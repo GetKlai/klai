@@ -1,10 +1,10 @@
 #!/bin/bash
-# update-moai.sh — Update MoAI-ADK agents naar een nieuwe versie
+# update-moai.sh — Update MoAI-ADK agents to a new upstream version
 #
-# Gebruik: ./scripts/update-moai.sh
+# Usage: ./scripts/update-moai.sh
 #
-# MoAI-ADK wordt gedistribueerd via https://github.com/moai-adk/moai-adk
-# Na een update: controleer of agents/klai/ of rules/klai/ aanpassingen nodig hebben.
+# MoAI-ADK is distributed via https://github.com/moai-adk/moai-adk
+# After updating: check whether agents/klai/ or rules/klai/ need adjustments.
 
 set -e
 
@@ -14,44 +14,44 @@ TMP_DIR=$(mktemp -d)
 
 MOAI_REPO="https://github.com/moai-adk/moai-adk.git"
 
-echo "MoAI-ADK updaten..."
-echo "Huidige versie: $(cat "$ROOT_DIR/VERSION")"
+echo "Updating MoAI-ADK..."
+echo "Current version: $(cat "$ROOT_DIR/VERSION")"
 echo ""
 
 # Clone upstream MoAI
-echo "Upstream ophalen..."
+echo "Fetching upstream..."
 git clone --depth 1 "$MOAI_REPO" "$TMP_DIR" 2>/dev/null || {
-    echo "Fout: kon MoAI-ADK repo niet ophalen."
-    echo "Controleer of je internettoegang hebt en de repo bereikbaar is."
+    echo "Error: could not fetch MoAI-ADK repo."
+    echo "Check your internet connection and whether the repo is reachable."
     rm -rf "$TMP_DIR"
     exit 1
 }
 
-# Toon diff
+# Show diff
 echo ""
-echo "Wijzigingen ten opzichte van huidige agents/moai/:"
+echo "Changes compared to current agents/moai/:"
 diff -rq "$ROOT_DIR/agents/moai/" "$TMP_DIR/.claude/agents/moai/" 2>/dev/null || true
 echo ""
 
-read -p "Doorgaan met update? (j/n) " -n 1 -r
+read -p "Continue with update? (y/n) " -n 1 -r
 echo ""
-if [[ ! $REPLY =~ ^[Jj]$ ]]; then
-    echo "Update geannuleerd."
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Update cancelled."
     rm -rf "$TMP_DIR"
     exit 0
 fi
 
-# Vervang agents/moai volledig
+# Replace agents/moai completely
 rm -rf "$ROOT_DIR/agents/moai"
 cp -r "$TMP_DIR/.claude/agents/moai" "$ROOT_DIR/agents/moai/"
 
-# Vervang rules/moai als aanwezig
+# Replace rules/moai if present
 if [ -d "$TMP_DIR/.claude/rules/moai" ]; then
     rm -rf "$ROOT_DIR/rules/moai"
     cp -r "$TMP_DIR/.claude/rules/moai" "$ROOT_DIR/rules/moai/"
 fi
 
-# Vervang skills als aanwezig
+# Replace skills if present
 if [ -d "$TMP_DIR/.claude/skills" ]; then
     rm -rf "$ROOT_DIR/skills"
     cp -r "$TMP_DIR/.claude/skills" "$ROOT_DIR/skills/"
@@ -59,6 +59,6 @@ fi
 
 rm -rf "$TMP_DIR"
 
-echo "MoAI agents bijgewerkt."
-echo "Controleer rules/klai/ en agents/klai/ op eventuele aanpassingen."
-echo "Vergeet niet VERSION bij te werken en te committen."
+echo "MoAI agents updated."
+echo "Check rules/klai/ and agents/klai/ for any required adjustments."
+echo "Don't forget to update VERSION and commit."

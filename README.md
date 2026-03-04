@@ -1,61 +1,69 @@
 # klai-claude
 
-Gedeelde Claude-configuratie voor alle Klai-projecten.
+Shared Claude configuration for all Klai projects.
 
-Bevat MoAI-ADK agents, GTM content agents, skills, rules en hooks die
-beschikbaar zijn in elk Klai-project: website, infra, app.
+Contains MoAI-ADK agents, GTM content agents, skills, rules and hooks that are
+available in every Klai project: website, infra, app.
 
-## Structuur
+## Structure
 
 ```
 agents/
-  moai/          MoAI-ADK agents (upstream, niet handmatig aanpassen)
-  gtm/           GTM content agents (Klai-eigendom)
-  klai/          Klai-eigen agents
+  moai/          MoAI-ADK agents (upstream — do not edit manually)
+  gtm/           GTM content agents (Klai-owned)
+  klai/          Klai-built agents
 rules/
-  moai/          MoAI regels (upstream)
-  gtm/           GTM regels incl. klai-brand-voice.md
-  klai/          Klai-specifieke regels
+  moai/          MoAI rules (upstream)
+  gtm/           GTM rules including klai-brand-voice.md
+  klai/          Klai-specific rules
 skills/          MoAI skills (upstream)
-hooks/           Gedeelde hooks
-commands/        Gedeelde slash commands
+hooks/           Shared hooks
+commands/        Shared slash commands
 output-styles/   MoAI output styles
 scripts/
-  update-moai.sh Update MoAI agents naar nieuwe versie
+  setup.sh       Set up a new machine with the full klai/ workspace
+  update-moai.sh Update MoAI agents to a new upstream version
 ```
 
-## Gebruik in een project
+## Using in a project
 
-Projecten halen de gedeelde configuratie op via het `scripts/update-shared.sh`
-script dat in elk projectrepo staat. Dat script kopieert de inhoud van deze
-repo naar `.claude/` in het project.
+Projects pull shared configuration via their `scripts/update-shared.sh` script.
+That script copies the contents of this repo into `.claude/` in the project.
 
 ```bash
-# In klai-website, klai-infra of klai-app:
+# Inside klai-website, klai-infra or klai-app:
 ./scripts/update-shared.sh
 ```
 
-## MoAI updaten
+## New machine setup
+
+```bash
+cd ~/Server/projects
+git clone git@github.com:GetKlai/klai-claude.git klai/klai-claude
+./klai/klai-claude/scripts/setup.sh
+```
+
+## Updating MoAI
 
 ```bash
 ./scripts/update-moai.sh
 ```
 
-Toont een diff, vraagt om bevestiging, vervangt `agents/moai/` en `rules/moai/`
-volledig. Daarna VERSION aanpassen en committen.
+Shows a diff, asks for confirmation, replaces `agents/moai/` and `rules/moai/`
+completely. Then update VERSION and commit.
 
 ## Versioning
 
-Dit repo gebruikt semantic versioning (zie `VERSION`).
-Projecten pinnen op een versie via `KLAI_CLAUDE_VERSION` in hun update-script.
+This repo uses semantic versioning (see `VERSION`). Projects pin to a version
+via `KLAI_CLAUDE_VERSION` in their update script.
 
-- **patch** (1.0.1): kleine verbeteringen
-- **minor** (1.1.0): nieuwe agent of MoAI update
-- **major** (2.0.0): structuurwijziging
+- **patch** (1.0.1): minor improvements, typo fixes, tone adjustments
+- **minor** (1.1.0): new agent or skill added, MoAI update integrated
+- **major** (2.0.0): structural change, breaking change in update script or directories
 
-## GTM agents aanpassen
+## GTM agents
 
-GTM agents (`agents/gtm/`) zijn Klai-eigendom. Aanpassingen direct in die
-bestanden, in deze repo. Upstream GTM wordt handmatig als inspiratie gebruikt.
+GTM agents (`agents/gtm/`) are Klai-owned. Edit them directly in this repo.
+Upstream GTM is used as inspiration only, not as an automatic source.
 
-Klai-schrijfstijl staat in: `rules/gtm/klai-brand-voice.md`
+Writing style: `rules/gtm/klai-brand-voice.md`

@@ -1,32 +1,32 @@
-# Klai: Gedeelde Claude-configuratie
+# Klai: Shared Claude Configuration
 
-Dit zijn de gedeelde basisinstructies voor alle Klai-projecten.
-Projectspecifieke instructies staan in het CLAUDE.md van het betreffende project.
+These are the shared base instructions for all Klai projects.
+Project-specific instructions are in each project's own CLAUDE.md.
 
-## Over Klai
+## About Klai
 
-Klai bouwt AI-aangedreven go-to-market tools voor B2B sales- en marketingteams.
-Primaire taal: Nederlands. Secundaire taal: Engels.
+Klai builds AI-powered go-to-market tools for B2B sales and marketing teams.
+Primary language: Dutch. Secondary language: English.
 
-## Infrastructuur
+## Infrastructure
 
 - **Server:** Hetzner CX42 — `ssh root@65.109.237.64`
-- **Deployment:** Coolify op `http://65.109.237.64:8000`
-- **GitHub:** `git@github.com:GetKlai/` (organisatie)
-- **Domein:** getklai.com (registrar: Registrar.eu, DNS: Cloud86)
+- **Deployment:** Coolify at `http://65.109.237.64:8000`
+- **GitHub:** `git@github.com:GetKlai/` (organisation)
+- **Domain:** getklai.com (registrar: Registrar.eu, DNS: Cloud86)
 
-## Werkwijze
+## Working principles
 
-- Minimale wijzigingen: alleen wat gevraagd is
-- Geen gedachtestreepjes (—) in content of code
-- Geen display:none/block voor content switching
+- Minimal changes: only what was asked
+- No em dashes (--) in content or code
+- No display:none/block for content switching
 
-## Agent-configuratie
+## Agent configuration
 
-Deze repo bevat drie lagen agents:
+This repo contains three layers of agents:
 
-- `agents/moai/` — MoAI-ADK agents (upstream, niet handmatig aanpassen)
-- `agents/gtm/` — GTM content agents (Klai-eigendom, aangepast voor getklai.com)
-- `agents/klai/` — Klai-eigen agents
+- `agents/moai/` — MoAI-ADK agents (upstream, do not edit manually)
+- `agents/gtm/` — GTM content agents (Klai-owned, adapted for getklai.com)
+- `agents/klai/` — Klai-built agents
 
-Schrijfstijl voor alle content: zie `rules/gtm/klai-brand-voice.md`
+Writing style for all content: see `rules/gtm/klai-brand-voice.md`
