@@ -1,0 +1,12 @@
+# Backend
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+
+# Frontend
+frontend/.env.local
+frontend/node_modules/
+frontend/dist/
+frontend/src/routeTree.gen.ts

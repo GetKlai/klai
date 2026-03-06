@@ -1,0 +1,78 @@
+/* Self-hosted fonts via Fontsource — no external requests */
+@import "@fontsource/libre-baskerville/400.css";
+@import "@fontsource/libre-baskerville/700.css";
+@import "@fontsource/libre-baskerville/400-italic.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/manrope";
+@import "tailwindcss";
+
+@theme inline {
+  /* Klai brand colors */
+  --color-purple-primary: #2D1B69;
+  --color-purple-deep:    #1A0F40;
+  --color-purple-accent:  #7C6AFF;
+  --color-purple-muted:   #4A3A8A;
+  --color-sand-light:     #F5F0E8;
+  --color-sand-mid:       #EAE3D5;
+  --color-off-white:      #FAFAF8;
+
+  /* shadcn/ui semantic tokens mapped to Klai brand */
+  --color-background:           #FAFAF8;
+  --color-foreground:           #1A1A1A;
+  --color-card:                 #FFFFFF;
+  --color-card-foreground:      #1A1A1A;
+  --color-popover:              #FFFFFF;
+  --color-popover-foreground:   #1A1A1A;
+  --color-primary:              #2D1B69;
+  --color-primary-foreground:   #FAFAF8;
+  --color-secondary:            #F5F0E8;
+  --color-secondary-foreground: #2D1B69;
+  --color-muted:                #EAE3D5;
+  --color-muted-foreground:     #6B6B6B;
+  --color-accent:               #7C6AFF;
+  --color-accent-foreground:    #FAFAF8;
+  --color-destructive:          #C0392B;
+  --color-border:               rgba(45, 27, 105, 0.1);
+  --color-input:                rgba(45, 27, 105, 0.08);
+  --color-ring:                 #7C6AFF;
+
+  /* Sidebar (dark purple) */
+  --color-sidebar:                  #1A0F40;
+  --color-sidebar-foreground:       #F5F0E8;
+  --color-sidebar-border:           rgba(124, 106, 255, 0.15);
+  --color-sidebar-accent:           rgba(124, 106, 255, 0.15);
+  --color-sidebar-accent-foreground: #FAFAF8;
+  --color-sidebar-muted-foreground: rgba(245, 240, 232, 0.55);
+
+  /* Typography */
+  --font-serif:   "Libre Baskerville", Georgia, serif;
+  --font-sans:    "Inter", system-ui, sans-serif;
+  --font-display: "Manrope", system-ui, sans-serif;
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  border-color: var(--color-border);
+  outline-color: var(--color-ring);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
