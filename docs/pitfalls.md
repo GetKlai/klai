@@ -25,7 +25,6 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 ## How to use
 
-**Before every session**: Read `pitfalls/process.md` — universal rules for AI-assisted work
 **Before deploying**: Scan `pitfalls/devops.md` and `pitfalls/infrastructure.md`
 **Before platform work**: Read `pitfalls/platform.md` for the relevant component
 **After an incident**: Run `/retro "what happened"` to capture it immediately
