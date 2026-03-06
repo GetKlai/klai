@@ -1,0 +1,70 @@
+# Patterns
+
+> Copy-paste solutions. Use these, don't reinvent.
+
+## How to use
+
+**When building**: Check if a pattern exists before writing new code
+**After solving**: Add reusable solutions to the appropriate file
+**In code**: Add `# AI-CONTEXT: See klai-claude/docs/patterns/[category].md#[anchor]`
+
+## Shared Pattern Files
+
+| File | Contents |
+|------|----------|
+| [patterns/devops.md](patterns/devops.md) | Coolify deployments, Docker, service management, CI/CD |
+| [patterns/infrastructure.md](patterns/infrastructure.md) | Hetzner, SOPS secrets, env management, DNS, SSH |
+| [patterns/platform.md](patterns/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, MongoDB per-tenant |
+
+## Project Pattern Files
+
+Each project has its own `docs/patterns/` directory for project-specific patterns.
+
+| Project | File |
+|---------|------|
+| klai-website | [klai-website/docs/patterns/frontend.md](../../klai-website/docs/patterns/frontend.md) *(planned)* |
+
+## Quick Reference
+
+### DevOps
+
+- **[coolify-env-update](patterns/devops.md#coolify-env-update)** - Update env var in SOPS and Coolify
+- **[coolify-redeploy](patterns/devops.md#coolify-redeploy)** - Trigger a fresh deploy
+- **[docker-rebuild-no-cache](patterns/devops.md#docker-rebuild-no-cache)** - Full rebuild after dependency changes
+
+### Infrastructure
+
+- **[sops-overview](patterns/infrastructure.md#sops-overview)** - How SOPS + age works in this project (files, keys, structure)
+- **[sops-secret-edit](patterns/infrastructure.md#sops-secret-edit)** - Change or add a secret in core-01
+- **[sops-secret-add](patterns/infrastructure.md#sops-secret-add)** - Add a brand-new secret end-to-end
+- **[sops-disaster-recovery](patterns/infrastructure.md#sops-disaster-recovery)** - Rebuild server from scratch using SOPS backups
+- **[sops-add-new-server](patterns/infrastructure.md#sops-add-new-server)** - Register a new server as a SOPS recipient
+- **[ssh-server-access](patterns/infrastructure.md#ssh-server-access)** - Connect to Hetzner servers
+- **[dns-propagation-check](patterns/infrastructure.md#dns-propagation-check)** - Verify DNS changes
+
+### Platform (AI Stack)
+
+- **[platform-litellm-vllm-config](patterns/platform.md#platform-litellm-vllm-config)** - Full LiteLLM config for Qwen3 dual-model
+- **[platform-vllm-startup-sequence](patterns/platform.md#platform-vllm-startup-sequence)** - Sequential startup with health checks
+- **[platform-mongodb-per-tenant](patterns/platform.md#platform-mongodb-per-tenant)** - One database per tenant via MONGO_URI
+- **[platform-caddy-tenant-router](patterns/platform.md#platform-caddy-tenant-router)** - FastAPI dispatcher for per-tenant routing
+- **[platform-zitadel-org-per-tenant](patterns/platform.md#platform-zitadel-org-per-tenant)** - Zitadel Organization provisioning
+- **[platform-librechat-env-template](patterns/platform.md#platform-librechat-env-template)** - Required LibreChat `.env` settings
+- **[platform-hetzner-dns-wildcard-tls](patterns/platform.md#platform-hetzner-dns-wildcard-tls)** - Custom Caddy build for wildcard TLS
+
+## Anchor format
+
+Use category-prefixed anchors:
+- `#coolify-env-update`
+- `#sops-secret-add`
+- `#docker-rebuild-no-cache`
+
+This enables splitting files later without breaking code references.
+
+## Adding new patterns
+
+1. Choose the appropriate file based on category
+2. Add entry with category-prefixed anchor
+3. Include copy-paste ready commands or code
+4. Update the quick reference in this file
+5. Run `/retro` to do this automatically after a solved problem
