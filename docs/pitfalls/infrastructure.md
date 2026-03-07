@@ -52,4 +52,48 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops core-01/.env.sops
 
 ---
 
+## infra-sops-dotenv-dollar-sign
+
+**Severity:** HIGH
+
+**Trigger:** Adding a secret containing `$` characters (bcrypt hashes, generated passwords) to a SOPS dotenv file that is used as a docker-compose `.env` file
+
+Bcrypt hashes (e.g. `$2a$14$...`) and some generated secrets contain `$` signs. Docker-compose interprets `$` in `.env` files as variable interpolation. A single `$` causes docker-compose to treat the rest as a variable name, substituting an empty string. The service starts with a blank value and may silently fail or behave incorrectly.
+
+**What went wrong:**
+```
+GRAFANA_CADDY_HASH=$2a$14$nNgmBc87...
+# docker-compose reads this as: GRAFANA_CADDY_HASH= (empty)
+# because $2a, $14, $nNgmBc87... are treated as variable expansions
+```
+
+**Why it happens:**
+SOPS stores the raw plaintext value. When `deploy.sh` decrypts and writes to `/opt/klai/.env`, the raw value (with single `$`) lands in the `.env` file. Docker-compose then interpolates it and the value becomes empty.
+
+**Fix for `.env` on the server:**
+```bash
+# Use $$ (double dollar) in the .env file for literal $ characters
+GRAFANA_CADDY_HASH=$$2a$$14$$nNgmBc87dq1Dkx5XPIVR1...
+```
+
+**Fix for storage in `.env.sops`:**
+Store the value with `$$` so `deploy.sh` writes the correct escaped form to the server `.env`:
+```bash
+GRAFANA_CADDY_HASH=$$2a$$14$$nNgmBc87dq1Dkx5XPIVR1...
+```
+
+**Diagnosis:**
+```bash
+# If a service has a blank env var that should contain a hash:
+docker exec <container> env | grep <VAR_NAME>
+# Expected: $2a$14$...
+# Symptom: empty string or variable name fragment
+```
+
+**Prevention:**
+- When generating bcrypt hashes or any secret with `$`, immediately store it with `$$` in `.env.sops`
+- After decrypting and writing to server `.env`, verify the variable value with `docker exec` before restarting dependent services
+
+---
+
 *(Add more entries here with `/retro "description"` after infrastructure incidents.)*
