@@ -11,12 +11,13 @@ Returns 201 on success. The user still needs to verify their email before loggin
 import re
 import unicodedata
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
+from app.services.provisioning import provision_tenant
 from app.services.zitadel import zitadel
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -60,7 +61,7 @@ def _slugify(name: str) -> str:
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)) -> SignupResponse:
+async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> SignupResponse:
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
@@ -113,6 +114,8 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)) -> Sig
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Kon account niet opslaan: {exc}",
         ) from exc
+
+    background_tasks.add_task(provision_tenant, org_row.id, db)
 
     return SignupResponse(
         org_id=zitadel_org_id,

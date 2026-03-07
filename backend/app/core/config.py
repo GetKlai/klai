@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     zitadel_base_url: str = "https://auth.getklai.com"
     zitadel_pat: str  # PORTAL_API_ZITADEL_PAT — never exposed to frontend
     zitadel_project_id: str = "362771533686374406"
+    zitadel_org_id: str = ""          # Klai's own org ID — needed to create OIDC apps
+    zitadel_portal_app_id: str = ""   # Portal OIDC app ID — to add per-tenant redirect URIs
 
     # Database
     database_url: str  # asyncpg DSN: postgresql+asyncpg://...
@@ -16,7 +18,36 @@ class Settings(BaseSettings):
     moneybird_api_token: str = ""
     moneybird_admin_id: str = "480855402911630899"
     moneybird_webhook_token: str = ""
-    moneybird_subscription_product_id: str = ""
+
+    # Product IDs — one per plan/cycle combination (Moneybird > Instellingen > Producten)
+    # Fetch IDs: source .env && curl -s -H "Authorization: Bearer $MONEYBIRD_API_TOKEN" \
+    #   "https://moneybird.com/api/v2/$MONEYBIRD_ADMIN_ID/products.json" | python3 -m json.tool
+    moneybird_product_core_monthly: str = ""
+    moneybird_product_core_yearly: str = ""
+    moneybird_product_professional_monthly: str = ""
+    moneybird_product_professional_yearly: str = ""
+    moneybird_product_complete_monthly: str = ""
+    moneybird_product_complete_yearly: str = ""
+
+    def moneybird_product_id(self, plan: str, cycle: str) -> str:
+        key = f"moneybird_product_{plan}_{cycle}"
+        value = getattr(self, key, "")
+        if not value:
+            raise ValueError(f"Moneybird product ID niet geconfigureerd voor {plan}/{cycle}")
+        return value
+
+    # Domain
+    domain: str = "getklai.com"
+
+    # Secrets passed to new LibreChat containers (read from /opt/klai/.env)
+    mongo_root_password: str = ""
+    meili_master_key: str = ""
+    litellm_master_key: str = ""
+
+    # Provisioning paths (container-internal paths, mounted from host)
+    caddy_config_path: str = "/caddy/Caddyfile"        # Caddyfile inside portal-api container
+    librechat_container_data_path: str = "/librechat"   # base dir for per-tenant librechat files
+    librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
 
     # CORS origins (comma-separated)
     cors_origins: str = "http://localhost:5174,https://my.getklai.com"

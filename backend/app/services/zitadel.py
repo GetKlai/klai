@@ -130,6 +130,52 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    # ── Provisioning ──────────────────────────────────────────────────────────
+
+    async def create_librechat_oidc_app(
+        self, slug: str, redirect_uri: str
+    ) -> dict:
+        """Create a per-tenant LibreChat OIDC app in the Klai Platform project."""
+        resp = await self._http.post(
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/oidc",
+            json={
+                "name": f"librechat-{slug}",
+                "redirectUris": [redirect_uri],
+                "responseTypes": ["OIDC_RESPONSE_TYPE_CODE"],
+                "grantTypes": [
+                    "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+                    "OIDC_GRANT_TYPE_REFRESH_TOKEN",
+                ],
+                "appType": "OIDC_APP_TYPE_WEB",
+                "authMethodType": "OIDC_AUTH_METHOD_TYPE_POST",
+                "postLogoutRedirectUris": [f"https://chat.{slug}.{settings.domain}"],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()  # contains appId, clientId, clientSecret
+
+    async def add_portal_redirect_uri(self, slug: str) -> None:
+        """Add {slug}.getklai.com/callback to the portal OIDC app's allowed redirect URIs."""
+        if not settings.zitadel_portal_app_id:
+            return  # not configured yet, skip
+        # GET current config
+        get_resp = await self._http.get(
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc"
+        )
+        get_resp.raise_for_status()
+        current = get_resp.json().get("oidcConfig", {})
+        existing_uris: list[str] = current.get("redirectUris", [])
+        new_uri = f"https://{slug}.{settings.domain}/callback"
+        if new_uri in existing_uris:
+            return
+        updated_uris = existing_uris + [new_uri]
+        # PUT updated config (preserve all other fields)
+        put_resp = await self._http.put(
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc",
+            json={**current, "redirectUris": updated_uris},
+        )
+        put_resp.raise_for_status()
+
 
 # Singleton — reused across requests
 zitadel = ZitadelClient()

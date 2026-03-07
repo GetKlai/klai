@@ -4,7 +4,8 @@ import { LogOut, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export interface NavItem {
-  to: string
+  to?: string
+  href?: string
   label: string
   icon: LucideIcon
   end?: boolean
@@ -30,21 +31,35 @@ export function Sidebar({ navItems }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-1">
           {navItems.map((item) => (
-            <li key={item.to}>
-              <Link
-                to={item.to}
-                activeOptions={item.end ? { exact: true } : undefined}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]'
-                )}
-                activeProps={{
-                  className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
-                }}
-              >
-                <item.icon size={16} strokeWidth={1.75} />
-                {item.label}
-              </Link>
+            <li key={item.href ?? item.to}>
+              {item.href ? (
+                <a
+                  href={item.href}
+                  rel="noopener noreferrer"
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]'
+                  )}
+                >
+                  <item.icon size={16} strokeWidth={1.75} />
+                  {item.label}
+                </a>
+              ) : (
+                <Link
+                  to={item.to!}
+                  activeOptions={item.end ? { exact: true } : undefined}
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]'
+                  )}
+                  activeProps={{
+                    className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
+                  }}
+                >
+                  <item.icon size={16} strokeWidth={1.75} />
+                  {item.label}
+                </Link>
+              )}
             </li>
           ))}
         </ul>

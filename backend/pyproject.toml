@@ -13,6 +13,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.14",
     "python-multipart>=0.0.12",
+    "docker>=7.0",
 ]
 
 [project.optional-dependencies]
