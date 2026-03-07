@@ -210,14 +210,47 @@ Cloud86 (former DNS provider for getklai.com) has no Caddy DNS plugin. Caddy req
 
 Caddy does NOT automatically discover new Docker containers. Provisioning a new tenant does not automatically make their subdomain work.
 
-**Required architecture:**
-- Caddy has one static `*.getklai.com` block
-- A FastAPI Tenant Router dispatcher reads tenant registration from the database and proxies to the correct container via Docker network hostname
-- New tenants are registered in the database; no Caddy config reload needed
-
-**Do not** attempt to update Caddy config via the Admin API on every tenant provisioning.
+**Implemented architecture (as of 2026-03-07):**
+- Caddy has one wildcard `*.getklai.com` block handling known services (auth, chat.getklai.com, grafana, llm)
+- Per-tenant LibreChat blocks are **appended** to the Caddyfile at provisioning time by the portal-api
+- After appending, the Caddy **container is restarted** via Docker SDK so it picks up the new block
+- The Caddyfile is bind-mounted (`./caddy/Caddyfile:/etc/caddy/Caddyfile`) so the portal-api can write to it
 
 **Source:** `platform-beslissingen.md` — Per-Tenant Routing: Tenant Router
+
+---
+
+## platform-caddy-admin-off-reload
+
+**Severity:** HIGH
+
+**Trigger:** Trying to reload Caddy config via Admin API when `admin off` is set
+
+When Caddy is configured with `admin off`, the Admin API is completely disabled. Any call to `POST http://caddy:2019/load` or `/reload` will fail with a connection error.
+
+**Wrong:**
+```python
+# This will always fail when admin off is set
+await httpx.post("http://caddy:2019/load", content=config)
+```
+
+**Correct:**
+```python
+# Restart the container via Docker SDK — Caddy re-reads config on startup
+import docker
+client = docker.from_env()
+container = client.containers.get("klai-core-caddy-1")
+container.restart(timeout=10)
+```
+
+**Requirements:**
+- The portal-api must have Docker API access (via `DOCKER_HOST` or socket mount)
+- The Docker socket proxy must allow `POST: 1` (container restart is a POST operation)
+- `settings.caddy_container_name` must match the actual running container name (`klai-core-caddy-1`)
+
+**Trade-off:** Container restart causes ~1s TLS interruption. Acceptable at current scale; revisit when tenants exceed ~50.
+
+**Source:** provisioning.py `_reload_caddy()`
 
 ---
 
@@ -255,6 +288,46 @@ CTranslate2 (the Whisper runtime) requires CUDA 12 + cuDNN 9. Version mismatch i
 3. Use a base Docker image that already pins `cuda:12.x-cudnn9`
 
 **Source:** `platform-beslissingen.md` — GPU Resource Management: faster-whisper on H100
+
+---
+
+## platform-fastapi-background-tasks-db-session
+
+**Severity:** CRIT
+
+**Trigger:** Passing a request-scoped `db: AsyncSession = Depends(get_db)` to a FastAPI `BackgroundTasks` function
+
+FastAPI's request-scoped database session (`Depends(get_db)`) is closed when the HTTP response is sent. `BackgroundTasks` run **after** the response. Passing the session to the task means it will be closed (or in an undefined state) when the task tries to use it.
+
+**Wrong:**
+```python
+@router.post("/signup")
+async def signup(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    # ... create records in db ...
+    background_tasks.add_task(provision_tenant, org.id, db)  # WRONG: db is closed by the time this runs
+    return Response(status_code=201)
+```
+
+**Correct:**
+```python
+@router.post("/signup")
+async def signup(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    # ... create records in db ...
+    background_tasks.add_task(provision_tenant, org.id)  # pass only IDs, not the session
+    return Response(status_code=201)
+
+async def provision_tenant(org_id: int) -> None:
+    async with AsyncSessionLocal() as db:  # open a new session
+        # ... use db ...
+```
+
+**Rule:** Background tasks that need database access must open their own session via `AsyncSessionLocal()`. Never pass a request-scoped session to a background task.
 
 ---
 
