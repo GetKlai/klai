@@ -8,7 +8,6 @@ import secrets
 from pathlib import Path
 
 import docker
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -107,19 +106,15 @@ chat.{slug}.{domain} {{
         f.write(block)
 
 
-async def _reload_caddy() -> None:
-    """Trigger a Caddy config reload via the Admin API."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post("http://caddy:2019/load",
-                                     content=Path(settings.caddy_config_path).read_bytes(),
-                                     headers={"Content-Type": "text/caddyfile"})
-            resp.raise_for_status()
-    except Exception as exc:
-        logger.warning("Caddy reload via /load failed, trying /reload: %s", exc)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post("http://caddy:2019/reload")
-            resp.raise_for_status()
+def _reload_caddy() -> None:
+    """Restart the Caddy container so it picks up the updated Caddyfile.
+
+    Caddy admin API is disabled (admin off); restarting is the safe alternative.
+    docker-socket-proxy allows POST (restart) on CONTAINERS.
+    """
+    client = docker.from_env()
+    caddy = client.containers.get(settings.caddy_container_name)
+    caddy.restart(timeout=10)
 
 
 def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
@@ -136,7 +131,7 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
 
     librechat_host_base = settings.librechat_host_data_path
     client.containers.run(
-        image="ghcr.io/danny-avila/librechat:latest",
+        image=settings.librechat_image,
         name=container_name,
         detach=True,
         restart_policy={"Name": "unless-stopped"},
@@ -213,11 +208,11 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         )
         logger.info("Started container librechat-%s", slug)
 
-        # Step 5: Append Caddyfile block + reload
+        # Step 5: Append Caddyfile block + restart Caddy (admin API is disabled)
         async with _caddy_lock:
             _append_caddy_block(slug)
-            await _reload_caddy()
-        logger.info("Caddy reloaded for %s", slug)
+            await loop.run_in_executor(None, _reload_caddy)
+        logger.info("Caddy restarted for %s", slug)
 
         # Step 6: Update DB
         org.slug = slug

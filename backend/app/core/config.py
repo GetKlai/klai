@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     caddy_config_path: str = "/caddy/Caddyfile"        # Caddyfile inside portal-api container
     librechat_container_data_path: str = "/librechat"   # base dir for per-tenant librechat files
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
+    librechat_image: str = "ghcr.io/danny-avila/librechat:v0.8.3-rc2"  # pinned image for tenants
+    caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy restart
 
     # CORS origins (comma-separated)
     cors_origins: str = "http://localhost:5174,https://my.getklai.com"
