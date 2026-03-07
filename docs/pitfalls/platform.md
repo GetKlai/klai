@@ -331,6 +331,87 @@ async def provision_tenant(org_id: int) -> None:
 
 ---
 
+## caddy-basicauth-monitoring-conflict
+
+**Severity:** HIGH
+
+**Trigger:** Adding `basic_auth` to a Caddy route that is also monitored by Uptime Kuma or any HTTP health checker
+
+When you add `basic_auth` to a Caddy route, ALL requests to that host get challenged for credentials — including Uptime Kuma's health check. The monitor switches from "up" to "down" immediately after deploy.
+
+**What went wrong:**
+```
+Grafana monitor: https://grafana.getklai.com/api/health
+→ After adding basic_auth: 401 Unauthorized
+→ Uptime Kuma marks service as DOWN
+```
+
+**Fix:**
+Create a named matcher for the health path BEFORE the `basic_auth` handler:
+```caddyfile
+@grafana-health {
+    host grafana.{$DOMAIN}
+    path /api/health
+}
+handle @grafana-health {
+    reverse_proxy grafana:3000
+}
+
+@grafana host grafana.{$DOMAIN}
+handle @grafana {
+    basic_auth { ... }
+    reverse_proxy grafana:3000
+}
+```
+
+**Prevention:**
+Before deploying `basic_auth` to any route: check Uptime Kuma for monitors on that host. Add the health path bypass first, deploy, confirm monitors are green, then confirm auth works.
+
+---
+
+## caddy-log-not-in-handle
+
+**Severity:** MEDIUM
+
+**Trigger:** Adding a `log` directive inside a `handle` or `handle @matcher` block in Caddy
+
+The `log` directive is a site-level directive and cannot be placed directly inside a `handle` block. Caddy will refuse to start with: `directive 'log' is not an ordered HTTP handler, so it cannot be used here`.
+
+**Wrong:**
+```caddyfile
+handle @grafana {
+    log { output file /var/log/caddy/access.log }  # ERROR
+    reverse_proxy grafana:3000
+}
+```
+
+**Correct:**
+```caddyfile
+*.example.com {
+    log {
+        output file /var/log/caddy/access.log { roll_size 10mb }
+    }
+
+    handle @grafana {
+        reverse_proxy grafana:3000
+    }
+}
+```
+
+---
+
+## caddy-basicauth-deprecated
+
+**Severity:** LOW
+
+**Trigger:** Using `basicauth` in a Caddyfile
+
+Caddy v2.6+ deprecated `basicauth` in favour of `basic_auth` (with underscore). Using `basicauth` still works but logs a warning on every startup. Some future Caddy version may remove it.
+
+**Fix:** Replace `basicauth` with `basic_auth` throughout the Caddyfile.
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
