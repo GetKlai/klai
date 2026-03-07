@@ -13,6 +13,8 @@ class PortalOrg(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     moneybird_contact_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     billing_status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    plan: Mapped[str] = mapped_column(Text, nullable=False, default="professional", server_default="professional")
+    billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly", server_default="monthly")
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 

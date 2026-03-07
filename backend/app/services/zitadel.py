@@ -79,6 +79,46 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
+    async def list_org_users(self, org_id: str) -> list[dict]:
+        """List all human users in a Zitadel org."""
+        resp = await self._http.post(
+            "/management/v1/users/_search",
+            headers={"x-zitadel-orgid": org_id},
+            json={"queries": [{"typeQuery": {"type": "TYPE_HUMAN"}}]},
+        )
+        resp.raise_for_status()
+        return resp.json().get("result", [])
+
+    async def invite_user(self, org_id: str, email: str, first_name: str, last_name: str) -> dict:
+        """Create a human user and send initialization email (password-less invite)."""
+        resp = await self._http.post(
+            "/management/v1/users/human/_import",
+            headers={"x-zitadel-orgid": org_id},
+            json={
+                "userName": email,
+                "profile": {
+                    "firstName": first_name,
+                    "lastName": last_name,
+                    "displayName": f"{first_name} {last_name}",
+                },
+                "email": {
+                    "email": email,
+                    "isEmailVerified": False,
+                },
+                "sendCodes": True,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def remove_user(self, org_id: str, zitadel_user_id: str) -> None:
+        """Deactivate a user in the org (does not delete the Zitadel account)."""
+        resp = await self._http.delete(
+            f"/management/v1/users/{zitadel_user_id}",
+            headers={"x-zitadel-orgid": org_id},
+        )
+        resp.raise_for_status()
+
     # ── Token introspection ───────────────────────────────────────────────────
 
     async def get_userinfo(self, access_token: str) -> dict:
