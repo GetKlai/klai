@@ -96,4 +96,49 @@ docker exec <container> env | grep <VAR_NAME>
 
 ---
 
+## infra-docker-user-container-ip-stale
+
+**Severity:** CRIT
+
+**Trigger:** Using container IPs in DOCKER-USER iptables rules, then restarting any container in the stack
+
+Docker assigns container IPs dynamically from the bridge subnet. IPs are stable while the stack is running but change when containers restart. DOCKER-USER rules written with a specific container IP (`172.18.0.x`) break silently when the container gets a new IP after a restart.
+
+**What went wrong:**
+```bash
+# Rules were saved with Caddy at 172.18.0.9:
+iptables -A DOCKER-USER -d 172.18.0.9 -i enp5s0 -p tcp -m multiport --dports 80,443 -j ACCEPT
+iptables -A DOCKER-USER -i enp5s0 -j DROP
+
+# After container restart, Caddy moved to 172.18.0.7.
+# All inbound HTTPS traffic now hits the DROP rule — services unreachable from internet.
+# push monitors still pass (they run from inside the server), so the outage is not obvious.
+```
+
+**Symptoms:**
+- External monitors (Uptime Kuma HTTP) timeout; push monitors stay green
+- `curl https://chat.getklai.com` times out from an external host
+- `docker ps` shows all containers running and healthy
+- `curl https://chat.getklai.com` works from within core-01 (bypasses DOCKER-USER)
+
+**Correct approach (port-based rules):**
+```bash
+# Flush and re-add with port matching, not container IP
+iptables -F DOCKER-USER
+iptables -A DOCKER-USER -i enp5s0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A DOCKER-USER -i enp5s0 -p tcp -m multiport --dports 80,443 -j ACCEPT
+iptables -A DOCKER-USER -i enp5s0 -p udp --dport 443 -j ACCEPT
+iptables -A DOCKER-USER -i enp5s0 -j DROP
+iptables-save > /etc/iptables/rules.v4
+```
+
+Port-based rules match any container on those ports. Docker's own DOCKER chain ensures only explicitly-mapped containers receive the traffic — no additional security risk.
+
+**Script:** `core-01/scripts/harden-docker-user.sh` — run after `docker compose up -d` to (re)apply correct rules.
+
+**Why Docker's DOCKER chain is not enough alone:**
+Docker adds ACCEPT rules in the FORWARD chain's DOCKER chain (for mapped ports) and then DROP. Without DOCKER-USER restrictions, all forwarded traffic passes through. Internal networks (Redis, PostgreSQL) are safe because they have no port mappings. But the intent of DOCKER-USER is to be explicit about what external traffic is allowed.
+
+---
+
 *(Add more entries here with `/retro "description"` after infrastructure incidents.)*
