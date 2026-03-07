@@ -115,7 +115,7 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
             detail=f"Kon account niet opslaan: {exc}",
         ) from exc
 
-    background_tasks.add_task(provision_tenant, org_row.id, db)
+    background_tasks.add_task(provision_tenant, org_row.id)
 
     return SignupResponse(
         org_id=zitadel_org_id,

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.database import AsyncSessionLocal
 from app.models.portal import PortalOrg
 from app.services.zitadel import zitadel
 
@@ -156,11 +157,17 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
             logger.warning("Could not connect %s to %s: %s", container_name, net_name, exc)
 
 
-async def provision_tenant(org_id: int, db: AsyncSession) -> None:
+async def provision_tenant(org_id: int) -> None:
     """
     Full tenant provisioning. Called as a BackgroundTask after signup.
+    Opens its own DB session (the request session is closed by the time this runs).
     Updates the PortalOrg row with provisioning results.
     """
+    async with AsyncSessionLocal() as db:
+        await _provision(org_id, db)
+
+
+async def _provision(org_id: int, db: AsyncSession) -> None:
     # Fetch org
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
     org = result.scalar_one()
@@ -200,7 +207,7 @@ async def provision_tenant(org_id: int, db: AsyncSession) -> None:
         logger.info("Wrote LibreChat .env for %s", slug)
 
         # Step 4: Start Docker container
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None, _start_librechat_container, slug, env_file_host_path
         )
