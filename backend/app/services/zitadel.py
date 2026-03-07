@@ -53,10 +53,8 @@ class ZitadelClient:
                     "email": email,
                     "isEmailVerified": False,
                 },
-                "password": {
-                    "password": password,
-                    "passwordChangeRequired": False,
-                },
+                "password": password,
+                "passwordChangeRequired": False,
             },
         )
         resp.raise_for_status()

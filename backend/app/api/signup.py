@@ -11,9 +11,12 @@ Returns 201 on success. The user still needs to verify their email before loggin
 import re
 import unicodedata
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
+from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -57,7 +60,7 @@ def _slugify(name: str) -> str:
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupRequest) -> SignupResponse:
+async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)) -> SignupResponse:
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
@@ -67,12 +70,12 @@ async def signup(body: SignupRequest) -> SignupResponse:
             detail=f"Kon organisatie niet aanmaken: {exc}",
         ) from exc
 
-    org_id: str = org_data["id"]
+    zitadel_org_id: str = org_data["id"]
 
     # 2. Create human user inside that org
     try:
         user_data = await zitadel.create_human_user(
-            org_id=org_id,
+            org_id=zitadel_org_id,
             email=body.email,
             first_name=body.first_name,
             last_name=body.last_name,
@@ -84,12 +87,35 @@ async def signup(body: SignupRequest) -> SignupResponse:
             detail=f"Kon gebruiker niet aanmaken: {exc}",
         ) from exc
 
-    user_id: str = user_data["userId"]
+    zitadel_user_id: str = user_data["userId"]
 
-    # TODO: persist org + user to PostgreSQL (portal_orgs / portal_users tables)
+    # 3. Persist to PostgreSQL
+    try:
+        org_row = PortalOrg(
+            zitadel_org_id=zitadel_org_id,
+            name=body.company_name,
+        )
+        db.add(org_row)
+        await db.flush()  # get org_row.id without committing yet
+
+        user_row = PortalUser(
+            zitadel_user_id=zitadel_user_id,
+            org_id=org_row.id,
+            email=body.email,
+            first_name=body.first_name,
+            last_name=body.last_name,
+        )
+        db.add(user_row)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon account niet opslaan: {exc}",
+        ) from exc
 
     return SignupResponse(
-        org_id=org_id,
-        user_id=user_id,
+        org_id=zitadel_org_id,
+        user_id=zitadel_user_id,
         message="Account aangemaakt. Controleer je e-mail om je account te bevestigen.",
     )

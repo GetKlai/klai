@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str  # asyncpg DSN: postgresql+asyncpg://...
 
+    # Moneybird
+    moneybird_api_token: str = ""
+    moneybird_admin_id: str = "480855402911630899"
+    moneybird_webhook_token: str = ""
+    moneybird_subscription_product_id: str = ""
+
     # CORS origins (comma-separated)
     cors_origins: str = "http://localhost:5174,https://my.getklai.com"
 

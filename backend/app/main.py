@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import me, signup
+from app.api.billing import router as billing_router
+from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.services.zitadel import zitadel
 
@@ -31,6 +33,8 @@ app.add_middleware(
 
 app.include_router(signup.router)
 app.include_router(me.router)
+app.include_router(billing_router)
+app.include_router(webhooks_router)
 
 
 @app.get("/health")
