@@ -101,13 +101,21 @@ cd klai-infra
 #         /opt/klai/litellm/.env, /opt/klai/zitadel/.env
 
 # 2. Copy static config files
-scp core-01/docker-compose.yml core-01:/opt/klai/docker-compose.yml
-scp core-01/postgres/init.sql  core-01:/opt/klai/postgres/init.sql
-scp core-01/litellm/config.yaml core-01:/opt/klai/litellm/config.yaml
-scp core-01/caddy/Caddyfile    core-01:/opt/klai/caddy/Caddyfile
+scp core-01/docker-compose.yml              core-01:/opt/klai/docker-compose.yml
+scp core-01/postgres/init.sql               core-01:/opt/klai/postgres/init.sql
+scp core-01/litellm/config.yaml             core-01:/opt/klai/litellm/config.yaml
+scp core-01/caddy/Caddyfile                 core-01:/opt/klai/caddy/Caddyfile
+scp core-01/librechat/librechat.yaml        core-01:/opt/klai/librechat/librechat.yaml
+scp core-01/alloy/config.alloy              core-01:/opt/klai/alloy/config.alloy
+scp -r core-01/grafana/provisioning/        core-01:/opt/klai/grafana/
+scp core-01/scripts/push-health.sh          core-01:/opt/klai/scripts/push-health.sh
+ssh core-01 'chmod +x /opt/klai/scripts/push-health.sh'
 
 # 3. Start services
 ssh core-01 'cd /opt/klai && docker compose up -d'
+
+# 4. Restore cron job (if not already present)
+# Add to crontab for user klai: * * * * * /opt/klai/scripts/push-health.sh
 ```
 
 **Prerequisite:** Your `~/.config/sops/age/keys.txt` must be present. Without it, nothing can be decrypted.
@@ -164,9 +172,11 @@ docker logs coolify --tail=100 -f
 
 ## dns-propagation-check
 
-**When to use:** After a DNS change at Cloud86 or Registrar.eu
+**When to use:** After a DNS change at Hetzner DNS or Registrar.eu
 
 DNS changes for getklai.com can take up to 24h to propagate fully.
+DNS provider: Hetzner DNS (migrated from Cloud86 in March 2026).
+Domain registrar: Registrar.eu.
 
 ```bash
 # Check current DNS resolution
