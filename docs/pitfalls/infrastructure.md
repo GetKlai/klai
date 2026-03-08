@@ -141,27 +141,44 @@ Docker adds ACCEPT rules in the FORWARD chain's DOCKER chain (for mapped ports) 
 
 ---
 
-## infra-zitadel-x-forwarded-proto
+## infra-zitadel-console-http-api
 
 **Severity:** CRIT
 
-**Trigger:** Running Zitadel behind a TLS-terminating reverse proxy (Caddy, nginx, etc.)
+**Trigger:** Zitadel console is broken -- all API calls fail, blank or non-functional admin UI at `auth.getklai.com`
 
-Zitadel generates `"api":"http://..."` in `/ui/console/assets/environment.json` regardless of `ZITADEL_EXTERNALSECURE=true`. This is a known upstream bug (zitadel/zitadel#8675): Zitadel derives the API scheme from the incoming connection to itself (plain HTTP from the reverse proxy), not from the `EXTERNALSECURE` config. The `issuer` URL is correctly generated as `https://` from config, but the `api` field uses the request scheme.
+**Symptom:**
+`/ui/console/assets/environment.json` returns `"api":"http://auth.getklai.com"` instead of `"https://"`. The Angular console makes gRPC-Web calls to `http://` URLs from an HTTPS page. Browsers block these as mixed content. The moment any CSP is present (even Zitadel's own), `connect-src 'self'` on an HTTPS page does not match `http://` URLs.
 
-**What breaks:**
-The Zitadel Angular console makes gRPC-Web API calls to `http://` URLs from an HTTPS page. Browsers block these as CSP violations or mixed content. The console loads but all API calls fail — users see a blank or broken admin UI.
+**Root cause:**
+`--tlsMode disabled` as a CLI flag in the compose `command:` overrides `ZITADEL_EXTERNALSECURE=true`. These are different internal config keys. The startup logs will show:
 
-**Why it seems to work until it doesn't:**
-Before any CSP is present, browsers may silently auto-upgrade `http://` → `https://` for same-origin requests. The moment any CSP is introduced (even Zitadel's own), `connect-src 'self'` on an HTTPS page does not match `http://` URLs — they are blocked.
+```
+External Secure: false   <-- wrong, means api URL will be http://
+```
 
-**Fix — Caddy:**
-Explicitly forward `X-Forwarded-Proto: https` in the Zitadel reverse_proxy block:
+Even though `ZITADEL_EXTERNALSECURE=true` is set, the CLI flag wins.
+
+**Fix:**
+1. Remove `--tlsMode disabled` from the compose `command:`
+2. Add `ZITADEL_TLS_ENABLED: "false"` as an explicit environment variable (this is the env var equivalent -- it tells Zitadel not to terminate TLS itself, which is correct behind a proxy)
+3. Use `h2c://zitadel:8080` in the Caddy reverse_proxy (official Zitadel/Caddy pattern for HTTP/2 cleartext)
+
+```yaml
+# docker-compose.yml
+zitadel:
+  command: start-from-init --masterkey ${ZITADEL_MASTERKEY}  # no --tlsMode disabled
+  environment:
+    ZITADEL_TLS_ENABLED: "false"      # replaces --tlsMode disabled
+    ZITADEL_EXTERNALSECURE: "true"    # public URL is https://
+    ZITADEL_EXTERNALDOMAIN: auth.getklai.com
+    ZITADEL_EXTERNALPORT: "443"
+```
+
 ```caddyfile
+# Caddyfile
 handle @auth {
-    reverse_proxy zitadel:8080 {
-        header_up X-Forwarded-Proto "https"
-    }
+    reverse_proxy h2c://zitadel:8080
 }
 ```
 
@@ -172,7 +189,16 @@ curl -s https://auth.getklai.com/ui/console/assets/environment.json
 # Wrong:     "api":"http://auth.getklai.com"
 ```
 
-**Do NOT fix this with CSP changes.** The root cause is a wrong scheme in environment.json. Patching CSP (upgrade-insecure-requests, adding http: to connect-src, removing CSP) are workarounds that mask the problem or introduce security regressions.
+Check startup logs for confirmation:
+```bash
+docker logs klai-core-zitadel-1 2>&1 | grep "External Secure"
+# Must show: External Secure: true
+```
+
+**Do NOT fix this with:**
+- `header_up X-Forwarded-Proto "https"` in Caddy (does not override the CLI flag)
+- CSP changes (`upgrade-insecure-requests`, adding `http:` to `connect-src`) -- these mask the symptom and introduce security regressions
+- Restarting Zitadel without changing the command/env -- the flag is read at startup
 
 ---
 
