@@ -2,10 +2,19 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, CheckCircle } from 'lucide-react'
+import * as m from '@/paraglide/messages'
+import { setLocale } from '@/paraglide/runtime'
 
 export const Route = createFileRoute('/signup')({
   component: SignupPage,
 })
+
+type Locale = 'nl' | 'en'
+
+function getInitialLocale(): Locale {
+  const saved = localStorage.getItem('klai-locale')
+  return saved === 'en' ? 'en' : 'nl'
+}
 
 interface FormState {
   first_name: string
@@ -16,6 +25,11 @@ interface FormState {
 }
 
 function SignupPage() {
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    const initial = getInitialLocale()
+    setLocale(initial)
+    return initial
+  })
   const [form, setForm] = useState<FormState>({
     first_name: '',
     last_name: '',
@@ -28,6 +42,12 @@ function SignupPage() {
   const [done, setDone] = useState(false)
 
   const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+
+  function switchLocale(l: Locale) {
+    setLocale(l)
+    setLocaleState(l)
+    localStorage.setItem('klai-locale', l)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -43,13 +63,13 @@ function SignupPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        setError(data?.detail ?? `Fout ${resp.status} — probeer opnieuw`)
+        setError(data?.detail ?? m.signup_error_server({ status: String(resp.status) }))
         return
       }
 
       setDone(true)
     } catch {
-      setError('Kan geen verbinding maken met de server')
+      setError(m.signup_error_connection())
     } finally {
       setLoading(false)
     }
@@ -65,17 +85,16 @@ function SignupPage() {
             strokeWidth={1.5}
           />
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-            Bevestig je e-mail
+            {m.signup_confirm_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            We hebben een bevestigingslink gestuurd naar <strong>{form.email}</strong>.
-            Klik op de link om je account te activeren.
+            {m.signup_confirm_body({ email: form.email })}
           </p>
           <Link
             to="/"
-            className="inline-block text-sm font-medium text-[var(--color-purple-muted)] hover:underline"
+            className="inline-block text-sm font-medium text-[var(--color-purple-muted)] underline"
           >
-            Terug naar inloggen
+            {m.signup_confirm_back()}
           </Link>
         </div>
       </div>
@@ -89,12 +108,12 @@ function SignupPage() {
         <span className="font-serif text-2xl font-bold">Klai</span>
         <div className="space-y-4">
           <h1 className="font-serif text-4xl font-bold leading-tight">
-            Jouw eigen AI-werkruimte.
+            {m.signup_hero_heading()}
             <br />
-            <span className="text-[var(--color-purple-accent)]">Klaar in 2 minuten.</span>
+            <span className="text-[var(--color-purple-accent)]">{m.signup_hero_highlight()}</span>
           </h1>
           <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
-            Maak een account aan en start direct. Alles draait op Europese servers.
+            {m.signup_hero_body()}
           </p>
         </div>
         <p className="text-xs text-[var(--color-sand-mid)] opacity-50">
@@ -105,18 +124,35 @@ function SignupPage() {
       {/* Right panel — form */}
       <div className="flex w-full flex-col items-center justify-center px-8 py-12 lg:w-1/2">
         <div className="w-full max-w-sm space-y-6">
-          <div className="lg:hidden">
-            <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+          <div className="flex items-center justify-between">
+            <div className="lg:hidden">
+              <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+            </div>
+            <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+              <button
+                onClick={() => switchLocale('nl')}
+                className={locale === 'nl' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+              >
+                NL
+              </button>
+              <span className="opacity-30">/</span>
+              <button
+                onClick={() => switchLocale('en')}
+                className={locale === 'en' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+              >
+                EN
+              </button>
+            </div>
           </div>
 
           <div className="space-y-1">
             <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-              Account aanmaken
+              {m.signup_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              Al een account?{' '}
-              <Link to="/" className="font-medium text-[var(--color-purple-muted)] hover:underline">
-                Inloggen
+              {m.signup_existing_account()}{' '}
+              <Link to="/" className="font-medium text-[var(--color-purple-muted)] underline">
+                {m.signup_login_link()}
               </Link>
             </p>
           </div>
@@ -124,14 +160,14 @@ function SignupPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Field
-                label="Voornaam"
+                label={m.signup_field_first_name()}
                 name="first_name"
                 value={form.first_name}
                 onChange={(v) => setForm((f) => ({ ...f, first_name: v }))}
                 required
               />
               <Field
-                label="Achternaam"
+                label={m.signup_field_last_name()}
                 name="last_name"
                 value={form.last_name}
                 onChange={(v) => setForm((f) => ({ ...f, last_name: v }))}
@@ -139,14 +175,14 @@ function SignupPage() {
               />
             </div>
             <Field
-              label="Bedrijfsnaam"
+              label={m.signup_field_company()}
               name="company_name"
               value={form.company_name}
               onChange={(v) => setForm((f) => ({ ...f, company_name: v }))}
               required
             />
             <Field
-              label="E-mailadres"
+              label={m.signup_field_email()}
               name="email"
               type="email"
               value={form.email}
@@ -154,12 +190,12 @@ function SignupPage() {
               required
             />
             <Field
-              label="Wachtwoord"
+              label={m.signup_field_password()}
               name="password"
               type="password"
               value={form.password}
               onChange={(v) => setForm((f) => ({ ...f, password: v }))}
-              hint="Minimaal 8 tekens"
+              hint={m.signup_field_password_hint()}
               required
             />
 
@@ -168,15 +204,15 @@ function SignupPage() {
             )}
 
             <Button type="submit" size="lg" className="w-full gap-2" disabled={loading}>
-              {loading ? 'Even geduld…' : 'Account aanmaken'}
+              {loading ? m.signup_submit_loading() : m.signup_submit()}
               {!loading && <ArrowRight size={16} />}
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)] opacity-60">
-            Door aan te melden ga je akkoord met onze{' '}
-            <a href="https://getklai.com/privacy" className="hover:underline">
-              privacyverklaring
+          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+            {m.signup_privacy_text()}{' '}
+            <a href="https://getklai.com/docs/legal/privacy" className="text-[var(--color-purple-muted)] underline">
+              {m.signup_privacy_link()}
             </a>
           </p>
         </div>

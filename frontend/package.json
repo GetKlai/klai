@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "i18n:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide",
+    "dev": "npm run i18n:compile && vite",
+    "build": "npm run i18n:compile && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint ."
   },
@@ -13,6 +14,7 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource/libre-baskerville": "^5.2.10",
+    "@inlang/paraglide-js": "^2.13.2",
     "@tanstack/react-query": "^5.66.0",
     "@tanstack/react-router": "^1.114.0",
     "@tanstack/react-table": "^8.21.3",
