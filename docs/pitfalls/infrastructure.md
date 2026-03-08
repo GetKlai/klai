@@ -141,4 +141,67 @@ Docker adds ACCEPT rules in the FORWARD chain's DOCKER chain (for mapped ports) 
 
 ---
 
+## infra-zitadel-x-forwarded-proto
+
+**Severity:** CRIT
+
+**Trigger:** Running Zitadel behind a TLS-terminating reverse proxy (Caddy, nginx, etc.)
+
+Zitadel generates `"api":"http://..."` in `/ui/console/assets/environment.json` regardless of `ZITADEL_EXTERNALSECURE=true`. This is a known upstream bug (zitadel/zitadel#8675): Zitadel derives the API scheme from the incoming connection to itself (plain HTTP from the reverse proxy), not from the `EXTERNALSECURE` config. The `issuer` URL is correctly generated as `https://` from config, but the `api` field uses the request scheme.
+
+**What breaks:**
+The Zitadel Angular console makes gRPC-Web API calls to `http://` URLs from an HTTPS page. Browsers block these as CSP violations or mixed content. The console loads but all API calls fail — users see a blank or broken admin UI.
+
+**Why it seems to work until it doesn't:**
+Before any CSP is present, browsers may silently auto-upgrade `http://` → `https://` for same-origin requests. The moment any CSP is introduced (even Zitadel's own), `connect-src 'self'` on an HTTPS page does not match `http://` URLs — they are blocked.
+
+**Fix — Caddy:**
+Explicitly forward `X-Forwarded-Proto: https` in the Zitadel reverse_proxy block:
+```caddyfile
+handle @auth {
+    reverse_proxy zitadel:8080 {
+        header_up X-Forwarded-Proto "https"
+    }
+}
+```
+
+**Verification:**
+```bash
+curl -s https://auth.getklai.com/ui/console/assets/environment.json
+# Must show: "api":"https://auth.getklai.com"
+# Wrong:     "api":"http://auth.getklai.com"
+```
+
+**Do NOT fix this with CSP changes.** The root cause is a wrong scheme in environment.json. Patching CSP (upgrade-insecure-requests, adding http: to connect-src, removing CSP) are workarounds that mask the problem or introduce security regressions.
+
+---
+
+## infra-caddy-no-global-csp
+
+**Severity:** HIGH
+
+**Trigger:** Adding a Content-Security-Policy header to Caddy's global `header {}` block
+
+A global CSP at the reverse proxy level is not industry standard and will break applications that manage their own CSP. Zitadel, LibreChat, and similar apps set application-specific CSP headers. A generic Caddy CSP overrides these and breaks the apps.
+
+**What breaks:**
+Any app whose own CSP is more permissive than the generic Caddy CSP will fail. Zitadel's Angular console in particular makes gRPC-Web calls that require `connect-src 'self' auth.getklai.com` — a generic CSP without this exact allowance blocks all API calls.
+
+**Correct split:**
+Caddy's global `header {}` block is appropriate for **transport-level security headers** that are safe to apply globally:
+```caddyfile
+header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    -Server
+}
+```
+
+Do NOT add `Content-Security-Policy` here. Each application sets its own.
+
+---
+
 *(Add more entries here with `/retro "description"` after infrastructure incidents.)*
