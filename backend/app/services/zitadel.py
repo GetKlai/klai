@@ -165,6 +165,17 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
 
+    async def set_password_with_code(self, user_id: str, code: str, new_password: str) -> None:
+        """Set a new password using a verification code from a password-reset email."""
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/password",
+            json={
+                "newPassword": {"password": new_password, "changeRequired": False},
+                "verificationCode": code,
+            },
+        )
+        resp.raise_for_status()
+
     # ── Provisioning ──────────────────────────────────────────────────────────
 
     async def create_librechat_oidc_app(

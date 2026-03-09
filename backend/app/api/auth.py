@@ -34,6 +34,30 @@ class LoginResponse(BaseModel):
     callback_url: str
 
 
+class PasswordSetRequest(BaseModel):
+    user_id: str
+    code: str
+    new_password: str
+
+
+@router.post("/auth/password/set", status_code=status.HTTP_204_NO_CONTENT)
+async def password_set(body: PasswordSetRequest) -> None:
+    """Complete a password reset using the code from the reset email."""
+    try:
+        await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
+    except httpx.HTTPStatusError as exc:
+        log.error("set_password_with_code failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code in (400, 404, 410):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Link is verlopen of ongeldig, vraag een nieuwe reset-link aan",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Wachtwoord instellen mislukt, probeer het later opnieuw",
+        ) from exc
+
+
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginRequest) -> LoginResponse:
     # 1. Create a Zitadel session by checking email + password
