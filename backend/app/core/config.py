@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     zitadel_base_url: str = "https://auth.getklai.com"
     zitadel_pat: str  # PORTAL_API_ZITADEL_PAT — never exposed to frontend
     zitadel_project_id: str = "362771533686374406"
-    zitadel_org_id: str = ""          # Klai's own org ID — needed to create OIDC apps
-    zitadel_portal_app_id: str = ""   # Portal OIDC app ID — to add per-tenant redirect URIs
+    zitadel_org_id: str = ""
+    zitadel_portal_app_id: str = "362901948573155339"  # "Klai Portal" OIDC app
 
     # Database
     database_url: str  # asyncpg DSN: postgresql+asyncpg://...
@@ -51,8 +51,13 @@ class Settings(BaseSettings):
     librechat_image: str = "ghcr.io/danny-avila/librechat:v0.8.3-rc2"  # pinned image for tenants
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy restart
 
-    # CORS origins (comma-separated)
+    # Mock mode — disables real Moneybird calls for pre-launch testing
+    mock_billing: bool = False
+    frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
+
+    # CORS — static origins + wildcard regex for tenant subdomains
     cors_origins: str = "http://localhost:5174,https://my.getklai.com"
+    cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
 
     @property
     def cors_origins_list(self) -> list[str]:
