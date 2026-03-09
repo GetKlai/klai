@@ -54,7 +54,7 @@ def _generate_librechat_env(slug: str, client_id: str, client_secret: str) -> st
 MONGO_URI=mongodb://klai:{mongo_pw}@mongodb:27017/librechat-{slug}?authSource=admin
 
 # Zitadel OIDC
-OPENID_ISSUER=https://auth.{domain}/oidc
+OPENID_ISSUER=https://auth.{domain}
 OPENID_CLIENT_ID={client_id}
 OPENID_CLIENT_SECRET={client_secret}
 OPENID_SCOPE=openid profile email
