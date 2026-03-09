@@ -67,13 +67,13 @@ class ZitadelClient:
 
     # ── Role assignment ───────────────────────────────────────────────────────
 
-    async def grant_project_role(self, org_id: str, user_id: str, role: str) -> None:
-        """Grant a project role to a user (e.g. 'org:owner')."""
+    async def grant_user_role(self, org_id: str, user_id: str, role: str) -> None:
+        """Assign a project role to a specific user (user grant)."""
         resp = await self._http.post(
-            f"/management/v1/projects/{settings.zitadel_project_id}/grants",
+            f"/management/v1/users/{user_id}/grants",
             headers={"x-zitadel-orgid": org_id},
             json={
-                "grantedOrgId": org_id,
+                "projectId": settings.zitadel_project_id,
                 "roleKeys": [role],
             },
         )
@@ -129,6 +129,41 @@ class ZitadelClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    # ── Custom Login UI (Session API) ─────────────────────────────────────────
+
+    async def create_session_with_password(self, email: str, password: str) -> dict:
+        """Create a Zitadel session validated by email + password.
+
+        Returns the full response dict containing ``sessionId`` and ``sessionToken``.
+        Raises ``httpx.HTTPStatusError`` on invalid credentials (4xx).
+        """
+        resp = await self._http.post(
+            "/v2/sessions",
+            json={
+                "checks": {
+                    "user": {"loginName": email},
+                    "password": {"password": password},
+                }
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def finalize_auth_request(
+        self, auth_request_id: str, session_id: str, session_token: str
+    ) -> str:
+        """Connect an authenticated session to an OIDC auth request.
+
+        Returns the ``callbackUrl`` the browser should be redirected to.
+        Requires the service account to have the ``IAM_LOGIN_CLIENT`` role.
+        """
+        resp = await self._http.post(
+            f"/v2/oidc/auth_requests/{auth_request_id}",
+            json={"session": {"sessionId": session_id, "sessionToken": session_token}},
+        )
+        resp.raise_for_status()
+        return resp.json()["callbackUrl"]
 
     # ── Provisioning ──────────────────────────────────────────────────────────
 
