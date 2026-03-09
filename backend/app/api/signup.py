@@ -4,7 +4,8 @@ POST /api/signup
 Creates:
   1. A Zitadel org  (company name → slug)
   2. A human user in that org
-  3. A portal_orgs + portal_users row in PostgreSQL
+  3. Assigns org:owner role to the user (so /api/me returns isAdmin=true)
+  4. A portal_orgs + portal_users row in PostgreSQL
 
 Returns 201 on success. The user still needs to verify their email before logging in.
 """
@@ -60,6 +61,17 @@ def _slugify(name: str) -> str:
     return name[:60] if name else "org"
 
 
+def _to_slug(name: str, suffix: str = "") -> str:
+    """Convert company name to a unique URL slug (lowercase, dashes)."""
+    base = _slugify(name).lower()
+    base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+    if not base:
+        base = "org"
+    if suffix:
+        base = f"{base}-{suffix[:8]}"
+    return base[:64]
+
+
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
 async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> SignupResponse:
     # 1. Create Zitadel org
@@ -90,11 +102,25 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
 
     zitadel_user_id: str = user_data["userId"]
 
-    # 3. Persist to PostgreSQL
+    # 3. Assign org:owner role to the signup user
+    try:
+        await zitadel.grant_user_role(
+            org_id=zitadel_org_id,
+            user_id=zitadel_user_id,
+            role="org:owner",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon beheerdersrol niet toewijzen: {exc}",
+        ) from exc
+
+    # 4. Persist to PostgreSQL
     try:
         org_row = PortalOrg(
             zitadel_org_id=zitadel_org_id,
             name=body.company_name,
+            slug=_to_slug(body.company_name, zitadel_org_id),
         )
         db.add(org_row)
         await db.flush()  # get org_row.id without committing yet
@@ -102,9 +128,6 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
         user_row = PortalUser(
             zitadel_user_id=zitadel_user_id,
             org_id=org_row.id,
-            email=body.email,
-            first_name=body.first_name,
-            last_name=body.last_name,
         )
         db.add(user_row)
         await db.commit()

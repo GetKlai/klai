@@ -30,22 +30,32 @@ async def moneybird_webhook(
     entity_type: str = payload.get("entity_type", "")
     event: str = payload.get("event", "")
 
-    if entity_type == "Contact" and event == "mandate_request_succeeded":
+    if entity_type == "Contact" and event == "contact_mandate_request_succeeded":
         contact_id = str(payload.get("entity", {}).get("id", ""))
         if contact_id:
-            moneybird = MoneybirdService(settings)
-            try:
-                await moneybird.create_subscription(contact_id)
-            except RuntimeError as exc:
-                logger.error("Moneybird create_subscription failed: %s", exc)
-            finally:
-                await moneybird.close()
-
             result = await db.execute(
                 select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id)
             )
             org = result.scalar_one_or_none()
             if org:
+                try:
+                    product_id = settings.moneybird_product_id(org.plan, org.billing_cycle)
+                except ValueError as exc:
+                    logger.error("Moneybird product ID ontbreekt: %s", exc)
+                    return Response(status_code=200)
+
+                frequency_type = "yearly" if org.billing_cycle == "yearly" else "monthly"
+                moneybird = MoneybirdService(settings)
+                try:
+                    subscription = await moneybird.create_subscription(
+                        contact_id, product_id, frequency_type, quantity=org.seats
+                    )
+                    org.moneybird_subscription_id = str(subscription["id"])
+                except RuntimeError as exc:
+                    logger.error("Moneybird create_subscription failed: %s", exc)
+                finally:
+                    await moneybird.close()
+
                 org.billing_status = "active"
                 await db.commit()
 

@@ -6,9 +6,9 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const ADMIN_ROLES = ['org:owner', 'org:admin']
 
-export const Route = createFileRoute('/callback')({
+export const Route = createFileRoute('/callback')(({
   component: CallbackPage,
-})
+}))
 
 function CallbackPage() {
   const auth = useAuth()
@@ -25,15 +25,54 @@ function CallbackPage() {
         })
         if (res.ok) {
           const me = await res.json()
+
+          // Provisioning still running — send to loading screen
+          if (me.provisioning_status === 'pending' || me.provisioning_status === 'failed') {
+            window.location.replace('/provisioning')
+            return
+          }
+
+          // Provisioning done — ensure user is on their tenant subdomain
+          if (me.workspace_url) {
+            const currentHost = window.location.hostname
+            const workspaceHost = new URL(me.workspace_url).hostname
+            if (currentHost !== workspaceHost) {
+              // User logged in from my.getklai.com — send them to their subdomain
+              window.location.replace(me.workspace_url)
+              return
+            }
+          }
+
+          // On the correct subdomain — route by role
           const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
           sessionStorage.setItem('klai:isAdmin', String(isAdmin))
-          window.location.replace(isAdmin ? '/admin' : '/app')
+
+          if (isAdmin) {
+            try {
+              const billingRes = await fetch(`${API_BASE}/api/billing/status`, {
+                headers: { Authorization: `Bearer ${auth.user!.access_token}` },
+              })
+              if (billingRes.ok) {
+                const billing = await billingRes.json()
+                if (billing.billing_status === 'pending') {
+                  window.location.replace('/admin/billing')
+                  return
+                }
+              }
+            } catch {
+              // Ignore — go to admin dashboard
+            }
+            window.location.replace('/admin')
+          } else {
+            window.location.replace('/app')
+          }
           return
         }
       } catch {
         // fall through to default
       }
-      // If /api/me fails (e.g. backend not running), go to /app
+
+      // /api/me failed (e.g. backend not running) — go to /app
       sessionStorage.setItem('klai:isAdmin', 'false')
       window.location.replace('/app')
     }

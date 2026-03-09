@@ -6,18 +6,18 @@ import { ArrowRight, Lock, Shield } from 'lucide-react'
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type SearchParams = {
-  authRequestId?: string
+  authRequest?: string
 }
 
 export const Route = createFileRoute('/login')({
   validateSearch: (search: Record<string, unknown>): SearchParams => ({
-    authRequestId: typeof search.authRequestId === 'string' ? search.authRequestId : undefined,
+    authRequest: typeof search.authRequest === 'string' ? search.authRequest : undefined,
   }),
   component: LoginPage,
 })
 
 function LoginPage() {
-  const { authRequestId } = Route.useSearch()
+  const { authRequest: authRequestId } = Route.useSearch()
   const navigate = useNavigate()
 
   const [email, setEmail] = useState('')

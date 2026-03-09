@@ -90,6 +90,9 @@ function SignupPage() {
           <p className="text-sm text-[var(--color-muted-foreground)]">
             {m.signup_confirm_body({ email: form.email })}
           </p>
+          <p className="text-xs text-[var(--color-muted-foreground)] opacity-70">
+            {m.signup_confirm_hint()}
+          </p>
           <Link
             to="/"
             className="inline-block text-sm font-medium text-[var(--color-purple-muted)] underline"

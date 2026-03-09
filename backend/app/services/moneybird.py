@@ -1,4 +1,7 @@
+from datetime import date, timedelta
+
 import httpx
+
 from app.core.config import Settings
 
 
@@ -12,17 +15,45 @@ class MoneybirdService:
             },
             timeout=15.0,
         )
-        self._settings = settings
 
     async def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.is_error:
             raise RuntimeError(resp.text)
 
-    async def create_contact(self, name: str, email: str | None = None) -> dict:
-        body: dict = {"contact": {"company_name": name}}
+    async def create_contact(
+        self,
+        company_name: str,
+        email: str | None = None,
+        firstname: str | None = None,
+        lastname: str | None = None,
+        address: str | None = None,
+        zipcode: str | None = None,
+        city: str | None = None,
+        country: str = "NL",
+        tax_number: str | None = None,
+        chamber_of_commerce: str | None = None,
+        send_invoices_to_email: str | None = None,
+    ) -> dict:
+        contact: dict = {"company_name": company_name, "country": country}
         if email:
-            body["contact"]["email"] = email
-        resp = await self._http.post("/contacts.json", json=body)
+            contact["email"] = email
+        if firstname:
+            contact["firstname"] = firstname
+        if lastname:
+            contact["lastname"] = lastname
+        if address:
+            contact["address1"] = address
+        if zipcode:
+            contact["zipcode"] = zipcode
+        if city:
+            contact["city"] = city
+        if tax_number:
+            contact["tax_number"] = tax_number
+        if chamber_of_commerce:
+            contact["chamber_of_commerce"] = chamber_of_commerce
+        if send_invoices_to_email:
+            contact["send_invoices_to_email"] = send_invoices_to_email
+        resp = await self._http.post("/contacts.json", json={"contact": contact})
         await self._raise_for_status(resp)
         return resp.json()
 
@@ -33,16 +64,26 @@ class MoneybirdService:
         await self._raise_for_status(resp)
         return resp.json()["url"]
 
-    async def create_subscription(self, contact_id: str) -> dict:
-        resp = await self._http.post(
-            "/subscriptions.json",
-            json={
-                "subscription": {
-                    "contact_id": contact_id,
-                    "recurring_sales_invoice_id": self._settings.moneybird_subscription_product_id,
-                }
-            },
-        )
+    async def create_subscription(
+        self,
+        contact_id: str,
+        product_id: str,
+        frequency_type: str,
+        quantity: int = 1,
+        reference: str | None = None,
+    ) -> dict:
+        start_date = (date.today() + timedelta(days=1)).isoformat()
+        payload: dict = {
+            "contact_id": contact_id,
+            "product_id": product_id,
+            "frequency_type": frequency_type,
+            "frequency": 1,
+            "start_date": start_date,
+            "quantity": quantity,
+        }
+        if reference:
+            payload["reference"] = reference
+        resp = await self._http.post("/subscriptions.json", json={"subscription": payload})
         await self._raise_for_status(resp)
         return resp.json()
 

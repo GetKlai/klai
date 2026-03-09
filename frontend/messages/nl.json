@@ -4,7 +4,8 @@
   "signup_hero_body": "Maak een account aan en start direct. Alles draait op Europese servers.",
 
   "signup_confirm_heading": "Bevestig je e-mail",
-  "signup_confirm_body": "We hebben een bevestigingslink gestuurd naar {email}. Klik op de link om je account te activeren.",
+  "signup_confirm_body": "We hebben een bevestigingslink gestuurd naar {email}. Klik op de link om je account te activeren en te starten.",
+  "signup_confirm_hint": "Na verificatie word je automatisch doorgestuurd naar jouw werkruimte.",
   "signup_confirm_back": "Terug naar inloggen",
 
   "signup_heading": "Account aanmaken",

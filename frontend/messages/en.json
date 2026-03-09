@@ -5,6 +5,7 @@
 
   "signup_confirm_heading": "Confirm your email",
   "signup_confirm_body": "We sent a confirmation link to {email}. Click the link to activate your account.",
+  "signup_confirm_hint": "After verification you will be redirected automatically to your workspace.",
   "signup_confirm_back": "Back to login",
 
   "signup_heading": "Create account",

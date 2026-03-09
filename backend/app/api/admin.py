@@ -28,16 +28,20 @@ async def _get_caller_org(
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
 
-    zitadel_org_id = info.get("urn:zitadel:iam:user:resourceowner:id")
-    if not zitadel_org_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen organisatie gevonden in token")
+    zitadel_user_id = info.get("sub")
+    if not zitadel_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden in token")
 
-    result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
+    result = await db.execute(
+        select(PortalOrg)
+        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
+        .where(PortalUser.zitadel_user_id == zitadel_user_id)
+    )
     org = result.scalar_one_or_none()
     if not org:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisatie niet gevonden")
 
-    return zitadel_org_id, org
+    return zitadel_user_id, org
 
 
 class UserOut(BaseModel):
@@ -74,25 +78,36 @@ async def list_users(
 ) -> UsersResponse:
     _, org = await _get_caller_org(credentials, db)
 
+    # Get portal membership records (mapping + created_at)
     result = await db.execute(
         select(PortalUser)
         .where(PortalUser.org_id == org.id)
         .order_by(PortalUser.created_at)
     )
-    users = result.scalars().all()
+    portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
 
-    return UsersResponse(
-        users=[
-            UserOut(
-                zitadel_user_id=u.zitadel_user_id,
-                email=u.email,
-                first_name=u.first_name,
-                last_name=u.last_name,
-                created_at=u.created_at,
-            )
-            for u in users
-        ]
-    )
+    if not portal_users:
+        return UsersResponse(users=[])
+
+    # Fetch live identity details from Zitadel
+    zitadel_users = await zitadel.list_org_users(org.zitadel_org_id)
+
+    users_out: list[UserOut] = []
+    for z in zitadel_users:
+        uid = z.get("id", "")
+        if uid not in portal_users:
+            continue  # not in our portal (e.g. service accounts)
+        profile = z.get("human", {}).get("profile", {})
+        email_obj = z.get("human", {}).get("email", {})
+        users_out.append(UserOut(
+            zitadel_user_id=uid,
+            email=email_obj.get("email", ""),
+            first_name=profile.get("firstName", ""),
+            last_name=profile.get("lastName", ""),
+            created_at=portal_users[uid].created_at,
+        ))
+
+    return UsersResponse(users=users_out)
 
 
 @router.post("/users/invite", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
@@ -121,9 +136,6 @@ async def invite_user(
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,
         org_id=org.id,
-        email=body.email,
-        first_name=body.first_name,
-        last_name=body.last_name,
     )
     db.add(user_row)
     await db.commit()
