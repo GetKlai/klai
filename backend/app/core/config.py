@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     zitadel_project_id: str = "362771533686374406"
     zitadel_org_id: str = ""
     zitadel_portal_app_id: str = "362901948573155339"  # "Klai Portal" OIDC app
+    zitadel_portal_org_id: str = "362757920133283846"  # Org where all portal users live
 
     # Database
     database_url: str  # asyncpg DSN: postgresql+asyncpg://...

@@ -10,6 +10,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
@@ -89,8 +90,8 @@ async def list_users(
     if not portal_users:
         return UsersResponse(users=[])
 
-    # Fetch live identity details from Zitadel
-    zitadel_users = await zitadel.list_org_users(org.zitadel_org_id)
+    # Fetch live identity details from Zitadel (all users live in portal org)
+    zitadel_users = await zitadel.list_org_users(settings.zitadel_portal_org_id)
 
     users_out: list[UserOut] = []
     for z in zitadel_users:
@@ -116,11 +117,11 @@ async def invite_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> InviteResponse:
-    zitadel_org_id, org = await _get_caller_org(credentials, db)
+    _, org = await _get_caller_org(credentials, db)
 
     try:
         user_data = await zitadel.invite_user(
-            org_id=zitadel_org_id,
+            org_id=settings.zitadel_portal_org_id,
             email=body.email,
             first_name=body.first_name,
             last_name=body.last_name,
@@ -152,7 +153,7 @@ async def remove_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    zitadel_org_id, org = await _get_caller_org(credentials, db)
+    _, org = await _get_caller_org(credentials, db)
 
     # Verify user belongs to this org before deleting
     result = await db.execute(
@@ -166,7 +167,7 @@ async def remove_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
 
     try:
-        await zitadel.remove_user(org_id=zitadel_org_id, zitadel_user_id=zitadel_user_id)
+        await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

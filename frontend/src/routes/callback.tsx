@@ -80,6 +80,18 @@ function CallbackPage() {
     resolveDestination()
   }, [auth.isLoading, auth.isAuthenticated, auth.user])
 
+  if (auth.error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
+        <div className="space-y-3 text-center max-w-sm px-4">
+          <p className="text-sm font-medium text-red-700">Inloggen mislukt</p>
+          <p className="text-xs text-[var(--color-muted-foreground)] font-mono break-all">{auth.error.message}</p>
+          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">Terug naar inloggen</a>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
       <div className="space-y-3 text-center">

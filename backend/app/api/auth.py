@@ -11,11 +11,15 @@ The authRequestId is issued by Zitadel when it redirects to the custom login UI:
 The service account (zitadel_pat) must have the ``IAM_LOGIN_CLIENT`` role in Zitadel
 for the finalize step to succeed.
 """
+import logging
+
 import httpx
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
 from app.services.zitadel import zitadel
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -36,6 +40,7 @@ async def login(body: LoginRequest) -> LoginResponse:
     try:
         session = await zitadel.create_session_with_password(body.email, body.password)
     except httpx.HTTPStatusError as exc:
+        log.error("create_session failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401, 404, 412):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -54,6 +59,7 @@ async def login(body: LoginRequest) -> LoginResponse:
             session_token=session["sessionToken"],
         )
     except httpx.HTTPStatusError as exc:
+        log.error("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code == 404:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

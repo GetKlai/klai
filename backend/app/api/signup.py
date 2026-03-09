@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning import provision_tenant
@@ -85,10 +86,10 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
 
     zitadel_org_id: str = org_data["id"]
 
-    # 2. Create human user inside that org
+    # 2. Create human user in the portal org (all users live here for OIDC compatibility)
     try:
         user_data = await zitadel.create_human_user(
-            org_id=zitadel_org_id,
+            org_id=settings.zitadel_portal_org_id,
             email=body.email,
             first_name=body.first_name,
             last_name=body.last_name,
@@ -102,10 +103,10 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
 
     zitadel_user_id: str = user_data["userId"]
 
-    # 3. Assign org:owner role to the signup user
+    # 3. Assign org:owner role in the portal org's project
     try:
         await zitadel.grant_user_role(
-            org_id=zitadel_org_id,
+            org_id=settings.zitadel_portal_org_id,
             user_id=zitadel_user_id,
             role="org:owner",
         )
