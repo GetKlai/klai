@@ -2,8 +2,17 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Lock, Shield } from 'lucide-react'
+import * as m from '@/paraglide/messages'
+import { setLocale } from '@/paraglide/runtime'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
+type Locale = 'nl' | 'en'
+
+function getInitialLocale(): Locale {
+  const saved = localStorage.getItem('klai-locale')
+  return saved === 'en' ? 'en' : 'nl'
+}
 
 type SearchParams = {
   authRequest?: string
@@ -20,10 +29,21 @@ function LoginPage() {
   const { authRequest: authRequestId } = Route.useSearch()
   const navigate = useNavigate()
 
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    const initial = getInitialLocale()
+    setLocale(initial)
+    return initial
+  })
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  function switchLocale(l: Locale) {
+    setLocale(l)
+    setLocaleState(l)
+    localStorage.setItem('klai-locale', l)
+  }
 
   // If Zitadel didn't supply an authRequestId, the user arrived here directly.
   // Send them back to / so signinRedirect() can start the OIDC flow properly.
@@ -46,7 +66,7 @@ function LoginPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        setError(data?.detail ?? 'Inloggen mislukt, probeer het later opnieuw')
+        setError(data?.detail ?? m.login_submit())
         return
       }
 
@@ -54,7 +74,7 @@ function LoginPage() {
       // Navigate to the OIDC callback URL — react-oidc-context picks it up from there
       window.location.href = callback_url
     } catch {
-      setError('Geen verbinding, controleer je internetverbinding')
+      setError(m.login_error_connection())
     } finally {
       setLoading(false)
     }
@@ -70,22 +90,22 @@ function LoginPage() {
 
         <div className="space-y-6">
           <h1 className="font-serif text-4xl font-bold leading-tight">
-            AI die van jou is.
+            {m.login_hero_heading()}
             <br />
-            <span className="text-[var(--color-purple-accent)]">Niet van Silicon Valley.</span>
+            <span className="text-[var(--color-purple-accent)]">{m.login_hero_highlight()}</span>
           </h1>
           <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
-            Jouw werkruimte. Jouw data. Draait op Europese servers, nooit gedeeld, altijd aantoonbaar privé.
+            {m.login_hero_body()}
           </p>
 
           <div className="flex flex-col gap-3 pt-4">
             <div className="flex items-center gap-3 text-sm text-[var(--color-sand-mid)]">
               <Shield size={16} className="shrink-0 text-[var(--color-purple-accent)]" />
-              Europese infrastructuur — data verlaat nooit de EU
+              {m.login_hero_bullet_eu()}
             </div>
             <div className="flex items-center gap-3 text-sm text-[var(--color-sand-mid)]">
               <Lock size={16} className="shrink-0 text-[var(--color-purple-accent)]" />
-              Open source modellen, aantoonbaar privé
+              {m.login_hero_bullet_open()}
             </div>
           </div>
         </div>
@@ -98,24 +118,40 @@ function LoginPage() {
       {/* Right panel — login form */}
       <div className="flex w-full flex-col items-center justify-center px-8 lg:w-1/2">
         <div className="w-full max-w-sm space-y-8">
-          {/* Mobile logo */}
-          <div className="lg:hidden">
-            <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+          <div className="flex items-center justify-between">
+            <div className="lg:hidden">
+              <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+            </div>
+            <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+              <button
+                onClick={() => switchLocale('nl')}
+                className={locale === 'nl' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+              >
+                NL
+              </button>
+              <span className="opacity-30">/</span>
+              <button
+                onClick={() => switchLocale('en')}
+                className={locale === 'en' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+              >
+                EN
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2">
             <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-              Welkom terug
+              {m.login_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              Log in op jouw werkruimte
+              {m.login_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
               <label htmlFor="email" className="block text-sm font-medium text-[var(--color-foreground)]">
-                E-mailadres
+                {m.login_field_email()}
               </label>
               <input
                 id="email"
@@ -131,7 +167,7 @@ function LoginPage() {
 
             <div className="space-y-1">
               <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
-                Wachtwoord
+                {m.login_field_password()}
               </label>
               <input
                 id="password"
@@ -149,18 +185,16 @@ function LoginPage() {
             )}
 
             <Button type="submit" size="lg" className="w-full gap-3" disabled={loading}>
-              {loading ? 'Inloggen…' : 'Inloggen'}
+              {loading ? m.login_submit_loading() : m.login_submit()}
               {!loading && <ArrowRight size={16} />}
             </Button>
           </form>
 
           <p className="text-center text-xs text-[var(--color-muted-foreground)]">
             <a href="/password/forgot" className="text-[var(--color-purple-muted)] hover:underline">
-              Wachtwoord vergeten?
+              {m.login_forgot_password()}
             </a>
           </p>
-
-
         </div>
       </div>
     </div>

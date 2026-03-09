@@ -2,6 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Mail } from 'lucide-react'
+import * as m from '@/paraglide/messages'
+import { setLocale } from '@/paraglide/runtime'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -10,6 +12,12 @@ export const Route = createFileRoute('/password/forgot')({
 })
 
 function ForgotPasswordPage() {
+  // Inherit locale from localStorage; no toggle on transactional pages
+  useState(() => {
+    const saved = localStorage.getItem('klai-locale')
+    setLocale(saved === 'en' ? 'en' : 'nl')
+  })
+
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -29,7 +37,7 @@ function ForgotPasswordPage() {
       // Always show confirmation — do not reveal whether email exists
       setDone(true)
     } catch {
-      setError('Geen verbinding, controleer je internetverbinding')
+      setError(m.forgot_error_connection())
     } finally {
       setLoading(false)
     }
@@ -44,12 +52,12 @@ function ForgotPasswordPage() {
         </div>
         <div className="space-y-4">
           <h1 className="font-serif text-4xl font-bold leading-tight">
-            Wachtwoord vergeten?
+            {m.forgot_hero_heading()}
             <br />
-            <span className="text-[var(--color-purple-accent)]">Geen probleem.</span>
+            <span className="text-[var(--color-purple-accent)]">{m.forgot_hero_highlight()}</span>
           </h1>
           <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
-            Vul je e-mailadres in en we sturen je een link om je wachtwoord opnieuw in te stellen.
+            {m.forgot_hero_body()}
           </p>
         </div>
         <p className="text-xs text-[var(--color-sand-mid)] opacity-50">
@@ -71,30 +79,30 @@ function ForgotPasswordPage() {
                 <Mail size={22} className="text-[var(--color-sand-light)]" />
               </div>
               <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
-                Mail onderweg
+                {m.forgot_done_heading()}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
-                Als dit e-mailadres bij ons bekend is, ontvang je een link om je wachtwoord opnieuw in te stellen.
+                {m.forgot_done_body()}
               </p>
               <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline pt-2">
-                Terug naar inloggen
+                {m.forgot_back()}
               </a>
             </div>
           ) : (
             <>
               <div className="space-y-2">
                 <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-                  Wachtwoord vergeten
+                  {m.forgot_heading()}
                 </h2>
                 <p className="text-sm text-[var(--color-muted-foreground)]">
-                  Vul je e-mailadres in en we sturen je een resetlink.
+                  {m.forgot_subheading()}
                 </p>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1">
                   <label htmlFor="email" className="block text-sm font-medium text-[var(--color-foreground)]">
-                    E-mailadres
+                    {m.forgot_field_email()}
                   </label>
                   <input
                     id="email"
@@ -113,13 +121,13 @@ function ForgotPasswordPage() {
                 )}
 
                 <Button type="submit" size="lg" className="w-full" disabled={loading}>
-                  {loading ? 'Versturen…' : 'Resetlink sturen'}
+                  {loading ? m.forgot_submit_loading() : m.forgot_submit()}
                 </Button>
               </form>
 
               <p className="text-center text-xs text-[var(--color-muted-foreground)]">
                 <a href="/" className="text-[var(--color-purple-muted)] hover:underline">
-                  Terug naar inloggen
+                  {m.forgot_back()}
                 </a>
               </p>
             </>

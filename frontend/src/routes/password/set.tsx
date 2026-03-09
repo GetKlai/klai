@@ -2,6 +2,8 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
+import * as m from '@/paraglide/messages'
+import { setLocale } from '@/paraglide/runtime'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -24,6 +26,12 @@ export const Route = createFileRoute('/password/set')({
 })
 
 function PasswordSetPage() {
+  // Inherit locale from localStorage; no toggle on transactional pages
+  useState(() => {
+    const saved = localStorage.getItem('klai-locale')
+    setLocale(saved === 'en' ? 'en' : 'nl')
+  })
+
   const { userID, code } = Route.useSearch()
   const navigate = useNavigate()
 
@@ -38,9 +46,9 @@ function PasswordSetPage() {
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="space-y-3 text-center max-w-sm px-4">
           <p className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</p>
-          <p className="text-sm text-red-700">Deze link is ongeldig of verlopen.</p>
+          <p className="text-sm text-red-700">{m.set_invalid_link()}</p>
           <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">
-            Terug naar inloggen
+            {m.set_invalid_link_back()}
           </a>
         </div>
       </div>
@@ -52,11 +60,11 @@ function PasswordSetPage() {
     setError(null)
 
     if (password.length < 8) {
-      setError('Wachtwoord moet minimaal 8 tekens bevatten')
+      setError(m.set_error_min_length())
       return
     }
     if (password !== confirm) {
-      setError('Wachtwoorden komen niet overeen')
+      setError(m.set_error_mismatch())
       return
     }
 
@@ -70,14 +78,14 @@ function PasswordSetPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        setError(data?.detail ?? 'Wachtwoord instellen mislukt, probeer het later opnieuw')
+        setError(data?.detail ?? m.set_error_server())
         return
       }
 
       setDone(true)
       setTimeout(() => navigate({ to: '/' }), 2500)
     } catch {
-      setError('Geen verbinding, controleer je internetverbinding')
+      setError(m.set_error_connection())
     } finally {
       setLoading(false)
     }
@@ -92,10 +100,10 @@ function PasswordSetPage() {
         </div>
         <div className="space-y-4">
           <h1 className="font-serif text-4xl font-bold leading-tight">
-            Bijna klaar.
+            {m.set_hero_heading()}
           </h1>
           <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
-            Kies een sterk wachtwoord om je account te beveiligen.
+            {m.set_hero_body()}
           </p>
         </div>
         <p className="text-xs text-[var(--color-sand-mid)] opacity-50">
@@ -117,27 +125,27 @@ function PasswordSetPage() {
                 <KeyRound size={22} className="text-[var(--color-sand-light)]" />
               </div>
               <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
-                Wachtwoord ingesteld
+                {m.set_done_heading()}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
-                Je wordt doorgestuurd naar inloggen…
+                {m.set_done_body()}
               </p>
             </div>
           ) : (
             <>
               <div className="space-y-2">
                 <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-                  Nieuw wachtwoord
+                  {m.set_heading()}
                 </h2>
                 <p className="text-sm text-[var(--color-muted-foreground)]">
-                  Kies een wachtwoord van minimaal 8 tekens.
+                  {m.set_subheading()}
                 </p>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1">
                   <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
-                    Nieuw wachtwoord
+                    {m.set_field_password()}
                   </label>
                   <input
                     id="password"
@@ -153,7 +161,7 @@ function PasswordSetPage() {
 
                 <div className="space-y-1">
                   <label htmlFor="confirm" className="block text-sm font-medium text-[var(--color-foreground)]">
-                    Bevestig wachtwoord
+                    {m.set_field_confirm()}
                   </label>
                   <input
                     id="confirm"
@@ -171,13 +179,13 @@ function PasswordSetPage() {
                 )}
 
                 <Button type="submit" size="lg" className="w-full" disabled={loading}>
-                  {loading ? 'Opslaan…' : 'Wachtwoord instellen'}
+                  {loading ? m.set_submit_loading() : m.set_submit()}
                 </Button>
               </form>
 
               <p className="text-center text-xs text-[var(--color-muted-foreground)]">
                 <a href="/" className="text-[var(--color-purple-muted)] hover:underline">
-                  Terug naar inloggen
+                  {m.set_back()}
                 </a>
               </p>
             </>
