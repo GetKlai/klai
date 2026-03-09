@@ -8,9 +8,30 @@ import './index.css'
 
 const queryClient = new QueryClient()
 
+// Custom search parsers that keep all values as strings.
+// TanStack Router's default parser coerces numeric-looking values to Number,
+// which loses precision for 18-digit Zitadel IDs (exceeds MAX_SAFE_INTEGER).
+function parseSearch(searchStr: string): Record<string, string> {
+  const str = searchStr.startsWith('?') ? searchStr.slice(1) : searchStr
+  return Object.fromEntries(new URLSearchParams(str))
+}
+
+function stringifySearch(search: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(search)) {
+    if (value !== undefined && value !== null) {
+      params.set(key, String(value))
+    }
+  }
+  const str = params.toString()
+  return str ? `?${str}` : ''
+}
+
 const router = createRouter({
   routeTree,
   context: { queryClient },
+  parseSearch,
+  stringifySearch,
 })
 
 declare module '@tanstack/react-router' {

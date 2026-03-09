@@ -176,6 +176,23 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
+    async def find_user_id_by_email(self, email: str) -> str | None:
+        """Return the Zitadel userId for the given email, or None if not found."""
+        resp = await self._http.post(
+            "/v2/users",
+            json={"queries": [{"loginNameQuery": {"loginName": email, "method": "TEXT_QUERY_METHOD_EQUALS"}}]},
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result", [])
+        if not result:
+            return None
+        return result[0]["userId"]
+
+    async def send_password_reset(self, user_id: str) -> None:
+        """Trigger Zitadel to send a password reset email to the user."""
+        resp = await self._http.post(f"/v2/users/{user_id}/password_reset")
+        resp.raise_for_status()
+
     # ── Provisioning ──────────────────────────────────────────────────────────
 
     async def create_librechat_oidc_app(
@@ -204,20 +221,20 @@ class ZitadelClient:
         """Add {slug}.getklai.com/callback to the portal OIDC app's allowed redirect URIs."""
         if not settings.zitadel_portal_app_id:
             return  # not configured yet, skip
-        # GET current config
+        # GET current config (full app endpoint includes oidcConfig)
         get_resp = await self._http.get(
-            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc"
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}"
         )
         get_resp.raise_for_status()
-        current = get_resp.json().get("oidcConfig", {})
+        current = get_resp.json().get("app", {}).get("oidcConfig", {})
         existing_uris: list[str] = current.get("redirectUris", [])
         new_uri = f"https://{slug}.{settings.domain}/callback"
         if new_uri in existing_uris:
             return
         updated_uris = existing_uris + [new_uri]
-        # PUT updated config (preserve all other fields)
+        # PUT updated config — correct path is oidc_config, not oidc
         put_resp = await self._http.put(
-            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc",
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc_config",
             json={**current, "redirectUris": updated_uris},
         )
         put_resp.raise_for_status()

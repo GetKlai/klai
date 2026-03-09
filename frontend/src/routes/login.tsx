@@ -154,12 +154,13 @@ function LoginPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)] opacity-60">
-            Door in te loggen ga je akkoord met onze{' '}
-            <a href="https://getklai.com/privacy" className="hover:underline">
-              privacyverklaring
+          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+            <a href="/password/forgot" className="text-[var(--color-purple-muted)] hover:underline">
+              Wachtwoord vergeten?
             </a>
           </p>
+
+
         </div>
       </div>
     </div>

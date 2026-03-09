@@ -34,10 +34,33 @@ class LoginResponse(BaseModel):
     callback_url: str
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
 class PasswordSetRequest(BaseModel):
     user_id: str
     code: str
     new_password: str
+
+
+@router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def password_reset(body: PasswordResetRequest) -> None:
+    """Send a password reset email. Always returns 204 to prevent email enumeration."""
+    try:
+        user_id = await zitadel.find_user_id_by_email(body.email)
+    except httpx.HTTPStatusError as exc:
+        log.error("find_user_id_by_email failed %s: %s", exc.response.status_code, exc.response.text)
+        return  # fail silently
+
+    if not user_id:
+        return  # unknown email — return 204 silently
+
+    try:
+        await zitadel.send_password_reset(user_id)
+    except httpx.HTTPStatusError as exc:
+        log.error("send_password_reset failed %s: %s", exc.response.status_code, exc.response.text)
+        return  # fail silently
 
 
 @router.post("/auth/password/set", status_code=status.HTTP_204_NO_CONTENT)

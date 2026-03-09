@@ -13,9 +13,12 @@ type SearchParams = {
 
 export const Route = createFileRoute('/password/set')({
   validateSearch: (search: Record<string, unknown>): SearchParams => ({
-    userID: typeof search.userID === 'string' ? search.userID : undefined,
+    // Zitadel sends userId/organization; also accept userID/orgID for consistency
+    userID: typeof search.userID === 'string' ? search.userID
+          : typeof search.userId === 'string' ? search.userId : undefined,
     code: typeof search.code === 'string' ? search.code : undefined,
-    orgID: typeof search.orgID === 'string' ? search.orgID : undefined,
+    orgID: typeof search.orgID === 'string' ? search.orgID
+         : typeof search.organization === 'string' ? search.organization : undefined,
   }),
   component: PasswordSetPage,
 })
