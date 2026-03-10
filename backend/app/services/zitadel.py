@@ -193,6 +193,65 @@ class ZitadelClient:
         resp = await self._http.post(f"/v2/users/{user_id}/password_reset")
         resp.raise_for_status()
 
+    # ── MFA / TOTP ────────────────────────────────────────────────────────────
+
+    async def find_user_by_email(self, email: str) -> tuple[str, str] | None:
+        """Return (userId, orgId) for the given email, or None if not found."""
+        resp = await self._http.post(
+            "/v2/users",
+            json={"queries": [{"loginNameQuery": {"loginName": email, "method": "TEXT_QUERY_METHOD_EQUALS"}}]},
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result", [])
+        if not result:
+            return None
+        user = result[0]
+        return user["userId"], user["details"]["resourceOwner"]
+
+    async def has_totp(self, user_id: str, org_id: str | None = None) -> bool:
+        """Return True if the user has a verified TOTP factor registered."""
+        headers: dict[str, str] = {}
+        if org_id:
+            headers["x-zitadel-orgid"] = org_id
+        resp = await self._http.get(
+            f"/management/v1/users/{user_id}/auth_factors",
+            headers=headers,
+        )
+        resp.raise_for_status()
+        factors = resp.json().get("result", [])
+        return any(
+            f.get("state") == "AUTH_FACTOR_STATE_READY" and f.get("otp") is not None
+            for f in factors
+        )
+
+    async def update_session_with_totp(
+        self, session_id: str, session_token: str, code: str
+    ) -> dict:
+        """Add a TOTP check to an existing session. Returns updated session dict."""
+        resp = await self._http.patch(
+            f"/v2/sessions/{session_id}",
+            json={
+                "sessionToken": session_token,
+                "checks": {"totp": {"code": code}},
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def register_user_totp(self, user_id: str) -> dict:
+        """Start TOTP registration for a user. Returns {uri, totpSecret}."""
+        resp = await self._http.post(f"/v2/users/{user_id}/totp")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def verify_user_totp(self, user_id: str, code: str) -> None:
+        """Verify and activate a TOTP registration."""
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/totp/_verify",
+            json={"code": code},
+        )
+        resp.raise_for_status()
+
     # ── Provisioning ──────────────────────────────────────────────────────────
 
     async def create_librechat_oidc_app(

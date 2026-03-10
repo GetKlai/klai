@@ -2,8 +2,11 @@
 Auth endpoints for the custom login UI.
 
 POST /api/auth/login          — email+password → Zitadel session → OIDC callback URL
+POST /api/auth/totp-login     — complete login with TOTP code (when user has 2FA)
 POST /api/auth/sso-complete   — reuse portal session to silently complete LibreChat OIDC
 POST /api/auth/logout         — clear the SSO cookie
+POST /api/auth/totp/setup     — initiate TOTP registration (requires Bearer token)
+POST /api/auth/totp/confirm   — activate TOTP after scanning QR (requires Bearer token)
 
 The authRequestId is issued by Zitadel when it redirects to the custom login UI:
   https://my.getklai.com/login?authRequest=<id>
@@ -26,7 +29,8 @@ import secrets
 import time
 
 import httpx
-from fastapi import APIRouter, Cookie, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
 from app.core.config import settings
@@ -35,6 +39,7 @@ from app.services.zitadel import zitadel
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
+bearer = HTTPBearer()
 
 # ---------------------------------------------------------------------------
 # In-memory SSO session cache
@@ -66,6 +71,34 @@ def _get_sso_session(token: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Pending TOTP cache
+# After password check, store the session here while waiting for the TOTP code.
+# ---------------------------------------------------------------------------
+_TOTP_PENDING_TTL = 300  # 5 minutes
+_pending_totp: dict[str, dict] = {}
+
+
+def _create_pending_totp(session_id: str, session_token: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _pending_totp[token] = {
+        "session_id": session_id,
+        "session_token": session_token,
+        "expires_at": time.monotonic() + _TOTP_PENDING_TTL,
+    }
+    return token
+
+
+def _get_pending_totp(token: str) -> dict | None:
+    entry = _pending_totp.get(token)
+    if not entry:
+        return None
+    if time.monotonic() > entry["expires_at"]:
+        _pending_totp.pop(token, None)
+        return None
+    return entry
+
+
+# ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
 
@@ -76,7 +109,17 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    callback_url: str
+    # Normal login: callback_url is set, status = "ok"
+    # TOTP required: status = "totp_required", temp_token is set
+    callback_url: str | None = None
+    status: str = "ok"
+    temp_token: str | None = None
+
+
+class TOTPLoginRequest(BaseModel):
+    temp_token: str
+    code: str
+    auth_request_id: str
 
 
 class SSOCompleteRequest(BaseModel):
@@ -91,6 +134,15 @@ class PasswordSetRequest(BaseModel):
     user_id: str
     code: str
     new_password: str
+
+
+class TOTPSetupResponse(BaseModel):
+    uri: str
+    secret: str
+
+
+class TOTPConfirmRequest(BaseModel):
+    code: str
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +188,17 @@ async def password_set(body: PasswordSetRequest) -> None:
 
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginRequest, response: Response) -> LoginResponse:
-    # 1. Create a Zitadel session by checking email + password
+    # 1. Check if user has TOTP registered
+    has_totp = False
+    try:
+        user_info = await zitadel.find_user_by_email(body.email)
+        if user_info:
+            user_id, org_id = user_info
+            has_totp = await zitadel.has_totp(user_id, org_id)
+    except httpx.HTTPStatusError as exc:
+        log.warning("TOTP check failed %s — continuing without 2FA check", exc.response.status_code)
+
+    # 2. Create a Zitadel session by checking email + password
     try:
         session = await zitadel.create_session_with_password(body.email, body.password)
     except httpx.HTTPStatusError as exc:
@@ -151,7 +213,12 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
             detail="Inloggen mislukt, probeer het later opnieuw",
         ) from exc
 
-    # 2. Finalize the OIDC auth request with the authenticated session
+    # 3. If the user has TOTP, require a code before finalizing
+    if has_totp:
+        temp_token = _create_pending_totp(session["sessionId"], session["sessionToken"])
+        return LoginResponse(status="totp_required", temp_token=temp_token)
+
+    # 4. No TOTP — finalize the OIDC auth request with the authenticated session
     try:
         callback_url = await zitadel.finalize_auth_request(
             auth_request_id=body.auth_request_id,
@@ -170,9 +237,77 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
             detail="Inloggen mislukt, probeer het later opnieuw",
         ) from exc
 
-    # 3. Store the session in the SSO cache and set a domain-wide cookie so that
-    #    subsequent OIDC flows (e.g. LibreChat in an iframe) can be auto-completed.
+    # 5. Store the session in the SSO cache and set a domain-wide cookie
     sso_token = _create_sso_token(session["sessionId"], session["sessionToken"])
+    response.set_cookie(
+        key="klai_sso",
+        value=sso_token,
+        domain=f".{settings.domain}",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=_SSO_TTL,
+    )
+
+    return LoginResponse(callback_url=callback_url)
+
+
+@router.post("/auth/totp-login", response_model=LoginResponse)
+async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginResponse:
+    """Complete login by providing a TOTP code after password was accepted."""
+    pending = _get_pending_totp(body.temp_token)
+    if not pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sessie verlopen, log opnieuw in",
+        )
+
+    # Verify TOTP code by updating the session
+    try:
+        updated = await zitadel.update_session_with_totp(
+            session_id=pending["session_id"],
+            session_token=pending["session_token"],
+            code=body.code,
+        )
+    except httpx.HTTPStatusError as exc:
+        log.error("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code in (400, 401):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ongeldige code, probeer opnieuw",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Verificatie mislukt, probeer het later opnieuw",
+        ) from exc
+
+    session_id = updated.get("sessionId", pending["session_id"])
+    session_token = updated.get("sessionToken", pending["session_token"])
+
+    # Finalize the OIDC auth request with the TOTP-verified session
+    try:
+        callback_url = await zitadel.finalize_auth_request(
+            auth_request_id=body.auth_request_id,
+            session_id=session_id,
+            session_token=session_token,
+        )
+    except httpx.HTTPStatusError as exc:
+        log.error("finalize_auth_request (totp) failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Inlogverzoek is verlopen, probeer opnieuw",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Inloggen mislukt, probeer het later opnieuw",
+        ) from exc
+
+    # Clean up pending token
+    _pending_totp.pop(body.temp_token, None)
+
+    # Store session in SSO cache and set domain-wide cookie
+    sso_token = _create_sso_token(session_id, session_token)
     response.set_cookie(
         key="klai_sso",
         value=sso_token,
@@ -226,3 +361,59 @@ async def logout(response: Response, klai_sso: str | None = Cookie(default=None)
     if klai_sso:
         _sso_cache.pop(klai_sso, None)
     response.delete_cookie(key="klai_sso", domain=f".{settings.domain}")
+
+
+@router.post("/auth/totp/setup", response_model=TOTPSetupResponse)
+async def totp_setup(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+) -> TOTPSetupResponse:
+    """Initiate TOTP registration for the logged-in user. Returns QR URI and secret."""
+    try:
+        info = await zitadel.get_userinfo(credentials.credentials)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+
+    user_id = info.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token")
+
+    try:
+        result = await zitadel.register_user_totp(user_id)
+    except httpx.HTTPStatusError as exc:
+        log.error("register_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="2FA instellen mislukt, probeer het later opnieuw",
+        ) from exc
+
+    return TOTPSetupResponse(uri=result["uri"], secret=result["totpSecret"])
+
+
+@router.post("/auth/totp/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def totp_confirm(
+    body: TOTPConfirmRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+) -> None:
+    """Verify and activate the TOTP registration."""
+    try:
+        info = await zitadel.get_userinfo(credentials.credentials)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+
+    user_id = info.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token")
+
+    try:
+        await zitadel.verify_user_totp(user_id, body.code)
+    except httpx.HTTPStatusError as exc:
+        log.error("verify_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code in (400, 401):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ongeldige code, probeer opnieuw",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="2FA bevestigen mislukt, probeer het later opnieuw",
+        ) from exc

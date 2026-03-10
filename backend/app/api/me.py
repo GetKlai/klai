@@ -27,6 +27,7 @@ class MeResponse(BaseModel):
     roles: list[str] = []
     workspace_url: str | None = None
     provisioning_status: str = "pending"
+    requires_2fa_setup: bool = False
 
 
 def _extract_roles(info: dict) -> list[str]:
@@ -71,6 +72,15 @@ async def me(
             if org.slug:
                 workspace_url = f"https://{org.slug}.{settings.domain}"
 
+    # Check whether the user still needs to set up 2FA
+    requires_2fa_setup = False
+    if zitadel_user_id:
+        try:
+            token_org_id = info.get("urn:zitadel:iam:user:resourceowner:id")
+            requires_2fa_setup = not await zitadel.has_totp(zitadel_user_id, token_org_id)
+        except Exception:
+            pass  # Don't block login if the check fails
+
     return MeResponse(
         user_id=zitadel_user_id,
         email=info.get("email", ""),
@@ -79,4 +89,5 @@ async def me(
         roles=_extract_roles(info),
         workspace_url=workspace_url,
         provisioning_status=provisioning_status,
+        requires_2fa_setup=requires_2fa_setup,
     )
