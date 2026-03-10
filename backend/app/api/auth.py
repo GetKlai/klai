@@ -389,6 +389,30 @@ async def totp_setup(
     return TOTPSetupResponse(uri=result["uri"], secret=result["totpSecret"])
 
 
+class VerifyEmailRequest(BaseModel):
+    user_id: str
+    code: str
+    org_id: str
+
+
+@router.post("/auth/verify-email", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_email(body: VerifyEmailRequest) -> None:
+    """Verify a user's email address using the code from the verification email."""
+    try:
+        await zitadel.verify_user_email(body.org_id, body.user_id, body.code)
+    except httpx.HTTPStatusError as exc:
+        log.error("verify_user_email failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code in (400, 404):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ongeldige of verlopen verificatielink.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Verificatie mislukt, probeer het later opnieuw.",
+        ) from exc
+
+
 @router.post("/auth/totp/confirm", status_code=status.HTTP_204_NO_CONTENT)
 async def totp_confirm(
     body: TOTPConfirmRequest,

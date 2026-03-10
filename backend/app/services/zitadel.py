@@ -111,6 +111,15 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def verify_user_email(self, org_id: str, user_id: str, code: str) -> None:
+        """Verify a user's email address using the code from the verification email."""
+        resp = await self._http.post(
+            f"/management/v1/users/{user_id}/email/_verify",
+            headers={"x-zitadel-orgid": org_id},
+            json={"verificationCode": code},
+        )
+        resp.raise_for_status()
+
     async def remove_user(self, org_id: str, zitadel_user_id: str) -> None:
         """Deactivate a user in the org (does not delete the Zitadel account)."""
         resp = await self._http.delete(

@@ -83,7 +83,7 @@ function ProvisioningPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
       <div className="w-full max-w-sm space-y-6 px-6 text-center">
-        <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+        <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto mx-auto" />
 
         {(status === 'polling') && (
           <>
