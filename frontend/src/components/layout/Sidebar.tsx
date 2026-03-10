@@ -43,9 +43,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       {/* Logo + toggle */}
       <div className="flex h-16 items-center border-b border-[var(--color-sidebar-border)] px-3">
         {!collapsed && (
-          <span className="flex-1 px-3 font-serif text-xl font-bold tracking-tight text-[var(--color-sand-light)]">
-            Klai
-          </span>
+          <img src="/klai-logo-white.svg" alt="Klai" className="flex-1 px-3 h-6 w-auto object-contain object-left" />
         )}
         <button
           onClick={toggle}

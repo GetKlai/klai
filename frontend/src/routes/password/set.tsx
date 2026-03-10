@@ -45,7 +45,7 @@ function PasswordSetPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="space-y-3 text-center max-w-sm px-4">
-          <p className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</p>
+          <img src="/klai-logo.svg" alt="Klai" className="h-8 w-auto" />
           <p className="text-sm text-red-700">{m.set_invalid_link()}</p>
           <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">
             {m.set_invalid_link_back()}
@@ -96,7 +96,7 @@ function PasswordSetPage() {
       {/* Left panel — branding */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
         <div>
-          <span className="font-serif text-2xl font-bold">Klai</span>
+          <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto" />
         </div>
         <div className="space-y-4">
           <h1 className="font-serif text-4xl font-bold leading-tight">
@@ -116,7 +116,7 @@ function PasswordSetPage() {
         <div className="w-full max-w-sm space-y-8">
           {/* Mobile logo */}
           <div className="lg:hidden">
-            <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+            <img src="/klai-logo.svg" alt="Klai" className="h-8 w-auto" />
           </div>
 
           {done ? (
