@@ -11,6 +11,7 @@
   "login_submit": "Inloggen",
   "login_submit_loading": "Inloggen…",
   "login_forgot_password": "Wachtwoord vergeten?",
+  "login_no_account": "Nog geen klant?",
   "login_error_connection": "Geen verbinding, controleer je internetverbinding",
   "forgot_hero_heading": "Wachtwoord vergeten?",
   "forgot_hero_highlight": "Geen probleem.",

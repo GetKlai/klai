@@ -11,6 +11,7 @@
   "login_submit": "Log in",
   "login_submit_loading": "Logging in…",
   "login_forgot_password": "Forgot password?",
+  "login_no_account": "No account yet?",
   "login_error_connection": "No connection, check your internet",
   "forgot_hero_heading": "Forgot your password?",
   "forgot_hero_highlight": "No problem.",

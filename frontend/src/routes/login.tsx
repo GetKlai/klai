@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Lock, Shield } from 'lucide-react'
 import * as m from '@/paraglide/messages'
@@ -38,6 +38,35 @@ function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // True while checking for an existing portal SSO session
+  const [checkingSSO, setCheckingSSO] = useState(!!authRequestId)
+
+  useEffect(() => {
+    if (!authRequestId) return
+
+    // Try to silently complete the auth request using the portal SSO session.
+    // The klai_sso cookie (set during portal login) is sent automatically by the browser.
+    async function trySSO() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/auth/sso-complete`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auth_request_id: authRequestId }),
+        })
+        if (resp.ok) {
+          const { callback_url } = await resp.json()
+          window.location.href = callback_url
+          return
+        }
+      } catch {
+        // Network error — fall through to login form
+      }
+      setCheckingSSO(false)
+    }
+
+    trySSO()
+  }, [authRequestId])
 
   function switchLocale(l: Locale) {
     setLocale(l)
@@ -50,6 +79,15 @@ function LoginPage() {
   if (!authRequestId) {
     navigate({ to: '/' })
     return null
+  }
+
+  // Still checking for existing SSO session — show a spinner
+  if (checkingSSO) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
+      </div>
+    )
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -190,11 +228,17 @@ function LoginPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-            <a href="/password/forgot" className="text-[var(--color-purple-muted)] hover:underline">
+          <div className="flex items-center justify-between text-center text-xs text-[var(--color-muted-foreground)]">
+            <a
+              href={`/password/forgot${email ? `?email=${encodeURIComponent(email)}` : ''}`}
+              className="text-[var(--color-purple-muted)] hover:underline"
+            >
               {m.login_forgot_password()}
             </a>
-          </p>
+            <a href="/signup" className="text-[var(--color-purple-muted)] hover:underline">
+              {m.login_no_account()}
+            </a>
+          </div>
         </div>
       </div>
     </div>

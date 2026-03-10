@@ -7,18 +7,40 @@ import { setLocale } from '@/paraglide/runtime'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+type Locale = 'nl' | 'en'
+
+function getInitialLocale(): Locale {
+  const saved = localStorage.getItem('klai-locale')
+  return saved === 'en' ? 'en' : 'nl'
+}
+
+type SearchParams = {
+  email?: string
+}
+
 export const Route = createFileRoute('/password/forgot')({
+  validateSearch: (search: Record<string, unknown>): SearchParams => ({
+    email: typeof search.email === 'string' ? search.email : undefined,
+  }),
   component: ForgotPasswordPage,
 })
 
 function ForgotPasswordPage() {
-  // Inherit locale from localStorage; no toggle on transactional pages
-  useState(() => {
-    const saved = localStorage.getItem('klai-locale')
-    setLocale(saved === 'en' ? 'en' : 'nl')
+  const { email: emailParam } = Route.useSearch()
+
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    const initial = getInitialLocale()
+    setLocale(initial)
+    return initial
   })
 
-  const [email, setEmail] = useState('')
+  function switchLocale(l: Locale) {
+    setLocale(l)
+    setLocaleState(l)
+    localStorage.setItem('klai-locale', l)
+  }
+
+  const [email, setEmail] = useState(emailParam ?? '')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
@@ -68,9 +90,25 @@ function ForgotPasswordPage() {
       {/* Right panel — form */}
       <div className="flex w-full flex-col items-center justify-center px-8 lg:w-1/2">
         <div className="w-full max-w-sm space-y-8">
-          {/* Mobile logo */}
-          <div className="lg:hidden">
-            <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+          <div className="flex items-center justify-between">
+            <div className="lg:hidden">
+              <span className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Klai</span>
+            </div>
+            <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+              <button
+                onClick={() => switchLocale('nl')}
+                className={locale === 'nl' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+              >
+                NL
+              </button>
+              <span className="opacity-30">/</span>
+              <button
+                onClick={() => switchLocale('en')}
+                className={locale === 'en' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+              >
+                EN
+              </button>
+            </div>
           </div>
 
           {done ? (
