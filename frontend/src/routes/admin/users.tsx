@@ -252,7 +252,7 @@ function UsersPage() {
             {!loading && !error && (
                 plural(getLocale(), users.length) === 'one'
                   ? m.admin_users_count_one()
-                  : m.admin_users_count_other({ count: users.length })
+                  : m.admin_users_count_other({ count: String(users.length) })
               )}
           </p>
         </div>
