@@ -5,6 +5,9 @@ import { AlertCircle, CheckCircle, CreditCard, ExternalLink, XCircle } from 'luc
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import * as m from '@/paraglide/messages'
+import { getLocale } from '@/paraglide/runtime'
+import { number } from '@/paraglide/registry'
 
 export const Route = createFileRoute('/admin/billing')({
   component: BillingPage,
@@ -42,40 +45,26 @@ interface MandateForm {
 
 // --- Plan definitions ---
 
-const PLANS: { id: Plan; name: string; description: string; monthly: number; yearly: number }[] = [
-  {
-    id: 'core',
-    name: 'Chat',
-    description: 'AI-chat voor je team',
-    monthly: 22,
-    yearly: 18,
-  },
-  {
-    id: 'professional',
-    name: 'Chat + Focus',
-    description: 'Chat en productiviteitstools',
-    monthly: 42,
-    yearly: 34,
-  },
-  {
-    id: 'complete',
-    name: 'Chat + Focus + Scribe',
-    description: 'Volledig AI-platform',
-    monthly: 60,
-    yearly: 48,
-  },
+const PLANS: { id: Plan; name: string; monthly: number; yearly: number }[] = [
+  { id: 'core', name: 'Chat', monthly: 22, yearly: 18 },
+  { id: 'professional', name: 'Chat + Focus', monthly: 42, yearly: 34 },
+  { id: 'complete', name: 'Chat + Focus + Scribe', monthly: 60, yearly: 48 },
 ]
 
-const PLAN_LABELS: Record<Plan, string> = {
-  core: 'Chat',
-  professional: 'Chat + Focus',
-  complete: 'Chat + Focus + Scribe',
-  free: 'Intern account',
+function getPlanDescription(id: Plan): string {
+  if (id === 'core') return m.admin_billing_plan_chat_description()
+  if (id === 'professional') return m.admin_billing_plan_professional_description()
+  return m.admin_billing_plan_complete_description()
 }
 
-const CYCLE_LABELS: Record<BillingCycle, string> = {
-  monthly: 'Maandelijks',
-  yearly: 'Jaarlijks',
+function getPlanLabel(plan: Plan): string {
+  if (plan === 'free') return m.admin_billing_free_title()
+  const p = PLANS.find((p) => p.id === plan)
+  return p ? p.name : plan
+}
+
+function getCycleLabel(cycle: BillingCycle): string {
+  return cycle === 'monthly' ? m.admin_billing_cycle_monthly() : m.admin_billing_cycle_yearly()
 }
 
 // --- Helpers ---
@@ -88,8 +77,8 @@ function planPrice(plan: Plan, cycle: BillingCycle): number {
 function totalPrice(plan: Plan, cycle: BillingCycle, seats: number): string {
   const price = planPrice(plan, cycle) * seats
   return cycle === 'yearly'
-    ? `\u20ac${(price * 12).toLocaleString('nl-NL')} / jaar`
-    : `\u20ac${price} / maand`
+    ? `\u20ac${number(getLocale(), price * 12)} ${m.admin_billing_per_year()}`
+    : `\u20ac${number(getLocale(), price)} ${m.admin_billing_per_month()}`
 }
 
 // --- Field component ---
@@ -118,7 +107,7 @@ function Field({
       <label htmlFor={name} className="block text-sm font-medium text-[var(--color-foreground)]">
         {label}
         {!required && (
-          <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">(optioneel)</span>
+          <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_field_optional()}</span>
         )}
       </label>
       <input
@@ -153,7 +142,7 @@ function BillingPage() {
     })
       .then((r) => r.json())
       .then(setBillingStatus)
-      .catch(() => setFetchError('Kon factuurstatus niet ophalen'))
+      .catch(() => setFetchError(m.admin_billing_error_fetch()))
       .finally(() => setLoadingStatus(false))
   }, [token])
 
@@ -168,9 +157,9 @@ function BillingPage() {
   return (
     <div className="p-8 space-y-6 max-w-3xl">
       <div className="space-y-1">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">Abonnement</h1>
+        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{m.admin_billing_heading()}</h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Plan, facturering en betaalhistorie.
+          {m.admin_billing_subtitle()}
         </p>
       </div>
 
@@ -266,7 +255,7 @@ function SetupView({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setError(data?.detail ?? `Fout ${res.status} — probeer opnieuw`)
+        setError(data?.detail ?? m.admin_billing_error_server({ status: String(res.status) }))
         return
       }
 
@@ -275,7 +264,6 @@ function SetupView({
       if (data.mandate_url) {
         window.location.href = data.mandate_url
       } else {
-        // Moneybird Payments not yet active — billing_status is already "mandate_requested" in DB
         onComplete({
           billing_status: 'mandate_requested',
           plan: form.plan,
@@ -285,7 +273,7 @@ function SetupView({
         })
       }
     } catch {
-      setError('Kan geen verbinding maken met de server')
+      setError(m.admin_billing_error_connection())
     } finally {
       setLoading(false)
     }
@@ -296,8 +284,8 @@ function SetupView({
       {/* Plan + cycle selection */}
       <Card>
         <CardHeader>
-          <CardTitle>Kies een plan</CardTitle>
-          <CardDescription>Prijzen per gebruiker per maand, excl. BTW.</CardDescription>
+          <CardTitle>{m.admin_billing_setup_plan_title()}</CardTitle>
+          <CardDescription>{m.admin_billing_setup_plan_description()}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Cycle toggle */}
@@ -314,9 +302,9 @@ function SetupView({
                     : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-purple-muted)]',
                 ].join(' ')}
               >
-                {CYCLE_LABELS[cycle]}
+                {getCycleLabel(cycle)}
                 {cycle === 'yearly' && (
-                  <span className="ml-2 text-xs text-[var(--color-purple-accent)]">20% korting</span>
+                  <span className="ml-2 text-xs text-[var(--color-purple-accent)]">{m.admin_billing_yearly_discount()}</span>
                 )}
               </button>
             ))}
@@ -340,13 +328,13 @@ function SetupView({
                   {plan.name}
                 </span>
                 <span className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                  {plan.description}
+                  {getPlanDescription(plan.id)}
                 </span>
                 <span className="mt-3 text-lg font-bold text-[var(--color-purple-deep)]">
                   &euro;{form.billing_cycle === 'yearly' ? plan.yearly : plan.monthly}
                   <span className="text-xs font-normal text-[var(--color-muted-foreground)]">
                     {' '}
-                    /gebr/mnd
+                    {m.admin_billing_per_user_month()}
                   </span>
                 </span>
               </button>
@@ -360,7 +348,7 @@ function SetupView({
                 htmlFor="seats"
                 className="block text-sm font-medium text-[var(--color-foreground)]"
               >
-                Aantal gebruikers
+                {m.admin_billing_seats_label()}
               </label>
               <input
                 id="seats"
@@ -373,13 +361,13 @@ function SetupView({
               />
             </div>
             <div className="ml-auto text-right">
-              <p className="text-xs text-[var(--color-muted-foreground)]">Totaal excl. BTW</p>
+              <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
               <p className="text-xl font-bold text-[var(--color-purple-deep)]">
                 {totalPrice(form.plan, form.billing_cycle, form.seats)}
               </p>
               {form.billing_cycle === 'yearly' && (
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  &euro;{planPrice(form.plan, form.billing_cycle) * form.seats} /mnd equivalent
+                  &euro;{planPrice(form.plan, form.billing_cycle) * form.seats} {m.admin_billing_monthly_equivalent()}
                 </p>
               )}
             </div>
@@ -390,14 +378,14 @@ function SetupView({
       {/* Billing details */}
       <Card>
         <CardHeader>
-          <CardTitle>Factuurgegevens</CardTitle>
+          <CardTitle>{m.admin_billing_details_title()}</CardTitle>
           <CardDescription>
-            Verplicht voor een rechtsgeldige Nederlandse factuur (Wet OB 1968, art. 35).
+            {m.admin_billing_details_description()}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Field
-            label="Straat en huisnummer"
+            label={m.admin_billing_field_address()}
             name="address"
             value={form.address}
             onChange={(v) => set('address', v)}
@@ -406,7 +394,7 @@ function SetupView({
           />
           <div className="grid grid-cols-2 gap-3">
             <Field
-              label="Postcode"
+              label={m.admin_billing_field_zipcode()}
               name="zipcode"
               value={form.zipcode}
               onChange={(v) => set('zipcode', v)}
@@ -414,7 +402,7 @@ function SetupView({
               placeholder="1234 AB"
             />
             <Field
-              label="Stad"
+              label={m.admin_billing_field_city()}
               name="city"
               value={form.city}
               onChange={(v) => set('city', v)}
@@ -423,39 +411,39 @@ function SetupView({
             />
           </div>
           <Field
-            label="Land"
+            label={m.admin_billing_field_country()}
             name="country"
             value={form.country}
             onChange={(v) => set('country', v)}
             required
           />
           <Field
-            label="BTW-nummer"
+            label={m.admin_billing_field_tax_number()}
             name="tax_number"
             value={form.tax_number}
             onChange={(v) => set('tax_number', v)}
             placeholder="NL123456789B01"
           />
           <Field
-            label="KvK-nummer"
+            label={m.admin_billing_field_coc()}
             name="chamber_of_commerce"
             value={form.chamber_of_commerce}
             onChange={(v) => set('chamber_of_commerce', v)}
           />
           <Field
-            label="Facturatie-e-mailadres"
+            label={m.admin_billing_field_billing_email()}
             name="billing_email"
             type="email"
             value={form.billing_email}
             onChange={(v) => set('billing_email', v)}
-            hint="Als facturen naar een ander adres moeten dan je inlogadres."
+            hint={m.admin_billing_field_billing_email_hint()}
           />
           <Field
-            label="Interne referentie / PO-nummer"
+            label={m.admin_billing_field_internal_ref()}
             name="internal_reference"
             value={form.internal_reference}
             onChange={(v) => set('internal_reference', v)}
-            hint="Wordt vermeld op de factuur."
+            hint={m.admin_billing_field_internal_ref_hint()}
           />
         </CardContent>
       </Card>
@@ -469,11 +457,11 @@ function SetupView({
 
       <div className="flex items-center justify-between gap-4">
         <p className="text-xs text-[var(--color-muted-foreground)]">
-          Je wordt doorgestuurd naar Moneybird voor de SEPA-betaalmachtiging.
+          {m.admin_billing_sepa_note()}
         </p>
         <Button type="submit" disabled={loading} className="shrink-0 gap-2">
           <CreditCard size={16} />
-          {loading ? 'Even geduld\u2026' : 'Start abonnement'}
+          {loading ? m.admin_billing_submit_loading() : m.admin_billing_submit()}
         </Button>
       </div>
     </form>
@@ -490,12 +478,12 @@ function FreeView() {
           <CheckCircle size={24} className="text-[var(--color-purple-accent)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">Intern account</p>
+          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_free_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
-            Dit account heeft gratis toegang tot het volledige Klai-platform.
+            {m.admin_billing_free_description()}
           </p>
         </div>
-        <Badge variant="secondary">Gratis</Badge>
+        <Badge variant="secondary">{m.admin_billing_free_badge()}</Badge>
       </CardContent>
     </Card>
   )
@@ -511,13 +499,12 @@ function MandateRequestedView() {
           <CreditCard size={24} className="text-[var(--color-purple-accent)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">Aanvraag ontvangen</p>
+          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_mandate_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
-            We hebben je gegevens ontvangen en nemen contact met je op om de betaling in te stellen.
-            Je ontvangt een bevestiging zodra je abonnement actief is.
+            {m.admin_billing_mandate_description()}
           </p>
         </div>
-        <Badge variant="secondary">In behandeling</Badge>
+        <Badge variant="secondary">{m.admin_billing_mandate_badge()}</Badge>
       </CardContent>
     </Card>
   )
@@ -550,7 +537,7 @@ function ActiveView({
       const data = await res.json()
       window.open(data.portal_url, '_blank')
     } catch {
-      setActionError('Kon factuurportaal niet openen')
+      setActionError(m.admin_billing_error_invoices())
     } finally {
       setLoadingInvoices(false)
     }
@@ -567,7 +554,7 @@ function ActiveView({
       if (!res.ok) throw new Error()
       onCancel({ ...status, billing_status: 'cancelled' })
     } catch {
-      setActionError('Kon abonnement niet opzeggen')
+      setActionError(m.admin_billing_error_cancel())
       setCancelConfirm(false)
     } finally {
       setCancelling(false)
@@ -579,27 +566,27 @@ function ActiveView({
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Huidig abonnement</CardTitle>
-            <Badge variant="success">Actief</Badge>
+            <CardTitle>{m.admin_billing_active_title()}</CardTitle>
+            <Badge variant="success">{m.admin_billing_active_badge()}</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <p className="text-[var(--color-muted-foreground)]">Plan</p>
-              <p className="font-medium">{PLAN_LABELS[status.plan]}</p>
+              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_plan_label()}</p>
+              <p className="font-medium">{getPlanLabel(status.plan)}</p>
             </div>
             <div>
-              <p className="text-[var(--color-muted-foreground)]">Cyclus</p>
-              <p className="font-medium">{CYCLE_LABELS[status.billing_cycle]}</p>
+              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_cycle_label()}</p>
+              <p className="font-medium">{getCycleLabel(status.billing_cycle)}</p>
             </div>
             <div>
-              <p className="text-[var(--color-muted-foreground)]">Gebruikers</p>
+              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_seats_label()}</p>
               <p className="font-medium">{status.seats}</p>
             </div>
           </div>
           <div className="pt-3 border-t border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-muted-foreground)]">Totaal excl. BTW</p>
+            <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
             <p className="text-2xl font-bold text-[var(--color-purple-deep)]">
               {totalPrice(status.plan, status.billing_cycle, status.seats)}
             </p>
@@ -609,8 +596,8 @@ function ActiveView({
 
       <Card>
         <CardHeader>
-          <CardTitle>Facturen</CardTitle>
-          <CardDescription>Bekijk en download facturen via het Moneybird-portaal.</CardDescription>
+          <CardTitle>{m.admin_billing_invoices_title()}</CardTitle>
+          <CardDescription>{m.admin_billing_invoices_description()}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button
@@ -620,7 +607,7 @@ function ActiveView({
             className="gap-2"
           >
             <ExternalLink size={16} />
-            {loadingInvoices ? 'Laden\u2026' : 'Factuurportaal openen'}
+            {loadingInvoices ? m.admin_billing_invoices_loading() : m.admin_billing_invoices_button()}
           </Button>
         </CardContent>
       </Card>
@@ -639,21 +626,21 @@ function ActiveView({
             onClick={() => setCancelConfirm(true)}
             className="text-sm text-[var(--color-muted-foreground)] hover:text-red-600 transition-colors"
           >
-            Abonnement opzeggen
+            {m.admin_billing_cancel_link()}
           </button>
         ) : (
           <div className="flex items-center gap-3">
-            <p className="text-sm">Weet je het zeker?</p>
+            <p className="text-sm">{m.admin_billing_cancel_confirm()}</p>
             <Button
               variant="destructive"
               size="sm"
               onClick={handleCancel}
               disabled={cancelling}
             >
-              {cancelling ? 'Bezig\u2026' : 'Ja, opzeggen'}
+              {cancelling ? m.admin_billing_cancel_loading() : m.admin_billing_cancel_confirm_button()}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setCancelConfirm(false)}>
-              Annuleren
+              {m.admin_billing_cancel_abort()}
             </Button>
           </div>
         )}
@@ -672,16 +659,15 @@ function PaymentFailedView({ onRetry }: { onRetry: () => void }) {
           <AlertCircle size={24} className="text-red-600" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">Betaling mislukt</p>
+          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_payment_failed_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
-            De SEPA-incasso is afgewezen. Controleer of je bankrekening voldoende saldo heeft en
-            probeer opnieuw.
+            {m.admin_billing_payment_failed_description()}
           </p>
         </div>
-        <Badge variant="destructive">Betaling mislukt</Badge>
+        <Badge variant="destructive">{m.admin_billing_payment_failed_badge()}</Badge>
         <Button onClick={onRetry} className="gap-2">
           <CreditCard size={16} />
-          Opnieuw proberen
+          {m.admin_billing_payment_failed_retry()}
         </Button>
       </CardContent>
     </Card>
@@ -698,15 +684,15 @@ function CancelledView({ onReactivate }: { onReactivate: () => void }) {
           <XCircle size={24} className="text-[var(--color-muted-foreground)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">Abonnement opgezegd</p>
+          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_cancelled_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
-            Je abonnement is be&euml;indigd. Je kunt het op elk moment heractiveren.
+            {m.admin_billing_cancelled_description()}
           </p>
         </div>
-        <Badge variant="secondary">Opgezegd</Badge>
+        <Badge variant="secondary">{m.admin_billing_cancelled_badge()}</Badge>
         <Button variant="outline" onClick={onReactivate} className="gap-2">
           <CheckCircle size={16} />
-          Abonnement heractiveren
+          {m.admin_billing_cancelled_reactivate()}
         </Button>
       </CardContent>
     </Card>

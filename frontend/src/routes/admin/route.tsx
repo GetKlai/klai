@@ -3,13 +3,7 @@ import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { LayoutDashboard, Users, Settings, CreditCard } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
-
-const adminNav = [
-  { to: '/admin', label: 'Overzicht', icon: LayoutDashboard, end: true },
-  { to: '/admin/users', label: 'Gebruikers', icon: Users },
-  { to: '/admin/billing', label: 'Facturen', icon: CreditCard },
-  { to: '/admin/settings', label: 'Instellingen', icon: Settings },
-]
+import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
@@ -19,6 +13,13 @@ function AdminLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
   const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'
+
+  const adminNav = [
+    { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },
+    { to: '/admin/users', label: m.admin_nav_users(), icon: Users },
+    { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
+    { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
+  ]
 
   useEffect(() => {
     if (!auth.isLoading) {

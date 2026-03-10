@@ -90,7 +90,7 @@ function Setup2FAPage() {
       {/* Left panel — branding */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
         <div>
-          <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto block" />
+          <img src="/klai-logo-white.svg" alt="Klai" className="h-7 w-auto block" />
         </div>
 
         <div className="space-y-6 my-auto">
@@ -117,7 +117,7 @@ function Setup2FAPage() {
         <div className="w-full max-w-sm space-y-8">
           {/* Mobile logo */}
           <div className="lg:hidden">
-            <img src="/klai-logo.svg" alt="Klai" className="h-8 w-auto block" />
+            <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto block" />
           </div>
 
           {done ? (

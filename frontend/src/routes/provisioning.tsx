@@ -2,14 +2,15 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { CheckCircle, AlertCircle } from 'lucide-react'
+import * as m from '@/paraglide/messages'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 const POLL_INTERVAL_MS = 3000
 const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
 
-export const Route = createFileRoute('/provisioning')(({
+export const Route = createFileRoute('/provisioning')((({
   component: ProvisioningPage,
-}))
+})))
 
 type Status = 'polling' | 'ready' | 'failed' | 'timeout'
 
@@ -89,10 +90,10 @@ function ProvisioningPage() {
             <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
             <div className="space-y-2">
               <p className="font-serif text-lg font-semibold text-[var(--color-purple-deep)]">
-                Werkruimte wordt aangemaakt{dots}
+                {m.provisioning_polling_title()}{dots}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
-                We starten jouw persoonlijke omgeving op. Dit duurt doorgaans minder dan een minuut.
+                {m.provisioning_polling_subtitle()}
               </p>
             </div>
           </>
@@ -106,10 +107,10 @@ function ProvisioningPage() {
               strokeWidth={1.5}
             />
             <p className="font-serif text-lg font-semibold text-[var(--color-purple-deep)]">
-              Werkruimte gereed
+              {m.provisioning_ready_title()}
             </p>
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              Je wordt doorgestuurd naar jouw werkruimte&hellip;
+              {m.provisioning_ready_subtitle()}
             </p>
           </>
         )}
@@ -123,10 +124,10 @@ function ProvisioningPage() {
             />
             <div className="space-y-2">
               <p className="font-serif text-lg font-semibold text-[var(--color-purple-deep)]">
-                Er is iets misgegaan
+                {m.provisioning_failed_title()}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
-                Het aanmaken van jouw werkruimte is mislukt. Neem contact op via{' '}
+                {m.provisioning_failed_body()}{' '}
                 <a
                   href="mailto:support@getklai.com"
                   className="font-medium text-[var(--color-purple-muted)] underline"

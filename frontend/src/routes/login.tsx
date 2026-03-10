@@ -3,16 +3,9 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Lock, Shield } from 'lucide-react'
 import * as m from '@/paraglide/messages'
-import { setLocale } from '@/paraglide/runtime'
+import { useLocale } from '@/lib/locale'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
-
-type Locale = 'nl' | 'en'
-
-function getInitialLocale(): Locale {
-  const saved = localStorage.getItem('klai-locale')
-  return saved === 'en' ? 'en' : 'nl'
-}
 
 type SearchParams = {
   authRequest?: string
@@ -29,11 +22,7 @@ function LoginPage() {
   const { authRequest: authRequestId } = Route.useSearch()
   const navigate = useNavigate()
 
-  const [locale, setLocaleState] = useState<Locale>(() => {
-    const initial = getInitialLocale()
-    setLocale(initial)
-    return initial
-  })
+  const { locale, switchLocale } = useLocale()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -72,12 +61,6 @@ function LoginPage() {
 
     trySSO()
   }, [authRequestId])
-
-  function switchLocale(l: Locale) {
-    setLocale(l)
-    setLocaleState(l)
-    localStorage.setItem('klai-locale', l)
-  }
 
   // If Zitadel didn't supply an authRequestId, the user arrived here directly.
   // Send them back to / so signinRedirect() can start the OIDC flow properly.
@@ -166,7 +149,7 @@ function LoginPage() {
       {/* Left panel — branding */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
         <div>
-          <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto block" />
+          <img src="/klai-logo-white.svg" alt="Klai" className="h-7 w-auto block" />
         </div>
 
         <div className="space-y-6 my-auto">
@@ -199,7 +182,7 @@ function LoginPage() {
         <div className="w-full max-w-sm space-y-8">
           <div className="flex items-center justify-between">
             <div className="lg:hidden">
-              <img src="/klai-logo.svg" alt="Klai" className="h-8 w-auto block" />
+              <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto block" />
             </div>
             <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
               <button

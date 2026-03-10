@@ -1,49 +1,57 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, FileText } from 'lucide-react'
+import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/')({
   component: AppHome,
 })
 
-const tools = [
-  {
-    title: 'Chat',
-    description: 'Privé AI-gesprekken op Europese servers',
-    icon: MessageSquare,
-    href: '/app/chat',
-  },
-  {
-    title: 'Transcriberen',
-    description: 'Audio en video omzetten naar tekst',
-    icon: Mic,
-    href: '/app/transcribe',
-  },
-  {
-    title: 'Scribe',
-    description: 'Documenten en notities genereren',
-    icon: FileText,
-    href: '/app/scribe',
-  },
-]
+function getGreeting(name: string): string {
+  const hour = new Date().getHours()
+  if (hour >= 6 && hour < 12) return m.app_home_greeting_morning({ name })
+  if (hour >= 12 && hour < 18) return m.app_home_greeting_afternoon({ name })
+  return m.app_home_greeting_evening({ name })
+}
 
 function AppHome() {
   const auth = useAuth()
-  const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? 'daar'
+  const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? m.app_home_user_fallback()
+
+  const tools = [
+    {
+      title: m.app_tool_chat_title(),
+      description: m.app_tool_chat_description(),
+      icon: MessageSquare,
+      href: '/app/chat',
+    },
+    {
+      title: m.app_tool_transcribe_title(),
+      description: m.app_tool_transcribe_description(),
+      icon: Mic,
+      href: '/app/transcribe',
+    },
+    {
+      title: m.app_tool_scribe_title(),
+      description: m.app_tool_scribe_description(),
+      icon: FileText,
+      href: '/app/scribe',
+    },
+  ]
 
   return (
     <div className="p-8 space-y-8 max-w-3xl">
       <div className="space-y-1">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-          Goedemorgen, {userName}
+          {getGreeting(userName)}
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Jouw werkruimte draait op Europese servers. Alles blijft van jou.
+          {m.app_home_subtitle()}
         </p>
       </div>
 
       <div>
-        <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">Tools</h2>
+        <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">{m.app_home_tools()}</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {tools.map((tool) => (
             <a

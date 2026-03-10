@@ -43,6 +43,12 @@ function CallbackPage() {
             }
           }
 
+          // First login without 2FA — redirect to setup
+          if (me.requires_2fa_setup) {
+            window.location.replace('/setup/2fa')
+            return
+          }
+
           // On the correct subdomain — route by role
           const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
           sessionStorage.setItem('klai:isAdmin', String(isAdmin))

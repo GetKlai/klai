@@ -10,6 +10,8 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
+import { getLocale } from '@/paraglide/runtime'
+import { datetime, plural } from '@/paraglide/registry'
 
 export const Route = createFileRoute('/admin/users')({
   component: UsersPage,
@@ -33,9 +35,8 @@ interface InviteForm {
   role: Role
 }
 
-function formatDutchDate(isoString: string): string {
-  const date = new Date(isoString)
-  return date.toLocaleDateString('nl-NL', {
+function formatDate(isoString: string): string {
+  return datetime(getLocale(), isoString, {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -200,7 +201,7 @@ function UsersPage() {
     }),
     columnHelper.accessor('created_at', {
       header: () => m.admin_users_col_since(),
-      cell: (info) => formatDutchDate(info.getValue()),
+      cell: (info) => formatDate(info.getValue()),
     }),
     columnHelper.display({
       id: 'acties',
@@ -248,7 +249,11 @@ function UsersPage() {
             {m.admin_users_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {m.admin_users_subtitle()}
+            {!loading && !error && (
+                plural(getLocale(), users.length) === 'one'
+                  ? m.admin_users_count_one()
+                  : m.admin_users_count_other({ count: users.length })
+              )}
           </p>
         </div>
         <Button

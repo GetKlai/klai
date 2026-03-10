@@ -12,6 +12,7 @@ Returns 201 on success. The user still needs to verify their email before loggin
 import re
 import unicodedata
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,10 +79,20 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Deze bedrijfsnaam is al in gebruik. Probeer een andere naam.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Aanmaken mislukt, probeer het later opnieuw",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon organisatie niet aanmaken: {exc}",
+            detail="Aanmaken mislukt, probeer het later opnieuw",
         ) from exc
 
     zitadel_org_id: str = org_data["id"]
@@ -95,10 +106,20 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
             last_name=body.last_name,
             password=body.password,
         )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Dit e-mailadres is al geregistreerd. Probeer in te loggen.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Aanmaken mislukt, probeer het later opnieuw",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon gebruiker niet aanmaken: {exc}",
+            detail="Aanmaken mislukt, probeer het later opnieuw",
         ) from exc
 
     zitadel_user_id: str = user_data["userId"]
@@ -113,7 +134,7 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon beheerdersrol niet toewijzen: {exc}",
+            detail="Aanmaken mislukt, probeer het later opnieuw",
         ) from exc
 
     # 4. Persist to PostgreSQL
@@ -136,7 +157,7 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon account niet opslaan: {exc}",
+            detail="Aanmaken mislukt, probeer het later opnieuw",
         ) from exc
 
     background_tasks.add_task(provision_tenant, org_row.id)

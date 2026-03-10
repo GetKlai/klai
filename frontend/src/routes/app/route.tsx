@@ -3,12 +3,7 @@ import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, FileText } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
-
-const appNav = [
-  { to: '/app/chat', label: 'Chat', icon: MessageSquare },
-  { to: '/app/transcribe', label: 'Transcriberen', icon: Mic },
-  { to: '/app/scribe', label: 'Scribe', icon: FileText },
-]
+import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app')({
   component: AppLayout,
@@ -17,6 +12,12 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
+
+  const appNav = [
+    { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
+    { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
+    { to: '/app/scribe', label: m.app_tool_scribe_title(), icon: FileText },
+  ]
 
   useEffect(() => {
     if (!auth.isLoading && !auth.isAuthenticated) {

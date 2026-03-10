@@ -1,40 +1,41 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Users, CreditCard, Settings } from 'lucide-react'
+import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/admin/')({
   component: AdminHome,
 })
 
-const adminSections = [
-  {
-    title: 'Gebruikers',
-    description: 'Uitnodigen, rollen beheren en verwijderen',
-    icon: Users,
-    href: '/admin/users',
-  },
-  {
-    title: 'Facturen',
-    description: 'Abonnement en betaalhistorie',
-    icon: CreditCard,
-    href: '/admin/billing',
-  },
-  {
-    title: 'Instellingen',
-    description: 'Organisatienaam en accountdetails',
-    icon: Settings,
-    href: '/admin/settings',
-  },
-]
-
 function AdminHome() {
+  const adminSections = [
+    {
+      title: m.admin_section_users_title(),
+      description: m.admin_section_users_description(),
+      icon: Users,
+      href: '/admin/users',
+    },
+    {
+      title: m.admin_section_billing_title(),
+      description: m.admin_section_billing_description(),
+      icon: CreditCard,
+      href: '/admin/billing',
+    },
+    {
+      title: m.admin_section_settings_title(),
+      description: m.admin_section_settings_description(),
+      icon: Settings,
+      href: '/admin/settings',
+    },
+  ]
+
   return (
     <div className="p-8 space-y-8 max-w-3xl">
       <div className="space-y-1">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-          Beheer
+          {m.admin_home_heading()}
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Gebruikers, abonnement en instellingen van jouw organisatie.
+          {m.admin_home_subtitle()}
         </p>
       </div>
 
