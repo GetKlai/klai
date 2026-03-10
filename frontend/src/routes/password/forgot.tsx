@@ -82,9 +82,7 @@ function ForgotPasswordPage() {
             {m.forgot_hero_body()}
           </p>
         </div>
-        <p className="text-xs text-[var(--color-sand-mid)] opacity-50">
-          © {new Date().getFullYear()} Klai
-        </p>
+
       </div>
 
       {/* Right panel — form */}
