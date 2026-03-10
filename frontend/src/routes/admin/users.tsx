@@ -14,11 +14,14 @@ export const Route = createFileRoute('/admin/users')({
   component: UsersPage,
 })
 
+type Role = 'admin' | 'member'
+
 interface User {
   zitadel_user_id: string
   email: string
   first_name: string
   last_name: string
+  role: Role
   created_at: string
 }
 
@@ -26,6 +29,7 @@ interface InviteForm {
   first_name: string
   last_name: string
   email: string
+  role: Role
 }
 
 function formatDutchDate(isoString: string): string {
@@ -35,6 +39,21 @@ function formatDutchDate(isoString: string): string {
     month: 'short',
     year: 'numeric',
   })
+}
+
+function RoleBadge({ role }: { role: Role }) {
+  if (role === 'admin') {
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700">
+        Beheerder
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
+      Lid
+    </span>
+  )
 }
 
 const columnHelper = createColumnHelper<User>()
@@ -53,9 +72,12 @@ function UsersPage() {
     first_name: '',
     last_name: '',
     email: '',
+    role: 'member',
   })
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState<string | null>(null)
+
+  const [roleChanging, setRoleChanging] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchUsers() {
@@ -101,6 +123,33 @@ function UsersPage() {
     }
   }
 
+  async function handleRoleChange(user: User, newRole: Role) {
+    setRoleChanging(user.zitadel_user_id)
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/api/admin/users/${user.zitadel_user_id}/role`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ role: newRole }),
+        }
+      )
+      if (!res.ok) throw new Error(`Rol wijzigen mislukt (${res.status})`)
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.zitadel_user_id === user.zitadel_user_id ? { ...u, role: newRole } : u
+        )
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rol wijzigen mislukt.')
+    } finally {
+      setRoleChanging(null)
+    }
+  }
+
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault()
     setInviteLoading(true)
@@ -117,7 +166,7 @@ function UsersPage() {
       })
       if (!res.ok) throw new Error(`Uitnodiging mislukt (${res.status})`)
 
-      setInviteForm({ first_name: '', last_name: '', email: '' })
+      setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
       setShowInviteForm(false)
 
       const refreshRes = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/admin/users`, {
@@ -144,6 +193,10 @@ function UsersPage() {
       header: 'E-mail',
       cell: (info) => info.getValue(),
     }),
+    columnHelper.accessor('role', {
+      header: 'Rol',
+      cell: (info) => <RoleBadge role={info.getValue()} />,
+    }),
     columnHelper.accessor('created_at', {
       header: 'Lid sinds',
       cell: (info) => formatDutchDate(info.getValue()),
@@ -154,15 +207,27 @@ function UsersPage() {
       cell: ({ row }) => {
         const user = row.original
         const isSelf = user.zitadel_user_id === currentUserId
+        const isChangingRole = roleChanging === user.zitadel_user_id
         return (
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={isSelf}
-            onClick={() => handleDelete(user)}
-          >
-            Verwijderen
-          </Button>
+          <div className="flex items-center gap-2">
+            <select
+              value={user.role}
+              disabled={isSelf || isChangingRole}
+              onChange={(e) => handleRoleChange(user, e.target.value as Role)}
+              className="rounded border border-[var(--color-border)] bg-transparent px-2 py-1 text-xs text-[var(--color-purple-deep)] outline-none focus:ring-2 focus:ring-[var(--color-ring)] disabled:opacity-50"
+            >
+              <option value="admin">Beheerder</option>
+              <option value="member">Lid</option>
+            </select>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={isSelf}
+              onClick={() => handleDelete(user)}
+            >
+              Verwijderen
+            </Button>
+          </div>
         )
       },
     }),
@@ -229,19 +294,36 @@ function UsersPage() {
                   />
                 </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                  E-mailadres
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={inviteForm.email}
-                  onChange={(e) =>
-                    setInviteForm((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                  className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-                />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
+                    E-mailadres
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={inviteForm.email}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
+                    Rol
+                  </label>
+                  <select
+                    value={inviteForm.role}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, role: e.target.value as Role }))
+                    }
+                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                  >
+                    <option value="member">Lid</option>
+                    <option value="admin">Beheerder</option>
+                  </select>
+                </div>
               </div>
               {inviteError && (
                 <p className="text-sm text-[var(--color-destructive)]">{inviteError}</p>
@@ -255,7 +337,7 @@ function UsersPage() {
                   variant="outline"
                   onClick={() => {
                     setShowInviteForm(false)
-                    setInviteForm({ first_name: '', last_name: '', email: '' })
+                    setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
                     setInviteError(null)
                   }}
                 >

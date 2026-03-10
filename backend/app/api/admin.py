@@ -3,6 +3,7 @@ Admin user management endpoints.
 All endpoints require authentication and resolve the caller's org from their OIDC token.
 """
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -50,6 +51,7 @@ class UserOut(BaseModel):
     email: str
     first_name: str
     last_name: str
+    role: Literal["admin", "member"]
     created_at: datetime
 
 
@@ -61,11 +63,16 @@ class InviteRequest(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
+    role: Literal["admin", "member"] = "member"
 
 
 class InviteResponse(BaseModel):
     user_id: str
     message: str
+
+
+class RoleUpdateRequest(BaseModel):
+    role: Literal["admin", "member"]
 
 
 class MessageResponse(BaseModel):
@@ -79,7 +86,7 @@ async def list_users(
 ) -> UsersResponse:
     _, org = await _get_caller_org(credentials, db)
 
-    # Get portal membership records (mapping + created_at)
+    # Get portal membership records (mapping + created_at + role)
     result = await db.execute(
         select(PortalUser)
         .where(PortalUser.org_id == org.id)
@@ -100,12 +107,14 @@ async def list_users(
             continue  # not in our portal (e.g. service accounts)
         profile = z.get("human", {}).get("profile", {})
         email_obj = z.get("human", {}).get("email", {})
+        portal_user = portal_users[uid]
         users_out.append(UserOut(
             zitadel_user_id=uid,
             email=email_obj.get("email", ""),
             first_name=profile.get("firstName", ""),
             last_name=profile.get("lastName", ""),
-            created_at=portal_users[uid].created_at,
+            role=portal_user.role,
+            created_at=portal_user.created_at,
         ))
 
     return UsersResponse(users=users_out)
@@ -137,6 +146,7 @@ async def invite_user(
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,
         org_id=org.id,
+        role=body.role,
     )
     db.add(user_row)
     await db.commit()
@@ -145,6 +155,32 @@ async def invite_user(
         user_id=zitadel_user_id,
         message=f"Uitnodiging verstuurd naar {body.email}.",
     )
+
+
+@router.patch("/users/{zitadel_user_id}/role", response_model=MessageResponse)
+async def update_user_role(
+    zitadel_user_id: str,
+    body: RoleUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    # TODO(SPEC-AUTH-001): enforce admin role via JWT claims
+    _, org = await _get_caller_org(credentials, db)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    user.role = body.role
+    await db.commit()
+
+    return MessageResponse(message="Rol bijgewerkt.")
 
 
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
