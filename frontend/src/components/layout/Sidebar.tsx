@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import * as m from '@/paraglide/messages'
 
 export interface NavItem {
   to?: string
@@ -43,11 +44,13 @@ export function Sidebar({ navItems }: SidebarProps) {
       {/* Logo + toggle */}
       <div className="flex h-16 items-center border-b border-[var(--color-sidebar-border)] px-3">
         {!collapsed && (
-          <img src="/klai-logo-white.svg" alt="Klai" className="flex-1 px-3 h-6 w-auto object-contain object-left" />
+          <div className="flex-1 px-3">
+            <img src="/klai-logo-white.svg" alt="Klai" className="h-5 w-auto block" />
+          </div>
         )}
         <button
           onClick={toggle}
-          title={collapsed ? 'Menu uitklappen' : 'Menu inklappen'}
+          title={collapsed ? m.sidebar_expand() : m.sidebar_collapse()}
           className={cn(
             'flex items-center justify-center rounded-lg p-2 transition-colors',
             'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
@@ -108,7 +111,7 @@ export function Sidebar({ navItems }: SidebarProps) {
         <div className="border-t border-[var(--color-sidebar-border)] px-2 py-3">
           <Link
             to={inAdmin ? '/app' : '/admin'}
-            title={collapsed ? (inAdmin ? 'Naar App' : 'Beheer') : undefined}
+            title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
               'flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors',
               'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
@@ -119,7 +122,7 @@ export function Sidebar({ navItems }: SidebarProps) {
               ? <LayoutGrid size={16} strokeWidth={1.75} />
               : <Shield size={16} strokeWidth={1.75} />
             }
-            {!collapsed && (inAdmin ? 'Naar App' : 'Beheer')}
+            {!collapsed && (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin())}
           </Link>
         </div>
       )}
@@ -138,7 +141,7 @@ export function Sidebar({ navItems }: SidebarProps) {
         )}
         <button
           onClick={() => auth.signoutRedirect()}
-          title={collapsed ? 'Uitloggen' : undefined}
+          title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
             'flex w-full items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors',
             'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
@@ -146,7 +149,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           )}
         >
           <LogOut size={16} strokeWidth={1.75} />
-          {!collapsed && 'Uitloggen'}
+          {!collapsed && m.sidebar_logout()}
         </button>
       </div>
     </aside>

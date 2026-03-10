@@ -166,7 +166,7 @@ function LoginPage() {
       {/* Left panel — branding */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
         <div>
-          <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto" />
+          <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto block" />
         </div>
 
         <div className="space-y-6 my-auto">
@@ -199,7 +199,7 @@ function LoginPage() {
         <div className="w-full max-w-sm space-y-8">
           <div className="flex items-center justify-between">
             <div className="lg:hidden">
-              <img src="/klai-logo.svg" alt="Klai" className="h-8 w-auto" />
+              <img src="/klai-logo.svg" alt="Klai" className="h-8 w-auto block" />
             </div>
             <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
               <button

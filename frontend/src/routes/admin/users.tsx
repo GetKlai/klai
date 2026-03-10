@@ -9,6 +9,7 @@ import {
 import { useState, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/admin/users')({
   component: UsersPage,
@@ -45,13 +46,13 @@ function RoleBadge({ role }: { role: Role }) {
   if (role === 'admin') {
     return (
       <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700">
-        Beheerder
+        {m.admin_users_role_admin()}
       </span>
     )
   }
   return (
     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
-      Lid
+      {m.admin_users_role_member()}
     </span>
   )
 }
@@ -87,11 +88,11 @@ function UsersPage() {
         const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/admin/users`, {
           headers: { Authorization: `Bearer ${token}` },
         })
-        if (!res.ok) throw new Error(`Fout bij ophalen gebruikers (${res.status})`)
+        if (!res.ok) throw new Error(m.admin_users_error_fetch({ status: String(res.status) }))
         const data = await res.json()
         setUsers(data.users)
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Er is een fout opgetreden.')
+        setError(err instanceof Error ? err.message : m.admin_users_error_generic())
       } finally {
         setLoading(false)
       }
@@ -104,7 +105,7 @@ function UsersPage() {
 
   async function handleDelete(user: User) {
     const name = `${user.first_name} ${user.last_name}`
-    if (!window.confirm(`Weet je zeker dat je ${name} wilt verwijderen?`)) return
+    if (!window.confirm(m.admin_users_confirm_delete({ name }))) return
 
     setUsers((prev) => prev.filter((u) => u.zitadel_user_id !== user.zitadel_user_id))
 
@@ -116,9 +117,9 @@ function UsersPage() {
           headers: { Authorization: `Bearer ${token}` },
         }
       )
-      if (!res.ok) throw new Error(`Verwijderen mislukt (${res.status})`)
+      if (!res.ok) throw new Error(m.admin_users_error_delete({ status: String(res.status) }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verwijderen mislukt.')
+      setError(err instanceof Error ? err.message : m.admin_users_error_delete_generic())
       setUsers((prev) => [...prev, user])
     }
   }
@@ -137,14 +138,14 @@ function UsersPage() {
           body: JSON.stringify({ role: newRole }),
         }
       )
-      if (!res.ok) throw new Error(`Rol wijzigen mislukt (${res.status})`)
+      if (!res.ok) throw new Error(m.admin_users_error_role({ status: String(res.status) }))
       setUsers((prev) =>
         prev.map((u) =>
           u.zitadel_user_id === user.zitadel_user_id ? { ...u, role: newRole } : u
         )
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Rol wijzigen mislukt.')
+      setError(err instanceof Error ? err.message : m.admin_users_error_role_generic())
     } finally {
       setRoleChanging(null)
     }
@@ -164,7 +165,7 @@ function UsersPage() {
         },
         body: JSON.stringify(inviteForm),
       })
-      if (!res.ok) throw new Error(`Uitnodiging mislukt (${res.status})`)
+      if (!res.ok) throw new Error(m.admin_users_error_invite({ status: String(res.status) }))
 
       setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
       setShowInviteForm(false)
@@ -177,7 +178,7 @@ function UsersPage() {
         setUsers(data.users)
       }
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : 'Uitnodiging mislukt.')
+      setInviteError(err instanceof Error ? err.message : m.admin_users_error_invite_generic())
     } finally {
       setInviteLoading(false)
     }
@@ -186,24 +187,24 @@ function UsersPage() {
   const columns = [
     columnHelper.accessor((row) => `${row.first_name} ${row.last_name}`, {
       id: 'naam',
-      header: 'Naam',
+      header: () => m.admin_users_col_name(),
       cell: (info) => info.getValue(),
     }),
     columnHelper.accessor('email', {
-      header: 'E-mail',
+      header: () => m.admin_users_col_email(),
       cell: (info) => info.getValue(),
     }),
     columnHelper.accessor('role', {
-      header: 'Rol',
+      header: () => m.admin_users_col_role(),
       cell: (info) => <RoleBadge role={info.getValue()} />,
     }),
     columnHelper.accessor('created_at', {
-      header: 'Lid sinds',
+      header: () => m.admin_users_col_since(),
       cell: (info) => formatDutchDate(info.getValue()),
     }),
     columnHelper.display({
       id: 'acties',
-      header: 'Acties',
+      header: () => m.admin_users_col_actions(),
       cell: ({ row }) => {
         const user = row.original
         const isSelf = user.zitadel_user_id === currentUserId
@@ -216,8 +217,8 @@ function UsersPage() {
               onChange={(e) => handleRoleChange(user, e.target.value as Role)}
               className="rounded border border-[var(--color-border)] bg-transparent px-2 py-1 text-xs text-[var(--color-purple-deep)] outline-none focus:ring-2 focus:ring-[var(--color-ring)] disabled:opacity-50"
             >
-              <option value="admin">Beheerder</option>
-              <option value="member">Lid</option>
+              <option value="admin">{m.admin_users_role_admin()}</option>
+              <option value="member">{m.admin_users_role_member()}</option>
             </select>
             <Button
               variant="destructive"
@@ -225,7 +226,7 @@ function UsersPage() {
               disabled={isSelf}
               onClick={() => handleDelete(user)}
             >
-              Verwijderen
+              {m.admin_users_delete()}
             </Button>
           </div>
         )
@@ -244,10 +245,10 @@ function UsersPage() {
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-            Gebruikers
+            {m.admin_users_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            Beheer de gebruikers in jouw organisatie.
+            {m.admin_users_subtitle()}
           </p>
         </div>
         <Button
@@ -256,7 +257,7 @@ function UsersPage() {
             setInviteError(null)
           }}
         >
-          Gebruiker uitnodigen
+          {m.admin_users_invite_button()}
         </Button>
       </div>
 
@@ -267,7 +268,7 @@ function UsersPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    Voornaam
+                    {m.admin_users_field_first_name()}
                   </label>
                   <input
                     type="text"
@@ -281,7 +282,7 @@ function UsersPage() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    Achternaam
+                    {m.admin_users_field_last_name()}
                   </label>
                   <input
                     type="text"
@@ -297,7 +298,7 @@ function UsersPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    E-mailadres
+                    {m.admin_users_field_email()}
                   </label>
                   <input
                     type="email"
@@ -311,7 +312,7 @@ function UsersPage() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    Rol
+                    {m.admin_users_field_role()}
                   </label>
                   <select
                     value={inviteForm.role}
@@ -320,8 +321,8 @@ function UsersPage() {
                     }
                     className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                   >
-                    <option value="member">Lid</option>
-                    <option value="admin">Beheerder</option>
+                    <option value="member">{m.admin_users_role_member()}</option>
+                    <option value="admin">{m.admin_users_role_admin()}</option>
                   </select>
                 </div>
               </div>
@@ -330,7 +331,7 @@ function UsersPage() {
               )}
               <div className="flex gap-2">
                 <Button type="submit" disabled={inviteLoading}>
-                  {inviteLoading ? 'Versturen...' : 'Uitnodiging versturen'}
+                  {inviteLoading ? m.admin_users_invite_submit_loading() : m.admin_users_invite_submit()}
                 </Button>
                 <Button
                   type="button"
@@ -341,7 +342,7 @@ function UsersPage() {
                     setInviteError(null)
                   }}
                 >
-                  Annuleren
+                  {m.admin_users_cancel()}
                 </Button>
               </div>
             </form>
@@ -357,11 +358,11 @@ function UsersPage() {
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {loading ? (
             <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-              Bezig met laden...
+              {m.admin_users_loading()}
             </p>
           ) : users.length === 0 ? (
             <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-              Nog geen gebruikers.
+              {m.admin_users_empty()}
             </p>
           ) : (
             <table className="w-full text-sm">
