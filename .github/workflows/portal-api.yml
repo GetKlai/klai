@@ -38,3 +38,13 @@ jobs:
             ghcr.io/getklai/portal-api:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Deploy to core-01
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            docker pull ghcr.io/getklai/portal-api:latest
+            cd /opt/klai && docker compose up -d portal-api
