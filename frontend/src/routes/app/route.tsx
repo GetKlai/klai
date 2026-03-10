@@ -4,19 +4,8 @@ import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, FileText } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 
-const chatUrl = (() => {
-  const parts = window.location.hostname.split('.')
-  // e.g. "acme.getklai.com" → parts = ["acme", "getklai", "com"]
-  // chat URL = "chat.acme.getklai.com"
-  if (parts.length >= 3) {
-    return `https://chat.${window.location.hostname}`
-  }
-  // dev fallback
-  return 'http://localhost:3080'
-})()
-
 const appNav = [
-  { href: chatUrl, label: 'Chat', icon: MessageSquare },
+  { to: '/app/chat', label: 'Chat', icon: MessageSquare },
   { to: '/app/transcribe', label: 'Transcriberen', icon: Mic },
   { to: '/app/scribe', label: 'Scribe', icon: FileText },
 ]

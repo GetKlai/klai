@@ -99,6 +99,7 @@ chat.{slug}.{domain} {{
         dns hetzner {{env.HETZNER_AUTH_API_TOKEN}}
         propagation_delay 120s
     }}
+    header -X-Frame-Options
     reverse_proxy librechat-{slug}:3080
 }}
 """
