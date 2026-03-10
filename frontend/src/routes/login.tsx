@@ -169,7 +169,7 @@ function LoginPage() {
           <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto" />
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-6 my-auto">
           <h1 className="font-serif text-4xl font-bold leading-tight">
             {m.login_hero_heading()}
             <br />
@@ -265,7 +265,7 @@ function LoginPage() {
                   onClick={() => { setTotpStep(false); setTotpCode(''); setError(null) }}
                   className="text-[var(--color-purple-muted)] hover:underline"
                 >
-                  Terug
+                  {m.totp_back()}
                 </button>
               </p>
             </>

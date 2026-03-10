@@ -72,7 +72,7 @@ function ForgotPasswordPage() {
         <div>
           <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto" />
         </div>
-        <div className="space-y-4">
+        <div className="space-y-4 my-auto">
           <h1 className="font-serif text-4xl font-bold leading-tight">
             {m.forgot_hero_heading()}
             <br />

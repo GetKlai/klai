@@ -109,7 +109,7 @@ function SignupPage() {
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
         <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto" />
-        <div className="space-y-4">
+        <div className="space-y-4 my-auto">
           <h1 className="font-serif text-4xl font-bold leading-tight">
             {m.signup_hero_heading()}
             <br />

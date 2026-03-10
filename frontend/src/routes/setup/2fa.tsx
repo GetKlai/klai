@@ -93,7 +93,7 @@ function Setup2FAPage() {
           <img src="/klai-logo-white.svg" alt="Klai" className="h-8 w-auto" />
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-6 my-auto">
           <h1 className="font-serif text-4xl font-bold leading-tight">
             {m.setup_2fa_hero_heading()}
             <br />
