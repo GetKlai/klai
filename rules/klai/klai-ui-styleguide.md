@@ -194,7 +194,7 @@ Field pattern:
 - Form grids: `grid grid-cols-2 gap-4` for paired fields (name/name, role/language)
 - Wrap the form in a `<Card>` with `<CardContent className="pt-6">`
 - **Back/cancel: header only.** Ghost button with `<ArrowLeft>` icon, top-right of the page header. No cancel button in the form footer — two identical cancel controls harm screenreader users (button list navigation shows duplicate labels with no context).
-- **Form footer: primary action only.** Just the submit button, left-aligned, `pt-2`.
+- **Form footer: primary action only.** Just the submit button, **left-aligned**, `pt-2`. Left alignment matches the scan axis of the form fields above it (GOV.UK, GitHub Primer, PatternFly all require this). Right-alignment is for dialogs only — and we don't use those.
 
 ### Card sections
 
