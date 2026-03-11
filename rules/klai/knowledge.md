@@ -1,0 +1,42 @@
+# Klai Knowledge Base
+
+Klai maintains a living knowledge base of patterns and pitfalls, built up through experience.
+Always consult this before working on a relevant domain.
+
+## Shared knowledge (klai-claude/docs/)
+
+| Domain | Patterns | Pitfalls |
+|--------|----------|---------|
+| Process (AI dev workflow) | — | `klai-claude/docs/pitfalls/process.md` |
+| Git | — | `klai-claude/docs/pitfalls/git.md` |
+| DevOps (Coolify, Docker) | `klai-claude/docs/patterns/devops.md` | `klai-claude/docs/pitfalls/devops.md` |
+| Infrastructure (Hetzner, SOPS, env, DNS) | `klai-claude/docs/patterns/infrastructure.md` | `klai-claude/docs/pitfalls/infrastructure.md` |
+| Platform (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) | `klai-claude/docs/patterns/platform.md` | `klai-claude/docs/pitfalls/platform.md` |
+| Frontend (i18n, component patterns) | `klai-claude/docs/patterns/frontend.md` | — |
+| UI design system (colors, typography, buttons) | `klai-claude/docs/styleguide.md` (full) / auto-loaded via `klai-claude/rules/klai/klai-ui-styleguide.md` | — |
+
+## Project knowledge
+
+Each project may have its own `docs/patterns/` and `docs/pitfalls/` directories.
+Check the project's CLAUDE.md for the full list.
+
+## When to read these files
+
+- **Before making code changes** → read `pitfalls/process.md` — universal AI dev rules
+- **Before committing** → check `pitfalls/git.md`
+- **Deploying or changing infrastructure** → read `pitfalls/devops.md` and `pitfalls/infrastructure.md`
+- **Working on the AI stack** (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) → read `pitfalls/platform.md` and `patterns/platform.md`
+- **Managing secrets or env vars** → read `patterns/infrastructure.md` first
+- **Working on frontend UI** → styleguide rule auto-loads for `.astro`/`.tsx` files; full detail in `klai-claude/docs/styleguide.md`
+- **Working on a project-specific domain** → read that project's relevant domain files
+
+## When to add new entries
+
+- After any deployment incident or unexpected failure → run `/retro "what happened"`
+- After solving a tricky infrastructure problem → run `/retro "what worked"`
+- At the end of a SPEC cycle → the sync command will prompt for learnings
+
+## Index files
+
+- Patterns index: `klai-claude/docs/patterns.md`
+- Pitfalls index: `klai-claude/docs/pitfalls.md`
