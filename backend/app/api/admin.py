@@ -152,6 +152,18 @@ async def invite_user(
 
     zitadel_user_id: str = user_data["userId"]
 
+    try:
+        await zitadel.grant_user_role(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+            role="org:owner",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon projectrol niet toewijzen: {exc}",
+        ) from exc
+
     user_row = PortalUser(
         zitadel_user_id=zitadel_user_id,
         org_id=org.id,
