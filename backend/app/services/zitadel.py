@@ -207,6 +207,27 @@ class ZitadelClient:
             return None
         return result[0]["userId"]
 
+    async def update_user_language(self, org_id: str, user_id: str, language: str) -> None:
+        """Update the preferredLanguage on a Zitadel user profile."""
+        get_resp = await self._http.get(
+            f"/management/v1/users/{user_id}",
+            headers={"x-zitadel-orgid": org_id},
+        )
+        get_resp.raise_for_status()
+        profile = get_resp.json().get("user", {}).get("human", {}).get("profile", {})
+        put_resp = await self._http.put(
+            f"/management/v1/users/{user_id}/profile",
+            headers={"x-zitadel-orgid": org_id},
+            json={
+                "firstName": profile.get("firstName", ""),
+                "lastName": profile.get("lastName", ""),
+                "displayName": profile.get("displayName", ""),
+                "preferredLanguage": language,
+                "gender": profile.get("gender", "GENDER_UNSPECIFIED"),
+            },
+        )
+        put_resp.raise_for_status()
+
     async def send_password_reset(self, user_id: str) -> None:
         """Trigger Zitadel to send a password reset email to the user."""
         resp = await self._http.post(f"/v2/users/{user_id}/password_reset")

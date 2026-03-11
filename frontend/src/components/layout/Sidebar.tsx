@@ -1,7 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, type LucideIcon } from 'lucide-react'
+import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
@@ -183,6 +183,21 @@ export function Sidebar({ navItems }: SidebarProps) {
             </p>
           </div>
         )}
+        <Link
+          to="/app/account"
+          title={collapsed ? m.sidebar_account() : undefined}
+          className={cn(
+            'flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+            'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            collapsed ? 'justify-center' : 'gap-3'
+          )}
+          activeProps={{
+            className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
+          }}
+        >
+          <UserCircle size={16} strokeWidth={1.75} />
+          {!collapsed && m.sidebar_account()}
+        </Link>
         <button
           onClick={() => {
             // sendBeacon is guaranteed to fire even when the page navigates away,

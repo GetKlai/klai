@@ -18,6 +18,7 @@ class PortalOrg(Base):
     billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly", server_default="monthly")
     seats: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     slug: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    default_language: Mapped[str] = mapped_column(String(8), nullable=False, default="nl", server_default="nl")
     librechat_container: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)

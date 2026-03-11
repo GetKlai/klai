@@ -12,6 +12,9 @@ const oidcConfig = {
   scope: 'openid profile email',
   // Always call Zitadel end_session on logout (clears Zitadel session too)
   revokeTokensOnSignout: true,
+  // Silent renew is not needed: the portal always does a full redirect login.
+  // Disabling prevents any background re-authentication after signout.
+  automaticSilentRenew: false,
 }
 
 export function KlaiAuthProvider({ children }: { children: ReactNode }) {

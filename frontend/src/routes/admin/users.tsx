@@ -21,6 +21,7 @@ export const Route = createFileRoute('/admin/users')({
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Role = 'admin' | 'member'
+type Language = 'nl' | 'en'
 
 interface User {
   zitadel_user_id: string
@@ -28,6 +29,7 @@ interface User {
   first_name: string
   last_name: string
   role: Role
+  preferred_language: Language
   created_at: string
 }
 
@@ -36,6 +38,12 @@ interface InviteForm {
   last_name: string
   email: string
   role: Role
+  preferred_language: Language
+}
+
+interface OrgSettings {
+  name: string
+  default_language: Language
 }
 
 function formatDate(isoString: string): string {
@@ -75,6 +83,20 @@ function UsersPage() {
     last_name: '',
     email: '',
     role: 'member',
+    preferred_language: 'nl',
+  })
+
+  // Fetch org settings to use as default language in the invite form
+  const { data: orgSettings } = useQuery({
+    queryKey: ['admin-org-settings', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return null
+      return res.json() as Promise<OrgSettings>
+    },
+    enabled: !!token,
   })
 
   // Fetch users
@@ -139,7 +161,7 @@ function UsersPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
+      setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
       setShowInviteForm(false)
     },
   })
@@ -236,6 +258,12 @@ function UsersPage() {
         <Button
           onClick={() => {
             setShowInviteForm((prev) => !prev)
+            if (!showInviteForm) {
+              setInviteForm((prev) => ({
+                ...prev,
+                preferred_language: orgSettings?.default_language ?? 'nl',
+              }))
+            }
             inviteMutation.reset()
           }}
         >
@@ -277,7 +305,7 @@ function UsersPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-[var(--color-purple-deep)]">
                     {m.admin_users_field_email()}
@@ -307,6 +335,21 @@ function UsersPage() {
                     <option value="admin">{m.admin_users_role_admin()}</option>
                   </select>
                 </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
+                    {m.admin_users_field_language()}
+                  </label>
+                  <select
+                    value={inviteForm.preferred_language}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
+                    }
+                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                  >
+                    <option value="nl">{m.admin_users_language_nl()}</option>
+                    <option value="en">{m.admin_users_language_en()}</option>
+                  </select>
+                </div>
               </div>
               {inviteMutation.error && (
                 <p className="text-sm text-[var(--color-destructive)]">
@@ -326,7 +369,7 @@ function UsersPage() {
                   variant="outline"
                   onClick={() => {
                     setShowInviteForm(false)
-                    setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
+                    setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
                     inviteMutation.reset()
                   }}
                 >

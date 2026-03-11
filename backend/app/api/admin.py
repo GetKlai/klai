@@ -59,6 +59,7 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     role: Literal["admin", "member"]
+    preferred_language: Literal["nl", "en"]
     created_at: datetime
 
 
@@ -81,6 +82,15 @@ class InviteResponse(BaseModel):
 
 class RoleUpdateRequest(BaseModel):
     role: Literal["admin", "member"]
+
+
+class OrgSettingsOut(BaseModel):
+    name: str
+    default_language: Literal["nl", "en"]
+
+
+class OrgSettingsUpdate(BaseModel):
+    default_language: Literal["nl", "en"]
 
 
 class MessageResponse(BaseModel):
@@ -123,6 +133,7 @@ async def list_users(
             first_name=profile.get("firstName", ""),
             last_name=profile.get("lastName", ""),
             role=portal_user.role,
+            preferred_language=portal_user.preferred_language,
             created_at=portal_user.created_at,
         ))
 
@@ -205,6 +216,29 @@ async def update_user_role(
     await db.commit()
 
     return MessageResponse(message="Rol bijgewerkt.")
+
+
+@router.get("/settings", response_model=OrgSettingsOut)
+async def get_org_settings(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> OrgSettingsOut:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    return OrgSettingsOut(name=org.name, default_language=org.default_language)
+
+
+@router.patch("/settings", response_model=OrgSettingsOut)
+async def update_org_settings(
+    body: OrgSettingsUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> OrgSettingsOut:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    org.default_language = body.default_language
+    await db.commit()
+    return OrgSettingsOut(name=org.name, default_language=org.default_language)
 
 
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)

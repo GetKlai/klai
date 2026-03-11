@@ -27,6 +27,7 @@ import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
 import { Route as AppTranscribeRouteImport } from './routes/app/transcribe'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppChatRouteImport } from './routes/app/chat'
+import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminUsersRouteImport } from './routes/admin/users'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
@@ -123,6 +124,11 @@ const AppChatRoute = AppChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppAccountRoute = AppAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -164,6 +170,7 @@ export interface FileRoutesByFullPath {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/users': typeof AdminUsersRoute
+  '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/scribe': typeof AppScribeRoute
   '/app/transcribe': typeof AppTranscribeRoute
@@ -187,6 +194,7 @@ export interface FileRoutesByTo {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/users': typeof AdminUsersRoute
+  '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/scribe': typeof AppScribeRoute
   '/app/transcribe': typeof AppTranscribeRoute
@@ -213,6 +221,7 @@ export interface FileRoutesById {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/users': typeof AdminUsersRoute
+  '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/scribe': typeof AppScribeRoute
   '/app/transcribe': typeof AppTranscribeRoute
@@ -240,6 +249,7 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/settings'
     | '/admin/users'
+    | '/app/account'
     | '/app/chat'
     | '/app/scribe'
     | '/app/transcribe'
@@ -263,6 +273,7 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/settings'
     | '/admin/users'
+    | '/app/account'
     | '/app/chat'
     | '/app/scribe'
     | '/app/transcribe'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/settings'
     | '/admin/users'
+    | '/app/account'
     | '/app/chat'
     | '/app/scribe'
     | '/app/transcribe'
@@ -436,6 +448,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppScribeRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/account': {
+      id: '/app/account'
+      path: '/account'
+      fullPath: '/app/account'
+      preLoaderRoute: typeof AppAccountRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/chat': {
       id: '/app/chat'
       path: '/chat'
@@ -514,6 +533,7 @@ const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
 )
 
 interface AppRouteRouteChildren {
+  AppAccountRoute: typeof AppAccountRoute
   AppChatRoute: typeof AppChatRoute
   AppScribeRoute: typeof AppScribeRoute
   AppTranscribeRoute: typeof AppTranscribeRoute
@@ -521,6 +541,7 @@ interface AppRouteRouteChildren {
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
+  AppAccountRoute: AppAccountRoute,
   AppChatRoute: AppChatRoute,
   AppScribeRoute: AppScribeRoute,
   AppTranscribeRoute: AppTranscribeRoute,
