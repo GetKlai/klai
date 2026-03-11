@@ -171,7 +171,7 @@ function InviteUserPage() {
               </p>
             )}
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex justify-between pt-2">
               <Button type="submit" disabled={inviteMutation.isPending}>
                 {inviteMutation.isPending
                   ? m.admin_users_invite_submit_loading()
