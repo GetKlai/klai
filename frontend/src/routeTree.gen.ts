@@ -17,6 +17,7 @@ import { Route as LoggedOutRouteImport } from './routes/logged-out'
 import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as AppRouteRouteImport } from './routes/app/route'
 import { Route as AdminRouteRouteImport } from './routes/admin/route'
+import { Route as LocaleRouteRouteImport } from './routes/$locale/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
@@ -29,6 +30,8 @@ import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AdminUsersRouteImport } from './routes/admin/users'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
+import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
+import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
@@ -68,6 +71,11 @@ const AppRouteRoute = AppRouteRouteImport.update({
 const AdminRouteRoute = AdminRouteRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LocaleRouteRoute = LocaleRouteRouteImport.update({
+  id: '/$locale',
+  path: '/$locale',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -130,9 +138,20 @@ const AdminBillingRoute = AdminBillingRouteImport.update({
   path: '/billing',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const LocaleSignupRoute = LocaleSignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => LocaleRouteRoute,
+} as any)
+const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
+  id: '/password/forgot',
+  path: '/password/forgot',
+  getParentRoute: () => LocaleRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/$locale': typeof LocaleRouteRouteWithChildren
   '/admin': typeof AdminRouteRouteWithChildren
   '/app': typeof AppRouteRouteWithChildren
   '/callback': typeof CallbackRoute
@@ -141,6 +160,7 @@ export interface FileRoutesByFullPath {
   '/provisioning': typeof ProvisioningRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
+  '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -152,15 +172,18 @@ export interface FileRoutesByFullPath {
   '/setup/2fa': typeof Setup2faRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/$locale/password/forgot': typeof LocalePasswordForgotRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/$locale': typeof LocaleRouteRouteWithChildren
   '/callback': typeof CallbackRoute
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
   '/provisioning': typeof ProvisioningRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
+  '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -172,10 +195,12 @@ export interface FileRoutesByTo {
   '/setup/2fa': typeof Setup2faRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
+  '/$locale/password/forgot': typeof LocalePasswordForgotRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/$locale': typeof LocaleRouteRouteWithChildren
   '/admin': typeof AdminRouteRouteWithChildren
   '/app': typeof AppRouteRouteWithChildren
   '/callback': typeof CallbackRoute
@@ -184,6 +209,7 @@ export interface FileRoutesById {
   '/provisioning': typeof ProvisioningRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
+  '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -195,11 +221,13 @@ export interface FileRoutesById {
   '/setup/2fa': typeof Setup2faRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/$locale/password/forgot': typeof LocalePasswordForgotRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/$locale'
     | '/admin'
     | '/app'
     | '/callback'
@@ -208,6 +236,7 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/signup'
     | '/verify'
+    | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
     | '/admin/users'
@@ -219,15 +248,18 @@ export interface FileRouteTypes {
     | '/setup/2fa'
     | '/admin/'
     | '/app/'
+    | '/$locale/password/forgot'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/$locale'
     | '/callback'
     | '/logged-out'
     | '/login'
     | '/provisioning'
     | '/signup'
     | '/verify'
+    | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
     | '/admin/users'
@@ -239,9 +271,11 @@ export interface FileRouteTypes {
     | '/setup/2fa'
     | '/admin'
     | '/app'
+    | '/$locale/password/forgot'
   id:
     | '__root__'
     | '/'
+    | '/$locale'
     | '/admin'
     | '/app'
     | '/callback'
@@ -250,6 +284,7 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/signup'
     | '/verify'
+    | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
     | '/admin/users'
@@ -261,10 +296,12 @@ export interface FileRouteTypes {
     | '/setup/2fa'
     | '/admin/'
     | '/app/'
+    | '/$locale/password/forgot'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LocaleRouteRoute: typeof LocaleRouteRouteWithChildren
   AdminRouteRoute: typeof AdminRouteRouteWithChildren
   AppRouteRoute: typeof AppRouteRouteWithChildren
   CallbackRoute: typeof CallbackRoute
@@ -334,6 +371,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$locale': {
+      id: '/$locale'
+      path: '/$locale'
+      fullPath: '/$locale'
+      preLoaderRoute: typeof LocaleRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -420,8 +464,36 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminBillingRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/$locale/signup': {
+      id: '/$locale/signup'
+      path: '/signup'
+      fullPath: '/$locale/signup'
+      preLoaderRoute: typeof LocaleSignupRouteImport
+      parentRoute: typeof LocaleRouteRoute
+    }
+    '/$locale/password/forgot': {
+      id: '/$locale/password/forgot'
+      path: '/password/forgot'
+      fullPath: '/$locale/password/forgot'
+      preLoaderRoute: typeof LocalePasswordForgotRouteImport
+      parentRoute: typeof LocaleRouteRoute
+    }
   }
 }
+
+interface LocaleRouteRouteChildren {
+  LocaleSignupRoute: typeof LocaleSignupRoute
+  LocalePasswordForgotRoute: typeof LocalePasswordForgotRoute
+}
+
+const LocaleRouteRouteChildren: LocaleRouteRouteChildren = {
+  LocaleSignupRoute: LocaleSignupRoute,
+  LocalePasswordForgotRoute: LocalePasswordForgotRoute,
+}
+
+const LocaleRouteRouteWithChildren = LocaleRouteRoute._addFileChildren(
+  LocaleRouteRouteChildren,
+)
 
 interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
@@ -461,6 +533,7 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LocaleRouteRoute: LocaleRouteRouteWithChildren,
   AdminRouteRoute: AdminRouteRouteWithChildren,
   AppRouteRoute: AppRouteRouteWithChildren,
   CallbackRoute: CallbackRoute,

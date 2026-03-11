@@ -5,6 +5,7 @@ import { ArrowRight, Lock, Shield } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
+import { useLocale } from '@/lib/locale'
 
 type SearchParams = {
   authRequest?: string
@@ -20,6 +21,7 @@ export const Route = createFileRoute('/login')({
 function LoginPage() {
   const { authRequest: authRequestId } = Route.useSearch()
   const navigate = useNavigate()
+  const { locale } = useLocale()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -274,13 +276,18 @@ function LoginPage() {
 
           <div className="flex items-center justify-between text-center text-xs text-[var(--color-muted-foreground)]">
             <Link
-              to="/password/forgot"
+              to="/$locale/password/forgot"
+              params={{ locale }}
               search={email ? { email } : {}}
               className="text-[var(--color-purple-muted)] hover:underline"
             >
               {m.login_forgot_password()}
             </Link>
-            <Link to="/signup" className="text-[var(--color-purple-muted)] hover:underline">
+            <Link
+              to="/$locale/signup"
+              params={{ locale }}
+              className="text-[var(--color-purple-muted)] hover:underline"
+            >
               {m.login_no_account()}
             </Link>
           </div>
