@@ -2,7 +2,8 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ArrowLeft } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -88,17 +89,18 @@ function InviteUserPage() {
 
   return (
     <div className="p-8 max-w-lg">
-      <div className="mb-6">
+      <div className="flex items-center justify-between mb-6">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.admin_users_invite_button()}
         </h1>
+        <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.admin_users_cancel()}
+        </Button>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>{m.admin_users_invite_button()}</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <form id="invite-form" onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -169,14 +171,14 @@ function InviteUserPage() {
               </p>
             )}
 
-            <div className="flex justify-end gap-3 pt-2">
-              <Button type="button" variant="outline" onClick={handleCancel}>
-                {m.admin_users_cancel()}
-              </Button>
+            <div className="flex gap-3 pt-2">
               <Button type="submit" disabled={inviteMutation.isPending}>
                 {inviteMutation.isPending
                   ? m.admin_users_invite_submit_loading()
                   : m.admin_users_invite_submit()}
+              </Button>
+              <Button type="button" variant="outline" onClick={handleCancel}>
+                {m.admin_users_cancel()}
               </Button>
             </div>
           </form>
