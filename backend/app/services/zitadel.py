@@ -219,19 +219,10 @@ class ZitadelClient:
 
     async def has_totp(self, user_id: str, org_id: str | None = None) -> bool:
         """Return True if the user has a verified TOTP factor registered."""
-        headers: dict[str, str] = {}
-        if org_id:
-            headers["x-zitadel-orgid"] = org_id
-        resp = await self._http.get(
-            f"/management/v1/users/{user_id}/auth_factors",
-            headers=headers,
-        )
+        resp = await self._http.get(f"/v2/users/{user_id}/authentication_methods")
         resp.raise_for_status()
-        factors = resp.json().get("result", [])
-        return any(
-            f.get("state") == "AUTH_FACTOR_STATE_READY" and f.get("otp") is not None
-            for f in factors
-        )
+        methods = resp.json().get("authMethodTypes", [])
+        return "AUTHENTICATION_METHOD_TYPE_TOTP" in methods
 
     async def update_session_with_totp(
         self, session_id: str, session_token: str, code: str
@@ -286,7 +277,7 @@ class ZitadelClient:
         return resp.json()  # contains appId, clientId, clientSecret
 
     async def add_portal_redirect_uri(self, slug: str) -> None:
-        """Add {slug}.getklai.com/callback to the portal OIDC app's allowed redirect URIs."""
+        """Add {slug}.getklai.com/callback and /logged-out to the portal OIDC app's allowed URIs."""
         if not settings.zitadel_portal_app_id:
             return  # not configured yet, skip
         # GET current config (full app endpoint includes oidcConfig)
@@ -295,15 +286,18 @@ class ZitadelClient:
         )
         get_resp.raise_for_status()
         current = get_resp.json().get("app", {}).get("oidcConfig", {})
-        existing_uris: list[str] = current.get("redirectUris", [])
-        new_uri = f"https://{slug}.{settings.domain}/callback"
-        if new_uri in existing_uris:
+        existing_redirect: list[str] = current.get("redirectUris", [])
+        existing_logout: list[str] = current.get("postLogoutRedirectUris", [])
+        new_callback = f"https://{slug}.{settings.domain}/callback"
+        new_logged_out = f"https://{slug}.{settings.domain}/logged-out"
+        if new_callback in existing_redirect and new_logged_out in existing_logout:
             return
-        updated_uris = existing_uris + [new_uri]
+        updated_redirect = existing_redirect + ([new_callback] if new_callback not in existing_redirect else [])
+        updated_logout = existing_logout + ([new_logged_out] if new_logged_out not in existing_logout else [])
         # PUT updated config — correct path is oidc_config, not oidc
         put_resp = await self._http.put(
             f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc_config",
-            json={**current, "redirectUris": updated_uris},
+            json={**current, "redirectUris": updated_redirect, "postLogoutRedirectUris": updated_logout},
         )
         put_resp.raise_for_status()
 
