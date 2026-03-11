@@ -10,6 +10,10 @@ import {
 import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '@/components/ui/dialog'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -77,7 +81,7 @@ function UsersPage() {
   const currentUserId = auth.user?.profile?.sub
   const queryClient = useQueryClient()
 
-  const [showInviteForm, setShowInviteForm] = useState(false)
+  const [showInviteDialog, setShowInviteDialog] = useState(false)
   const [inviteForm, setInviteForm] = useState<InviteForm>({
     first_name: '',
     last_name: '',
@@ -162,7 +166,7 @@ function UsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] })
       setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
-      setShowInviteForm(false)
+      setShowInviteDialog(false)
     },
   })
 
@@ -175,6 +179,21 @@ function UsersPage() {
   function handleInvite(e: React.FormEvent) {
     e.preventDefault()
     inviteMutation.mutate(inviteForm)
+  }
+
+  function handleOpenInvite() {
+    setInviteForm((prev) => ({
+      ...prev,
+      preferred_language: orgSettings?.default_language ?? 'nl',
+    }))
+    inviteMutation.reset()
+    setShowInviteDialog(true)
+  }
+
+  function handleCloseInvite() {
+    setShowInviteDialog(false)
+    setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
+    inviteMutation.reset()
   }
 
   const pageError =
@@ -211,15 +230,15 @@ function UsersPage() {
           roleMutation.variables?.user.zitadel_user_id === user.zitadel_user_id
         return (
           <div className="flex items-center gap-2">
-            <select
+            <Select
               value={user.role}
               disabled={isSelf || isChangingRole}
               onChange={(e) => roleMutation.mutate({ user, newRole: e.target.value as Role })}
-              className="rounded border border-[var(--color-border)] bg-transparent px-2 py-1 text-xs text-[var(--color-purple-deep)] outline-none focus:ring-2 focus:ring-[var(--color-ring)] disabled:opacity-50"
+              className="w-auto px-2 py-1 text-xs"
             >
               <option value="admin">{m.admin_users_role_admin()}</option>
               <option value="member">{m.admin_users_role_member()}</option>
-            </select>
+            </Select>
             <Button
               variant="destructive"
               size="sm"
@@ -255,131 +274,10 @@ function UsersPage() {
             )}
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setShowInviteForm((prev) => !prev)
-            if (!showInviteForm) {
-              setInviteForm((prev) => ({
-                ...prev,
-                preferred_language: orgSettings?.default_language ?? 'nl',
-              }))
-            }
-            inviteMutation.reset()
-          }}
-        >
+        <Button onClick={handleOpenInvite}>
           {m.admin_users_invite_button()}
         </Button>
       </div>
-
-      {showInviteForm && (
-        <Card>
-          <CardContent className="pt-6">
-            <form onSubmit={handleInvite} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {m.admin_users_field_first_name()}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={inviteForm.first_name}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))
-                    }
-                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {m.admin_users_field_last_name()}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={inviteForm.last_name}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))
-                    }
-                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {m.admin_users_field_email()}
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={inviteForm.email}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, email: e.target.value }))
-                    }
-                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {m.admin_users_field_role()}
-                  </label>
-                  <select
-                    value={inviteForm.role}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, role: e.target.value as Role }))
-                    }
-                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-                  >
-                    <option value="member">{m.admin_users_role_member()}</option>
-                    <option value="admin">{m.admin_users_role_admin()}</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {m.admin_users_field_language()}
-                  </label>
-                  <select
-                    value={inviteForm.preferred_language}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
-                    }
-                    className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-                  >
-                    <option value="nl">{m.admin_users_language_nl()}</option>
-                    <option value="en">{m.admin_users_language_en()}</option>
-                  </select>
-                </div>
-              </div>
-              {inviteMutation.error && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {inviteMutation.error instanceof Error
-                    ? inviteMutation.error.message
-                    : m.admin_users_error_invite_generic()}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <Button type="submit" disabled={inviteMutation.isPending}>
-                  {inviteMutation.isPending
-                    ? m.admin_users_invite_submit_loading()
-                    : m.admin_users_invite_submit()}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setShowInviteForm(false)
-                    setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
-                    inviteMutation.reset()
-                  }}
-                >
-                  {m.admin_users_cancel()}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      )}
 
       {pageError && (
         <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
@@ -436,6 +334,119 @@ function UsersPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={showInviteDialog} onClose={handleCloseInvite}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{m.admin_users_invite_button()}</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            <form id="invite-form" onSubmit={handleInvite} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-first-name">
+                    {m.admin_users_field_first_name()}
+                  </Label>
+                  <Input
+                    id="invite-first-name"
+                    type="text"
+                    required
+                    value={inviteForm.first_name}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-last-name">
+                    {m.admin_users_field_last_name()}
+                  </Label>
+                  <Input
+                    id="invite-last-name"
+                    type="text"
+                    required
+                    value={inviteForm.last_name}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-email">
+                  {m.admin_users_field_email()}
+                </Label>
+                <Input
+                  id="invite-email"
+                  type="email"
+                  required
+                  value={inviteForm.email}
+                  onChange={(e) =>
+                    setInviteForm((prev) => ({ ...prev, email: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-role">
+                    {m.admin_users_field_role()}
+                  </Label>
+                  <Select
+                    id="invite-role"
+                    value={inviteForm.role}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, role: e.target.value as Role }))
+                    }
+                  >
+                    <option value="member">{m.admin_users_role_member()}</option>
+                    <option value="admin">{m.admin_users_role_admin()}</option>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-language">
+                    {m.admin_users_field_language()}
+                  </Label>
+                  <Select
+                    id="invite-language"
+                    value={inviteForm.preferred_language}
+                    onChange={(e) =>
+                      setInviteForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
+                    }
+                  >
+                    <option value="nl">{m.admin_users_language_nl()}</option>
+                    <option value="en">{m.admin_users_language_en()}</option>
+                  </Select>
+                </div>
+              </div>
+              {inviteMutation.error && (
+                <p className="text-sm text-[var(--color-destructive)]">
+                  {inviteMutation.error instanceof Error
+                    ? inviteMutation.error.message
+                    : m.admin_users_error_invite_generic()}
+                </p>
+              )}
+            </form>
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCloseInvite}
+            >
+              {m.admin_users_cancel()}
+            </Button>
+            <Button
+              type="submit"
+              form="invite-form"
+              disabled={inviteMutation.isPending}
+            >
+              {inviteMutation.isPending
+                ? m.admin_users_invite_submit_loading()
+                : m.admin_users_invite_submit()}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

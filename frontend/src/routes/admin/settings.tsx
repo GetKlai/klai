@@ -4,6 +4,8 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -80,18 +82,19 @@ function AdminSettingsPage() {
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
             <>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-[var(--color-purple-deep)]">
+              <div className="space-y-1.5">
+                <Label htmlFor="settings-language">
                   {m.admin_settings_language_label()}
-                </label>
-                <select
+                </Label>
+                <Select
+                  id="settings-language"
                   value={selectedLang}
                   onChange={(e) => setSelectedLang(e.target.value as 'nl' | 'en')}
-                  className="w-full max-w-xs rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                  className="max-w-xs"
                 >
                   <option value="nl">{m.admin_settings_language_nl()}</option>
                   <option value="en">{m.admin_settings_language_en()}</option>
-                </select>
+                </Select>
               </div>
               {saveMutation.error && (
                 <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
