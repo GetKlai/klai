@@ -147,17 +147,19 @@ OPENID_USERNAME_CLAIM=preferred_username
 
 ## platform-librechat-logout-no-zitadel-session
 
-**Severity:** HIGH
+**Severity:** HIGH — **RESOLVED** (2026-03-11)
 
 **Trigger:** Implementing logout in the customer portal
 
 LibreChat logout does NOT call the Zitadel `end_session` endpoint. After LibreChat logout, the Zitadel session remains active. Users can immediately log back in without re-authenticating.
 
-**Prevention:**
-Build a custom logout flow that:
-1. Logs out of LibreChat
-2. Redirects to the Zitadel end-session endpoint with `post_logout_redirect_uri`
-3. Then redirects back to the portal login
+**Resolution (implemented):**
+The portal sidebar logout:
+1. Awaits `POST /api/auth/logout` (clears klai_sso cookie + SSO cache)
+2. Calls `auth.signoutRedirect()` (react-oidc-context) — redirects to Zitadel end-session endpoint
+3. Zitadel redirects to `post_logout_redirect_uri: /logged-out`
+
+**Race condition fix:** The `fetch` to `/api/auth/logout` is awaited before `signoutRedirect()`. Without the await, the browser navigates away before the logout request completes.
 
 **Source:** `platform-beslissingen.md` — Auth: Zitadel + LibreChat + FastAPI + React SPA
 
@@ -409,6 +411,116 @@ handle @grafana {
 Caddy v2.6+ deprecated `basicauth` in favour of `basic_auth` (with underscore). Using `basicauth` still works but logs a warning on every startup. Some future Caddy version may remove it.
 
 **Fix:** Replace `basicauth` with `basic_auth` throughout the Caddyfile.
+
+---
+
+## platform-zitadel-project-grant-vs-user-grant
+
+**Severity:** HIGH
+
+**Trigger:** Assigning a role to a user in Zitadel (e.g. `org:owner` at signup)
+
+Zitadel has two separate grant APIs that do completely different things:
+
+| API | Purpose |
+|-----|---------|
+| `POST /management/v1/projects/{projectId}/grants` | Grants a project to another **org** — not for individual users |
+| `POST /management/v1/users/{userId}/grants` | Assigns a role to a **specific user** — this is what you want |
+
+**Wrong (creates an org-level project grant, user gets no role):**
+```python
+await http.post(
+    f"/management/v1/projects/{project_id}/grants",
+    json={"grantedOrgId": org_id, "roleKeys": ["org:owner"]},
+)
+```
+
+**Correct (assigns role to the user, role appears in their token):**
+```python
+await http.post(
+    f"/management/v1/users/{user_id}/grants",
+    headers={"x-zitadel-orgid": org_id},
+    json={
+        "projectId": settings.zitadel_project_id,
+        "roleKeys": ["org:owner"],
+    },
+)
+```
+
+**Also required:** The role (`org:owner`) must be defined on the Zitadel project before it can be assigned.
+
+**Symptom when wrong:** User is created, token is issued, but `urn:zitadel:iam:org:project:roles` is empty in the userinfo response. The portal's `klai:isAdmin` flag is never set.
+
+**Source:** `klai-portal/backend/app/services/zitadel.py` — `grant_user_role()`
+
+---
+
+## platform-zitadel-resourceowner-claim-unreliable
+
+**Severity:** HIGH
+
+**Trigger:** Using `urn:zitadel:iam:user:resourceowner:id` from userinfo to look up the user's organization in PostgreSQL
+
+The `urn:zitadel:iam:user:resourceowner:id` claim contains the Zitadel org ID of the **org that owns the user** — but this claim is not always present in the userinfo response, and relying on it creates a fragile coupling to Zitadel's internal data model.
+
+**Wrong:**
+```python
+info = await zitadel.get_userinfo(token)
+zitadel_org_id = info.get("urn:zitadel:iam:user:resourceowner:id")
+# Look up portal_orgs directly by zitadel_org_id
+org = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
+```
+
+**Correct — use `sub` → `portal_users` → `portal_orgs`:**
+```python
+info = await zitadel.get_userinfo(token)
+zitadel_user_id = info.get("sub")  # Always present, stable
+result = await db.execute(
+    select(PortalOrg)
+    .join(PortalUser, PortalUser.org_id == PortalOrg.id)
+    .where(PortalUser.zitadel_user_id == zitadel_user_id)
+)
+org = result.scalar_one_or_none()
+```
+
+**Why:** `sub` is the OIDC subject claim — always present and stable. The `portal_users` table is the authoritative mapping of Zitadel user → portal org. This also means user-org membership is controlled by the portal, not implicitly derived from where a user lives in Zitadel.
+
+**Source:** `klai-portal/backend/app/api/billing.py`, `admin.py` — `_get_org()`, `_get_caller_org()`
+
+---
+
+## platform-sso-cache-single-instance
+
+**Severity:** HIGH
+
+**Trigger:** Scaling portal-api to multiple instances, or deploying a second instance for staging
+
+The `_sso_cache` and `_pending_totp` caches in `portal-api/app/api/auth.py` are **in-memory Python dicts**. They are not shared between processes or containers.
+
+**What goes wrong:**
+- User logs in via instance A → SSO token stored in A's memory
+- Next request routed to instance B → B has no record of the token → 401 Unauthorized
+- Result: users get logged out randomly under load, or cannot complete TOTP login
+
+**Current state:** Safe because portal-api runs as a single container on core-01. There is no horizontal scaling and no blue/green deployment.
+
+**When this becomes a problem:**
+- Adding a second portal-api replica (load balancing)
+- Blue/green deploy where both containers are briefly live
+- Moving to a multi-instance setup
+
+**Resolution when needed:**
+Replace in-memory caches with Redis:
+```python
+# Replace TTLCache with Redis-backed cache
+# _sso_cache.put(value) → redis.setex(token, ttl, json.dumps(value))
+# _sso_cache.get(token) → json.loads(redis.get(token))
+# _sso_cache.pop(token) → redis.delete(token)
+```
+
+Redis is already in the stack on `klai-net-redis`. Add portal-api to that network.
+
+**Source:** `klai-portal/backend/app/api/auth.py` — TTLCache, `_sso_cache`, `_pending_totp`
 
 ---
 
