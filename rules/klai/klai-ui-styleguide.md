@@ -156,9 +156,61 @@ Hover:  #2D1B69
 
 ---
 
+---
+
+## Portal admin UI
+
+> Applies to `klai-portal/frontend/src/routes/admin/` and `klai-portal/frontend/src/routes/app/`.
+
+### Form fields
+
+Always use the shared primitives from `components/ui/`:
+
+```tsx
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
+```
+
+Field pattern:
+```tsx
+<div className="space-y-1.5">
+  <Label htmlFor="field-id">Label text</Label>
+  <Input id="field-id" type="text" ... />
+</div>
+```
+
+- Label color: `var(--color-purple-deep)`, `text-sm font-medium`
+- Field text color: `var(--color-purple-deep)`
+- Border: `var(--color-border)`, `rounded-md`
+- Focus: `ring-2 ring-[var(--color-ring)]`
+- Standalone narrow selects (settings/account): add `className="max-w-xs"` on the `<Select>`
+
+### Add/edit forms
+
+- **Always use `<Dialog>`** from `components/ui/dialog.tsx`, never an inline expanding card
+- Dialog max-width: `max-w-md` (default)
+- Form grids: `grid grid-cols-2 gap-4` for paired fields (name/name, role/language)
+- Submit button goes in `<DialogFooter>`, linked via `form="form-id"`
+
+### Card sections
+
+- Use `<CardHeader>` + `<CardTitle>` + `<CardDescription>` for every named card section
+- Use `<CardContent>` with `space-y-4` for the field group
+- Exception: data tables use `<CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">` to flush the table edges
+
+### Tables
+
+- Inside `<Card>` with `<CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">`
+- `<thead>` rows: `px-6 py-3 text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide`
+- `<tbody>` rows: zebra striping with `var(--color-card)` / `var(--color-secondary)`
+- Action controls in table rows use compact size: `px-2 py-1 text-xs`
+
+---
+
 ## See Also
 
 - Full reference with spacing, layout, border radius, shadows, sidebar and portal tokens: `klai-claude/docs/styleguide.md`
 - [Brand colors](https://www.getklai.com/company/brand-colors) - canonical color reference
 - [rules/gtm/klai-brand-voice.md](../gtm/klai-brand-voice.md) - tone and writing style
-- [patterns/frontend.md](../../docs/patterns/frontend.md) - technical frontend patterns (i18n, etc.)
+- [patterns/frontend.md](../../docs/patterns/frontend.md) - technical frontend patterns (i18n, UI components)
