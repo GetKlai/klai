@@ -46,7 +46,7 @@ $COMPOSE up -d whisper-server scribe-api
 echo ""
 echo "==> Waiting for whisper-server to become ready (model warmup takes 30-60s)..."
 for i in $(seq 1 30); do
-    if $COMPOSE exec whisper-server curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+    if $COMPOSE exec whisper-server python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" > /dev/null 2>&1; then
         echo "    whisper-server is ready."
         break
     fi
@@ -56,11 +56,22 @@ done
 
 echo ""
 echo "==> Health check..."
-$COMPOSE exec scribe-api curl --connect-timeout 2 --max-time 3 -sf http://localhost:8020/health && echo "scribe-api OK"
+$COMPOSE exec whisper-server python -c "
+import urllib.request, json
+r = urllib.request.urlopen('http://localhost:8000/health')
+print('whisper-server:', json.loads(r.read()))
+"
+docker exec klai-core-caddy-1 wget -qO- http://scribe-api:8020/health && echo " [scribe-api via Caddy OK]" || \
+    $COMPOSE exec -T scribe-api python -c "
+import urllib.request, json
+r = urllib.request.urlopen('http://localhost:8020/health')
+print('scribe-api:', json.loads(r.read()))
+"
 
 echo ""
-echo "==> Reloading Caddy to activate the /scribe/* route..."
-docker exec klai-core-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+echo "==> Restarting Caddy to activate the /scribe/* route..."
+echo "    (admin API is off, so reload not available; restart is safe)"
+$COMPOSE restart caddy
 
 echo ""
 echo "Done. Scribe is live at https://{your-slug}.getklai.com/scribe/v1/"
