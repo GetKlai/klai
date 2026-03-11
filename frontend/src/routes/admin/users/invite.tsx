@@ -171,14 +171,11 @@ function InviteUserPage() {
               </p>
             )}
 
-            <div className="flex justify-between pt-2">
+            <div className="pt-2">
               <Button type="submit" disabled={inviteMutation.isPending}>
                 {inviteMutation.isPending
                   ? m.admin_users_invite_submit_loading()
                   : m.admin_users_invite_submit()}
-              </Button>
-              <Button type="button" variant="outline" onClick={handleCancel}>
-                {m.admin_users_cancel()}
               </Button>
             </div>
           </form>
