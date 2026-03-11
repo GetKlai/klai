@@ -184,7 +184,10 @@ export function Sidebar({ navItems }: SidebarProps) {
           </div>
         )}
         <button
-          onClick={() => auth.signoutRedirect()}
+          onClick={() => {
+            fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+            auth.signoutRedirect()
+          }}
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
             'flex w-full items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors',

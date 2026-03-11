@@ -10,10 +10,10 @@ function LoginPage() {
   const auth = useAuth()
 
   useEffect(() => {
-    if (!auth.isLoading && !auth.isAuthenticated) {
+    if (!auth.isLoading && !auth.isAuthenticated && auth.activeNavigator !== 'signoutRedirect') {
       auth.signinRedirect()
     }
-  }, [auth.isLoading, auth.isAuthenticated])
+  }, [auth.isLoading, auth.isAuthenticated, auth.activeNavigator])
 
   if (auth.isAuthenticated) {
     const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'
