@@ -266,6 +266,99 @@ OPENAI_REVERSE_PROXY=http://litellm:4000/v1
 
 ---
 
+## platform-portal-users-mapping-only
+
+**When to use:** Storing user membership in the portal database
+
+`portal_users` is a **pure mapping table** — it maps `zitadel_user_id` to `org_id` and records when the user joined. Identity details (email, first name, last name) are always fetched live from Zitadel, never stored in PostgreSQL.
+
+```python
+# portal.py — correct model
+class PortalUser(Base):
+    __tablename__ = "portal_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zitadel_user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    org: Mapped["PortalOrg"] = relationship(back_populates="users")
+    # No email, first_name, last_name — those live in Zitadel
+```
+
+**Listing users with live identity (admin.py pattern):**
+```python
+# 1. Get portal membership records (gives us org_id + created_at)
+portal_users = {u.zitadel_user_id: u for u in db_users}
+
+# 2. Fetch live identity from Zitadel
+zitadel_users = await zitadel.list_org_users(org.zitadel_org_id)
+
+# 3. Merge — only return users that are in our portal
+for z in zitadel_users:
+    uid = z.get("id", "")
+    if uid not in portal_users:
+        continue  # skip service accounts or users not in our portal
+    profile = z.get("human", {}).get("profile", {})
+    email_obj = z.get("human", {}).get("email", {})
+    users_out.append(UserOut(
+        zitadel_user_id=uid,
+        email=email_obj.get("email", ""),
+        first_name=profile.get("firstName", ""),
+        last_name=profile.get("lastName", ""),
+        created_at=portal_users[uid].created_at,
+    ))
+```
+
+**Why mapping-only:**
+- No drift: identity data cannot go stale (name/email changes in Zitadel are immediately reflected)
+- Single source of truth: Zitadel owns identity, portal owns membership
+- Simpler: no sync job, no update-on-login logic needed
+
+**See also:** `pitfalls/platform.md#platform-zitadel-resourceowner-claim-unreliable`
+
+---
+
+## platform-zitadel-user-role-assignment
+
+**When to use:** Assigning a Zitadel project role to a user (e.g. at signup or invite)
+
+After creating a user in Zitadel, you must assign a role via a **user grant** for the role to appear in their token. The role must already exist on the Zitadel project.
+
+```python
+# zitadel.py
+async def grant_user_role(self, org_id: str, user_id: str, role: str) -> None:
+    """Assign a project role to a specific user (user grant)."""
+    resp = await self._http.post(
+        f"/management/v1/users/{user_id}/grants",
+        headers={"x-zitadel-orgid": org_id},
+        json={
+            "projectId": settings.zitadel_project_id,
+            "roleKeys": [role],
+        },
+    )
+    resp.raise_for_status()
+```
+
+**Usage in signup flow:**
+```python
+# After creating user in Zitadel:
+await zitadel.grant_user_role(
+    org_id=zitadel_org_id,
+    user_id=zitadel_user_id,
+    role="org:owner",
+)
+```
+
+**Prerequisites (one-time Zitadel setup):**
+1. Role must be defined on the project (e.g. `org:owner`, `org:admin`)
+2. Project must have "Return user roles during authentication" enabled
+3. Role appears in token as `urn:zitadel:iam:org:project:roles`
+
+**See also:** `pitfalls/platform.md#platform-zitadel-project-grant-vs-user-grant`
+
+---
+
 ## platform-hetzner-dns-wildcard-tls
 
 **When to use:** Building Caddy for wildcard TLS on `*.getklai.com`

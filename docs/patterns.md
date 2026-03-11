@@ -15,6 +15,7 @@
 | [patterns/devops.md](patterns/devops.md) | Coolify deployments, Docker, service management, CI/CD |
 | [patterns/infrastructure.md](patterns/infrastructure.md) | Hetzner, SOPS secrets, env management, DNS, SSH |
 | [patterns/platform.md](patterns/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, MongoDB per-tenant |
+| [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions |
 
 ## Project Pattern Files
 
@@ -42,6 +43,10 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[ssh-server-access](patterns/infrastructure.md#ssh-server-access)** - Connect to Hetzner servers
 - **[dns-propagation-check](patterns/infrastructure.md#dns-propagation-check)** - Verify DNS changes
 
+### Frontend
+
+- **[i18n-paraglide](patterns/frontend.md#i18n-paraglide)** - i18n with Paraglide JS (React + Vite + TanStack Router)
+
 ### Platform (AI Stack)
 
 - **[platform-litellm-vllm-config](patterns/platform.md#platform-litellm-vllm-config)** - Full LiteLLM config for Qwen3 dual-model
@@ -49,6 +54,8 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[platform-mongodb-per-tenant](patterns/platform.md#platform-mongodb-per-tenant)** - One database per tenant via MONGO_URI
 - **[platform-caddy-tenant-router](patterns/platform.md#platform-caddy-tenant-router)** - FastAPI dispatcher for per-tenant routing
 - **[platform-zitadel-org-per-tenant](patterns/platform.md#platform-zitadel-org-per-tenant)** - Zitadel Organization provisioning
+- **[platform-zitadel-user-role-assignment](patterns/platform.md#platform-zitadel-user-role-assignment)** - Assign project role to user at signup/invite
+- **[platform-portal-users-mapping-only](patterns/platform.md#platform-portal-users-mapping-only)** - portal_users as thin mapping table, live Zitadel identity fetch
 - **[platform-librechat-env-template](patterns/platform.md#platform-librechat-env-template)** - Required LibreChat `.env` settings
 - **[platform-hetzner-dns-wildcard-tls](patterns/platform.md#platform-hetzner-dns-wildcard-tls)** - Custom Caddy build for wildcard TLS
 
