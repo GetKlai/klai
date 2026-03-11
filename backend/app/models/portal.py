@@ -33,6 +33,7 @@ class PortalUser(Base):
     zitadel_user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"))
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="member", server_default="member")
+    preferred_language: Mapped[str] = mapped_column(String(8), nullable=False, default="nl", server_default="nl")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")

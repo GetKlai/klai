@@ -32,6 +32,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str
     company_name: str
+    preferred_language: str = "nl"
 
     @field_validator("password")
     @classmethod
@@ -46,6 +47,11 @@ class SignupRequest(BaseModel):
         if not v.strip():
             raise ValueError("Veld mag niet leeg zijn")
         return v.strip()
+
+    @field_validator("preferred_language")
+    @classmethod
+    def valid_language(cls, v: str) -> str:
+        return v if v in ("nl", "en") else "nl"
 
 
 class SignupResponse(BaseModel):
@@ -105,6 +111,7 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
             first_name=body.first_name,
             last_name=body.last_name,
             password=body.password,
+            preferred_language=body.preferred_language,
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:
@@ -151,6 +158,7 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
             zitadel_user_id=zitadel_user_id,
             org_id=org_row.id,
             role="admin",  # org creator is always admin
+            preferred_language=body.preferred_language,
         )
         db.add(user_row)
         await db.commit()

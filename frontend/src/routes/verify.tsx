@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, CheckCircle, XCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -23,6 +24,7 @@ export const Route = createFileRoute('/verify')({
 })
 
 function VerifyEmailPage() {
+  useLocale()
   const { code, userId, organization } = Route.useSearch()
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)

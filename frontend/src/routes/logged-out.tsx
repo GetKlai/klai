@@ -3,39 +3,49 @@ import { useAuth } from 'react-oidc-context'
 import { Button } from '@/components/ui/button'
 import { ArrowRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { useLocale } from '@/lib/locale'
+import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 
 export const Route = createFileRoute('/logged-out')({
   component: LoggedOutPage,
 })
 
 function LoggedOutPage() {
+  useLocale()
   const auth = useAuth()
 
+  const leftContent = (
+    <>
+      <h1 className="font-serif text-4xl font-bold leading-tight">
+        {m.logged_out_hero_heading()}
+        <br />
+        <span className="text-[var(--color-purple-accent)]">{m.logged_out_hero_highlight()}</span>
+      </h1>
+      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+        {m.logged_out_hero_body()}
+      </p>
+    </>
+  )
+
   return (
-    <div className="flex min-h-screen bg-[var(--color-off-white)]">
-      <div className="flex w-full flex-col items-center justify-center px-8">
-        <div className="w-full max-w-sm space-y-8">
-          <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto block" />
-
-          <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-              {m.logged_out_heading()}
-            </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.logged_out_body()}
-            </p>
-          </div>
-
-          <Button
-            onClick={() => auth.signinRedirect()}
-            size="lg"
-            className="w-full gap-3"
-          >
-            {m.logged_out_cta()}
-            <ArrowRight size={16} />
-          </Button>
-        </div>
+    <AuthPageLayout leftContent={leftContent}>
+      <div className="space-y-2">
+        <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          {m.logged_out_heading()}
+        </h2>
+        <p className="text-sm text-[var(--color-muted-foreground)]">
+          {m.logged_out_body()}
+        </p>
       </div>
-    </div>
+
+      <Button
+        onClick={() => auth.signinRedirect()}
+        size="lg"
+        className="w-full gap-3"
+      >
+        {m.logged_out_cta()}
+        <ArrowRight size={16} />
+      </Button>
+    </AuthPageLayout>
   )
 }

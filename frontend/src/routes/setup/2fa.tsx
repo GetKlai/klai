@@ -5,6 +5,7 @@ import QRCode from 'react-qr-code'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Shield } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -14,6 +15,7 @@ export const Route = createFileRoute('/setup/2fa')({
 })
 
 function Setup2FAPage() {
+  useLocale()
   const auth = useAuth()
 
   const [uri, setUri] = useState<string | null>(null)

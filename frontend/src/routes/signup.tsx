@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { ArrowRight, CheckCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
+import { useLocale } from '@/lib/locale'
 
 export const Route = createFileRoute('/signup')({
   component: SignupPage,
@@ -18,6 +19,7 @@ interface FormState {
 }
 
 function SignupPage() {
+  const { locale } = useLocale()
   const [form, setForm] = useState<FormState>({
     first_name: '',
     last_name: '',
@@ -40,7 +42,7 @@ function SignupPage() {
       const resp = await fetch(`${apiBase}/api/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, preferred_language: locale }),
       })
 
       if (!resp.ok) {

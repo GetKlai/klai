@@ -37,6 +37,7 @@ class ZitadelClient:
         first_name: str,
         last_name: str,
         password: str,
+        preferred_language: str = "nl",
     ) -> dict:
         """Create a human user inside a specific org."""
         resp = await self._http.post(
@@ -48,6 +49,7 @@ class ZitadelClient:
                     "firstName": first_name,
                     "lastName": last_name,
                     "displayName": f"{first_name} {last_name}",
+                    "preferredLanguage": preferred_language,
                 },
                 "email": {
                     "email": email,

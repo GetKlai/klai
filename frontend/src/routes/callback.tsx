@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import { useAuth } from 'react-oidc-context'
+import * as m from '@/paraglide/messages'
+import { useLocale } from '@/lib/locale'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -13,6 +15,7 @@ export const Route = createFileRoute('/callback')(({
 function CallbackPage() {
   const auth = useAuth()
   const redirected = useRef(false)
+  useLocale() // subscribe to locale changes so Paraglide re-renders on switch
 
   useEffect(() => {
     if (auth.isLoading || !auth.isAuthenticated || redirected.current) return
@@ -90,9 +93,9 @@ function CallbackPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="space-y-3 text-center max-w-sm px-4">
-          <p className="text-sm font-medium text-red-700">Inloggen mislukt</p>
+          <p className="text-sm font-medium text-red-700">{m.callback_error_heading()}</p>
           <p className="text-xs text-[var(--color-muted-foreground)] font-mono break-all">{auth.error.message}</p>
-          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">Terug naar inloggen</a>
+          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">{m.callback_error_back()}</a>
         </div>
       </div>
     )
@@ -102,7 +105,7 @@ function CallbackPage() {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
       <div className="space-y-3 text-center">
         <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
-        <p className="text-sm text-[var(--color-muted-foreground)]">Inloggen…</p>
+        <p className="text-sm text-[var(--color-muted-foreground)]">{m.callback_loading()}</p>
       </div>
     </div>
   )
