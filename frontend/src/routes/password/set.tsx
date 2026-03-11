@@ -35,20 +35,6 @@ function PasswordSetPage() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
 
-  if (!userID || !code) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
-        <div className="space-y-3 text-center max-w-sm px-4">
-          <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto block" />
-          <p className="text-sm text-red-700">{m.set_invalid_link()}</p>
-          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">
-            {m.set_invalid_link_back()}
-          </a>
-        </div>
-      </div>
-    )
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
@@ -95,6 +81,19 @@ function PasswordSetPage() {
       </p>
     </>
   )
+
+  if (!userID || !code) {
+    return (
+      <AuthPageLayout leftContent={leftContent}>
+        <div className="space-y-3 text-center">
+          <p className="text-sm text-red-700">{m.set_invalid_link()}</p>
+          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">
+            {m.set_invalid_link_back()}
+          </a>
+        </div>
+      </AuthPageLayout>
+    )
+  }
 
   return (
     <AuthPageLayout leftContent={leftContent}>

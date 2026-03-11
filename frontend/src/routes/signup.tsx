@@ -59,18 +59,29 @@ function SignupPage() {
     }
   }
 
+  const leftContent = (
+    <>
+      <h1 className="font-serif text-4xl font-bold leading-tight">
+        {m.signup_hero_heading()}
+        <br />
+        <span className="text-[var(--color-purple-accent)]">{m.signup_hero_highlight()}</span>
+      </h1>
+      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+        {m.signup_hero_body()}
+      </p>
+    </>
+  )
+
   if (done) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
-        <div className="w-full max-w-sm space-y-6 text-center px-6">
-          <CheckCircle
-            size={48}
-            className="mx-auto text-[var(--color-purple-accent)]"
-            strokeWidth={1.5}
-          />
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+      <AuthPageLayout leftContent={leftContent} showLocale>
+        <div className="space-y-4 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">
+            <CheckCircle size={22} className="text-[var(--color-sand-light)]" strokeWidth={1.5} />
+          </div>
+          <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
             {m.signup_confirm_heading()}
-          </h1>
+          </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
             {m.signup_confirm_body({ email: form.email })}
           </p>
@@ -84,22 +95,9 @@ function SignupPage() {
             {m.signup_confirm_back()}
           </Link>
         </div>
-      </div>
+      </AuthPageLayout>
     )
   }
-
-  const leftContent = (
-    <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
-        {m.signup_hero_heading()}
-        <br />
-        <span className="text-[var(--color-purple-accent)]">{m.signup_hero_highlight()}</span>
-      </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
-        {m.signup_hero_body()}
-      </p>
-    </>
-  )
 
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
