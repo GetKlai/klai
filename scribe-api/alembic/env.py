@@ -1,6 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 
+import sqlalchemy as sa
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -21,16 +22,21 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
+        version_table="alembic_version",
+        version_table_schema="scribe",
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection) -> None:
+    connection.execute(sa.text("CREATE SCHEMA IF NOT EXISTS scribe"))
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         include_schemas=True,
+        version_table="alembic_version",
+        version_table_schema="scribe",
     )
     with context.begin_transaction():
         context.run_migrations()
