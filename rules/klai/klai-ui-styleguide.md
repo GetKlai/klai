@@ -193,8 +193,8 @@ Field pattern:
 - On success and cancel: `navigate({ to: '/admin/users' })` to return to the list
 - Form grids: `grid grid-cols-2 gap-4` for paired fields (name/name, role/language)
 - Wrap the form in a `<Card>` with `<CardContent className="pt-6">`
-- **Back button in the page header (top-right):** ghost variant with `<ArrowLeft>` icon, navigates back to the list
-- **Action buttons at the bottom of `<CardContent>`:** left-aligned `flex gap-3 pt-2` — **primary action first, Cancel after**
+- **Back/cancel: header only.** Ghost button with `<ArrowLeft>` icon, top-right of the page header. No cancel button in the form footer — two identical cancel controls harm screenreader users (button list navigation shows duplicate labels with no context).
+- **Form footer: primary action only.** Just the submit button, left-aligned, `pt-2`.
 
 ### Card sections
 
