@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import QRCode from 'react-qr-code'
