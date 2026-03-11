@@ -137,7 +137,6 @@ function switchLocale(l: Locale) {
 | `Input` | `components/ui/input.tsx` | Text, email, password fields |
 | `Label` | `components/ui/label.tsx` | Field labels (always pair with `htmlFor`) |
 | `Select` | `components/ui/select.tsx` | Native `<select>` dropdowns |
-| `Dialog` + sub-components | `components/ui/dialog.tsx` | Modal overlays for add/edit forms |
 | `Button` | `components/ui/button.tsx` | Actions |
 | `Card` + sub-components | `components/ui/card.tsx` | Content sections |
 
@@ -160,30 +159,60 @@ function switchLocale(l: Locale) {
 </div>
 ```
 
-**Add/invite form** (always in a Dialog, never inline):
+**Add/invite form** (always a separate route page, never a modal):
+
+List page — navigate to the form route on button click:
 ```tsx
-<Dialog open={showDialog} onClose={handleClose}>
-  <DialogContent>
-    <DialogHeader>
-      <DialogTitle>Gebruiker uitnodigen</DialogTitle>
-    </DialogHeader>
-    <DialogBody>
-      <form id="my-form" onSubmit={handleSubmit} className="space-y-4">
-        {/* fields */}
-      </form>
-    </DialogBody>
-    <DialogFooter>
-      <Button variant="outline" onClick={handleClose}>Annuleren</Button>
-      <Button type="submit" form="my-form">Opslaan</Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
+<Button onClick={() => navigate({ to: '/admin/users/invite' })}>
+  {m.admin_users_invite_button()}
+</Button>
 ```
 
-**Why Dialog over inline card:**
-- Standard UX pattern for create/invite flows in admin panels
-- Keeps the list page uncluttered
-- Escape key and backdrop click close it automatically
+Form page (`routes/admin/users/invite.tsx`) — wrap in Card, navigate back on success/cancel:
+```tsx
+export const Route = createFileRoute('/admin/users/invite')({
+  component: InviteUserPage,
+})
+
+function InviteUserPage() {
+  const navigate = useNavigate()
+
+  const inviteMutation = useMutation({
+    mutationFn: async (data) => { /* POST /api/admin/users/invite */ },
+    onSuccess: () => navigate({ to: '/admin/users' }),
+  })
+
+  return (
+    <div className="p-8 max-w-lg">
+      <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)] mb-6">
+        Gebruiker uitnodigen
+      </h1>
+      <Card>
+        <CardHeader>
+          <CardTitle>Gebruiker uitnodigen</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* fields */}
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="outline" onClick={() => navigate({ to: '/admin/users' })}>
+                Annuleren
+              </Button>
+              <Button type="submit">Opslaan</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+```
+
+**Why route-based over modal:**
+- No overlay/focus-trap complexity
+- Full page URL is shareable and bookmarkable
+- Back button works naturally
+- Consistent with how the rest of the admin navigation works
 
 **Inline selects in tables** (compact role switcher):
 ```tsx

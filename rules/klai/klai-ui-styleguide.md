@@ -188,10 +188,12 @@ Field pattern:
 
 ### Add/edit forms
 
-- **Always use `<Dialog>`** from `components/ui/dialog.tsx`, never an inline expanding card
-- Dialog max-width: `max-w-md` (default)
+- **Always use a separate route page**, never a modal/dialog or inline expanding card
+- Create/invite forms live at e.g. `/admin/users/invite` (TanStack Router file: `routes/admin/users/invite.tsx`)
+- On success and cancel: `navigate({ to: '/admin/users' })` to return to the list
 - Form grids: `grid grid-cols-2 gap-4` for paired fields (name/name, role/language)
-- Submit button goes in `<DialogFooter>`, linked via `form="form-id"`
+- Wrap the form in a `<Card>` with `<CardHeader>` + `<CardTitle>` + `<CardContent>`
+- Action buttons (`Cancel` + `Submit`) at the bottom of `<CardContent>`, right-aligned: `flex justify-end gap-3 pt-2`
 
 ### Card sections
 
