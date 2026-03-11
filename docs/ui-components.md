@@ -70,52 +70,6 @@ import { Select } from '@/components/ui/select'
 
 ---
 
-## Dialog
-
-`components/ui/dialog.tsx`
-
-Modal overlay. Closes on Escape and backdrop click.
-
-**Sub-components:** `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogBody`, `DialogFooter`
-
-```tsx
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogBody,
-  DialogFooter,
-} from '@/components/ui/dialog'
-
-<Dialog open={showDialog} onClose={handleClose}>
-  <DialogContent>
-    <DialogHeader>
-      <DialogTitle>Gebruiker uitnodigen</DialogTitle>
-    </DialogHeader>
-    <DialogBody>
-      <form id="invite-form" onSubmit={handleSubmit} className="space-y-4">
-        {/* fields */}
-      </form>
-    </DialogBody>
-    <DialogFooter>
-      <Button variant="outline" onClick={handleClose}>
-        Annuleren
-      </Button>
-      <Button type="submit" form="invite-form" disabled={isPending}>
-        Uitnodiging versturen
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
-```
-
-**Note:** The submit button uses `form="form-id"` to link to the form in `<DialogBody>` without nesting a button inside the form.
-
-Default width: `max-w-md`. Override on `<DialogContent className="max-w-lg">` if needed.
-
----
-
 ## Standard patterns
 
 ### Field (label + input/select)
@@ -189,6 +143,6 @@ Default width: `max-w-md`. Override on `<DialogContent className="max-w-lg">` if
 ## Rules
 
 - Never write inline Tailwind field classes on `<input>` or `<select>` elements in pages - always use `<Input>` / `<Select>` from `components/ui/`
-- Add/edit forms belong in `<Dialog>`, not in inline expanding cards
+- Add/edit forms belong in a separate route page (e.g. `/admin/users/invite`), not in modals or inline cards
 - `<Label>` always has `htmlFor` matching the field `id`
 - See `klai-claude/docs/patterns/frontend.md` for the full portal-ui-components pattern

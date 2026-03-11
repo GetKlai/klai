@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -7,25 +7,20 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '@/components/ui/dialog'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
 
-export const Route = createFileRoute('/admin/users')({
+export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
 })
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Role = 'admin' | 'member'
-type Language = 'nl' | 'en'
 
 interface User {
   zitadel_user_id: string
@@ -33,21 +28,8 @@ interface User {
   first_name: string
   last_name: string
   role: Role
-  preferred_language: Language
+  preferred_language: 'nl' | 'en'
   created_at: string
-}
-
-interface InviteForm {
-  first_name: string
-  last_name: string
-  email: string
-  role: Role
-  preferred_language: Language
-}
-
-interface OrgSettings {
-  name: string
-  default_language: Language
 }
 
 function formatDate(isoString: string): string {
@@ -80,30 +62,8 @@ function UsersPage() {
   const token = auth.user?.access_token
   const currentUserId = auth.user?.profile?.sub
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
-  const [showInviteDialog, setShowInviteDialog] = useState(false)
-  const [inviteForm, setInviteForm] = useState<InviteForm>({
-    first_name: '',
-    last_name: '',
-    email: '',
-    role: 'member',
-    preferred_language: 'nl',
-  })
-
-  // Fetch org settings to use as default language in the invite form
-  const { data: orgSettings } = useQuery({
-    queryKey: ['admin-org-settings', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/settings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return null
-      return res.json() as Promise<OrgSettings>
-    },
-    enabled: !!token,
-  })
-
-  // Fetch users
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-users', token],
     queryFn: async () => {
@@ -118,7 +78,6 @@ function UsersPage() {
 
   const users = data?.users ?? []
 
-  // Delete user
   const deleteMutation = useMutation({
     mutationFn: async (user: User) => {
       const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}`, {
@@ -132,7 +91,6 @@ function UsersPage() {
     },
   })
 
-  // Change role
   const roleMutation = useMutation({
     mutationFn: async ({ user, newRole }: { user: User; newRole: Role }) => {
       const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}/role`, {
@@ -150,50 +108,10 @@ function UsersPage() {
     },
   })
 
-  // Invite user
-  const inviteMutation = useMutation({
-    mutationFn: async (form: InviteForm) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/invite`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(form),
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_invite({ status: String(res.status) }))
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
-      setShowInviteDialog(false)
-    },
-  })
-
   function handleDelete(user: User) {
     const name = `${user.first_name} ${user.last_name}`
     if (!window.confirm(m.admin_users_confirm_delete({ name }))) return
     deleteMutation.mutate(user)
-  }
-
-  function handleInvite(e: React.FormEvent) {
-    e.preventDefault()
-    inviteMutation.mutate(inviteForm)
-  }
-
-  function handleOpenInvite() {
-    setInviteForm((prev) => ({
-      ...prev,
-      preferred_language: orgSettings?.default_language ?? 'nl',
-    }))
-    inviteMutation.reset()
-    setShowInviteDialog(true)
-  }
-
-  function handleCloseInvite() {
-    setShowInviteDialog(false)
-    setInviteForm({ first_name: '', last_name: '', email: '', role: 'member', preferred_language: orgSettings?.default_language ?? 'nl' })
-    inviteMutation.reset()
   }
 
   const pageError =
@@ -274,7 +192,7 @@ function UsersPage() {
             )}
           </p>
         </div>
-        <Button onClick={handleOpenInvite}>
+        <Button onClick={() => navigate({ to: '/admin/users/invite' })}>
           {m.admin_users_invite_button()}
         </Button>
       </div>
@@ -334,119 +252,6 @@ function UsersPage() {
           )}
         </CardContent>
       </Card>
-
-      <Dialog open={showInviteDialog} onClose={handleCloseInvite}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{m.admin_users_invite_button()}</DialogTitle>
-          </DialogHeader>
-          <DialogBody>
-            <form id="invite-form" onSubmit={handleInvite} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="invite-first-name">
-                    {m.admin_users_field_first_name()}
-                  </Label>
-                  <Input
-                    id="invite-first-name"
-                    type="text"
-                    required
-                    value={inviteForm.first_name}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="invite-last-name">
-                    {m.admin_users_field_last_name()}
-                  </Label>
-                  <Input
-                    id="invite-last-name"
-                    type="text"
-                    required
-                    value={inviteForm.last_name}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))
-                    }
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="invite-email">
-                  {m.admin_users_field_email()}
-                </Label>
-                <Input
-                  id="invite-email"
-                  type="email"
-                  required
-                  value={inviteForm.email}
-                  onChange={(e) =>
-                    setInviteForm((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="invite-role">
-                    {m.admin_users_field_role()}
-                  </Label>
-                  <Select
-                    id="invite-role"
-                    value={inviteForm.role}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, role: e.target.value as Role }))
-                    }
-                  >
-                    <option value="member">{m.admin_users_role_member()}</option>
-                    <option value="admin">{m.admin_users_role_admin()}</option>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="invite-language">
-                    {m.admin_users_field_language()}
-                  </Label>
-                  <Select
-                    id="invite-language"
-                    value={inviteForm.preferred_language}
-                    onChange={(e) =>
-                      setInviteForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
-                    }
-                  >
-                    <option value="nl">{m.admin_users_language_nl()}</option>
-                    <option value="en">{m.admin_users_language_en()}</option>
-                  </Select>
-                </div>
-              </div>
-              {inviteMutation.error && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {inviteMutation.error instanceof Error
-                    ? inviteMutation.error.message
-                    : m.admin_users_error_invite_generic()}
-                </p>
-              )}
-            </form>
-          </DialogBody>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleCloseInvite}
-            >
-              {m.admin_users_cancel()}
-            </Button>
-            <Button
-              type="submit"
-              form="invite-form"
-              disabled={inviteMutation.isPending}
-            >
-              {inviteMutation.isPending
-                ? m.admin_users_invite_submit_loading()
-                : m.admin_users_invite_submit()}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
