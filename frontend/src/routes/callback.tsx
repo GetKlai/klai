@@ -45,9 +45,10 @@ function CallbackPage() {
             }
           }
 
-          // First login without 2FA — redirect to setup
-          if (me.requires_2fa_setup) {
-            window.location.replace('/setup/2fa')
+          // MFA not yet enrolled — send to setup
+          if (!me.mfa_enrolled) {
+            sessionStorage.setItem('klai:mfaPolicy', me.mfa_policy ?? 'optional')
+            window.location.replace('/setup/mfa')
             return
           }
 

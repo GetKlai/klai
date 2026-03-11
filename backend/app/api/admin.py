@@ -87,10 +87,12 @@ class RoleUpdateRequest(BaseModel):
 class OrgSettingsOut(BaseModel):
     name: str
     default_language: Literal["nl", "en"]
+    mfa_policy: Literal["optional", "recommended", "required"] = "optional"
 
 
 class OrgSettingsUpdate(BaseModel):
     default_language: Literal["nl", "en"]
+    mfa_policy: Literal["optional", "recommended", "required"] | None = None
 
 
 class MessageResponse(BaseModel):
@@ -225,7 +227,7 @@ async def get_org_settings(
 ) -> OrgSettingsOut:
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-    return OrgSettingsOut(name=org.name, default_language=org.default_language)
+    return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
 
 
 @router.patch("/settings", response_model=OrgSettingsOut)
@@ -237,8 +239,10 @@ async def update_org_settings(
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
     org.default_language = body.default_language
+    if body.mfa_policy is not None:
+        org.mfa_policy = body.mfa_policy
     await db.commit()
-    return OrgSettingsOut(name=org.name, default_language=org.default_language)
+    return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
 
 
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)

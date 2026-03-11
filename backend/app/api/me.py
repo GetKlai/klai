@@ -40,7 +40,8 @@ class MeResponse(BaseModel):
     roles: list[str] = []
     workspace_url: str | None = None
     provisioning_status: str = "pending"
-    requires_2fa_setup: bool = False
+    mfa_enrolled: bool = False
+    mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
 
 
@@ -74,6 +75,7 @@ async def me(
     # Resolve org + user preferences from portal_users -> portal_orgs
     workspace_url: str | None = None
     provisioning_status: str = "pending"
+    mfa_policy: str = "optional"
     preferred_language: str = "nl"
     if zitadel_user_id:
         result = await db.execute(
@@ -85,16 +87,16 @@ async def me(
         if row:
             org, portal_user = row
             provisioning_status = org.provisioning_status
+            mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
             if org.slug:
                 workspace_url = f"https://{org.slug}.{settings.domain}"
 
-    # Check whether the user still needs to set up 2FA
-    requires_2fa_setup = False
+    # Check whether the user has any MFA method enrolled
+    mfa_enrolled = False
     if zitadel_user_id:
         try:
-            token_org_id = info.get("urn:zitadel:iam:user:resourceowner:id")
-            requires_2fa_setup = not await zitadel.has_totp(zitadel_user_id, token_org_id)
+            mfa_enrolled = await zitadel.has_any_mfa(zitadel_user_id)
         except Exception:
             pass  # Don't block login if the check fails
 
@@ -106,7 +108,8 @@ async def me(
         roles=_extract_roles(info),
         workspace_url=workspace_url,
         provisioning_status=provisioning_status,
-        requires_2fa_setup=requires_2fa_setup,
+        mfa_enrolled=mfa_enrolled,
+        mfa_policy=mfa_policy,
         preferred_language=preferred_language,
     )
 

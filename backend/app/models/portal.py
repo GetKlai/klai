@@ -23,6 +23,7 @@ class PortalOrg(Base):
     zitadel_librechat_client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     provisioning_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
+    mfa_policy: Mapped[str] = mapped_column(String(16), nullable=False, default="optional", server_default="optional")
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 

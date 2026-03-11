@@ -21,6 +21,7 @@ import { Route as LocaleRouteRouteImport } from './routes/$locale/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as SetupMfaRouteImport } from './routes/setup/mfa'
 import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
@@ -28,10 +29,11 @@ import { Route as AppTranscribeRouteImport } from './routes/app/transcribe'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
-import { Route as AdminUsersRouteImport } from './routes/admin/users'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
+import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 
 const VerifyRoute = VerifyRouteImport.update({
@@ -94,6 +96,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const SetupMfaRoute = SetupMfaRouteImport.update({
+  id: '/setup/mfa',
+  path: '/setup/mfa',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const Setup2faRoute = Setup2faRouteImport.update({
   id: '/setup/2fa',
   path: '/setup/2fa',
@@ -129,11 +136,6 @@ const AppAccountRoute = AppAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AdminUsersRoute = AdminUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -148,6 +150,16 @@ const LocaleSignupRoute = LocaleSignupRouteImport.update({
   id: '/signup',
   path: '/signup',
   getParentRoute: () => LocaleRouteRoute,
+} as any)
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
+  id: '/users/invite',
+  path: '/users/invite',
+  getParentRoute: () => AdminRouteRoute,
 } as any)
 const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
   id: '/password/forgot',
@@ -169,7 +181,6 @@ export interface FileRoutesByFullPath {
   '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
-  '/admin/users': typeof AdminUsersRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/scribe': typeof AppScribeRoute
@@ -177,9 +188,12 @@ export interface FileRoutesByFullPath {
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
+  '/setup/mfa': typeof SetupMfaRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -193,7 +207,6 @@ export interface FileRoutesByTo {
   '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
-  '/admin/users': typeof AdminUsersRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/scribe': typeof AppScribeRoute
@@ -201,9 +214,12 @@ export interface FileRoutesByTo {
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
+  '/setup/mfa': typeof SetupMfaRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/users': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -220,7 +236,6 @@ export interface FileRoutesById {
   '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
-  '/admin/users': typeof AdminUsersRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
   '/app/scribe': typeof AppScribeRoute
@@ -228,9 +243,12 @@ export interface FileRoutesById {
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
+  '/setup/mfa': typeof SetupMfaRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -248,7 +266,6 @@ export interface FileRouteTypes {
     | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
-    | '/admin/users'
     | '/app/account'
     | '/app/chat'
     | '/app/scribe'
@@ -256,9 +273,12 @@ export interface FileRouteTypes {
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
+    | '/setup/mfa'
     | '/admin/'
     | '/app/'
     | '/$locale/password/forgot'
+    | '/admin/users/invite'
+    | '/admin/users/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -272,7 +292,6 @@ export interface FileRouteTypes {
     | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
-    | '/admin/users'
     | '/app/account'
     | '/app/chat'
     | '/app/scribe'
@@ -280,9 +299,12 @@ export interface FileRouteTypes {
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
+    | '/setup/mfa'
     | '/admin'
     | '/app'
     | '/$locale/password/forgot'
+    | '/admin/users/invite'
+    | '/admin/users'
   id:
     | '__root__'
     | '/'
@@ -298,7 +320,6 @@ export interface FileRouteTypes {
     | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
-    | '/admin/users'
     | '/app/account'
     | '/app/chat'
     | '/app/scribe'
@@ -306,9 +327,12 @@ export interface FileRouteTypes {
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
+    | '/setup/mfa'
     | '/admin/'
     | '/app/'
     | '/$locale/password/forgot'
+    | '/admin/users/invite'
+    | '/admin/users/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -325,6 +349,7 @@ export interface RootRouteChildren {
   PasswordForgotRoute: typeof PasswordForgotRoute
   PasswordSetRoute: typeof PasswordSetRoute
   Setup2faRoute: typeof Setup2faRoute
+  SetupMfaRoute: typeof SetupMfaRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -413,6 +438,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/setup/mfa': {
+      id: '/setup/mfa'
+      path: '/setup/mfa'
+      fullPath: '/setup/mfa'
+      preLoaderRoute: typeof SetupMfaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup/2fa': {
       id: '/setup/2fa'
       path: '/setup/2fa'
@@ -448,13 +480,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppScribeRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/account': {
-      id: '/app/account'
-      path: '/account'
-      fullPath: '/app/account'
-      preLoaderRoute: typeof AppAccountRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/app/chat': {
       id: '/app/chat'
       path: '/chat'
@@ -462,12 +487,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppChatRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/admin/users': {
-      id: '/admin/users'
-      path: '/users'
-      fullPath: '/admin/users'
-      preLoaderRoute: typeof AdminUsersRouteImport
-      parentRoute: typeof AdminRouteRoute
+    '/app/account': {
+      id: '/app/account'
+      path: '/account'
+      fullPath: '/app/account'
+      preLoaderRoute: typeof AppAccountRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/admin/settings': {
       id: '/admin/settings'
@@ -489,6 +514,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/$locale/signup'
       preLoaderRoute: typeof LocaleSignupRouteImport
       parentRoute: typeof LocaleRouteRoute
+    }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/users'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/invite': {
+      id: '/admin/users/invite'
+      path: '/users/invite'
+      fullPath: '/admin/users/invite'
+      preLoaderRoute: typeof AdminUsersInviteRouteImport
+      parentRoute: typeof AdminRouteRoute
     }
     '/$locale/password/forgot': {
       id: '/$locale/password/forgot'
@@ -517,15 +556,17 @@ const LocaleRouteRouteWithChildren = LocaleRouteRoute._addFileChildren(
 interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
-  AdminUsersRoute: typeof AdminUsersRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  AdminUsersInviteRoute: typeof AdminUsersInviteRoute
+  AdminUsersIndexRoute: typeof AdminUsersIndexRoute
 }
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
   AdminSettingsRoute: AdminSettingsRoute,
-  AdminUsersRoute: AdminUsersRoute,
   AdminIndexRoute: AdminIndexRoute,
+  AdminUsersInviteRoute: AdminUsersInviteRoute,
+  AdminUsersIndexRoute: AdminUsersIndexRoute,
 }
 
 const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
@@ -566,6 +607,7 @@ const rootRouteChildren: RootRouteChildren = {
   PasswordForgotRoute: PasswordForgotRoute,
   PasswordSetRoute: PasswordSetRoute,
   Setup2faRoute: Setup2faRoute,
+  SetupMfaRoute: SetupMfaRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

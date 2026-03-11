@@ -30,7 +30,7 @@ import time
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
@@ -208,6 +208,21 @@ class TOTPSetupResponse(BaseModel):
 
 
 class TOTPConfirmRequest(BaseModel):
+    code: str
+
+
+class PasskeySetupResponse(BaseModel):
+    passkey_id: str
+    options: dict
+
+
+class PasskeyConfirmRequest(BaseModel):
+    passkey_id: str
+    public_key_credential: dict
+    passkey_name: str = "My passkey"
+
+
+class EmailOTPConfirmRequest(BaseModel):
     code: str
 
 
@@ -457,4 +472,84 @@ async def totp_confirm(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="2FA bevestigen mislukt, probeer het later opnieuw",
+        ) from exc
+
+
+@router.post("/auth/passkey/setup", response_model=PasskeySetupResponse)
+async def passkey_setup(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+) -> PasskeySetupResponse:
+    """Start WebAuthn passkey registration. Returns options for navigator.credentials.create()."""
+    domain = request.headers.get("x-forwarded-host") or request.headers.get("host", settings.domain)
+    # Strip port if present
+    domain = domain.split(":")[0]
+    try:
+        result = await zitadel.start_passkey_registration(user_id, domain)
+    except httpx.HTTPStatusError as exc:
+        log.error("start_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Passkey instellen mislukt, probeer het later opnieuw",
+        ) from exc
+    return PasskeySetupResponse(
+        passkey_id=result["passkeyId"],
+        options=result.get("publicKeyCredentialCreationOptions", {}),
+    )
+
+
+@router.post("/auth/passkey/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def passkey_confirm(
+    body: PasskeyConfirmRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> None:
+    """Complete passkey registration by submitting the browser's PublicKeyCredential."""
+    try:
+        await zitadel.verify_passkey_registration(user_id, body.passkey_id, body.public_key_credential, body.passkey_name)
+    except httpx.HTTPStatusError as exc:
+        log.error("verify_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code in (400, 401):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Passkey verificatie mislukt, probeer opnieuw",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Passkey instellen mislukt, probeer het later opnieuw",
+        ) from exc
+
+
+@router.post("/auth/email-otp/setup", status_code=status.HTTP_204_NO_CONTENT)
+async def email_otp_setup(
+    user_id: str = Depends(get_current_user_id),
+) -> None:
+    """Register email OTP for the user. Zitadel sends a verification code to the user's email."""
+    try:
+        await zitadel.register_email_otp(user_id)
+    except httpx.HTTPStatusError as exc:
+        log.error("register_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="E-mailcode instellen mislukt, probeer het later opnieuw",
+        ) from exc
+
+
+@router.post("/auth/email-otp/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def email_otp_confirm(
+    body: EmailOTPConfirmRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> None:
+    """Verify and activate the email OTP using the code sent during setup."""
+    try:
+        await zitadel.verify_email_otp(user_id, body.code)
+    except httpx.HTTPStatusError as exc:
+        log.error("verify_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code in (400, 401):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ongeldige code, probeer opnieuw",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="E-mailcode bevestigen mislukt, probeer het later opnieuw",
         ) from exc

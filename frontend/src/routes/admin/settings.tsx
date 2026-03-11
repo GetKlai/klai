@@ -27,20 +27,20 @@ function AdminSettingsPage() {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error(m.admin_settings_error_fetch())
-      return res.json() as Promise<{ name: string; default_language: 'nl' | 'en' }>
+      return res.json() as Promise<{ name: string; default_language: 'nl' | 'en'; mfa_policy: 'optional' | 'recommended' | 'required' }>
     },
     enabled: !!token,
   })
 
   const saveMutation = useMutation({
-    mutationFn: async (default_language: 'nl' | 'en') => {
+    mutationFn: async (payload: { default_language: 'nl' | 'en'; mfa_policy: 'optional' | 'recommended' | 'required' }) => {
       const res = await fetch(`${API_BASE}/api/admin/settings`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ default_language }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error(m.admin_settings_error_save())
       return res.json()
@@ -52,9 +52,13 @@ function AdminSettingsPage() {
   })
 
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>('nl')
+  const [selectedMfa, setSelectedMfa] = useState<'optional' | 'recommended' | 'required'>('optional')
 
   useEffect(() => {
-    if (settings) setSelectedLang(settings.default_language)
+    if (settings) {
+      setSelectedLang(settings.default_language)
+      setSelectedMfa(settings.mfa_policy ?? 'optional')
+    }
   }, [settings])
 
   return (
@@ -100,7 +104,59 @@ function AdminSettingsPage() {
                 <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
               )}
               <Button
-                onClick={() => saveMutation.mutate(selectedLang)}
+                onClick={() => saveMutation.mutate({ default_language: selectedLang, mfa_policy: selectedMfa })}
+                disabled={saveMutation.isPending || saved}
+              >
+                {saved
+                  ? m.admin_settings_saved()
+                  : saveMutation.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{m.admin_settings_security_title()}</CardTitle>
+          <CardDescription>
+            {m.admin_settings_security_description()}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+          ) : error ? (
+            <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="settings-mfa">
+                  {m.admin_settings_mfa_label()}
+                </Label>
+                <Select
+                  id="settings-mfa"
+                  value={selectedMfa}
+                  onChange={(e) => setSelectedMfa(e.target.value as 'optional' | 'recommended' | 'required')}
+                  className="max-w-xs"
+                >
+                  <option value="optional">{m.admin_settings_mfa_optional()}</option>
+                  <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
+                  <option value="required">{m.admin_settings_mfa_required()}</option>
+                </Select>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
+                  {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
+                  {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
+                </p>
+              </div>
+              {saveMutation.error && (
+                <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
+              )}
+              <Button
+                onClick={() => saveMutation.mutate({ default_language: selectedLang, mfa_policy: selectedMfa })}
                 disabled={saveMutation.isPending || saved}
               >
                 {saved

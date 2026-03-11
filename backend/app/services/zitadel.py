@@ -255,6 +255,56 @@ class ZitadelClient:
         methods = resp.json().get("authMethodTypes", [])
         return "AUTHENTICATION_METHOD_TYPE_TOTP" in methods
 
+    async def has_any_mfa(self, user_id: str) -> bool:
+        """Return True if the user has any second factor registered (TOTP, passkey, email OTP)."""
+        resp = await self._http.get(f"/v2/users/{user_id}/authentication_methods")
+        resp.raise_for_status()
+        methods = resp.json().get("authMethodTypes", [])
+        mfa_types = {
+            "AUTHENTICATION_METHOD_TYPE_TOTP",
+            "AUTHENTICATION_METHOD_TYPE_U2F",
+            "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL",
+            "AUTHENTICATION_METHOD_TYPE_OTP_SMS",
+        }
+        return bool(mfa_types & set(methods))
+
+    async def start_passkey_registration(self, user_id: str, domain: str) -> dict:
+        """Start WebAuthn passkey registration for a user.
+
+        Returns { passkeyId, publicKeyCredentialCreationOptions } from Zitadel.
+        The options must be forwarded to the browser to call navigator.credentials.create().
+        Verify endpoint: POST /v2/users/{userId}/passkeys/{passkeyId}
+        """
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/passkeys",
+            json={"domain": domain},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def verify_passkey_registration(
+        self, user_id: str, passkey_id: str, public_key_credential: dict, passkey_name: str = "My passkey"
+    ) -> None:
+        """Complete passkey registration by submitting the browser's PublicKeyCredential."""
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/passkeys/{passkey_id}",
+            json={"publicKeyCredential": public_key_credential, "passkeyName": passkey_name},
+        )
+        resp.raise_for_status()
+
+    async def register_email_otp(self, user_id: str) -> None:
+        """Register email OTP for a user. Zitadel sends a verification code to the user's email."""
+        resp = await self._http.post(f"/v2/users/{user_id}/otp_email")
+        resp.raise_for_status()
+
+    async def verify_email_otp(self, user_id: str, code: str) -> None:
+        """Verify and activate the email OTP registration using the code from the email."""
+        resp = await self._http.post(
+            f"/v2/users/{user_id}/otp_email/_verify",
+            json={"code": code},
+        )
+        resp.raise_for_status()
+
     async def update_session_with_totp(
         self, session_id: str, session_token: str, code: str
     ) -> dict:
