@@ -5,8 +5,7 @@ import { ArrowRight, CheckCircle, XCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 
 type SearchParams = {
   code?: string

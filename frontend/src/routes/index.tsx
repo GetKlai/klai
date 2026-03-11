@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
+import { useLocale } from '@/lib/locale'
 
 export const Route = createFileRoute('/')({
   component: LoginPage,
@@ -8,12 +9,13 @@ export const Route = createFileRoute('/')({
 
 function LoginPage() {
   const auth = useAuth()
+  const { locale } = useLocale()
 
   useEffect(() => {
     if (!auth.isLoading && !auth.isAuthenticated && auth.activeNavigator !== 'signoutRedirect') {
-      auth.signinRedirect()
+      auth.signinRedirect({ extraQueryParams: { ui_locales: locale } })
     }
-  }, [auth.isLoading, auth.isAuthenticated, auth.activeNavigator])
+  }, [auth.isLoading, auth.isAuthenticated, auth.activeNavigator, locale])
 
   if (auth.isAuthenticated) {
     const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'

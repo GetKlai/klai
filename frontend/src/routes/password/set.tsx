@@ -95,7 +95,7 @@ function PasswordSetPage() {
   }
 
   return (
-    <AuthPageLayout leftContent={leftContent}>
+    <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
         <div className="space-y-3 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">

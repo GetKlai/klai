@@ -1,11 +1,10 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Lock, Shield } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 
 type SearchParams = {
   authRequest?: string
@@ -274,15 +273,16 @@ function LoginPage() {
           </form>
 
           <div className="flex items-center justify-between text-center text-xs text-[var(--color-muted-foreground)]">
-            <a
-              href={`/password/forgot${email ? `?email=${encodeURIComponent(email)}` : ''}`}
+            <Link
+              to="/password/forgot"
+              search={email ? { email } : {}}
               className="text-[var(--color-purple-muted)] hover:underline"
             >
               {m.login_forgot_password()}
-            </a>
-            <a href="/signup" className="text-[var(--color-purple-muted)] hover:underline">
+            </Link>
+            <Link to="/signup" className="text-[var(--color-purple-muted)] hover:underline">
               {m.login_no_account()}
-            </a>
+            </Link>
           </div>
         </>
       )}
