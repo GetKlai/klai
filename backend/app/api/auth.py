@@ -27,6 +27,7 @@ request automatically — no second password prompt.
 import logging
 import secrets
 import time
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
@@ -96,8 +97,13 @@ _pending_totp = TTLCache(_TOTP_PENDING_TTL)
 # ---------------------------------------------------------------------------
 
 def _validate_callback_url(url: str) -> str:
-    """Ensure callback_url points to our Zitadel instance, not an attacker-controlled domain."""
-    if not url.startswith(settings.zitadel_base_url):
+    """Ensure callback_url points to a trusted domain, not an attacker-controlled one."""
+    try:
+        hostname = urlparse(url).hostname or ""
+    except Exception:
+        hostname = ""
+    trusted = settings.domain  # getklai.com
+    if not (hostname == trusted or hostname.endswith(f".{trusted}")):
         log.error("callback_url failed validation: %r", url)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
