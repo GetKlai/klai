@@ -9,3 +9,7 @@ backend/**/*.pyc
 frontend/.env.local
 frontend/node_modules/
 frontend/dist/
+
+# Tools
+.DS_Store
+.serena/
