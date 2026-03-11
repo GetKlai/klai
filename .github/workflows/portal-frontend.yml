@@ -27,6 +27,10 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
+        env:
+          VITE_OIDC_AUTHORITY: https://auth.getklai.com
+          VITE_OIDC_CLIENT_ID: "362901948573220875"
+          VITE_API_BASE_URL: ""
 
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.9.0

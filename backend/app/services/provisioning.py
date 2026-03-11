@@ -100,6 +100,7 @@ chat.{slug}.{domain} {{
         propagation_delay 120s
     }}
     header -X-Frame-Options
+    header Content-Security-Policy "frame-ancestors https://{slug}.{domain}"
     reverse_proxy librechat-{slug}:3080
 }}
 """

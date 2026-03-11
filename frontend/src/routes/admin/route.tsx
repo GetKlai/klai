@@ -5,6 +5,8 @@ import { LayoutDashboard, Users, Settings, CreditCard } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
 })
@@ -22,14 +24,25 @@ function AdminLayout() {
   ]
 
   useEffect(() => {
-    if (!auth.isLoading) {
-      if (!auth.isAuthenticated) {
-        navigate({ to: '/' })
-      } else if (!isAdmin) {
-        navigate({ to: '/app' })
-      }
+    if (auth.isLoading) return
+    if (!auth.isAuthenticated) {
+      navigate({ to: '/' })
+      return
     }
-  }, [auth.isLoading, auth.isAuthenticated, isAdmin, navigate])
+    if (!isAdmin) {
+      navigate({ to: '/app' })
+      return
+    }
+    // Re-check 2FA requirement in case user navigated directly here without going through /callback
+    fetch(`${API_BASE}/api/me`, {
+      headers: { Authorization: `Bearer ${auth.user!.access_token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((me) => {
+        if (me?.requires_2fa_setup) window.location.replace('/setup/2fa')
+      })
+      .catch(() => undefined)
+  }, [auth.isLoading, auth.isAuthenticated, isAdmin, auth.user, navigate])
 
   if (auth.isLoading || !auth.isAuthenticated || !isAdmin) {
     return (

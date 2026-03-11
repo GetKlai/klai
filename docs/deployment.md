@@ -1,4 +1,4 @@
-# Deployment: portal-api
+# Deployment: portal-api and portal-frontend
 
 Describes the CI/CD pipeline for the FastAPI backend (`backend/`) and the steps to
 maintain or recover it.
@@ -88,3 +88,81 @@ Or check the health endpoint:
 ```bash
 curl --max-time 3 http://localhost:8010/health
 ```
+
+---
+
+# Deployment: portal-frontend
+
+## Overview
+
+```
+git push (frontend/**) → GitHub Actions → npm run build → rsync to core-01
+```
+
+The workflow file is at [`.github/workflows/portal-frontend.yml`](../.github/workflows/portal-frontend.yml).
+
+## Trigger
+
+The pipeline runs automatically on every push to `main` that touches:
+
+- `frontend/**`
+- `.github/workflows/portal-frontend.yml`
+
+## Steps
+
+| Step | What it does |
+|------|-------------|
+| Install | `npm ci` with Node 22 and npm cache |
+| Build | `npm run build` (Vite) with production environment variables |
+| SSH setup | Installs `CORE01_DEPLOY_KEY` via `webfactory/ssh-agent` |
+| Deploy | `rsync --delete` the `dist/` folder to `/opt/klai/portal-dist/` on core-01 |
+
+## Build environment variables
+
+Baked into the static build at compile time:
+
+| Variable | Value |
+|----------|-------|
+| `VITE_OIDC_AUTHORITY` | `https://auth.getklai.com` |
+| `VITE_OIDC_CLIENT_ID` | `362901948573220875` |
+| `VITE_API_BASE_URL` | `""` (empty — API calls are relative, same origin) |
+
+These are set in the workflow file, not in GitHub Secrets (they are not secret).
+
+## Required GitHub Secrets
+
+Same secrets as portal-api:
+
+| Secret | Value |
+|--------|-------|
+| `CORE01_HOST` | IPv4 address of core-01 |
+| `CORE01_DEPLOY_KEY` | Private SSH key matching the deploy key on core-01 |
+
+## Serving on core-01
+
+Caddy serves the static files from `/opt/klai/portal-dist/` as the SPA fallback for all `*.getklai.com` requests not matched by other routes. The directory is updated in-place by rsync; no service restart is needed.
+
+## Manual Deployment
+
+```bash
+# Build locally
+cd frontend
+VITE_OIDC_AUTHORITY=https://auth.getklai.com \
+VITE_OIDC_CLIENT_ID=362901948573220875 \
+VITE_API_BASE_URL="" \
+npm run build
+
+# Deploy
+rsync -av --delete dist/ klai@core-01:/opt/klai/portal-dist/
+```
+
+## Local Development
+
+```bash
+cd frontend
+npm install
+cp .env.local.example .env.local  # or set vars manually
+npm run dev
+```
+
+The dev server runs on `http://localhost:5174`. CORS and OIDC redirect URIs are configured to allow this origin.

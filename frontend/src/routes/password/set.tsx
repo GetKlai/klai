@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { KeyRound } from 'lucide-react'
 import * as m from '@/paraglide/messages'
-import { setLocale } from '@/paraglide/runtime'
+import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -26,12 +26,6 @@ export const Route = createFileRoute('/password/set')({
 })
 
 function PasswordSetPage() {
-  // Inherit locale from localStorage; no toggle on transactional pages
-  useState(() => {
-    const saved = localStorage.getItem('klai-locale')
-    setLocale(saved === 'en' ? 'en' : 'nl')
-  })
-
   const { userID, code } = Route.useSearch()
   const navigate = useNavigate()
 
@@ -85,111 +79,96 @@ function PasswordSetPage() {
       setDone(true)
       setTimeout(() => navigate({ to: '/' }), 2500)
     } catch {
-      setError(m.set_error_connection())
+      setError(m.error_connection())
     } finally {
       setLoading(false)
     }
   }
 
+  const leftContent = (
+    <>
+      <h1 className="font-serif text-4xl font-bold leading-tight">
+        {m.set_hero_heading()}
+      </h1>
+      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+        {m.set_hero_body()}
+      </p>
+    </>
+  )
+
   return (
-    <div className="flex min-h-screen bg-[var(--color-off-white)]">
-      {/* Left panel — branding */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
-        <div>
-          <img src="/klai-logo-white.svg" alt="Klai" className="h-7 w-auto block" />
-        </div>
-        <div className="space-y-4 my-auto">
-          <h1 className="font-serif text-4xl font-bold leading-tight">
-            {m.set_hero_heading()}
-          </h1>
-          <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
-            {m.set_hero_body()}
+    <AuthPageLayout leftContent={leftContent}>
+      {done ? (
+        <div className="space-y-3 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">
+            <KeyRound size={22} className="text-[var(--color-sand-light)]" />
+          </div>
+          <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
+            {m.set_done_heading()}
+          </p>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.set_done_body()}
           </p>
         </div>
-
-      </div>
-
-      {/* Right panel — form */}
-      <div className="flex w-full flex-col items-center justify-center px-8 lg:w-1/2">
-        <div className="w-full max-w-sm space-y-8">
-          {/* Mobile logo */}
-          <div className="lg:hidden">
-            <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto block" />
+      ) : (
+        <>
+          <div className="space-y-2">
+            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+              {m.set_heading()}
+            </h2>
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {m.set_subheading()}
+            </p>
           </div>
 
-          {done ? (
-            <div className="space-y-3 text-center">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">
-                <KeyRound size={22} className="text-[var(--color-sand-light)]" />
-              </div>
-              <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
-                {m.set_done_heading()}
-              </p>
-              <p className="text-sm text-[var(--color-muted-foreground)]">
-                {m.set_done_body()}
-              </p>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
+                {m.set_field_password()}
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="new-password"
+                autoFocus
+                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+              />
             </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-                  {m.set_heading()}
-                </h2>
-                <p className="text-sm text-[var(--color-muted-foreground)]">
-                  {m.set_subheading()}
-                </p>
-              </div>
 
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-1">
-                  <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
-                    {m.set_field_password()}
-                  </label>
-                  <input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    autoComplete="new-password"
-                    autoFocus
-                    className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
-                  />
-                </div>
+            <div className="space-y-1">
+              <label htmlFor="confirm" className="block text-sm font-medium text-[var(--color-foreground)]">
+                {m.set_field_confirm()}
+              </label>
+              <input
+                id="confirm"
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                required
+                autoComplete="new-password"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+              />
+            </div>
 
-                <div className="space-y-1">
-                  <label htmlFor="confirm" className="block text-sm font-medium text-[var(--color-foreground)]">
-                    {m.set_field_confirm()}
-                  </label>
-                  <input
-                    id="confirm"
-                    type="password"
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    required
-                    autoComplete="new-password"
-                    className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
-                  />
-                </div>
+            {error && (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            )}
 
-                {error && (
-                  <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-                )}
+            <Button type="submit" size="lg" className="w-full" disabled={loading}>
+              {loading ? m.set_submit_loading() : m.set_submit()}
+            </Button>
+          </form>
 
-                <Button type="submit" size="lg" className="w-full" disabled={loading}>
-                  {loading ? m.set_submit_loading() : m.set_submit()}
-                </Button>
-              </form>
-
-              <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-                <a href="/" className="text-[var(--color-purple-muted)] hover:underline">
-                  {m.set_back()}
-                </a>
-              </p>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+            <a href="/" className="text-[var(--color-purple-muted)] hover:underline">
+              {m.set_back()}
+            </a>
+          </p>
+        </>
+      )}
+    </AuthPageLayout>
   )
 }

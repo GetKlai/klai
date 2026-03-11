@@ -23,8 +23,8 @@ bearer = HTTPBearer()
 async def _get_caller_org(
     credentials: HTTPAuthorizationCredentials,
     db: AsyncSession,
-) -> tuple[str, PortalOrg]:
-    """Validate token, return (zitadel_user_id, PortalOrg)."""
+) -> tuple[str, PortalOrg, PortalUser]:
+    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
@@ -35,15 +35,22 @@ async def _get_caller_org(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden in token")
 
     result = await db.execute(
-        select(PortalOrg)
+        select(PortalOrg, PortalUser)
         .join(PortalUser, PortalUser.org_id == PortalOrg.id)
         .where(PortalUser.zitadel_user_id == zitadel_user_id)
     )
-    org = result.scalar_one_or_none()
-    if not org:
+    row = result.one_or_none()
+    if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisatie niet gevonden")
 
-    return zitadel_user_id, org
+    org, caller_user = row
+    return zitadel_user_id, org, caller_user
+
+
+def _require_admin(caller_user: PortalUser) -> None:
+    """Raise 403 if the caller is not an admin."""
+    if caller_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang: admin rechten vereist")
 
 
 class UserOut(BaseModel):
@@ -84,7 +91,8 @@ async def list_users(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> UsersResponse:
-    _, org = await _get_caller_org(credentials, db)
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
 
     # Get portal membership records (mapping + created_at + role)
     result = await db.execute(
@@ -126,7 +134,8 @@ async def invite_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> InviteResponse:
-    _, org = await _get_caller_org(credentials, db)
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
 
     try:
         user_data = await zitadel.invite_user(
@@ -164,8 +173,8 @@ async def update_user_role(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    # TODO(SPEC-AUTH-001): enforce admin role via JWT claims
-    _, org = await _get_caller_org(credentials, db)
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
 
     result = await db.execute(
         select(PortalUser).where(
@@ -189,7 +198,8 @@ async def remove_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    _, org = await _get_caller_org(credentials, db)
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
 
     # Verify user belongs to this org before deleting
     result = await db.execute(

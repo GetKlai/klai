@@ -42,32 +42,44 @@ router = APIRouter(prefix="/api", tags=["auth"])
 bearer = HTTPBearer()
 
 # ---------------------------------------------------------------------------
+# Generic TTL cache
+# ---------------------------------------------------------------------------
+
+class TTLCache:
+    """Simple in-memory cache with per-entry TTL. Single-instance only."""
+
+    def __init__(self, ttl: int) -> None:
+        self._ttl = ttl
+        self._store: dict[str, dict] = {}
+
+    def put(self, value: dict) -> str:
+        """Store *value* and return an opaque token that can retrieve it."""
+        token = secrets.token_urlsafe(32)
+        self._store[token] = {**value, "expires_at": time.monotonic() + self._ttl}
+        return token
+
+    def get(self, token: str) -> dict | None:
+        """Return the entry for *token*, or None if missing/expired."""
+        entry = self._store.get(token)
+        if not entry:
+            return None
+        if time.monotonic() > entry["expires_at"]:
+            self._store.pop(token, None)
+            return None
+        return entry
+
+    def pop(self, token: str) -> None:
+        """Remove *token* from the cache (no-op if absent)."""
+        self._store.pop(token, None)
+
+
+# ---------------------------------------------------------------------------
 # In-memory SSO session cache
 # Maps an opaque token (stored in the klai_sso cookie) to a Zitadel session.
 # Single-instance only — good enough for the portal-api deployment.
 # ---------------------------------------------------------------------------
 _SSO_TTL = 3600  # seconds (1 hour)
-_sso_cache: dict[str, dict] = {}
-
-
-def _create_sso_token(session_id: str, session_token: str) -> str:
-    token = secrets.token_urlsafe(32)
-    _sso_cache[token] = {
-        "session_id": session_id,
-        "session_token": session_token,
-        "expires_at": time.monotonic() + _SSO_TTL,
-    }
-    return token
-
-
-def _get_sso_session(token: str) -> dict | None:
-    entry = _sso_cache.get(token)
-    if not entry:
-        return None
-    if time.monotonic() > entry["expires_at"]:
-        _sso_cache.pop(token, None)
-        return None
-    return entry
+_sso_cache = TTLCache(_SSO_TTL)
 
 
 # ---------------------------------------------------------------------------
@@ -75,27 +87,75 @@ def _get_sso_session(token: str) -> dict | None:
 # After password check, store the session here while waiting for the TOTP code.
 # ---------------------------------------------------------------------------
 _TOTP_PENDING_TTL = 300  # 5 minutes
-_pending_totp: dict[str, dict] = {}
+_TOTP_MAX_FAILURES = 5   # invalidate token after this many wrong codes
+_pending_totp = TTLCache(_TOTP_PENDING_TTL)
 
 
-def _create_pending_totp(session_id: str, session_token: str) -> str:
-    token = secrets.token_urlsafe(32)
-    _pending_totp[token] = {
-        "session_id": session_id,
-        "session_token": session_token,
-        "expires_at": time.monotonic() + _TOTP_PENDING_TTL,
-    }
-    return token
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _validate_callback_url(url: str) -> str:
+    """Ensure callback_url points to our Zitadel instance, not an attacker-controlled domain."""
+    if not url.startswith(settings.zitadel_base_url):
+        log.error("callback_url failed validation: %r", url)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Inloggen mislukt, probeer het later opnieuw",
+        )
+    return url
 
 
-def _get_pending_totp(token: str) -> dict | None:
-    entry = _pending_totp.get(token)
-    if not entry:
-        return None
-    if time.monotonic() > entry["expires_at"]:
-        _pending_totp.pop(token, None)
-        return None
-    return entry
+async def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+) -> str:
+    """FastAPI dependency: validate Bearer token and return the Zitadel user_id (sub)."""
+    try:
+        info = await zitadel.get_userinfo(credentials.credentials)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+    user_id = info.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token")
+    return user_id
+
+
+async def _finalize_and_set_cookie(
+    response: Response,
+    auth_request_id: str,
+    session_id: str,
+    session_token: str,
+) -> "LoginResponse":
+    """Finalize the Zitadel OIDC auth request, set the SSO cookie, and return a LoginResponse."""
+    try:
+        callback_url = await zitadel.finalize_auth_request(
+            auth_request_id=auth_request_id,
+            session_id=session_id,
+            session_token=session_token,
+        )
+    except httpx.HTTPStatusError as exc:
+        log.error("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        if exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Inlogverzoek is verlopen, probeer opnieuw",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Inloggen mislukt, probeer het later opnieuw",
+        ) from exc
+
+    sso_token = _sso_cache.put({"session_id": session_id, "session_token": session_token})
+    response.set_cookie(
+        key="klai_sso",
+        value=sso_token,
+        domain=f".{settings.domain}",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=_SSO_TTL,
+    )
+    return LoginResponse(callback_url=_validate_callback_url(callback_url))
 
 
 # ---------------------------------------------------------------------------
@@ -215,51 +275,38 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
 
     # 3. If the user has TOTP, require a code before finalizing
     if has_totp:
-        temp_token = _create_pending_totp(session["sessionId"], session["sessionToken"])
+        temp_token = _pending_totp.put({
+            "session_id": session["sessionId"],
+            "session_token": session["sessionToken"],
+            "failures": 0,
+        })
         return LoginResponse(status="totp_required", temp_token=temp_token)
 
-    # 4. No TOTP — finalize the OIDC auth request with the authenticated session
-    try:
-        callback_url = await zitadel.finalize_auth_request(
-            auth_request_id=body.auth_request_id,
-            session_id=session["sessionId"],
-            session_token=session["sessionToken"],
-        )
-    except httpx.HTTPStatusError as exc:
-        log.error("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
-        if exc.response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Inlogverzoek is verlopen, probeer opnieuw",
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Inloggen mislukt, probeer het later opnieuw",
-        ) from exc
-
-    # 5. Store the session in the SSO cache and set a domain-wide cookie
-    sso_token = _create_sso_token(session["sessionId"], session["sessionToken"])
-    response.set_cookie(
-        key="klai_sso",
-        value=sso_token,
-        domain=f".{settings.domain}",
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=_SSO_TTL,
+    # 4. No TOTP — finalize and set cookie
+    return await _finalize_and_set_cookie(
+        response=response,
+        auth_request_id=body.auth_request_id,
+        session_id=session["sessionId"],
+        session_token=session["sessionToken"],
     )
-
-    return LoginResponse(callback_url=callback_url)
 
 
 @router.post("/auth/totp-login", response_model=LoginResponse)
 async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginResponse:
     """Complete login by providing a TOTP code after password was accepted."""
-    pending = _get_pending_totp(body.temp_token)
+    pending = _pending_totp.get(body.temp_token)
     if not pending:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sessie verlopen, log opnieuw in",
+        )
+
+    # Reject immediately if the token is already locked out
+    if pending["failures"] >= _TOTP_MAX_FAILURES:
+        _pending_totp.pop(body.temp_token)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Te veel mislukte pogingen, log opnieuw in",
         )
 
     # Verify TOTP code by updating the session
@@ -272,6 +319,13 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
     except httpx.HTTPStatusError as exc:
         log.error("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):
+            pending["failures"] += 1
+            if pending["failures"] >= _TOTP_MAX_FAILURES:
+                _pending_totp.pop(body.temp_token)
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Te veel mislukte pogingen, log opnieuw in",
+                ) from exc
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Ongeldige code, probeer opnieuw",
@@ -284,41 +338,16 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
     session_id = updated.get("sessionId", pending["session_id"])
     session_token = updated.get("sessionToken", pending["session_token"])
 
-    # Finalize the OIDC auth request with the TOTP-verified session
-    try:
-        callback_url = await zitadel.finalize_auth_request(
-            auth_request_id=body.auth_request_id,
-            session_id=session_id,
-            session_token=session_token,
-        )
-    except httpx.HTTPStatusError as exc:
-        log.error("finalize_auth_request (totp) failed %s: %s", exc.response.status_code, exc.response.text)
-        if exc.response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Inlogverzoek is verlopen, probeer opnieuw",
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Inloggen mislukt, probeer het later opnieuw",
-        ) from exc
-
     # Clean up pending token
-    _pending_totp.pop(body.temp_token, None)
+    _pending_totp.pop(body.temp_token)
 
-    # Store session in SSO cache and set domain-wide cookie
-    sso_token = _create_sso_token(session_id, session_token)
-    response.set_cookie(
-        key="klai_sso",
-        value=sso_token,
-        domain=f".{settings.domain}",
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=_SSO_TTL,
+    # Finalize and set cookie
+    return await _finalize_and_set_cookie(
+        response=response,
+        auth_request_id=body.auth_request_id,
+        session_id=session_id,
+        session_token=session_token,
     )
-
-    return LoginResponse(callback_url=callback_url)
 
 
 @router.post("/auth/sso-complete", response_model=LoginResponse)
@@ -334,7 +363,7 @@ async def sso_complete(
     if not klai_sso:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No SSO session")
 
-    session_data = _get_sso_session(klai_sso)
+    session_data = _sso_cache.get(klai_sso)
     if not session_data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SSO session expired")
 
@@ -352,31 +381,22 @@ async def sso_complete(
             detail="SSO session no longer valid",
         ) from exc
 
-    return LoginResponse(callback_url=callback_url)
+    return LoginResponse(callback_url=_validate_callback_url(callback_url))
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(response: Response, klai_sso: str | None = Cookie(default=None)) -> None:
     """Clear the SSO cookie on logout."""
     if klai_sso:
-        _sso_cache.pop(klai_sso, None)
+        _sso_cache.pop(klai_sso)
     response.delete_cookie(key="klai_sso", domain=f".{settings.domain}")
 
 
 @router.post("/auth/totp/setup", response_model=TOTPSetupResponse)
 async def totp_setup(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    user_id: str = Depends(get_current_user_id),
 ) -> TOTPSetupResponse:
     """Initiate TOTP registration for the logged-in user. Returns QR URI and secret."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
-
-    user_id = info.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token")
-
     try:
         result = await zitadel.register_user_totp(user_id)
     except httpx.HTTPStatusError as exc:
@@ -416,18 +436,9 @@ async def verify_email(body: VerifyEmailRequest) -> None:
 @router.post("/auth/totp/confirm", status_code=status.HTTP_204_NO_CONTENT)
 async def totp_confirm(
     body: TOTPConfirmRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    user_id: str = Depends(get_current_user_id),
 ) -> None:
     """Verify and activate the TOTP registration."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
-
-    user_id = info.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token")
-
     try:
         await zitadel.verify_user_totp(user_id, body.code)
     except httpx.HTTPStatusError as exc:

@@ -1,12 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   useReactTable,
   getCoreRowModel,
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
@@ -16,6 +17,8 @@ import { datetime, plural } from '@/paraglide/registry'
 export const Route = createFileRoute('/admin/users')({
   component: UsersPage,
 })
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Role = 'admin' | 'member'
 
@@ -64,10 +67,7 @@ function UsersPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const currentUserId = auth.user?.profile?.sub
-
-  const [users, setUsers] = useState<User[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
 
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [inviteForm, setInviteForm] = useState<InviteForm>({
@@ -76,114 +76,89 @@ function UsersPage() {
     email: '',
     role: 'member',
   })
-  const [inviteLoading, setInviteLoading] = useState(false)
-  const [inviteError, setInviteError] = useState<string | null>(null)
 
-  const [roleChanging, setRoleChanging] = useState<string | null>(null)
+  // Fetch users
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['admin-users', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(m.admin_users_error_fetch({ status: String(res.status) }))
+      return res.json() as Promise<{ users: User[] }>
+    },
+    enabled: !!token,
+  })
 
-  useEffect(() => {
-    async function fetchUsers() {
-      setLoading(true)
-      setError(null)
-      try {
-        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/admin/users`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!res.ok) throw new Error(m.admin_users_error_fetch({ status: String(res.status) }))
-        const data = await res.json()
-        setUsers(data.users)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : m.admin_users_error_generic())
-      } finally {
-        setLoading(false)
-      }
-    }
+  const users = data?.users ?? []
 
-    if (token) {
-      fetchUsers()
-    }
-  }, [token])
-
-  async function handleDelete(user: User) {
-    const name = `${user.first_name} ${user.last_name}`
-    if (!window.confirm(m.admin_users_confirm_delete({ name }))) return
-
-    setUsers((prev) => prev.filter((u) => u.zitadel_user_id !== user.zitadel_user_id))
-
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/api/admin/users/${user.zitadel_user_id}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      )
+  // Delete user
+  const deleteMutation = useMutation({
+    mutationFn: async (user: User) => {
+      const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
       if (!res.ok) throw new Error(m.admin_users_error_delete({ status: String(res.status) }))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : m.admin_users_error_delete_generic())
-      setUsers((prev) => [...prev, user])
-    }
-  }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+  })
 
-  async function handleRoleChange(user: User, newRole: Role) {
-    setRoleChanging(user.zitadel_user_id)
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/api/admin/users/${user.zitadel_user_id}/role`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ role: newRole }),
-        }
-      )
+  // Change role
+  const roleMutation = useMutation({
+    mutationFn: async ({ user, newRole }: { user: User; newRole: Role }) => {
+      const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}/role`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ role: newRole }),
+      })
       if (!res.ok) throw new Error(m.admin_users_error_role({ status: String(res.status) }))
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.zitadel_user_id === user.zitadel_user_id ? { ...u, role: newRole } : u
-        )
-      )
-    } catch (err) {
-      setError(err instanceof Error ? err.message : m.admin_users_error_role_generic())
-    } finally {
-      setRoleChanging(null)
-    }
-  }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+  })
 
-  async function handleInvite(e: React.FormEvent) {
-    e.preventDefault()
-    setInviteLoading(true)
-    setInviteError(null)
-
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/admin/users/invite`, {
+  // Invite user
+  const inviteMutation = useMutation({
+    mutationFn: async (form: InviteForm) => {
+      const res = await fetch(`${API_BASE}/api/admin/users/invite`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(inviteForm),
+        body: JSON.stringify(form),
       })
       if (!res.ok) throw new Error(m.admin_users_error_invite({ status: String(res.status) }))
-
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
       setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
       setShowInviteForm(false)
+    },
+  })
 
-      const refreshRes = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (refreshRes.ok) {
-        const data = await refreshRes.json()
-        setUsers(data.users)
-      }
-    } catch (err) {
-      setInviteError(err instanceof Error ? err.message : m.admin_users_error_invite_generic())
-    } finally {
-      setInviteLoading(false)
-    }
+  function handleDelete(user: User) {
+    const name = `${user.first_name} ${user.last_name}`
+    if (!window.confirm(m.admin_users_confirm_delete({ name }))) return
+    deleteMutation.mutate(user)
   }
+
+  function handleInvite(e: React.FormEvent) {
+    e.preventDefault()
+    inviteMutation.mutate(inviteForm)
+  }
+
+  const pageError =
+    (error instanceof Error ? error.message : error ? m.admin_users_error_generic() : null) ??
+    (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
+    (roleMutation.error instanceof Error ? roleMutation.error.message : roleMutation.error ? m.admin_users_error_role_generic() : null)
 
   const columns = [
     columnHelper.accessor((row) => `${row.first_name} ${row.last_name}`, {
@@ -209,13 +184,15 @@ function UsersPage() {
       cell: ({ row }) => {
         const user = row.original
         const isSelf = user.zitadel_user_id === currentUserId
-        const isChangingRole = roleChanging === user.zitadel_user_id
+        const isChangingRole =
+          roleMutation.isPending &&
+          roleMutation.variables?.user.zitadel_user_id === user.zitadel_user_id
         return (
           <div className="flex items-center gap-2">
             <select
               value={user.role}
               disabled={isSelf || isChangingRole}
-              onChange={(e) => handleRoleChange(user, e.target.value as Role)}
+              onChange={(e) => roleMutation.mutate({ user, newRole: e.target.value as Role })}
               className="rounded border border-[var(--color-border)] bg-transparent px-2 py-1 text-xs text-[var(--color-purple-deep)] outline-none focus:ring-2 focus:ring-[var(--color-ring)] disabled:opacity-50"
             >
               <option value="admin">{m.admin_users_role_admin()}</option>
@@ -249,17 +226,17 @@ function UsersPage() {
             {m.admin_users_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {!loading && !error && (
-                plural(getLocale(), users.length) === 'one'
-                  ? m.admin_users_count_one()
-                  : m.admin_users_count_other({ count: String(users.length) })
-              )}
+            {!isLoading && !error && (
+              plural(getLocale(), users.length) === 'one'
+                ? m.admin_users_count_one()
+                : m.admin_users_count_other({ count: String(users.length) })
+            )}
           </p>
         </div>
         <Button
           onClick={() => {
             setShowInviteForm((prev) => !prev)
-            setInviteError(null)
+            inviteMutation.reset()
           }}
         >
           {m.admin_users_invite_button()}
@@ -331,12 +308,18 @@ function UsersPage() {
                   </select>
                 </div>
               </div>
-              {inviteError && (
-                <p className="text-sm text-[var(--color-destructive)]">{inviteError}</p>
+              {inviteMutation.error && (
+                <p className="text-sm text-[var(--color-destructive)]">
+                  {inviteMutation.error instanceof Error
+                    ? inviteMutation.error.message
+                    : m.admin_users_error_invite_generic()}
+                </p>
               )}
               <div className="flex gap-2">
-                <Button type="submit" disabled={inviteLoading}>
-                  {inviteLoading ? m.admin_users_invite_submit_loading() : m.admin_users_invite_submit()}
+                <Button type="submit" disabled={inviteMutation.isPending}>
+                  {inviteMutation.isPending
+                    ? m.admin_users_invite_submit_loading()
+                    : m.admin_users_invite_submit()}
                 </Button>
                 <Button
                   type="button"
@@ -344,7 +327,7 @@ function UsersPage() {
                   onClick={() => {
                     setShowInviteForm(false)
                     setInviteForm({ first_name: '', last_name: '', email: '', role: 'member' })
-                    setInviteError(null)
+                    inviteMutation.reset()
                   }}
                 >
                   {m.admin_users_cancel()}
@@ -355,13 +338,13 @@ function UsersPage() {
         </Card>
       )}
 
-      {error && (
-        <p className="text-sm text-[var(--color-destructive)]">{error}</p>
+      {pageError && (
+        <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
       )}
 
       <Card>
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-          {loading ? (
+          {isLoading ? (
             <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
               {m.admin_users_loading()}
             </p>

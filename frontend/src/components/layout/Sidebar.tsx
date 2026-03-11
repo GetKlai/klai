@@ -185,7 +185,9 @@ export function Sidebar({ navItems }: SidebarProps) {
         )}
         <button
           onClick={() => {
-            fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+            // sendBeacon is guaranteed to fire even when the page navigates away,
+            // unlike fetch which gets cancelled by signoutRedirect().
+            navigator.sendBeacon('/api/auth/logout')
             auth.signoutRedirect()
           }}
           title={collapsed ? m.sidebar_logout() : undefined}

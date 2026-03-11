@@ -150,6 +150,7 @@ async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: Asy
         user_row = PortalUser(
             zitadel_user_id=zitadel_user_id,
             org_id=org_row.id,
+            role="admin",  # org creator is always admin
         )
         db.add(user_row)
         await db.commit()
