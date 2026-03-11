@@ -1,5 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
+import { Button } from '@/components/ui/button'
+import { ArrowRight } from 'lucide-react'
+import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/logged-out')({
   component: LoggedOutPage,
@@ -9,14 +12,26 @@ function LoggedOutPage() {
   const auth = useAuth()
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-off-white)]">
-      <p className="text-sm text-gray-600">Je bent uitgelogd</p>
-      <button
-        onClick={() => auth.signinRedirect()}
-        className="rounded bg-[var(--color-purple-accent)] px-4 py-2 text-sm text-white hover:opacity-90"
-      >
-        Opnieuw inloggen
-      </button>
+    <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
+      <div className="w-full max-w-sm space-y-6 px-6 text-center">
+        <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto mx-auto" />
+        <div className="space-y-2">
+          <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            {m.logged_out_heading()}
+          </h2>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.logged_out_body()}
+          </p>
+        </div>
+        <Button
+          onClick={() => auth.signinRedirect()}
+          size="lg"
+          className="w-full gap-3"
+        >
+          {m.logged_out_cta()}
+          <ArrowRight size={16} />
+        </Button>
+      </div>
     </div>
   )
 }

@@ -235,5 +235,8 @@
   "sidebar_collapse": "Menu inklappen",
   "sidebar_go_to_app": "Naar App",
   "sidebar_go_to_admin": "Beheer",
-  "sidebar_logout": "Uitloggen"
+  "sidebar_logout": "Uitloggen",
+  "logged_out_heading": "Je bent uitgelogd",
+  "logged_out_body": "Tot de volgende keer.",
+  "logged_out_cta": "Opnieuw inloggen"
 }

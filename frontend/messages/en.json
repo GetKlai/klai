@@ -235,5 +235,8 @@
   "sidebar_collapse": "Collapse menu",
   "sidebar_go_to_app": "To App",
   "sidebar_go_to_admin": "Admin",
-  "sidebar_logout": "Log out"
+  "sidebar_logout": "Log out",
+  "logged_out_heading": "You've been logged out",
+  "logged_out_body": "See you next time.",
+  "logged_out_cta": "Log in again"
 }
