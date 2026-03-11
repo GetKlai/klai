@@ -91,7 +91,14 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json().get("result", [])
 
-    async def invite_user(self, org_id: str, email: str, first_name: str, last_name: str) -> dict:
+    async def invite_user(
+        self,
+        org_id: str,
+        email: str,
+        first_name: str,
+        last_name: str,
+        preferred_language: str = "nl",
+    ) -> dict:
         """Create a human user and send initialization email (password-less invite)."""
         resp = await self._http.post(
             "/management/v1/users/human/_import",
@@ -102,6 +109,7 @@ class ZitadelClient:
                     "firstName": first_name,
                     "lastName": last_name,
                     "displayName": f"{first_name} {last_name}",
+                    "preferredLanguage": preferred_language,
                 },
                 "email": {
                     "email": email,

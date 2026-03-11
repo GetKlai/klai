@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     librechat_image: str = "ghcr.io/danny-avila/librechat:v0.8.3-rc2"  # pinned image for tenants
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy restart
 
+    # Internal service-to-service secret (used by klai-mailer → portal)
+    # Generate with: openssl rand -hex 32
+    internal_secret: str = ""
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod

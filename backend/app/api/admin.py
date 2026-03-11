@@ -71,6 +71,7 @@ class InviteRequest(BaseModel):
     first_name: str
     last_name: str
     role: Literal["admin", "member"] = "member"
+    preferred_language: Literal["nl", "en"] = "nl"
 
 
 class InviteResponse(BaseModel):
@@ -143,6 +144,7 @@ async def invite_user(
             email=body.email,
             first_name=body.first_name,
             last_name=body.last_name,
+            preferred_language=body.preferred_language,
         )
     except Exception as exc:
         raise HTTPException(
@@ -168,6 +170,7 @@ async def invite_user(
         zitadel_user_id=zitadel_user_id,
         org_id=org.id,
         role=body.role,
+        preferred_language=body.preferred_language,
     )
     db.add(user_row)
     await db.commit()
