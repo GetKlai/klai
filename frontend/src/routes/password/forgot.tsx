@@ -4,8 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Mail } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 
 type SearchParams = {
   email?: string

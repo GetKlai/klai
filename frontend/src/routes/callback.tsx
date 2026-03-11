@@ -3,8 +3,7 @@ import { useEffect, useRef } from 'react'
 import { useAuth } from 'react-oidc-context'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 
 const ADMIN_ROLES = ['org:owner', 'org:admin']
 

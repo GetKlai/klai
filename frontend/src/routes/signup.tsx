@@ -5,6 +5,7 @@ import { ArrowRight, CheckCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { useLocale } from '@/lib/locale'
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/signup')({
   component: SignupPage,
@@ -31,15 +32,13 @@ function SignupPage() {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
 
-  const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setLoading(true)
 
     try {
-      const resp = await fetch(`${apiBase}/api/signup`, {
+      const resp = await fetch(`${API_BASE}/api/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, preferred_language: locale }),

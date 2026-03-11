@@ -5,8 +5,7 @@ import { CheckCircle, AlertCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { LocaleSwitcher } from '@/components/ui/LocaleSwitcher'
 import { useLocale } from '@/lib/locale'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 const POLL_INTERVAL_MS = 3000
 const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
 

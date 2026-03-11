@@ -7,8 +7,7 @@ import { ArrowRight, Shield } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/setup/2fa')({
   component: Setup2FAPage,
