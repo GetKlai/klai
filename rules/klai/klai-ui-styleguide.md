@@ -192,8 +192,9 @@ Field pattern:
 - Create/invite forms live at e.g. `/admin/users/invite` (TanStack Router file: `routes/admin/users/invite.tsx`)
 - On success and cancel: `navigate({ to: '/admin/users' })` to return to the list
 - Form grids: `grid grid-cols-2 gap-4` for paired fields (name/name, role/language)
-- Wrap the form in a `<Card>` with `<CardHeader>` + `<CardTitle>` + `<CardContent>`
-- Action buttons (`Cancel` + `Submit`) at the bottom of `<CardContent>`, right-aligned: `flex justify-end gap-3 pt-2`
+- Wrap the form in a `<Card>` with `<CardContent className="pt-6">`
+- **Back button in the page header (top-right):** ghost variant with `<ArrowLeft>` icon, navigates back to the list
+- **Action buttons at the bottom of `<CardContent>`:** left-aligned `flex gap-3 pt-2` — **primary action first, Cancel after**
 
 ### Card sections
 
