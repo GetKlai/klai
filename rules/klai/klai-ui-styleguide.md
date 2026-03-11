@@ -180,7 +180,7 @@ Field pattern:
 </div>
 ```
 
-- Label color: `var(--color-purple-deep)`, `text-sm font-medium`
+- Label color: `var(--color-purple-deep)`, `block text-sm font-medium` (block forces label above the field)
 - Field text color: `var(--color-purple-deep)`
 - Border: `var(--color-border)`, `rounded-md`
 - Focus: `ring-2 ring-[var(--color-ring)]`
