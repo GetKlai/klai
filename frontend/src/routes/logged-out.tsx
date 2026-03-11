@@ -28,7 +28,7 @@ function LoggedOutPage() {
   )
 
   return (
-    <AuthPageLayout leftContent={leftContent}>
+    <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-2">
         <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.logged_out_heading()}

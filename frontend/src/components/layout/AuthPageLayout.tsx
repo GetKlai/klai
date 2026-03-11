@@ -1,4 +1,4 @@
-import { useLocale } from '@/lib/locale'
+import { LocaleSwitcher } from '@/components/ui/LocaleSwitcher'
 
 interface AuthPageLayoutProps {
   leftContent: React.ReactNode
@@ -14,8 +14,6 @@ interface AuthPageLayoutProps {
  * Right panel: white content area with optional locale switcher.
  */
 export function AuthPageLayout({ leftContent, children, showLocale = false }: AuthPageLayoutProps) {
-  const { locale, switchLocale } = useLocale()
-
   return (
     <div className="flex min-h-screen bg-[var(--color-off-white)]">
       {/* Left panel — branding */}
@@ -36,20 +34,8 @@ export function AuthPageLayout({ leftContent, children, showLocale = false }: Au
               <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto block" />
             </div>
             {showLocale && (
-              <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
-                <button
-                  onClick={() => switchLocale('nl')}
-                  className={locale === 'nl' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
-                >
-                  NL
-                </button>
-                <span className="opacity-30">/</span>
-                <button
-                  onClick={() => switchLocale('en')}
-                  className={locale === 'en' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
-                >
-                  EN
-                </button>
+              <div className="ml-auto">
+                <LocaleSwitcher />
               </div>
             )}
           </div>

@@ -84,7 +84,7 @@ function PasswordSetPage() {
 
   if (!userID || !code) {
     return (
-      <AuthPageLayout leftContent={leftContent}>
+      <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="space-y-3 text-center">
           <p className="text-sm text-red-700">{m.set_invalid_link()}</p>
           <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">

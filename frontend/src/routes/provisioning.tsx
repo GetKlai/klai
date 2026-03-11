@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { CheckCircle, AlertCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { LocaleSwitcher } from '@/components/ui/LocaleSwitcher'
+import { useLocale } from '@/lib/locale'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 const POLL_INTERVAL_MS = 3000
@@ -15,6 +17,7 @@ export const Route = createFileRoute('/provisioning')((({
 type Status = 'polling' | 'ready' | 'failed' | 'timeout'
 
 function ProvisioningPage() {
+  useLocale()
   const auth = useAuth()
   const [status, setStatus] = useState<Status>('polling')
   const [dots, setDots] = useState('')
@@ -81,7 +84,11 @@ function ProvisioningPage() {
   }, [auth.isLoading, auth.isAuthenticated, auth.user])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
+    <div className="flex min-h-screen flex-col bg-[var(--color-off-white)]">
+      <div className="flex justify-end px-6 pt-5">
+        <LocaleSwitcher />
+      </div>
+      <div className="flex flex-1 items-center justify-center">
       <div className="w-full max-w-sm space-y-6 px-6 text-center">
         <img src="/klai-logo.svg" alt="Klai" className="h-7 w-auto mx-auto" />
 
@@ -139,6 +146,7 @@ function ProvisioningPage() {
             </div>
           </>
         )}
+      </div>
       </div>
     </div>
   )
