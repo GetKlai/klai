@@ -1,7 +1,8 @@
 """
 Transcription API endpoints:
 
-  POST /v1/transcribe              — upload + transcribe
+  POST /v1/transcribe              — upload + transcribe (does NOT save)
+  POST /v1/transcriptions          — save a transcription draft
   GET  /v1/transcriptions          — list user's transcripts
   GET  /v1/transcriptions/{id}     — get single transcript
   DELETE /v1/transcriptions/{id}  — delete transcript
@@ -30,6 +31,16 @@ router = APIRouter(prefix="/v1", tags=["transcription"])
 
 # ── Response models ──────────────────────────────────────────────────────────
 
+class TranscriptionDraft(BaseModel):
+    """Result of transcription — not yet persisted."""
+    text: str
+    language: str
+    duration_seconds: float
+    inference_time_seconds: float | None = None
+    provider: str
+    model: str
+
+
 class TranscriptionResponse(BaseModel):
     id: str
     text: str
@@ -49,14 +60,13 @@ class TranscriptionListResponse(BaseModel):
 
 # ── POST /v1/transcribe ───────────────────────────────────────────────────────
 
-@router.post("/transcribe", response_model=TranscriptionResponse, status_code=200)
-async def create_transcription(
+@router.post("/transcribe", response_model=TranscriptionDraft, status_code=200)
+async def transcribe(
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
     user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-) -> TranscriptionResponse:
-    # Validate size before reading full body
+) -> TranscriptionDraft:
+    """Transcribe audio. Does NOT save to database — call POST /v1/transcriptions to persist."""
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:
         raise HTTPException(
@@ -66,25 +76,41 @@ async def create_transcription(
 
     filename = file.filename or "upload"
 
-    # Preprocess audio in thread executor (CPU-bound pydub work)
     loop = asyncio.get_event_loop()
     wav_bytes = await loop.run_in_executor(None, normalize_audio, raw, filename)
 
-    # Transcribe via provider
     provider = get_provider()
     result = await provider.transcribe(wav_bytes, language)
 
-    # Persist
-    txn_id = "txn_" + uuid.uuid4().hex
-    record = Transcription(
-        id=txn_id,
-        user_id=user_id,
+    return TranscriptionDraft(
         text=result.text,
         language=result.language,
         duration_seconds=result.duration_seconds,
         inference_time_seconds=result.inference_time_seconds,
         provider=result.provider,
         model=result.model,
+    )
+
+
+# ── POST /v1/transcriptions ───────────────────────────────────────────────────
+
+@router.post("/transcriptions", response_model=TranscriptionResponse, status_code=201)
+async def save_transcription(
+    body: TranscriptionDraft,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptionResponse:
+    """Persist a transcription draft. Called only when the user explicitly saves."""
+    txn_id = "txn_" + uuid.uuid4().hex
+    record = Transcription(
+        id=txn_id,
+        user_id=user_id,
+        text=body.text,
+        language=body.language,
+        duration_seconds=body.duration_seconds,
+        inference_time_seconds=body.inference_time_seconds or 0,
+        provider=body.provider,
+        model=body.model,
         created_at=datetime.utcnow(),
     )
     db.add(record)
