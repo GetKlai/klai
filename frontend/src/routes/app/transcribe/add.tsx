@@ -4,6 +4,8 @@ import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
@@ -195,28 +197,20 @@ function AddTranscribePage() {
   const isTranscribing = transcribeMutation.isPending
 
   return (
-    <div className="p-8 space-y-6 max-w-2xl">
-      <div className="space-y-1">
-        <button
-          onClick={() => navigate({ to: '/app/transcribe' })}
-          className="flex items-center gap-1.5 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors mb-4"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {m.app_transcribe_back()}
-        </button>
+    <div className="p-8 max-w-lg">
+      <div className="flex items-center justify-between mb-6">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.app_transcribe_add_title()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
-          {m.app_transcribe_subtitle()}
-        </p>
+        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.app_transcribe_back()}
+        </Button>
       </div>
 
+      <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle>{m.app_transcribe_card_title()}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="pt-6 space-y-4">
           {/* Tabs */}
           <div className="flex gap-1 p-1 bg-[var(--color-muted)]/40 rounded-lg w-fit">
             {(['record', 'upload'] as Tab[]).map((tab) => (
@@ -334,42 +328,44 @@ function AddTranscribePage() {
           )}
 
           {/* Language selector */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium shrink-0">{m.app_transcribe_language_label()}</label>
-            <select
+          <div className="space-y-1.5">
+            <Label htmlFor="language">{m.app_transcribe_language_label()}</Label>
+            <Select
+              id="language"
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
-              className="text-sm border border-[var(--color-border)] rounded-md px-3 py-1.5 bg-transparent"
+              className="max-w-xs"
             >
               <option value="">{m.app_transcribe_language_auto()}</option>
               <option value="nl">Nederlands</option>
               <option value="en">English</option>
               <option value="de">Deutsch</option>
               <option value="fr">Français</option>
-            </select>
+            </Select>
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-[var(--color-destructive)]">{error}</p>}
 
           {/* Submit button (upload only) */}
           {activeTab === 'upload' && (
-            <Button
-              onClick={() => selectedFile && transcribeMutation.mutate(selectedFile)}
-              disabled={!selectedFile || isTranscribing}
-              className="w-full"
-            >
-              {isTranscribing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {m.app_transcribe_processing()}
-                </>
-              ) : (
-                <>
-                  <Upload className="mr-2 h-4 w-4" />
-                  {m.app_transcribe_submit()}
-                </>
-              )}
-            </Button>
+            <div className="flex justify-end pt-2">
+              <Button
+                onClick={() => selectedFile && transcribeMutation.mutate(selectedFile)}
+                disabled={!selectedFile || isTranscribing}
+              >
+                {isTranscribing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {m.app_transcribe_processing()}
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mr-2 h-4 w-4" />
+                    {m.app_transcribe_submit()}
+                  </>
+                )}
+              </Button>
+            </div>
           )}
 
           {isTranscribing && (
@@ -400,25 +396,25 @@ function AddTranscribePage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
-            <div className="flex gap-2 pt-1">
+            <div className="flex justify-end gap-3 pt-2">
               <Button
                 variant="outline"
-                size="sm"
-                onClick={() => navigate({ to: '/app/transcribe' })}
-              >
-                {m.app_transcribe_back()}
-              </Button>
-              <Button
-                variant="ghost"
                 size="sm"
                 onClick={() => { setResult(null); setError(null) }}
               >
                 {m.app_transcribe_new_button()}
               </Button>
+              <Button
+                size="sm"
+                onClick={() => navigate({ to: '/app/transcribe' })}
+              >
+                {m.app_transcribe_back()}
+              </Button>
             </div>
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   )
 }
