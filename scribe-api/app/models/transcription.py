@@ -12,7 +12,7 @@ class Transcription(Base):
     __tablename__ = "transcriptions"
     __table_args__ = {"schema": "scribe"}
 
-    id = Column(VARCHAR(32), primary_key=True)
+    id = Column(VARCHAR(64), primary_key=True)
     user_id = Column(VARCHAR(128), nullable=False, index=True)
     text = Column(TEXT, nullable=False)
     language = Column(VARCHAR(16), nullable=False)
