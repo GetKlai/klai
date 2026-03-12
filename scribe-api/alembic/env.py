@@ -30,7 +30,6 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
-    connection.execute(sa.text("CREATE SCHEMA IF NOT EXISTS scribe"))
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -44,6 +43,10 @@ def do_run_migrations(connection) -> None:
 
 async def run_migrations_online() -> None:
     engine = create_async_engine(settings.postgres_dsn)
+    # Commit schema creation before starting the migration transaction so that
+    # alembic can create scribe.alembic_version inside an already-existing schema.
+    async with engine.begin() as conn:
+        await conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS scribe"))
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await engine.dispose()
