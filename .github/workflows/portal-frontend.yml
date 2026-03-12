@@ -1,4 +1,5 @@
 name: Build and deploy portal-frontend
+# GlitchTip error tracking enabled (VITE_SENTRY_DSN + SENTRY_AUTH_TOKEN secrets set 2026-03-12)
 
 on:
   push:
