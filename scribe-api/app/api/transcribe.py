@@ -33,6 +33,7 @@ router = APIRouter(prefix="/v1", tags=["transcription"])
 
 class TranscriptionDraft(BaseModel):
     """Result of transcription — not yet persisted."""
+    name: str | None = None
     text: str
     language: str
     duration_seconds: float
@@ -43,6 +44,7 @@ class TranscriptionDraft(BaseModel):
 
 class TranscriptionResponse(BaseModel):
     id: str
+    name: str | None = None
     text: str
     language: str
     duration_seconds: float
@@ -105,6 +107,7 @@ async def save_transcription(
     record = Transcription(
         id=txn_id,
         user_id=user_id,
+        name=body.name or None,
         text=body.text,
         language=body.language,
         duration_seconds=body.duration_seconds,
@@ -119,6 +122,7 @@ async def save_transcription(
 
     return TranscriptionResponse(
         id=record.id,
+        name=record.name,
         text=record.text,
         language=record.language,
         duration_seconds=float(record.duration_seconds),
@@ -154,6 +158,7 @@ async def list_transcriptions(
         items=[
             TranscriptionResponse(
                 id=t.id,
+                name=t.name,
                 text=t.text,
                 language=t.language,
                 duration_seconds=float(t.duration_seconds),
@@ -186,6 +191,7 @@ async def get_transcription(
 
     return TranscriptionResponse(
         id=record.id,
+        name=record.name,
         text=record.text,
         language=record.language,
         duration_seconds=float(record.duration_seconds),

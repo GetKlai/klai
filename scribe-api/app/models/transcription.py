@@ -14,6 +14,7 @@ class Transcription(Base):
 
     id = Column(VARCHAR(64), primary_key=True)
     user_id = Column(VARCHAR(128), nullable=False, index=True)
+    name = Column(VARCHAR(255), nullable=True)
     text = Column(TEXT, nullable=False)
     language = Column(VARCHAR(16), nullable=False)
     duration_seconds = Column(NUMERIC(8, 2), nullable=False)
