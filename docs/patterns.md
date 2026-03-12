@@ -15,7 +15,8 @@
 | [patterns/devops.md](patterns/devops.md) | Coolify deployments, Docker, service management, CI/CD |
 | [patterns/infrastructure.md](patterns/infrastructure.md) | Hetzner, SOPS secrets, env management, DNS, SSH |
 | [patterns/platform.md](patterns/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, MongoDB per-tenant |
-| [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions |
+| [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions, button placement |
+| [patterns/testing.md](patterns/testing.md) | Playwright browser testing, permissions, GlitchTip debugging |
 
 ## Project Pattern Files
 
@@ -46,6 +47,13 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 ### Frontend
 
 - **[i18n-paraglide](patterns/frontend.md#i18n-paraglide)** - i18n with Paraglide JS (React + Vite + TanStack Router)
+- **[portal-ui-components](patterns/frontend.md#portal-ui-components)** - Button placement, form structure, component rules
+
+### Testing
+
+- **[playwright-workflow](patterns/testing.md#standard-workflow)** - Kill Brave, navigate, grant permissions, snapshot, close browser
+- **[playwright-permissions](patterns/testing.md#3-grant-browser-permissions-mic-camera-etc)** - Grant mic/camera/etc. programmatically
+- **[glitchtip-debugging](patterns/testing.md#debugging-with-glitchtip)** - Frontend error tracking via errors.getklai.com
 
 ### Platform (AI Stack)
 

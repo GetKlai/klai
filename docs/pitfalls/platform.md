@@ -524,6 +524,48 @@ Redis is already in the stack on `klai-net-redis`. Add portal-api to that networ
 
 ---
 
+## caddy-permissions-policy-blocks-mediadevices
+
+**Severity:** CRIT
+
+**Trigger:** Browser API (`getUserMedia`, camera, geolocation) silently fails — no permission dialog, no error shown to user
+
+The default Caddy global `Permissions-Policy` header may deny browser APIs entirely. A value of `microphone=()` blocks `navigator.mediaDevices.getUserMedia` at the browser level. The browser never shows a permission dialog — the call just fails silently (or with a `NotAllowedError` that looks like a user denial).
+
+**Root cause:** Caddyfile had:
+```caddyfile
+header Permissions-Policy "geolocation=(), microphone=(), camera=()"
+```
+
+`microphone=()` means: deny access to microphone for ALL origins, including the page itself.
+
+**Fix:**
+```caddyfile
+header Permissions-Policy "geolocation=(), microphone=self, camera=()"
+```
+
+`microphone=self` means: allow the page's own origin to request mic access via `getUserMedia`.
+
+**Diagnosis:**
+```bash
+# Check what header the server is actually sending:
+curl -sI https://getklai.getklai.com/ | grep -i permissions-policy
+```
+
+**After fixing the header:**
+Users who previously visited the page may have a cached "denied" permission in their browser. They must manually reset it:
+Chrome/Brave: click the lock icon → Site settings → Microphone → Reset to default.
+
+**Deploy:**
+```bash
+scp klai-infra/core-01/caddy/Caddyfile core-01:/opt/klai/caddy/Caddyfile
+ssh core-01 'docker restart klai-core-caddy-1'
+```
+
+**Note:** `caddy reload` will not work if `admin off` is set — see `platform-caddy-admin-off-reload`.
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns

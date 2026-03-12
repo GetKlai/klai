@@ -294,3 +294,4 @@ curl --connect-timeout 2 --max-time 3 -s http://localhost:8010/health
 - [pitfalls/platform.md](platform.md) - Platform-specific mistakes (LiteLLM, LibreChat, Caddy)
 - [pitfalls/infrastructure.md](infrastructure.md) - Infrastructure mistakes (SOPS, env vars, Hetzner)
 - [pitfalls/devops.md](devops.md) - Deployment and Docker mistakes
+- [patterns/testing.md](../patterns/testing.md) - Standard Playwright testing workflow
