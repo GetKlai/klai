@@ -389,7 +389,7 @@ function AddTranscribePage() {
 
             {/* Submit button (upload only) */}
             {activeTab === 'upload' && (
-              <div className="flex justify-end pt-2">
+              <div className="flex pt-2">
                 <Button
                   onClick={() => selectedFile && transcribeMutation.mutate(selectedFile)}
                   disabled={!selectedFile || isTranscribing}
