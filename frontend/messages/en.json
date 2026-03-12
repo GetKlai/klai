@@ -144,7 +144,7 @@
   "app_transcribe_search_empty": "No transcriptions found.",
   "app_transcribe_empty_heading": "No transcriptions yet",
   "app_transcribe_empty_body": "Upload an audio file and convert it to text.",
-  "app_transcribe_copy_label": "Copy text",
+  "app_transcribe_copy_label": "Copy transcript",
   "app_transcribe_download_label": "Download as .txt",
   "app_transcribe_col_text": "Text",
   "app_transcribe_col_words": "Words",
