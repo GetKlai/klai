@@ -52,6 +52,7 @@ function AddTranscribePage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
   // Record tab
+  const [micPermission, setMicPermission] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle')
   const [recording, setRecording] = useState(false)
   const [recordDuration, setRecordDuration] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
@@ -116,6 +117,34 @@ function AddTranscribePage() {
     animFrameRef.current = requestAnimationFrame(updateAudioLevel)
   }, [])
 
+  // Request mic permission when record tab becomes active
+  useEffect(() => {
+    if (activeTab !== 'record') return
+    if (streamRef.current) return // already have stream
+
+    setMicPermission('requesting')
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        streamRef.current = stream
+        setMicPermission('granted')
+        try {
+          const AudioCtx =
+            window.AudioContext ??
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+          const audioCtx = new AudioCtx()
+          audioContextRef.current = audioCtx
+          const analyser = audioCtx.createAnalyser()
+          analyser.fftSize = 256
+          analyserRef.current = analyser
+          audioCtx.createMediaStreamSource(stream).connect(analyser)
+        } catch {
+          // Audio visualisation unavailable — non-fatal
+        }
+      })
+      .catch(() => setMicPermission('denied'))
+  }, [activeTab])
+
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop()
@@ -130,38 +159,19 @@ function AddTranscribePage() {
       animFrameRef.current = null
     }
     setAudioLevel(0)
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    audioContextRef.current?.close()
   }, [])
 
-  const startRecording = async () => {
+  const startRecording = useCallback(() => {
     setError(null)
     setResult(null)
 
-    let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    } catch {
+    if (!streamRef.current || micPermission !== 'granted') {
       setError(m.app_transcribe_record_error_mic())
       return
     }
 
-    streamRef.current = stream
-
-    try {
-      const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      const audioCtx = new AudioCtx()
-      audioContextRef.current = audioCtx
-      const analyser = audioCtx.createAnalyser()
-      analyser.fftSize = 256
-      analyserRef.current = analyser
-      audioCtx.createMediaStreamSource(stream).connect(analyser)
-    } catch {
-      // Audio visualisation unavailable — non-fatal, recording continues
-    }
-
     const chunks: Blob[] = []
-    const recorder = new MediaRecorder(stream)
+    const recorder = new MediaRecorder(streamRef.current)
     mediaRecorderRef.current = recorder
 
     recorder.ondataavailable = (e) => chunks.push(e.data)
@@ -175,10 +185,17 @@ function AddTranscribePage() {
     setRecordDuration(0)
     durationIntervalRef.current = window.setInterval(() => setRecordDuration((d) => d + 1), 1000)
     updateAudioLevel()
-  }
+  }, [micPermission, updateAudioLevel, transcribeMutation])
 
-  // Cleanup on unmount
-  useEffect(() => () => stopRecording(), [stopRecording])
+  // Cleanup stream on unmount
+  useEffect(
+    () => () => {
+      stopRecording()
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      audioContextRef.current?.close()
+    },
+    [stopRecording],
+  )
 
   // Space key shortcut
   useEffect(() => {
@@ -192,7 +209,7 @@ function AddTranscribePage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [activeTab, recording, stopRecording])
+  }, [activeTab, recording, startRecording, stopRecording])
 
   const isTranscribing = transcribeMutation.isPending
 
@@ -209,211 +226,235 @@ function AddTranscribePage() {
       </div>
 
       <div className="space-y-6">
-      <Card>
-        <CardContent className="pt-6 space-y-4">
-          {/* Tabs */}
-          <div className="flex gap-1 p-1 bg-[var(--color-muted)]/40 rounded-lg w-fit">
-            {(['record', 'upload'] as Tab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => { setActiveTab(tab); setError(null) }}
-                className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  activeTab === tab
-                    ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
-                    : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
-                }`}
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            {/* Language selector — global setting, shown above tabs */}
+            <div className="space-y-1.5">
+              <Label htmlFor="language">{m.app_transcribe_language_label()}</Label>
+              <Select
+                id="language"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="max-w-xs"
               >
-                {tab === 'record' ? m.app_transcribe_tab_record() : m.app_transcribe_tab_upload()}
-              </button>
-            ))}
-          </div>
+                <option value="">{m.app_transcribe_language_auto()}</option>
+                <option value="nl">Nederlands</option>
+                <option value="en">English</option>
+                <option value="de">Deutsch</option>
+                <option value="fr">Français</option>
+              </Select>
+            </div>
 
-          {/* Record tab */}
-          {activeTab === 'record' && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-4">
-                <Button
-                  size="sm"
-                  variant={recording ? 'destructive' : 'default'}
-                  onClick={() => (recording ? stopRecording() : startRecording())}
-                  disabled={isTranscribing}
+            {/* Tabs */}
+            <div className="flex gap-1 p-1 bg-[var(--color-muted)]/40 rounded-lg w-fit">
+              {(['record', 'upload'] as Tab[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => {
+                    setActiveTab(tab)
+                    setError(null)
+                  }}
+                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    activeTab === tab
+                      ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                  }`}
                 >
-                  {recording ? (
+                  {tab === 'record' ? m.app_transcribe_tab_record() : m.app_transcribe_tab_upload()}
+                </button>
+              ))}
+            </div>
+
+            {/* Record tab */}
+            {activeTab === 'record' && (
+              <div className="space-y-3">
+                {micPermission === 'requesting' && (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    {m.app_transcribe_record_permission_request()}
+                  </p>
+                )}
+
+                {micPermission === 'denied' && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {m.app_transcribe_record_permission_denied()}
+                  </p>
+                )}
+
+                {(micPermission === 'granted' || micPermission === 'idle') && (
+                  <>
+                    <div className="flex items-center gap-4">
+                      <Button
+                        variant={recording ? 'destructive' : 'default'}
+                        onClick={() => (recording ? stopRecording() : startRecording())}
+                        disabled={isTranscribing || micPermission === 'idle'}
+                      >
+                        {recording ? (
+                          <>
+                            <Square className="mr-2 h-4 w-4" />
+                            {m.app_transcribe_record_stop()}
+                          </>
+                        ) : (
+                          <>
+                            <Mic className="mr-2 h-4 w-4" />
+                            {m.app_transcribe_record_start()}
+                          </>
+                        )}
+                      </Button>
+
+                      {recording && (
+                        <span className="font-mono text-sm text-[var(--color-muted-foreground)]">
+                          {formatDuration(recordDuration)}
+                        </span>
+                      )}
+                    </div>
+
+                    {recording && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                          <span className="text-xs font-medium text-red-600">
+                            {m.app_transcribe_record_recording()}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full rounded-full bg-[var(--color-muted)] overflow-hidden">
+                          <div
+                            className="h-full bg-green-500 transition-all duration-75"
+                            style={{ width: `${audioLevel}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {!recording && !isTranscribing && (
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        {m.app_transcribe_record_shortcut_hint()}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Upload tab */}
+            {activeTab === 'upload' && (
+              <div
+                className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                  dragging
+                    ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-purple-accent)]/50'
+                }`}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDragging(true)
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setDragging(false)
+                  const f = e.dataTransfer.files[0]
+                  if (f) handleFile(f)
+                }}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPTED_TYPES}
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) handleFile(f)
+                  }}
+                />
+                <Upload className="mx-auto mb-3 h-8 w-8 text-[var(--color-muted-foreground)]" />
+                {selectedFile ? (
+                  <div>
+                    <p className="font-medium text-sm">{selectedFile.name}</p>
+                    <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
+                      {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-sm font-medium">{m.app_transcribe_dropzone_label()}</p>
+                    <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
+                      {m.app_transcribe_dropzone_hint({ formats: 'WAV, MP3, M4A, OGG, WebM', max: MAX_MB })}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {error && <p className="text-sm text-[var(--color-destructive)]">{error}</p>}
+
+            {/* Submit button (upload only) */}
+            {activeTab === 'upload' && (
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => selectedFile && transcribeMutation.mutate(selectedFile)}
+                  disabled={!selectedFile || isTranscribing}
+                >
+                  {isTranscribing ? (
                     <>
-                      <Square className="mr-2 h-4 w-4" />
-                      {m.app_transcribe_record_stop()}
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {m.app_transcribe_processing()}
                     </>
                   ) : (
                     <>
-                      <Mic className="mr-2 h-4 w-4" />
-                      {m.app_transcribe_record_start()}
+                      <Upload className="mr-2 h-4 w-4" />
+                      {m.app_transcribe_submit()}
                     </>
                   )}
                 </Button>
-
-                {recording && (
-                  <span className="font-mono text-sm text-[var(--color-muted-foreground)]">
-                    {formatDuration(recordDuration)}
-                  </span>
-                )}
               </div>
+            )}
 
-              {recording && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                    <span className="text-xs font-medium text-red-600">
-                      {m.app_transcribe_record_recording()}
-                    </span>
-                  </div>
-                  <div className="h-2 w-full rounded-full bg-[var(--color-muted)] overflow-hidden">
-                    <div
-                      className="h-full bg-green-500 transition-all duration-75"
-                      style={{ width: `${audioLevel}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {!recording && !isTranscribing && (
-                <p className="text-xs text-[var(--color-muted-foreground)]">
-                  {m.app_transcribe_record_shortcut_hint()}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Upload tab */}
-          {activeTab === 'upload' && (
-            <div
-              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                dragging
-                  ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-purple-accent)]/50'
-              }`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragging(false)
-                const f = e.dataTransfer.files[0]
-                if (f) handleFile(f)
-              }}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={ACCEPTED_TYPES}
-                className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
-              />
-              <Upload className="mx-auto mb-3 h-8 w-8 text-[var(--color-muted-foreground)]" />
-              {selectedFile ? (
-                <div>
-                  <p className="font-medium text-sm">{selectedFile.name}</p>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
-                    {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-sm font-medium">{m.app_transcribe_dropzone_label()}</p>
-                  <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
-                    {m.app_transcribe_dropzone_hint({ formats: 'WAV, MP3, M4A, OGG, WebM', max: MAX_MB })}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Language selector */}
-          <div className="space-y-1.5">
-            <Label htmlFor="language">{m.app_transcribe_language_label()}</Label>
-            <Select
-              id="language"
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="max-w-xs"
-            >
-              <option value="">{m.app_transcribe_language_auto()}</option>
-              <option value="nl">Nederlands</option>
-              <option value="en">English</option>
-              <option value="de">Deutsch</option>
-              <option value="fr">Français</option>
-            </Select>
-          </div>
-
-          {error && <p className="text-sm text-[var(--color-destructive)]">{error}</p>}
-
-          {/* Submit button (upload only) */}
-          {activeTab === 'upload' && (
-            <div className="flex justify-end pt-2">
-              <Button
-                onClick={() => selectedFile && transcribeMutation.mutate(selectedFile)}
-                disabled={!selectedFile || isTranscribing}
-              >
-                {isTranscribing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {m.app_transcribe_processing()}
-                  </>
-                ) : (
-                  <>
-                    <Upload className="mr-2 h-4 w-4" />
-                    {m.app_transcribe_submit()}
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
-
-          {isTranscribing && (
-            <p className="text-xs text-[var(--color-muted-foreground)] text-center">
-              {m.app_transcribe_processing_hint()}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {result && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <CardTitle>{m.app_transcribe_result_title()}</CardTitle>
-                <CardDescription>
-                  {m.app_transcribe_result_meta({
-                    language: result.language.toUpperCase(),
-                    duration: formatDuration(result.duration_seconds),
-                  })}
-                </CardDescription>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleCopy}>
-                {copied ? <CheckCheck className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
-            <div className="flex justify-end gap-3 pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { setResult(null); setError(null) }}
-              >
-                {m.app_transcribe_new_button()}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => navigate({ to: '/app/transcribe' })}
-              >
-                {m.app_transcribe_back()}
-              </Button>
-            </div>
+            {isTranscribing && (
+              <p className="text-xs text-[var(--color-muted-foreground)] text-center">
+                {m.app_transcribe_processing_hint()}
+              </p>
+            )}
           </CardContent>
         </Card>
-      )}
+
+        {result && (
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle>{m.app_transcribe_result_title()}</CardTitle>
+                  <CardDescription>
+                    {m.app_transcribe_result_meta({
+                      language: result.language.toUpperCase(),
+                      duration: formatDuration(result.duration_seconds),
+                    })}
+                  </CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleCopy}>
+                  {copied ? <CheckCheck className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
+              <div className="flex justify-end gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setResult(null)
+                    setError(null)
+                  }}
+                >
+                  {m.app_transcribe_new_button()}
+                </Button>
+                <Button size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
+                  {m.app_transcribe_back()}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
