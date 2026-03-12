@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, useRef, type ReactNode } from 'react'
 
 interface TooltipProps {
   label: string
@@ -6,13 +6,28 @@ interface TooltipProps {
 }
 
 export function Tooltip({ label, children }: TooltipProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
   return (
-    <div className="relative group/tooltip">
+    <div
+      ref={ref}
+      onMouseEnter={() => {
+        const rect = ref.current?.getBoundingClientRect()
+        if (rect) setPos({ top: rect.top, left: rect.left + rect.width / 2 })
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
       {children}
-      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs text-white bg-gray-900 rounded whitespace-nowrap opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-opacity duration-150 z-50">
-        {label}
-        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
-      </div>
+      {pos && (
+        <div
+          style={{ position: 'fixed', top: pos.top - 6, left: pos.left, transform: 'translate(-50%, -100%)', zIndex: 50 }}
+          className="px-2 py-1 text-xs text-white bg-gray-900 rounded whitespace-nowrap pointer-events-none"
+        >
+          {label}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+        </div>
+      )}
     </div>
   )
 }
