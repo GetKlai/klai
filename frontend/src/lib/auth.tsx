@@ -22,10 +22,7 @@ function SentryUserSync() {
   const auth = useAuth()
   useEffect(() => {
     if (auth.isAuthenticated && auth.user?.profile) {
-      Sentry.setUser({
-        id: auth.user.profile.sub,
-        email: auth.user.profile.email ?? undefined,
-      })
+      Sentry.setUser({ id: auth.user.profile.sub })
     } else {
       Sentry.setUser(null)
     }

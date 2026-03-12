@@ -51,10 +51,19 @@ declare module '@tanstack/react-router' {
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN as string | undefined,
   environment: import.meta.env.MODE,
+  sendDefaultPii: false,
   integrations: [
     Sentry.tanstackRouterBrowserTracingIntegration(router),
+    // Disable console + DOM breadcrumbs: console logs may contain user data,
+    // DOM click trails are behavioural data we don't need for debugging.
+    Sentry.breadcrumbsIntegration({ console: false, dom: false }),
   ],
-  tracesSampleRate: 0.2,
+  tracesSampleRate: 0.05,
+  beforeSend(event) {
+    // Strip IP address — we identify by user ID only, not by network location.
+    if (event.user) delete event.user.ip_address
+    return event
+  },
   enabled: !!import.meta.env.VITE_SENTRY_DSN,
 })
 
