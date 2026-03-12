@@ -25,7 +25,8 @@ import { Route as SetupMfaRouteImport } from './routes/setup/mfa'
 import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
-import { Route as AppTranscribeRouteImport } from './routes/app/transcribe'
+import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppResearchRouteImport } from './routes/app/research'
 import { Route as AppChatRouteImport } from './routes/app/chat'
@@ -117,9 +118,14 @@ const PasswordForgotRoute = PasswordForgotRouteImport.update({
   path: '/password/forgot',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppTranscribeRoute = AppTranscribeRouteImport.update({
-  id: '/transcribe',
-  path: '/transcribe',
+const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
+  id: '/transcribe/',
+  path: '/transcribe/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
+  id: '/transcribe/add',
+  path: '/transcribe/add',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppScribeRoute = AppScribeRouteImport.update({
@@ -191,7 +197,8 @@ export interface FileRoutesByFullPath {
   '/app/chat': typeof AppChatRoute
   '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
-  '/app/transcribe': typeof AppTranscribeRoute
+  '/app/transcribe/add': typeof AppTranscribeAddRoute
+  '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -218,7 +225,8 @@ export interface FileRoutesByTo {
   '/app/chat': typeof AppChatRoute
   '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
-  '/app/transcribe': typeof AppTranscribeRoute
+  '/app/transcribe/add': typeof AppTranscribeAddRoute
+  '/app/transcribe': typeof AppTranscribeIndexRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -248,7 +256,8 @@ export interface FileRoutesById {
   '/app/chat': typeof AppChatRoute
   '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
-  '/app/transcribe': typeof AppTranscribeRoute
+  '/app/transcribe/add': typeof AppTranscribeAddRoute
+  '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -279,7 +288,8 @@ export interface FileRouteTypes {
     | '/app/chat'
     | '/app/research'
     | '/app/scribe'
-    | '/app/transcribe'
+    | '/app/transcribe/add'
+    | '/app/transcribe/'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -306,6 +316,7 @@ export interface FileRouteTypes {
     | '/app/chat'
     | '/app/research'
     | '/app/scribe'
+    | '/app/transcribe/add'
     | '/app/transcribe'
     | '/password/forgot'
     | '/password/set'
@@ -335,7 +346,8 @@ export interface FileRouteTypes {
     | '/app/chat'
     | '/app/research'
     | '/app/scribe'
-    | '/app/transcribe'
+    | '/app/transcribe/add'
+    | '/app/transcribe/'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -478,11 +490,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PasswordForgotRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/transcribe': {
-      id: '/app/transcribe'
+    '/app/transcribe/': {
+      id: '/app/transcribe/'
       path: '/transcribe'
-      fullPath: '/app/transcribe'
-      preLoaderRoute: typeof AppTranscribeRouteImport
+      fullPath: '/app/transcribe/'
+      preLoaderRoute: typeof AppTranscribeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/transcribe/add': {
+      id: '/app/transcribe/add'
+      path: '/transcribe/add'
+      fullPath: '/app/transcribe/add'
+      preLoaderRoute: typeof AppTranscribeAddRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/scribe': {
@@ -597,7 +616,8 @@ interface AppRouteRouteChildren {
   AppChatRoute: typeof AppChatRoute
   AppResearchRoute: typeof AppResearchRoute
   AppScribeRoute: typeof AppScribeRoute
-  AppTranscribeRoute: typeof AppTranscribeRoute
+  AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
+  AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -606,7 +626,8 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppChatRoute: AppChatRoute,
   AppResearchRoute: AppResearchRoute,
   AppScribeRoute: AppScribeRoute,
-  AppTranscribeRoute: AppTranscribeRoute,
+  AppTranscribeIndexRoute: AppTranscribeIndexRoute,
+  AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
