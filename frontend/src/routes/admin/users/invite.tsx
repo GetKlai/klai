@@ -9,12 +9,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/admin/users/invite')({
   component: InviteUserPage,
 })
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Role = 'admin' | 'member'
 type Language = 'nl' | 'en'

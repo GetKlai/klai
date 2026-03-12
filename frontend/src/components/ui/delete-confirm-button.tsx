@@ -40,14 +40,14 @@ export function DeleteConfirmButton({
             await onConfirm()
           }}
           aria-label={confirmLabel}
-          className="flex h-7 w-7 items-center justify-center rounded bg-green-500 text-white transition-colors hover:bg-green-600"
+          className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90"
         >
           <Check className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={() => setConfirming(false)}
           aria-label={cancelLabel}
-          className="flex h-7 w-7 items-center justify-center rounded bg-red-500 text-white transition-colors hover:bg-red-600"
+          className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -61,7 +61,7 @@ export function DeleteConfirmButton({
       disabled={disabled}
       aria-label={deleteLabel}
       className={cn(
-        'p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-red-500 disabled:pointer-events-none disabled:opacity-50',
+        'p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)] disabled:pointer-events-none disabled:opacity-50',
         className,
       )}
     >

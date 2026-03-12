@@ -4,6 +4,7 @@ import { useAuth } from 'react-oidc-context'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { API_BASE } from '@/lib/api'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 const ADMIN_ROLES = ['org:owner', 'org:admin']
 
@@ -47,11 +48,11 @@ function CallbackPage() {
 
           // Resolve role first so MFA redirect can use it
           const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
-          sessionStorage.setItem('klai:isAdmin', String(isAdmin))
+          sessionStorage.setItem(STORAGE_KEYS.isAdmin, String(isAdmin))
 
           // MFA not yet enrolled — send to setup
           if (!me.mfa_enrolled) {
-            sessionStorage.setItem('klai:mfaPolicy', me.mfa_policy ?? 'optional')
+            sessionStorage.setItem(STORAGE_KEYS.mfaPolicy, me.mfa_policy ?? 'optional')
             window.location.replace('/setup/mfa')
             return
           }
@@ -82,7 +83,7 @@ function CallbackPage() {
       }
 
       // /api/me failed (e.g. backend not running) — go to /app
-      sessionStorage.setItem('klai:isAdmin', 'false')
+      sessionStorage.setItem(STORAGE_KEYS.isAdmin, 'false')
       window.location.replace('/app')
     }
 
@@ -93,7 +94,7 @@ function CallbackPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="space-y-3 text-center max-w-sm px-4">
-          <p className="text-sm font-medium text-red-700">{m.callback_error_heading()}</p>
+          <p className="text-sm font-medium text-[var(--color-destructive-text)]">{m.callback_error_heading()}</p>
           <p className="text-xs text-[var(--color-muted-foreground)] font-mono break-all">{auth.error.message}</p>
           <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">{m.callback_error_back()}</a>
         </div>

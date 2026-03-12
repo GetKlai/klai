@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { setLocale as paraglideSetLocale } from '@/paraglide/runtime'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 export type Locale = 'nl' | 'en'
 
@@ -18,17 +19,17 @@ function getInitialLocale(): Locale {
   const params = new URLSearchParams(window.location.search)
   const urlParam = params.get('lang') ?? params.get('ui_locales')?.split(' ')[0]
   if (urlParam === 'nl' || urlParam === 'en') {
-    localStorage.setItem('klai-locale', urlParam)
+    localStorage.setItem(STORAGE_KEYS.locale, urlParam)
     return urlParam
   }
   // 2. localStorage (explicit user choice on this device)
-  const saved = localStorage.getItem('klai-locale')
+  const saved = localStorage.getItem(STORAGE_KEYS.locale)
   if (saved === 'nl' || saved === 'en') return saved as Locale
   // 3. Browser preference
   const browserLang = navigator.language.slice(0, 2).toLowerCase()
   const resolved: Locale = (browserLang === 'nl' || browserLang === 'en') ? browserLang as Locale : 'nl'
   // Always persist so subsequent page loads (e.g. after OIDC redirect) find a consistent value
-  localStorage.setItem('klai-locale', resolved)
+  localStorage.setItem(STORAGE_KEYS.locale, resolved)
   return resolved
 }
 
@@ -42,7 +43,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   function switchLocale(l: Locale) {
     paraglideSetLocale(l)
     setLocaleState(l)
-    localStorage.setItem('klai-locale', l)
+    localStorage.setItem(STORAGE_KEYS.locale, l)
   }
 
   return (

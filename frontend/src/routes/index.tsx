@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useLocale } from '@/lib/locale'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 export const Route = createFileRoute('/')({
   component: LoginPage,
@@ -18,7 +19,7 @@ function LoginPage() {
   }, [auth.isLoading, auth.isAuthenticated, auth.activeNavigator, locale])
 
   if (auth.isAuthenticated) {
-    const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'
+    const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
     window.location.replace(isAdmin ? '/admin' : '/app')
     return null
   }

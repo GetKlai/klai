@@ -32,7 +32,15 @@
   --color-accent:               #7C6AFF;
   --color-accent-foreground:    #FAFAF8;
   --color-destructive:          #C0392B;
+  --color-destructive-bg:       #FEF2F2;
+  --color-destructive-text:     #B91C1C;
   --color-success:              #27AE60;
+  --color-success-bg:           #D1FAE5;
+  --color-success-text:         #065F46;
+  --color-warning:              #D97706;
+  --color-warning-bg:           #FFFBEB;
+  --color-warning-subtle:       #FEF3C7;
+  --color-warning-text:         #92400E;
   --color-border:               rgba(45, 27, 105, 0.1);
   --color-input:                rgba(45, 27, 105, 0.08);
   --color-ring:                 #7C6AFF;

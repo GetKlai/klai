@@ -8,12 +8,11 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/app/account')({
   component: AccountPage,
 })
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 function AccountPage() {
   const auth = useAuth()

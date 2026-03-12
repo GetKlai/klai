@@ -8,12 +8,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { number } from '@/paraglide/registry'
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/admin/billing')({
   component: BillingPage,
 })
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 // --- Types ---
 
@@ -164,7 +163,7 @@ function BillingPage() {
       </div>
 
       {fetchError && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex items-center gap-2 rounded-lg bg-[var(--color-destructive-bg)] px-4 py-3 text-sm text-[var(--color-destructive-text)]">
           <AlertCircle size={16} className="shrink-0" />
           {fetchError}
         </div>
@@ -449,7 +448,7 @@ function SetupView({
       </Card>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex items-center gap-2 rounded-lg bg-[var(--color-destructive-bg)] px-4 py-3 text-sm text-[var(--color-destructive-text)]">
           <AlertCircle size={16} className="shrink-0" />
           {error}
         </div>
@@ -613,7 +612,7 @@ function ActiveView({
       </Card>
 
       {actionError && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex items-center gap-2 rounded-lg bg-[var(--color-destructive-bg)] px-4 py-3 text-sm text-[var(--color-destructive-text)]">
           <AlertCircle size={16} className="shrink-0" />
           {actionError}
         </div>
@@ -624,7 +623,7 @@ function ActiveView({
           <button
             type="button"
             onClick={() => setCancelConfirm(true)}
-            className="text-sm text-[var(--color-muted-foreground)] hover:text-red-600 transition-colors"
+            className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
           >
             {m.admin_billing_cancel_link()}
           </button>
@@ -655,8 +654,8 @@ function PaymentFailedView({ onRetry }: { onRetry: () => void }) {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-red-50 p-4">
-          <AlertCircle size={24} className="text-red-600" strokeWidth={1.5} />
+        <div className="rounded-full bg-[var(--color-destructive-bg)] p-4">
+          <AlertCircle size={24} className="text-[var(--color-destructive)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
           <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_payment_failed_title()}</p>

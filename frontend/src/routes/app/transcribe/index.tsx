@@ -356,7 +356,7 @@ function TranscribePage() {
                                   <button
                                     onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
                                     aria-label={m.app_transcribe_delete_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-red-500"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)]"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>

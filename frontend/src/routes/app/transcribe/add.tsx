@@ -335,14 +335,14 @@ function AddTranscribePage() {
                     {recording && (
                       <div className="space-y-1.5">
                         <div className="flex items-center gap-2">
-                          <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                          <span className="text-xs font-medium text-red-600">
+                          <div className="h-2 w-2 rounded-full bg-[var(--color-destructive)] animate-pulse" />
+                          <span className="text-xs font-medium text-[var(--color-destructive)]">
                             {m.app_transcribe_record_recording()}
                           </span>
                         </div>
                         <div className="h-2 w-full rounded-full bg-[var(--color-muted)] overflow-hidden">
                           <div
-                            className="h-full bg-green-500 transition-all duration-75"
+                            className="h-full bg-[var(--color-success)] transition-all duration-75"
                             style={{ width: `${audioLevel}%` }}
                           />
                         </div>

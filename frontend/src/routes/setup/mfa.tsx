@@ -8,6 +8,7 @@ import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 export const Route = createFileRoute('/setup/mfa')({
   component: SetupMFAPage,
@@ -188,13 +189,13 @@ function PasskeySetup({
       </div>
 
       {!supportsPasskeys ? (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="rounded-lg bg-[var(--color-warning-bg)] px-3 py-2 text-sm text-[var(--color-warning-text)]">
           {m.setup_mfa_passkey_error_unsupported()}
         </p>
       ) : (
         <>
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
           )}
           <Button
             size="lg"
@@ -358,7 +359,7 @@ function EmailOTPSetup({
             </div>
 
             {error && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+              <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
             )}
 
             <Button
@@ -479,7 +480,7 @@ function TOTPSetup({
 
       {loadError ? (
         <div className="space-y-3 text-center">
-          <p className="text-sm text-red-700">{loadError}</p>
+          <p className="text-sm text-[var(--color-destructive-text)]">{loadError}</p>
           <button
             onClick={() => setRetryCount((c) => c + 1)}
             className="text-xs text-[var(--color-purple-muted)] hover:underline"
@@ -531,7 +532,7 @@ function TOTPSetup({
               />
             </div>
             {error && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+              <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
             )}
             <Button
               type="submit"
@@ -567,7 +568,7 @@ function SetupMFAPage() {
   const [step, setStep] = useState<Step>('pick')
 
   // mfa_policy is passed via sessionStorage (set by callback.tsx before redirect)
-  const mfaPolicy = sessionStorage.getItem('klai:mfaPolicy') ?? 'optional'
+  const mfaPolicy = sessionStorage.getItem(STORAGE_KEYS.mfaPolicy) ?? 'optional'
   const isRequired = mfaPolicy === 'required'
 
   const token = auth.user?.access_token ?? ''
@@ -579,10 +580,10 @@ function SetupMFAPage() {
   }
 
   function handleSuccess() {
-    sessionStorage.removeItem('klai:mfaPolicy')
+    sessionStorage.removeItem(STORAGE_KEYS.mfaPolicy)
     setStep('done')
     setTimeout(() => {
-      const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'
+      const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
       window.location.replace(isAdmin ? '/admin' : '/app')
     }, 1500)
   }
@@ -593,8 +594,8 @@ function SetupMFAPage() {
   }
 
   function handleSkip() {
-    sessionStorage.removeItem('klai:mfaPolicy')
-    const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'
+    sessionStorage.removeItem(STORAGE_KEYS.mfaPolicy)
+    const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
     window.location.replace(isAdmin ? '/admin' : '/app')
   }
 

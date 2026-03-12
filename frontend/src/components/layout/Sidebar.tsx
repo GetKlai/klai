@@ -4,6 +4,7 @@ import { useAuth } from 'react-oidc-context'
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/locale'
+import { STORAGE_KEYS } from '@/lib/storage'
 import * as m from '@/paraglide/messages'
 
 export interface NavItem {
@@ -24,16 +25,16 @@ export function Sidebar({ navItems }: SidebarProps) {
   const { locale, switchLocale } = useLocale()
 
   const inAdmin = location.pathname.startsWith('/admin')
-  const isAdmin = inAdmin || sessionStorage.getItem('klai:isAdmin') === 'true'
+  const isAdmin = inAdmin || sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
 
   const [collapsed, setCollapsed] = useState(() => {
-    return localStorage.getItem('klai:sidebar-collapsed') === 'true'
+    return localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === 'true'
   })
 
   const toggle = () => {
     const next = !collapsed
     setCollapsed(next)
-    localStorage.setItem('klai:sidebar-collapsed', String(next))
+    localStorage.setItem(STORAGE_KEYS.sidebarCollapsed, String(next))
   }
 
   return (

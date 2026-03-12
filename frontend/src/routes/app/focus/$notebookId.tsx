@@ -72,9 +72,9 @@ interface ChatMessage {
 
 function StatusBadge({ status }: { status: SourceStatus }) {
   if (status === 'ready')
-    return <span className="text-xs text-emerald-600">{m.app_focus_source_status_ready()}</span>
+    return <span className="text-xs text-[var(--color-success)]00">{m.app_focus_source_status_ready()}</span>
   if (status === 'error')
-    return <span className="text-xs text-red-500">{m.app_focus_source_status_error()}</span>
+    return <span className="text-xs text-[var(--color-destructive)]">{m.app_focus_source_status_error()}</span>
   return (
     <span className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
       <Loader2 className="h-3 w-3 animate-spin" />
@@ -397,7 +397,7 @@ function NotebookDetailPage() {
                         disabled={
                           deleteSrcMutation.isPending && deleteSrcMutation.variables === src.id
                         }
-                        className="shrink-0 p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-red-500 disabled:opacity-50"
+                        className="shrink-0 p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)] disabled:opacity-50"
                         aria-label={m.app_focus_source_delete()}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -512,7 +512,7 @@ function NotebookDetailPage() {
                   </div>
                 )}
 
-                {addError && <p className="text-xs text-red-600">{addError}</p>}
+                {addError && <p className="text-xs text-[var(--color-destructive)]00">{addError}</p>}
               </CardContent>
             </Card>
           )}
@@ -645,7 +645,7 @@ function NotebookDetailPage() {
               ))
             )}
             {chatError && (
-              <p className="text-center text-xs text-red-600">{chatError}</p>
+              <p className="text-center text-xs text-[var(--color-destructive)]00">{chatError}</p>
             )}
             <div ref={messagesEndRef} />
           </CardContent>

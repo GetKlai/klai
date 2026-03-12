@@ -4,8 +4,7 @@ import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, BookOpen } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/app')({
   component: AppLayout,

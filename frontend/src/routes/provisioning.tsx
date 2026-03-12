@@ -125,7 +125,7 @@ function ProvisioningPage() {
           <>
             <AlertCircle
               size={40}
-              className="mx-auto text-red-400"
+              className="mx-auto text-[var(--color-destructive)]"
               strokeWidth={1.5}
             />
             <div className="space-y-2">

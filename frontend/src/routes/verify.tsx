@@ -85,7 +85,7 @@ function VerifyEmailPage() {
       {status === 'success' && (
         <div className="space-y-6 text-center">
           <div className="space-y-3">
-            <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
+            <CheckCircle className="mx-auto h-12 w-12 text-[var(--color-success)]" />
             <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
               {m.verify_success_heading()}
             </h1>
@@ -103,7 +103,7 @@ function VerifyEmailPage() {
       {status === 'error' && (
         <div className="space-y-6 text-center">
           <div className="space-y-3">
-            <XCircle className="mx-auto h-12 w-12 text-red-400" />
+            <XCircle className="mx-auto h-12 w-12 text-[var(--color-destructive)]" />
             <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
               {m.verify_error_heading()}
             </h1>

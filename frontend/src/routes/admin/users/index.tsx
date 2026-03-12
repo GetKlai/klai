@@ -9,16 +9,16 @@ import {
 } from '@tanstack/react-table'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
+import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
 })
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Role = 'admin' | 'member'
 
@@ -41,18 +41,9 @@ function formatDate(isoString: string): string {
 }
 
 function RoleBadge({ role }: { role: Role }) {
-  if (role === 'admin') {
-    return (
-      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700">
-        {m.admin_users_role_admin()}
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
-      {m.admin_users_role_member()}
-    </span>
-  )
+  return role === 'admin'
+    ? <Badge variant="accent">{m.admin_users_role_admin()}</Badge>
+    : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
 }
 
 const columnHelper = createColumnHelper<User>()

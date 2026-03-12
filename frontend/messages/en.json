@@ -150,7 +150,7 @@
   "app_transcribe_col_words": "Words",
   "app_transcribe_col_language": "Language",
   "app_transcribe_col_duration": "Duration",
-  "app_transcribe_col_date": "Date",
+  "app_transcribe_col_date": "Created",
   "app_transcribe_edit_label": "Edit name",
   "app_transcribe_edit_save": "Save",
   "app_transcribe_edit_cancel": "Cancel",

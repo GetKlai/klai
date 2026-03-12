@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 type SearchParams = {
   email?: string
@@ -11,7 +12,7 @@ export const Route = createFileRoute('/password/forgot')({
     email: typeof search.email === 'string' ? search.email : undefined,
   }),
   beforeLoad: ({ search }) => {
-    const saved = localStorage.getItem('klai-locale')
+    const saved = localStorage.getItem(STORAGE_KEYS.locale)
     const locale = saved === 'nl' || saved === 'en' ? saved : 'nl'
     throw redirect({
       to: '/$locale/password/forgot',

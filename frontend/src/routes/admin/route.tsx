@@ -4,8 +4,8 @@ import { useAuth } from 'react-oidc-context'
 import { LayoutDashboard, Users, Settings, CreditCard } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+import { API_BASE } from '@/lib/api'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
@@ -14,7 +14,7 @@ export const Route = createFileRoute('/admin')({
 function AdminLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
-  const isAdmin = sessionStorage.getItem('klai:isAdmin') === 'true'
+  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
 
   const adminNav = [
     { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },

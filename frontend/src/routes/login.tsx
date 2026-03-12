@@ -202,7 +202,7 @@ function LoginPage() {
             </div>
 
             {error && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+              <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
             )}
 
             <Button type="submit" size="lg" className="w-full gap-3" disabled={loading || totpCode.length !== 6}>
@@ -265,7 +265,7 @@ function LoginPage() {
             </div>
 
             {error && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+              <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
             )}
 
             <Button type="submit" size="lg" className="w-full gap-3" disabled={loading}>
