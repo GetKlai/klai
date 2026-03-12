@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
@@ -20,6 +21,7 @@ const MAX_MB = 100
 type Tab = 'record' | 'upload'
 
 interface TranscriptionDraft {
+  name?: string | null
   text: string
   language: string
   duration_seconds: number
@@ -43,6 +45,7 @@ function AddTranscribePage() {
   const [activeTab, setActiveTab] = useState<Tab>('record')
   const [language, setLanguage] = useState<string>('')
   const [result, setResult] = useState<TranscriptionDraft | null>(null)
+  const [name, setName] = useState('')
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -82,6 +85,7 @@ function AddTranscribePage() {
     },
     onSuccess: (data) => {
       setResult(data)
+      setName('')
       setSelectedFile(null)
     },
     onError: (err: Error) => {
@@ -456,11 +460,21 @@ function AddTranscribePage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="txn-name">{m.app_transcribe_name_label()}</Label>
+                <Input
+                  id="txn-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={m.app_transcribe_name_placeholder()}
+                  disabled={saveMutation.isPending}
+                />
+              </div>
               <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
               <div className="flex gap-3 pt-2">
                 <Button
                   disabled={saveMutation.isPending}
-                  onClick={() => saveMutation.mutate(result)}
+                  onClick={() => saveMutation.mutate({ ...result, name: name.trim() || null })}
                 >
                   {saveMutation.isPending ? (
                     <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{m.app_transcribe_processing()}</>
@@ -469,7 +483,7 @@ function AddTranscribePage() {
                 <Button
                   variant="outline"
                   disabled={saveMutation.isPending}
-                  onClick={() => { setResult(null); setError(null) }}
+                  onClick={() => { setResult(null); setName(''); setError(null) }}
                 >
                   {m.app_transcribe_discard_button()}
                 </Button>

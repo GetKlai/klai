@@ -134,6 +134,8 @@
   "app_transcribe_add_title": "New transcription",
   "app_transcribe_back": "Back to transcriptions",
   "app_transcribe_new_button": "Transcribe again",
+  "app_transcribe_name_label": "Name (optional)",
+  "app_transcribe_name_placeholder": "e.g. Sales call Jan",
   "app_transcribe_save_button": "Save",
   "app_transcribe_discard_button": "Discard",
   "app_transcribe_count": "{count} transcriptions",

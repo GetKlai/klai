@@ -15,6 +15,7 @@ const SCRIBE_BASE = '/scribe/v1'
 
 interface TranscriptionItem {
   id: string
+  name: string | null
   text: string
   language: string
   duration_seconds: number
@@ -121,7 +122,14 @@ function TranscribePage() {
                     className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
                   >
                     <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs">
-                      <span className="block truncate">{item.text}</span>
+                      {item.name ? (
+                        <div>
+                          <span className="block truncate font-medium">{item.name}</span>
+                          <span className="block truncate text-xs text-[var(--color-muted-foreground)]">{item.text}</span>
+                        </div>
+                      ) : (
+                        <span className="block truncate">{item.text}</span>
+                      )}
                     </td>
                     <td className="px-6 py-3 text-[var(--color-muted-foreground)] tabular-nums">
                       {item.text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()}
