@@ -278,7 +278,7 @@ function TranscribePage() {
                                     <button
                                       onClick={() => saveEdit(item.id)}
                                       aria-label={m.app_transcribe_edit_save()}
-                                      className="flex h-7 w-7 items-center justify-center rounded bg-green-500 text-white transition-colors hover:bg-green-600"
+                                      className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90"
                                     >
                                       <Check className="h-3.5 w-3.5" />
                                     </button>
@@ -304,7 +304,7 @@ function TranscribePage() {
                                         deleteMutation.mutate(item.id)
                                       }}
                                       aria-label={m.app_transcribe_delete_confirm()}
-                                      className="flex h-7 w-7 items-center justify-center rounded bg-red-500 text-white transition-colors hover:bg-red-600"
+                                      className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
                                     >
                                       <Check className="h-3.5 w-3.5" />
                                     </button>
@@ -333,7 +333,7 @@ function TranscribePage() {
                                   className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
                                 >
                                   {isCopied ? (
-                                    <CheckCheck className="h-3.5 w-3.5 text-green-500" />
+                                    <CheckCheck className="h-3.5 w-3.5 text-[var(--color-success)]" />
                                   ) : (
                                     <Copy className="h-3.5 w-3.5" />
                                   )}
