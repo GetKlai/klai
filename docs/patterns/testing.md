@@ -102,6 +102,31 @@ ssh core-01 'docker restart klai-core-caddy-1'
 
 ---
 
+## Debugging with GlitchTip
+
+The portal uses `@sentry/react` pointing at **GlitchTip** at `https://errors.getklai.com`.
+Frontend errors and unhandled exceptions are captured automatically in production.
+
+**When to check GlitchTip:**
+- A feature fails in production but not locally
+- Playwright's console shows a vague error (e.g. `Failed to load resource: 403`)
+- You want to see the full stack trace including component tree
+
+**How to use:**
+1. Open `https://errors.getklai.com` and log in
+2. Filter by project: `portal-frontend`
+3. Look for recent issues matching your test window
+
+**During a Playwright session**, also check the browser console directly:
+
+```js
+browser_console_messages({ level: 'error' })
+```
+
+This captures errors that GlitchTip may not have sent yet (e.g. network failures before Sentry initialises).
+
+---
+
 ## See Also
 
 - [patterns/frontend.md](frontend.md) - Component patterns, button placement, form structure
