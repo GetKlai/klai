@@ -15,6 +15,8 @@
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource/libre-baskerville": "^5.2.10",
     "@inlang/paraglide-js": "^2.13.2",
+    "@sentry/react": "^10.43.0",
+    "@sentry/vite-plugin": "^5.1.1",
     "@tanstack/react-query": "^5.66.0",
     "@tanstack/react-router": "^1.114.0",
     "@tanstack/react-table": "^8.21.3",

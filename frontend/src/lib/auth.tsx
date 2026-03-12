@@ -1,5 +1,6 @@
-import { AuthProvider } from 'react-oidc-context'
-import type { ReactNode } from 'react'
+import { AuthProvider, useAuth } from 'react-oidc-context'
+import { useEffect, type ReactNode } from 'react'
+import * as Sentry from '@sentry/react'
 
 // Configure in .env.local:
 //   VITE_OIDC_AUTHORITY=https://auth.getklai.com
@@ -17,6 +18,26 @@ const oidcConfig = {
   automaticSilentRenew: false,
 }
 
+function SentryUserSync() {
+  const auth = useAuth()
+  useEffect(() => {
+    if (auth.isAuthenticated && auth.user?.profile) {
+      Sentry.setUser({
+        id: auth.user.profile.sub,
+        email: auth.user.profile.email ?? undefined,
+      })
+    } else {
+      Sentry.setUser(null)
+    }
+  }, [auth.isAuthenticated, auth.user])
+  return null
+}
+
 export function KlaiAuthProvider({ children }: { children: ReactNode }) {
-  return <AuthProvider {...oidcConfig}>{children}</AuthProvider>
+  return (
+    <AuthProvider {...oidcConfig}>
+      <SentryUserSync />
+      {children}
+    </AuthProvider>
+  )
 }
