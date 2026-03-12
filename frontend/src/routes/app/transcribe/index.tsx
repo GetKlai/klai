@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, Loader2, Pencil, Check, X, Trash2, Copy, CheckCheck, Mic } from 'lucide-react'
+import { Plus, Loader2, Pencil, Check, X, Trash2, Copy, CheckCheck, Mic, Download } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/transcribe/')({
@@ -98,6 +98,7 @@ function TranscribePage() {
   })
 
   function startEdit(item: TranscriptionItem) {
+    setConfirmingDeleteId(null)
     setEditingId(item.id)
     setEditName(item.name ?? '')
   }
@@ -109,6 +110,16 @@ function TranscribePage() {
 
   function saveEdit(id: string) {
     renameMutation.mutate({ id, name: editName.trim() || null })
+  }
+
+  function downloadText(item: TranscriptionItem) {
+    const blob = new Blob([item.text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${item.name ?? 'transcriptie'}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   async function copyText(item: TranscriptionItem) {
@@ -207,7 +218,7 @@ function TranscribePage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                         {m.app_transcribe_col_date()}
                       </th>
-                      <th className="px-6 py-3 w-24" />
+                      <th className="px-6 py-3 w-32" />
                     </tr>
                   </thead>
                   <tbody>
@@ -257,7 +268,7 @@ function TranscribePage() {
                           <td className="px-6 py-3 text-[var(--color-purple-deep)]">
                             {formatDate(item.created_at)}
                           </td>
-                          <td className="px-6 py-3 w-24 text-right">
+                          <td className="px-6 py-3 w-32 text-right">
                             {isEditing ? (
                               <div className="flex items-center justify-end gap-1">
                                 {isSaving ? (
@@ -328,7 +339,14 @@ function TranscribePage() {
                                   )}
                                 </button>
                                 <button
-                                  onClick={() => setConfirmingDeleteId(item.id)}
+                                  onClick={() => downloadText(item)}
+                                  aria-label={m.app_transcribe_download_label()}
+                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
                                   aria-label={m.app_transcribe_delete_label()}
                                   className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-red-500"
                                 >
