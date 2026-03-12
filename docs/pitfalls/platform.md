@@ -631,6 +631,127 @@ Never rely on the default `public.alembic_version`.
 
 ---
 
+## platform-zitadel-login-v2-recovery
+
+**Severity:** CRIT
+
+**Trigger:** Portal login is broken AND Zitadel admin console (`auth.getklai.com/ui/console`) redirects to the broken portal login — creating a chicken-and-egg deadlock
+
+When Login V2 is active (`required: true`), ALL Zitadel OIDC flows — including the admin console — redirect to the portal's custom login. If that login is broken, you cannot access Zitadel to fix it.
+
+**Break the deadlock: delete the Login V2 projection row directly in PostgreSQL**
+
+```bash
+POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
+docker exec $POSTGRES psql -U zitadel -d zitadel -c \
+  "DELETE FROM projections.instance_features5
+   WHERE instance_id = '362757920133218310' AND key = 'login_v2';"
+```
+
+Takes effect immediately — no Zitadel restart needed. `auth.getklai.com/ui/console` now uses Zitadel's built-in login.
+
+**Re-enable Login V2 after fixing the underlying issue:**
+
+Write to a file to avoid shell quoting problems:
+
+```bash
+cat > /tmp/fix_login_v2.sql << 'EOF'
+UPDATE projections.instance_features5
+SET value = '{"base_uri": {"Host": "getklai.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
+    change_date = NOW(),
+    sequence = 5
+WHERE instance_id = '362757920133218310' AND key = 'login_v2';
+EOF
+POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
+docker cp /tmp/fix_login_v2.sql $POSTGRES:/tmp/fix_login_v2.sql
+docker exec $POSTGRES psql -U zitadel -d zitadel -f /tmp/fix_login_v2.sql
+```
+
+**Critical: exact JSON format for the `value` column**
+
+The value uses Go's `url.URL` struct serialization. Do not abbreviate or change the structure:
+
+```json
+{
+  "base_uri": {
+    "Host": "getklai.getklai.com",
+    "Path": "",
+    "User": null,
+    "Opaque": "",
+    "Scheme": "https",
+    "RawPath": "",
+    "Fragment": "",
+    "OmitHost": false,
+    "RawQuery": "",
+    "ForceQuery": false,
+    "RawFragment": ""
+  },
+  "required": true
+}
+```
+
+If you get this wrong, the projection row is written with `value = null` and Login V2 has no redirect target.
+
+**Zitadel instance constants (core-01, do not guess):**
+
+| Name | Value |
+|---|---|
+| Instance ID | `362757920133218310` |
+| Feature aggregate creator | `362760545968848902` |
+| portal-api machine user ID | `362780577813757958` |
+
+---
+
+## platform-zitadel-pat-invalid-after-upgrade
+
+**Severity:** CRIT
+
+**Trigger:** `create_session failed 401: Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs after a Zitadel version upgrade or after `portal-api` is restarted
+
+The portal-api uses a Personal Access Token (PAT) to call Zitadel's `/v2/sessions` API as a service account. This PAT can become invalid after major Zitadel upgrades. The failure is masked as long as the portal-api is running — it caches active sessions in memory. After a restart the cache is empty and every login attempt hits the invalid PAT immediately.
+
+**Symptoms:**
+- All users get "E-mailadres of wachtwoord is onjuist" on login
+- `docker logs klai-core-portal-api-1` shows `create_session failed 401: Errors.Token.Invalid`
+
+**Fix: rotate the PAT**
+
+1. Go to `https://auth.getklai.com/ui/console` (if Login V2 blocks you, see `platform-zitadel-login-v2-recovery`)
+2. Navigate to **Users** → **Service Accounts** tab → **Portal API**
+3. Go to **Personal Access Tokens** → **+ New** — copy the token value (shown once only)
+4. On core-01:
+   ```bash
+   sed -i 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' /opt/klai/.env
+   cd /opt/klai && docker compose up -d portal-api   # must be up -d, not restart
+   docker exec klai-core-portal-api-1 env | grep PORTAL_API_ZITADEL_PAT  # verify
+   ```
+5. Update `.env.sops` in the repo (decrypt on core-01 → update → re-encrypt → copy back):
+   ```bash
+   # On your MacBook:
+   scp klai-infra/core-01/.env.sops core-01:/tmp/core-01.env.sops
+   ssh core-01 "
+     sops --input-type dotenv --output-type dotenv --decrypt /tmp/core-01.env.sops > /tmp/core-01.decrypted &&
+     sed -i 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' /tmp/core-01.decrypted &&
+     sops --input-type dotenv --output-type dotenv --encrypt \
+       --age 'age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur,age15ztzw9vnngkdnw0pg5tn8upplglvhzkep23sm5zu86res5lcmv7syw5m4v' \
+       /tmp/core-01.decrypted > /tmp/core-01.env.sops.new &&
+     rm /tmp/core-01.decrypted
+   "
+   scp core-01:/tmp/core-01.env.sops.new klai-infra/core-01/.env.sops
+   cd klai-infra && git add core-01/.env.sops && git commit -m "Rotate PORTAL_API_ZITADEL_PAT"
+   ```
+
+**Verify the new PAT works before committing:**
+```bash
+ssh core-01 "curl -s https://auth.getklai.com/v2/sessions \
+  -H 'Authorization: Bearer <new-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{\"checks\":{\"user\":{\"loginName\":\"test\"},\"password\":{\"password\":\"test\"}}}'"
+# Expected: {"code":5, "message":"User could not be found"} — not 401
+```
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns

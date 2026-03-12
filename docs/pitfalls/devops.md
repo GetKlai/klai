@@ -29,6 +29,35 @@ Never use version numbers from AI training data. Training data is always months 
 
 ---
 
+## devops-compose-restart-does-not-reload-env
+
+**Severity:** HIGH
+
+**Trigger:** Updating `/opt/klai/.env` on the server and then restarting a service with `docker compose restart`
+
+`docker compose restart [service]` stops and starts the existing container with the **same environment variables** that were injected when the container was first created. It does NOT re-read `.env`.
+
+**Wrong:**
+```bash
+sed -i 's/^SOME_TOKEN=.*/SOME_TOKEN=new-value/' /opt/klai/.env
+docker compose restart portal-api   # Old value is still active — restart did nothing
+```
+
+**Correct:**
+```bash
+sed -i 's/^SOME_TOKEN=.*/SOME_TOKEN=new-value/' /opt/klai/.env
+docker compose up -d portal-api     # Recreates container, re-reads .env
+```
+
+**Always verify after env changes:**
+```bash
+docker exec klai-core-portal-api-1 env | grep SOME_TOKEN
+```
+
+**Rule:** After any change to `.env`, use `docker compose up -d [service]`, not `restart`.
+
+---
+
 ## See Also
 
 - [patterns/devops.md](../patterns/devops.md) - Proven deployment patterns
