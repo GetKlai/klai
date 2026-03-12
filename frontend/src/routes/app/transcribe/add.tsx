@@ -63,6 +63,23 @@ function AddTranscribePage() {
   const animFrameRef = useRef<number | null>(null)
   const durationIntervalRef = useRef<number | null>(null)
 
+  const discardMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok && res.status !== 404) {
+        throw new Error('delete failed')
+      }
+    },
+    onSuccess: () => {
+      setResult(null)
+      setError(null)
+      queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+    },
+  })
+
   const transcribeMutation = useMutation({
     mutationFn: async (file: File) => {
       setError(null)
@@ -437,19 +454,17 @@ function AddTranscribePage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex gap-3 pt-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setResult(null)
-                    setError(null)
-                  }}
+                  disabled={discardMutation.isPending}
+                  onClick={() => discardMutation.mutate(result.id)}
                 >
-                  {m.app_transcribe_new_button()}
+                  {m.app_transcribe_discard_button()}
                 </Button>
                 <Button size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
-                  {m.app_transcribe_back()}
+                  {m.app_transcribe_save_button()}
                 </Button>
               </div>
             </CardContent>
