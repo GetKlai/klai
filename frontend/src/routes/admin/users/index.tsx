@@ -11,6 +11,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
+import { Tooltip } from '@/components/ui/tooltip'
+import { Trash2, Send, Loader2 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -30,6 +32,7 @@ interface User {
   role: Role
   preferred_language: 'nl' | 'en'
   created_at: string
+  invite_pending: boolean
 }
 
 function formatDate(isoString: string): string {
@@ -68,6 +71,19 @@ function UsersPage() {
   })
 
   const users = data?.users ?? []
+
+  const resendInviteMutation = useMutation({
+    mutationFn: async (user: User) => {
+      const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}/resend-invite`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(m.admin_users_error_resend_invite({ status: String(res.status) }))
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+  })
 
   const deleteMutation = useMutation({
     mutationFn: async (user: User) => {
@@ -108,7 +124,8 @@ function UsersPage() {
   const pageError =
     (error instanceof Error ? error.message : error ? m.admin_users_error_generic() : null) ??
     (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
-    (roleMutation.error instanceof Error ? roleMutation.error.message : roleMutation.error ? m.admin_users_error_role_generic() : null)
+    (roleMutation.error instanceof Error ? roleMutation.error.message : roleMutation.error ? m.admin_users_error_role_generic() : null) ??
+    (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null)
 
   const columns = [
     columnHelper.accessor((row) => `${row.first_name} ${row.last_name}`, {
@@ -122,10 +139,19 @@ function UsersPage() {
     }),
     columnHelper.accessor('role', {
       header: () => m.admin_users_col_role(),
-      cell: (info) => <RoleBadge role={info.getValue()} />,
+      cell: (info) => (
+        <div className="flex flex-col gap-1">
+          <RoleBadge role={info.getValue()} />
+          {info.row.original.invite_pending && (
+            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 w-fit text-xs">
+              {m.admin_users_invite_pending()}
+            </Badge>
+          )}
+        </div>
+      ),
     }),
     columnHelper.accessor('created_at', {
-      header: () => m.admin_users_col_since(),
+      header: () => m.admin_users_col_invited(),
       cell: (info) => formatDate(info.getValue()),
     }),
     columnHelper.display({
@@ -137,6 +163,9 @@ function UsersPage() {
         const isChangingRole =
           roleMutation.isPending &&
           roleMutation.variables?.user.zitadel_user_id === user.zitadel_user_id
+        const isResending =
+          resendInviteMutation.isPending &&
+          resendInviteMutation.variables?.zitadel_user_id === user.zitadel_user_id
         return (
           <div className="flex items-center gap-2">
             <Select
@@ -148,14 +177,31 @@ function UsersPage() {
               <option value="admin">{m.admin_users_role_admin()}</option>
               <option value="member">{m.admin_users_role_member()}</option>
             </Select>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={isSelf}
-              onClick={() => handleDelete(user)}
-            >
-              {m.admin_users_delete()}
-            </Button>
+            {user.invite_pending && (
+              <Tooltip label={m.admin_users_resend_invite()}>
+                <button
+                  disabled={isResending}
+                  onClick={() => resendInviteMutation.mutate(user)}
+                  aria-label={m.admin_users_resend_invite()}
+                  className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
+                >
+                  {isResending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Send className="h-3.5 w-3.5" />
+                  }
+                </button>
+              </Tooltip>
+            )}
+            <Tooltip label={m.admin_users_delete()}>
+              <button
+                disabled={isSelf}
+                onClick={() => handleDelete(user)}
+                aria-label={m.admin_users_delete()}
+                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70 disabled:opacity-40"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
           </div>
         )
       },
