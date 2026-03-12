@@ -419,5 +419,14 @@
   "app_focus_chat_placeholder": "Ask a question...",
   "app_focus_chat_disabled_hint": "Add a document first",
   "app_focus_chat_sources_label": "Sources",
-  "app_focus_chat_error": "An error occurred, please try again."
+  "app_focus_chat_error": "An error occurred, please try again.",
+  "app_focus_count_one": "1 notebook",
+  "app_focus_count": "{count} notebooks",
+  "app_focus_empty_heading": "No notebooks yet",
+  "app_focus_empty_body": "Create a notebook to start asking questions from your documents.",
+  "app_focus_search_placeholder": "Search...",
+  "app_focus_search_empty": "No notebooks found.",
+  "app_focus_delete_label": "Delete",
+  "app_focus_delete_confirm_action": "Confirm",
+  "app_focus_delete_cancel_action": "Cancel"
 }

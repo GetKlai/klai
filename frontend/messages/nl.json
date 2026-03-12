@@ -419,5 +419,14 @@
   "app_focus_chat_placeholder": "Stel een vraag...",
   "app_focus_chat_disabled_hint": "Voeg eerst een document toe",
   "app_focus_chat_sources_label": "Bronnen",
-  "app_focus_chat_error": "Er is een fout opgetreden, probeer opnieuw."
+  "app_focus_chat_error": "Er is een fout opgetreden, probeer opnieuw.",
+  "app_focus_count_one": "1 notebook",
+  "app_focus_count": "{count} notebooks",
+  "app_focus_empty_heading": "Nog geen notebooks",
+  "app_focus_empty_body": "Maak een notebook aan om vragen te stellen aan je documenten.",
+  "app_focus_search_placeholder": "Zoeken...",
+  "app_focus_search_empty": "Geen notebooks gevonden.",
+  "app_focus_delete_label": "Verwijderen",
+  "app_focus_delete_confirm_action": "Bevestigen",
+  "app_focus_delete_cancel_action": "Annuleren"
 }
