@@ -34,6 +34,7 @@ class NotebookCreate(BaseModel):
 class NotebookUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    scope: Literal["personal", "org"] | None = None
     default_mode: Literal["narrow", "broad", "web"] | None = None
     save_history: bool | None = None
 
@@ -45,6 +46,7 @@ class NotebookResponse(BaseModel):
     scope: str
     default_mode: str
     save_history: bool
+    owner_user_id: str
     sources_count: int
     created_at: datetime
     updated_at: datetime
@@ -119,6 +121,7 @@ async def create_notebook(
         scope=nb.scope,
         default_mode=nb.default_mode,
         save_history=nb.save_history,
+        owner_user_id=nb.owner_user_id,
         sources_count=0,
         created_at=nb.created_at,
         updated_at=nb.updated_at,
@@ -166,6 +169,7 @@ async def list_notebooks(
                 scope=nb.scope,
                 default_mode=nb.default_mode,
                 save_history=nb.save_history,
+                owner_user_id=nb.owner_user_id,
                 sources_count=count,
                 created_at=nb.created_at,
                 updated_at=nb.updated_at,

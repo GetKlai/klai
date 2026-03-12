@@ -22,8 +22,8 @@ async def convert_file(file_bytes: bytes, filename: str) -> DoclingResult:
     """Send a file to docling-serve for conversion. Returns structured text."""
     async with httpx.AsyncClient(timeout=300.0) as client:
         resp = await client.post(
-            f"{settings.docling_url}/v1alpha/convert/file",
-            files={"files": (filename, file_bytes, "application/octet-stream")},
+            f"{settings.docling_url}/v1/convert/file",
+            files=[("files", (filename, file_bytes, "application/octet-stream"))],
         )
         resp.raise_for_status()
         data = resp.json()
@@ -35,8 +35,8 @@ async def convert_url(url: str) -> DoclingResult:
     """Send a URL to docling-serve for conversion. Returns structured text."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{settings.docling_url}/v1alpha/convert/source",
-            json={"http_source": {"url": url}},
+            f"{settings.docling_url}/v1/convert/source",
+            json={"sources": [{"kind": "http", "url": url}]},
         )
         resp.raise_for_status()
         data = resp.json()
