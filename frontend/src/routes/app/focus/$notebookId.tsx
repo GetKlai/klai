@@ -220,7 +220,7 @@ function NotebookDetailPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: question, mode: chatMode }),
+        body: JSON.stringify({ question: question, mode: chatMode }),
       })
       if (!res.ok) throw new Error('Chat mislukt')
       if (!res.body) throw new Error('Geen response')
@@ -236,25 +236,28 @@ function NotebookDetailPage() {
         const chunk = decoder.decode(value)
         for (const line of chunk.split('\n')) {
           if (!line.startsWith('data: ')) continue
+          let event: { type: string; content?: string; citations?: Citation[] }
           try {
-            const event = JSON.parse(line.slice(6))
-            if (event.type === 'token') {
-              assistantContent += event.content
-              setMessages((prev) => {
-                const next = [...prev]
-                next[next.length - 1] = { role: 'assistant', content: assistantContent }
-                return next
-              })
-            } else if (event.type === 'done') {
-              citations = event.citations ?? []
-              setMessages((prev) => {
-                const next = [...prev]
-                next[next.length - 1] = { role: 'assistant', content: assistantContent, citations }
-                return next
-              })
-            }
+            event = JSON.parse(line.slice(6))
           } catch {
-            // ignore malformed SSE lines
+            continue // ignore malformed SSE lines
+          }
+          if (event.type === 'token') {
+            assistantContent += event.content ?? ''
+            setMessages((prev) => {
+              const next = [...prev]
+              next[next.length - 1] = { role: 'assistant', content: assistantContent }
+              return next
+            })
+          } else if (event.type === 'done') {
+            citations = event.citations ?? []
+            setMessages((prev) => {
+              const next = [...prev]
+              next[next.length - 1] = { role: 'assistant', content: assistantContent, citations }
+              return next
+            })
+          } else if (event.type === 'error') {
+            throw new Error(event.content)
           }
         }
       }
