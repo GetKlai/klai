@@ -194,7 +194,7 @@ function UsersPage() {
             )}
             <Tooltip label={m.admin_users_edit()}>
               <button
-                onClick={() => navigate({ to: '/admin/users/$userId_/edit', params: { userId_: user.zitadel_user_id } })}
+                onClick={() => navigate({ to: '/admin/users/$userId/edit', params: { userId: user.zitadel_user_id } })}
                 aria-label={m.admin_users_edit()}
                 className="flex h-7 w-7 items-center justify-center text-amber-500 transition-opacity hover:opacity-70"
               >

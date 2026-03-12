@@ -11,7 +11,7 @@ import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 
-export const Route = createFileRoute('/admin/users/$userId_/edit')({
+export const Route = createFileRoute('/admin/users/$userId/edit')({
   component: EditUserPage,
 })
 
@@ -36,7 +36,7 @@ function EditUserPage() {
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const { userId_ } = Route.useParams()
+  const { userId } = Route.useParams()
 
   const [form, setForm] = useState<EditForm>({
     first_name: '',
@@ -56,7 +56,7 @@ function EditUserPage() {
     enabled: !!token,
   })
 
-  const user = data?.users.find((u) => u.zitadel_user_id === userId_)
+  const user = data?.users.find((u) => u.zitadel_user_id === userId)
 
   useEffect(() => {
     if (user) {
@@ -70,7 +70,7 @@ function EditUserPage() {
 
   const editMutation = useMutation({
     mutationFn: async (formData: EditForm) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId_}`, {
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
