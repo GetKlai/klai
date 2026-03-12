@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Trash2, Send, Loader2 } from 'lucide-react'
+import { Trash2, Send, Loader2, Pencil } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -194,7 +194,7 @@ function UsersPage() {
             )}
             <Tooltip label={m.admin_users_edit()}>
               <button
-                onClick={() => navigate({ to: '/admin/users/$userId_/edit', params: { userId: user.zitadel_user_id } })}
+                onClick={() => navigate({ to: '/admin/users/$userId_/edit', params: { userId_: user.zitadel_user_id } })}
                 aria-label={m.admin_users_edit()}
                 className="flex h-7 w-7 items-center justify-center text-amber-500 transition-opacity hover:opacity-70"
               >
