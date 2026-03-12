@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     mongo_root_password: str = ""
     meili_master_key: str = ""
     litellm_master_key: str = ""
+    redis_password: str = ""
 
     # Provisioning paths (container-internal paths, mounted from host)
     caddy_tenants_path: str = "/caddy/tenants"          # per-tenant .caddyfile dir (caddy-tenants volume)

@@ -83,6 +83,9 @@ CREDS_IV={creds_iv}
 MEILI_HOST=http://meilisearch:7700
 MEILI_MASTER_KEY={settings.meili_master_key}
 
+# Redis (session persistence across container restarts)
+REDIS_URI=redis://:{settings.redis_password}@redis:6379
+
 # AI routing via LiteLLM
 LITELLM_API_KEY={settings.litellm_master_key}
 """
@@ -167,7 +170,7 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
     )
 
     # Connect to additional networks
-    for net_name in ["klai-net-mongodb", "klai-net-meilisearch"]:
+    for net_name in ["klai-net-mongodb", "klai-net-meilisearch", "klai-net-redis"]:
         try:
             net = client.networks.get(net_name)
             net.connect(container_name)
