@@ -566,6 +566,71 @@ ssh core-01 'docker restart klai-core-caddy-1'
 
 ---
 
+## platform-alembic-shared-postgres-schema-conflict
+
+**Severity:** CRIT
+
+**Trigger:** Deploying a second FastAPI service (e.g. `scribe-api`) that uses Alembic migrations to the same PostgreSQL database as an existing service (e.g. `portal-api`)
+
+Alembic stores its migration version table as `alembic_version` in the `public` schema by default. If two services share the same database and both use the default location, they will overwrite each other's version table — causing migrations to fail or be silently skipped.
+
+**Symptom:**
+```
+FAILED: Can't locate revision identified by 'abc123'
+# or: migration appears to run but the schema is not created
+```
+
+**Fix:** Each service must scope its Alembic version table to its own schema, AND create the schema in a **separate committed transaction** before Alembic starts its own migration transaction.
+
+In `alembic/env.py`:
+
+```python
+import sqlalchemy as sa
+
+# IMPORTANT: run_migrations_offline must also set version_table_schema
+def run_migrations_offline() -> None:
+    context.configure(
+        url=...,
+        include_schemas=True,
+        version_table="alembic_version",
+        version_table_schema="scribe",
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+def do_run_migrations(connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_schemas=True,
+        version_table="alembic_version",
+        version_table_schema="scribe",   # scope to this service's schema
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+async def run_migrations_online() -> None:
+    engine = create_async_engine(settings.postgres_dsn)
+    # Commit schema creation BEFORE starting the migration transaction.
+    # If CREATE SCHEMA is inside the migration transaction, alembic cannot
+    # create the version table in the not-yet-committed schema.
+    async with engine.begin() as conn:
+        await conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS scribe"))
+    async with engine.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await engine.dispose()
+```
+
+**Rule:** Every FastAPI service that shares a PostgreSQL instance must:
+1. Set `version_table_schema` to its own dedicated schema
+2. Create that schema in a **separate `engine.begin()` block** before calling `run_sync(do_run_migrations)` — not inside `do_run_migrations` itself
+
+Never rely on the default `public.alembic_version`.
+
+**Source:** `klai-scribe/scribe-api/alembic/env.py` — fix commits `691db16` + `3e80070`
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
