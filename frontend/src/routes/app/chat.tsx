@@ -3,7 +3,10 @@ import { createFileRoute } from '@tanstack/react-router'
 const chatUrl = (() => {
   const { hostname } = window.location
   if (hostname !== 'localhost') {
-    return `https://chat.${hostname}/oauth/openid`
+    // Portal runs at {tenant}.getklai.com — extract tenant slug and root domain
+    // to build chat-{tenant}.getklai.com (single-level subdomain, covered by wildcard cert)
+    const [tenant, ...rest] = hostname.split('.')
+    return `https://chat-${tenant}.${rest.join('.')}/oauth/openid`
   }
   return 'http://localhost:3080'
 })()
