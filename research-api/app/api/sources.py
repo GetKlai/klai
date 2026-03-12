@@ -4,10 +4,14 @@ Source endpoints:
   GET    /v1/notebooks/{nb_id}/sources
   DELETE /v1/notebooks/{nb_id}/sources/{src_id}
 """
+import asyncio
+import ipaddress
 import logging
+import socket
 import uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
@@ -24,7 +28,7 @@ from app.services.ingestion import ingest_source
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["sources"])
 
-_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx"}
+_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md"}
 _UPLOAD_BASE = Path("/opt/klai/research-uploads")
 
 
@@ -79,8 +83,53 @@ async def _get_notebook_for_source(
 
 def _detect_source_type(filename: str) -> str:
     ext = Path(filename).suffix.lower()
-    mapping = {".pdf": "pdf", ".docx": "docx", ".xlsx": "xlsx", ".pptx": "pptx"}
+    mapping = {".pdf": "pdf", ".docx": "docx", ".xlsx": "xlsx", ".pptx": "pptx", ".txt": "text", ".md": "text"}
     return mapping.get(ext, "pdf")
+
+
+_BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal", "169.254.169.254"}
+
+
+async def _assert_url_safe(url: str) -> None:
+    """Reject URLs that target private/internal resources (SSRF guard)."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ongeldige URL")
+
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Alleen http/https URLs zijn toegestaan",
+        )
+
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ongeldige URL: geen hostname")
+
+    if hostname.lower() in _BLOCKED_HOSTNAMES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="URL niet toegestaan")
+
+    loop = asyncio.get_event_loop()
+    try:
+        addrs = await loop.run_in_executor(None, socket.getaddrinfo, hostname, None)
+    except socket.gaierror:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="URL niet bereikbaar: hostname kan niet worden omgezet",
+        )
+
+    for addr_info in addrs:
+        ip_str = addr_info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="URL verwijst naar intern netwerk",
+            )
 
 
 # ── POST /v1/notebooks/{nb_id}/sources — file upload ─────────────────────────
@@ -182,6 +231,10 @@ async def add_source_url(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="type moet 'url' of 'youtube' zijn",
         )
+
+    # SSRF guard: only for URL type (YouTube IDs are not user-controlled URLs)
+    if body.type == "url":
+        await _assert_url_safe(body.url)
 
     src_id = _src_id()
     display_name = body.name or body.url[:80]

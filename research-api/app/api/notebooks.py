@@ -8,10 +8,11 @@ Notebook CRUD endpoints:
 """
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
@@ -26,14 +27,15 @@ router = APIRouter(prefix="/v1", tags=["notebooks"])
 class NotebookCreate(BaseModel):
     name: str
     description: str | None = None
-    scope: str = "personal"
-    default_mode: str = "narrow"
+    scope: Literal["personal", "org"] = "personal"
+    default_mode: Literal["narrow", "broad", "web"] = "narrow"
 
 
 class NotebookUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    default_mode: str | None = None
+    default_mode: Literal["narrow", "broad", "web"] | None = None
+    save_history: bool | None = None
 
 
 class NotebookResponse(BaseModel):
@@ -42,6 +44,7 @@ class NotebookResponse(BaseModel):
     description: str | None
     scope: str
     default_mode: str
+    save_history: bool
     sources_count: int
     created_at: datetime
     updated_at: datetime
@@ -115,6 +118,7 @@ async def create_notebook(
         description=nb.description,
         scope=nb.scope,
         default_mode=nb.default_mode,
+        save_history=nb.save_history,
         sources_count=0,
         created_at=nb.created_at,
         updated_at=nb.updated_at,
@@ -128,21 +132,23 @@ async def list_notebooks(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> NotebookListResponse:
-    access_filter = or_(
-        Notebook.owner_user_id == user.user_id,
-        (Notebook.scope == "org"),
+    # Both branches explicitly include tenant_id to prevent cross-tenant leakage.
+    access_filter = and_(
+        Notebook.tenant_id == user.tenant_id,
+        or_(
+            Notebook.owner_user_id == user.user_id,
+            Notebook.scope == "org",
+        ),
     )
-    # Narrow to tenant
-    tenant_filter = Notebook.tenant_id == user.tenant_id
 
     total_result = await db.execute(
-        select(func.count()).select_from(Notebook).where(tenant_filter, access_filter)
+        select(func.count()).select_from(Notebook).where(access_filter)
     )
     total = total_result.scalar_one()
 
     rows = await db.execute(
         select(Notebook)
-        .where(tenant_filter, access_filter)
+        .where(access_filter)
         .order_by(Notebook.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -159,6 +165,7 @@ async def list_notebooks(
                 description=nb.description,
                 scope=nb.scope,
                 default_mode=nb.default_mode,
+                save_history=nb.save_history,
                 sources_count=count,
                 created_at=nb.created_at,
                 updated_at=nb.updated_at,
@@ -183,6 +190,7 @@ async def get_notebook(
         description=nb.description,
         scope=nb.scope,
         default_mode=nb.default_mode,
+        save_history=nb.save_history,
         sources_count=count,
         created_at=nb.created_at,
         updated_at=nb.updated_at,
@@ -209,6 +217,8 @@ async def update_notebook(
         nb.description = body.description
     if body.default_mode is not None:
         nb.default_mode = body.default_mode
+    if body.save_history is not None:
+        nb.save_history = body.save_history
     nb.updated_at = datetime.utcnow()
 
     await db.commit()
@@ -221,6 +231,7 @@ async def update_notebook(
         description=nb.description,
         scope=nb.scope,
         default_mode=nb.default_mode,
+        save_history=nb.save_history,
         sources_count=count,
         created_at=nb.created_at,
         updated_at=nb.updated_at,

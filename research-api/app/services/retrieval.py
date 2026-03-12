@@ -51,14 +51,14 @@ async def retrieve_chunks(
     result = await db.execute(
         text("""
             SELECT c.id, c.source_id, c.content, c.metadata,
-                   1 - (c.embedding <=> :embedding::vector) AS score,
+                   1 - (c.embedding <=> CAST(:embedding AS vector)) AS score,
                    s.name AS source_name
             FROM research.chunks c
             JOIN research.sources s ON s.id = c.source_id
-            WHERE c.tenant_id = :tenant_id::uuid
+            WHERE c.tenant_id = :tenant_id
               AND c.notebook_id = :notebook_id
               AND s.status = 'ready'
-            ORDER BY c.embedding <=> :embedding::vector
+            ORDER BY c.embedding <=> CAST(:embedding AS vector)
             LIMIT :top_k
         """),
         {

@@ -21,8 +21,6 @@ bearer = HTTPBearer()
 
 _jwks_cache: dict | None = None
 
-ZITADEL_ORG_CLAIM = "urn:zitadel:iam:org:id"
-
 
 async def _fetch_jwks() -> dict:
     jwks_url = f"{settings.zitadel_issuer}/oauth/v2/keys"
@@ -62,13 +60,17 @@ async def _decode_token(token: str) -> dict:
         if key is None:
             raise JWTError("Signing key not found in JWKS")
 
-        payload = jwt.decode(
-            token,
-            key,
-            algorithms=["RS256"],
-            issuer=settings.zitadel_issuer,
-            options={"verify_aud": False},
-        )
+        decode_kwargs: dict = {
+            "algorithms": ["RS256"],
+            "issuer": settings.zitadel_issuer,
+        }
+        if settings.zitadel_api_audience:
+            decode_kwargs["audience"] = settings.zitadel_api_audience
+        else:
+            logger.warning("ZITADEL_API_AUDIENCE not set — audience verification disabled")
+            decode_kwargs["options"] = {"verify_aud": False}
+
+        payload = jwt.decode(token, key, **decode_kwargs)
         return payload
     except JWTError as exc:
         raise HTTPException(
@@ -102,27 +104,25 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing sub claim")
 
-    zitadel_org_id: str = payload.get(ZITADEL_ORG_CLAIM, "")
-
-    # Resolve tenant UUID from portal.portal_orgs
-    if not zitadel_org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Geen organisatie gevonden in token",
-        )
-
+    # Resolve tenant via portal_users (org claim is not present in the portal OIDC token)
     row = await db.execute(
-        text("SELECT id FROM portal.portal_orgs WHERE zitadel_org_id = :zoid"),
-        {"zoid": zitadel_org_id},
+        text(
+            "SELECT pu.org_id, po.zitadel_org_id"
+            " FROM portal_users pu"
+            " JOIN portal_orgs po ON po.id = pu.org_id"
+            " WHERE pu.zitadel_user_id = :uid"
+        ),
+        {"uid": user_id},
     )
     org = row.fetchone()
     if org is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Organisatie niet gevonden",
+            detail="Gebruiker niet gevonden",
         )
 
-    tenant_id = str(org[0])
+    tenant_id: str = str(org[1])   # zitadel_org_id — stable tenant identifier
+    zitadel_org_id: str = str(org[1])
 
     # Extract roles from JWT (custom claim set by Zitadel)
     roles_claim = payload.get("urn:zitadel:iam:org:project:roles", {})

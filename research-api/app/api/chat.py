@@ -4,6 +4,7 @@ POST /v1/notebooks/{nb_id}/chat
 """
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -12,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
+from app.models.chat_message import ChatMessage
 from app.models.notebook import Notebook
 from app.services.retrieval import (
     BROAD_SYSTEM_PROMPT,
@@ -63,7 +65,7 @@ async def chat(
     history = body.history or []
 
     return StreamingResponse(
-        _generate(db, question, mode, nb_id, user.tenant_id, history),
+        _generate(db, question, mode, nb_id, user.tenant_id, history, nb.save_history),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -79,8 +81,10 @@ async def _generate(
     notebook_id: str,
     tenant_id: str,
     history: list[dict],
+    save_history: bool,
 ):
     """Async generator that yields SSE lines."""
+    full_response = ""
     try:
         # 1. Retrieve document chunks
         doc_chunks = await retrieve_chunks(db, question, notebook_id, tenant_id)
@@ -98,15 +102,41 @@ async def _generate(
 
         # 4. Stream LLM tokens
         async for token in stream_llm(system_prompt, context, question, history):
+            full_response += token
             yield _sse({"type": "token", "content": token})
 
         # 5. Emit done event with citations
         citations = extract_citations(doc_chunks)
         yield _sse({"type": "done", "citations": citations, "mode": mode})
 
+        # 6. Persist messages if history is enabled
+        if save_history and full_response:
+            await _persist_messages(notebook_id, tenant_id, question, full_response)
+
     except Exception:
         logger.exception("Chat streaming error for notebook %s", notebook_id)
         yield _sse({"type": "error", "content": "Er is een fout opgetreden"})
+
+
+async def _persist_messages(
+    notebook_id: str, tenant_id: str, question: str, answer: str
+) -> None:
+    """Save user question and assistant answer to chat_messages using a fresh session."""
+    try:
+        async with AsyncSessionLocal() as db:
+            for role, content in [("user", question), ("assistant", answer)]:
+                db.add(
+                    ChatMessage(
+                        id="msg_" + uuid.uuid4().hex[:24],
+                        notebook_id=notebook_id,
+                        tenant_id=tenant_id,
+                        role=role,
+                        content=content,
+                    )
+                )
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to persist chat messages for notebook %s", notebook_id)
 
 
 def _sse(data: dict) -> str:
