@@ -39,11 +39,23 @@ function formatDate(isoString: string): string {
   })
 }
 
+function parseJwtRoles(token: string): string[] {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    const rolesRecord = payload['urn:zitadel:iam:org:project:roles']
+    return rolesRecord && typeof rolesRecord === 'object' ? Object.keys(rolesRecord) : []
+  } catch {
+    return []
+  }
+}
+
 function FocusPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+
+  const isOrgAdmin = token ? parseJwtRoles(token).includes('org_admin') : false
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -173,7 +185,7 @@ function FocusPage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                         {m.app_focus_col_created()}
                       </th>
-                      <th className="px-6 py-3 w-16" />
+                      <th className="px-3 py-3 w-20" />
                     </tr>
                   </thead>
                   <tbody>
@@ -217,8 +229,8 @@ function FocusPage() {
                           <td className="px-6 py-3 text-[var(--color-purple-deep)]">
                             {formatDate(nb.created_at)}
                           </td>
-                          <td className="px-6 py-3 w-16 text-right">
-                            {isConfirmingDelete ? (
+                          <td className="px-3 py-3 w-20 text-right">
+                            {(nb.scope !== 'org' || isOrgAdmin) && (isConfirmingDelete ? (
                               <div className="flex items-center justify-end gap-1">
                                 {isDeleting ? (
                                   <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
@@ -267,7 +279,7 @@ function FocusPage() {
                                   </button>
                                 </Tooltip>
                               </div>
-                            )}
+                            ))}
                           </td>
                         </tr>
                       )

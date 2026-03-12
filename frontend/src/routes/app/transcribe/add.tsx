@@ -56,6 +56,7 @@ function AddTranscribePage() {
 
   // Record tab
   const [micPermission, setMicPermission] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle')
+  const [micBlocked, setMicBlocked] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recordDuration, setRecordDuration] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
@@ -141,33 +142,44 @@ function AddTranscribePage() {
     animFrameRef.current = requestAnimationFrame(updateAudioLevel)
   }, [])
 
+  const requestMicAccess = useCallback(async () => {
+    setMicBlocked(false)
+    setMicPermission('requesting')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      setMicPermission('granted')
+      try {
+        const AudioCtx =
+          window.AudioContext ??
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+        const audioCtx = new AudioCtx()
+        audioContextRef.current = audioCtx
+        const analyser = audioCtx.createAnalyser()
+        analyser.fftSize = 256
+        analyserRef.current = analyser
+        audioCtx.createMediaStreamSource(stream).connect(analyser)
+      } catch {
+        // Audio visualisation unavailable — non-fatal
+      }
+    } catch {
+      setMicPermission('denied')
+      // Check if browser has permanently blocked mic (no prompt will ever appear)
+      try {
+        const status = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+        setMicBlocked(status.state === 'denied')
+      } catch {
+        // Permissions API unavailable — can't determine if permanently blocked
+      }
+    }
+  }, [])
+
   // Request mic permission when record tab becomes active
   useEffect(() => {
     if (activeTab !== 'record') return
     if (streamRef.current) return // already have stream
-
-    setMicPermission('requesting')
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((stream) => {
-        streamRef.current = stream
-        setMicPermission('granted')
-        try {
-          const AudioCtx =
-            window.AudioContext ??
-            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-          const audioCtx = new AudioCtx()
-          audioContextRef.current = audioCtx
-          const analyser = audioCtx.createAnalyser()
-          analyser.fftSize = 256
-          analyserRef.current = analyser
-          audioCtx.createMediaStreamSource(stream).connect(analyser)
-        } catch {
-          // Audio visualisation unavailable — non-fatal
-        }
-      })
-      .catch(() => setMicPermission('denied'))
-  }, [activeTab])
+    requestMicAccess()
+  }, [activeTab, requestMicAccess])
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
@@ -299,9 +311,16 @@ function AddTranscribePage() {
                 )}
 
                 {micPermission === 'denied' && (
-                  <p className="text-sm text-[var(--color-destructive)]">
-                    {m.app_transcribe_record_permission_denied()}
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-[var(--color-destructive)]">
+                      {m.app_transcribe_record_permission_denied()}
+                    </p>
+                    {!micBlocked && (
+                      <Button variant="outline" size="sm" onClick={requestMicAccess}>
+                        {m.app_transcribe_record_grant_permission()}
+                      </Button>
+                    )}
+                  </div>
                 )}
 
                 {(micPermission === 'granted' || micPermission === 'idle') && (

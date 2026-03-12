@@ -3,6 +3,7 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   ArrowLeft,
   Trash2,
@@ -14,6 +15,8 @@ import {
   ChevronUp,
   X,
   History,
+  Info,
+  RotateCcw,
 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import * as m from '@/paraglide/messages'
@@ -91,6 +94,23 @@ function NotebookDetailPage() {
   const token = auth.user?.access_token
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+
+  // ── Onboarding ───────────────────────────────────────────────────────────────
+
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return localStorage.getItem('focus_onboarding_dismissed') !== '1'
+    } catch {
+      return true
+    }
+  })
+
+  function dismissOnboarding() {
+    try {
+      localStorage.setItem('focus_onboarding_dismissed', '1')
+    } catch {}
+    setShowOnboarding(false)
+  }
 
   // ── Notebook ────────────────────────────────────────────────────────────────
 
@@ -171,6 +191,21 @@ function NotebookDetailPage() {
     onError: (err: Error) => setAddError(err.message),
   })
 
+  function detectUrlType(url: string): 'url' | 'youtube' {
+    try {
+      const u = new URL(url)
+      if (
+        u.hostname === 'www.youtube.com' ||
+        u.hostname === 'youtube.com' ||
+        u.hostname === 'm.youtube.com' ||
+        u.hostname === 'youtu.be'
+      ) {
+        return 'youtube'
+      }
+    } catch {}
+    return 'url'
+  }
+
   const addUrlMutation = useMutation({
     mutationFn: async (url: string) => {
       const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/url`, {
@@ -179,7 +214,7 @@ function NotebookDetailPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, type: detectUrlType(url) }),
       })
       if (!res.ok) throw new Error('Toevoegen mislukt')
       return res.json()
@@ -218,6 +253,7 @@ function NotebookDetailPage() {
       return res.json()
     },
     onSuccess: () => {
+      // Only refreshes notebook metadata — does NOT reset the current chat session
       queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId, token] })
     },
   })
@@ -354,6 +390,70 @@ function NotebookDetailPage() {
         )}
       </div>
 
+      {/* Onboarding banner */}
+      {showOnboarding && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
+          <div className="flex items-start gap-3">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-purple-accent)]" />
+            <div className="flex-1 space-y-3 text-sm">
+              <p className="font-medium text-[var(--color-purple-deep)]">
+                {m.app_focus_onboarding_title()}
+              </p>
+              <p className="text-[var(--color-muted-foreground)]">
+                {m.app_focus_onboarding_body()}
+              </p>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                  {m.app_focus_onboarding_modes_heading()}
+                </p>
+                <ul className="space-y-0.5 text-xs text-[var(--color-muted-foreground)]">
+                  <li>
+                    <span className="font-medium text-[var(--color-foreground)]">
+                      {m.app_focus_chat_mode_narrow()}
+                    </span>{' '}
+                    &ndash; {m.app_focus_chat_mode_narrow_tooltip()}
+                  </li>
+                  <li>
+                    <span className="font-medium text-[var(--color-foreground)]">
+                      {m.app_focus_chat_mode_broad()}
+                    </span>{' '}
+                    &ndash; {m.app_focus_chat_mode_broad_tooltip()}
+                  </li>
+                  <li>
+                    <span className="font-medium text-[var(--color-foreground)]">
+                      {m.app_focus_chat_mode_web()}
+                    </span>{' '}
+                    &ndash; {m.app_focus_chat_mode_web_tooltip()}
+                  </li>
+                </ul>
+              </div>
+              <div className="space-y-0.5">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-purple-deep)]">
+                  <History className="h-3.5 w-3.5" />
+                  {m.app_focus_onboarding_history_heading()}
+                </p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {m.app_focus_onboarding_history_body()}
+                </p>
+              </div>
+              <button
+                onClick={dismissOnboarding}
+                className="text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+              >
+                {m.app_focus_onboarding_dismiss()}
+              </button>
+            </div>
+            <button
+              onClick={dismissOnboarding}
+              className="shrink-0 rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] hover:text-[var(--color-foreground)] transition-colors"
+              aria-label={m.app_focus_onboarding_dismiss()}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Two-column layout */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_3fr]">
         {/* Sources panel */}
@@ -362,16 +462,18 @@ function NotebookDetailPage() {
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm">{m.app_focus_sources_heading()}</CardTitle>
-                <button
-                  onClick={() => {
-                    setShowAdd((v) => !v)
-                    setAddError(null)
-                  }}
-                  className="flex items-center gap-1 text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
-                >
-                  {showAdd ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                  {showAdd ? m.app_focus_create_cancel() : m.app_focus_add_source()}
-                </button>
+                {!showAdd && (
+                  <button
+                    onClick={() => {
+                      setShowAdd(true)
+                      setAddError(null)
+                    }}
+                    className="flex items-center gap-1 text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {m.app_focus_add_source()}
+                  </button>
+                )}
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -413,7 +515,19 @@ function NotebookDetailPage() {
           {showAdd && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">{m.app_focus_add_source()}</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">{m.app_focus_add_source()}</CardTitle>
+                  <button
+                    onClick={() => {
+                      setShowAdd(false)
+                      setAddError(null)
+                    }}
+                    className="flex items-center gap-1 text-xs font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    {m.app_focus_create_cancel()}
+                  </button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 {/* Tabs */}
@@ -522,36 +636,52 @@ function NotebookDetailPage() {
         <Card className="flex flex-col" style={{ minHeight: '560px' }}>
           <CardHeader className="shrink-0 pb-2">
             <div className="flex items-center justify-between">
+              <CardTitle className="text-sm">{m.app_focus_chat_heading()}</CardTitle>
               <div className="flex items-center gap-2">
-                <CardTitle className="text-sm">{m.app_focus_chat_heading()}</CardTitle>
+                {/* Clear session */}
                 {messages.length > 0 && (
-                  <button
-                    onClick={() => clearHistoryMutation.mutate()}
-                    disabled={clearHistoryMutation.isPending}
-                    className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
-                  >
-                    {m.app_focus_chat_new_session()}
-                  </button>
+                  <Tooltip label={m.app_focus_chat_new_session()}>
+                    <button
+                      onClick={() => clearHistoryMutation.mutate()}
+                      disabled={clearHistoryMutation.isPending}
+                      className="rounded-md p-1 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                 )}
-              </div>
-              <div className="flex items-center gap-1">
                 {/* History toggle */}
-                <button
-                  onClick={() => toggleHistoryMutation.mutate(!(notebook?.save_history ?? true))}
-                  disabled={toggleHistoryMutation.isPending}
-                  title={
-                    notebook?.save_history
-                      ? m.app_focus_chat_history_on_tooltip()
-                      : m.app_focus_chat_history_off_tooltip()
-                  }
-                  className={`rounded-md p-1 transition-colors ${
-                    notebook?.save_history
-                      ? 'text-[var(--color-purple-deep)]'
-                      : 'text-[var(--color-muted-foreground)]'
-                  } hover:text-[var(--color-foreground)]`}
-                >
-                  <History className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex gap-1 rounded-lg p-1 bg-[var(--color-muted)]/40">
+                  <button
+                    onClick={() => {
+                      if (notebook?.save_history !== true) toggleHistoryMutation.mutate(true)
+                    }}
+                    disabled={toggleHistoryMutation.isPending}
+                    title={m.app_focus_chat_history_on_tooltip()}
+                    className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                      notebook?.save_history !== false
+                        ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                    }`}
+                  >
+                    <History className="h-3 w-3" />
+                    {m.app_focus_chat_history_on()}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (notebook?.save_history !== false) toggleHistoryMutation.mutate(false)
+                    }}
+                    disabled={toggleHistoryMutation.isPending}
+                    title={m.app_focus_chat_history_off_tooltip()}
+                    className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                      notebook?.save_history === false
+                        ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                    }`}
+                  >
+                    {m.app_focus_chat_history_off()}
+                  </button>
+                </div>
                 {/* Mode selector */}
                 <div className="flex gap-1 rounded-lg p-1 bg-[var(--color-muted)]/40">
                   {(['narrow', 'broad', 'web'] as ChatMode[]).map((mode) => (
