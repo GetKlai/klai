@@ -5,9 +5,8 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, Loader2, Pencil, Check, X } from 'lucide-react'
+import { Plus, Loader2, Pencil, Check, X, Trash2, Copy, CheckCheck, Mic } from 'lucide-react'
 import * as m from '@/paraglide/messages'
-import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
 
 export const Route = createFileRoute('/app/transcribe/')({
   component: TranscribePage,
@@ -35,6 +34,14 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('nl-NL', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
 function TranscribePage() {
   const auth = useAuth()
   const token = auth.user?.access_token
@@ -43,6 +50,9 @@ function TranscribePage() {
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState<string>('')
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const { data, isLoading } = useQuery<TranscriptionListResponse>({
     queryKey: ['transcriptions', token],
@@ -98,11 +108,27 @@ function TranscribePage() {
   }
 
   function saveEdit(id: string) {
-    const trimmed = editName.trim()
-    renameMutation.mutate({ id, name: trimmed || null })
+    renameMutation.mutate({ id, name: editName.trim() || null })
+  }
+
+  async function copyText(item: TranscriptionItem) {
+    await navigator.clipboard.writeText(item.text)
+    setCopiedId(item.id)
+    setTimeout(() => setCopiedId((prev) => (prev === item.id ? null : prev)), 2000)
   }
 
   const items = data?.items ?? []
+  const filteredItems = search.trim()
+    ? items.filter((item) => {
+        const q = search.toLowerCase()
+        return item.text.toLowerCase().includes(q) || (item.name?.toLowerCase().includes(q) ?? false)
+      })
+    : items
+
+  const countLabel =
+    data?.total === 1
+      ? m.app_transcribe_count_one()
+      : m.app_transcribe_count({ count: String(data?.total ?? 0) })
 
   return (
     <div className="p-8 space-y-6 max-w-4xl">
@@ -112,7 +138,7 @@ function TranscribePage() {
             {m.app_tool_transcribe_title()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {!isLoading && m.app_transcribe_count({ count: String(data?.total ?? 0) })}
+            {!isLoading && countLabel}
           </p>
         </div>
         <Button onClick={() => navigate({ to: '/app/transcribe/add' })}>
@@ -128,123 +154,196 @@ function TranscribePage() {
               <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
             </div>
           ) : items.length === 0 ? (
-            <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-              {m.app_transcribe_history_empty()}
-            </p>
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <Mic className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
+              <div className="space-y-1">
+                <p className="font-medium text-[var(--color-purple-deep)]">
+                  {m.app_transcribe_empty_heading()}
+                </p>
+                <p className="text-sm text-[var(--color-muted-foreground)]">
+                  {m.app_transcribe_empty_body()}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate({ to: '/app/transcribe/add' })}
+                className="mt-2"
+              >
+                <Plus className="mr-2 h-3.5 w-3.5" />
+                {m.app_transcribe_add_button()}
+              </Button>
+            </div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--color-border)]">
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.app_transcribe_col_text()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.app_transcribe_col_words()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.app_transcribe_col_language()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.app_transcribe_col_duration()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.app_transcribe_col_date()}
-                  </th>
-                  <th className="px-6 py-3 w-20" />
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item, i) => {
-                  const isEditing = editingId === item.id
-                  const isSaving = renameMutation.isPending && renameMutation.variables?.id === item.id
-
-                  return (
-                    <tr
-                      key={item.id}
-                      className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
-                    >
-                      <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs">
-                        {isEditing ? (
-                          <Input
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveEdit(item.id)
-                              if (e.key === 'Escape') cancelEdit()
-                            }}
-                            disabled={isSaving}
-                            autoFocus
-                            className="h-7 text-sm"
-                          />
-                        ) : item.name ? (
-                          <div>
-                            <span className="block truncate font-medium">{item.name}</span>
-                            <span className="block truncate text-xs text-[var(--color-muted-foreground)]">{item.text}</span>
-                          </div>
-                        ) : (
-                          <span className="block truncate">{item.text}</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-3 text-[var(--color-muted-foreground)] tabular-nums">
-                        {item.text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-3 text-[var(--color-purple-deep)]">
-                        {item.language.toUpperCase()}
-                      </td>
-                      <td className="px-6 py-3 text-[var(--color-purple-deep)]">
-                        {formatDuration(item.duration_seconds)}
-                      </td>
-                      <td className="px-6 py-3 text-[var(--color-purple-deep)]">
-                        {new Date(item.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-3 w-20 text-right">
-                        {isEditing ? (
-                          <div className="flex items-center justify-end gap-1">
-                            {isSaving ? (
-                              <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => saveEdit(item.id)}
-                                  aria-label={m.app_transcribe_edit_save()}
-                                  className="flex h-7 w-7 items-center justify-center rounded bg-green-500 text-white transition-colors hover:bg-green-600"
-                                >
-                                  <Check className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  onClick={cancelEdit}
-                                  aria-label={m.app_transcribe_edit_cancel()}
-                                  className="flex h-7 w-7 items-center justify-center rounded bg-red-500 text-white transition-colors hover:bg-red-600"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => startEdit(item)}
-                              aria-label={m.app_transcribe_edit_label()}
-                              className="p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <DeleteConfirmButton
-                              onConfirm={() => deleteMutation.mutate(item.id)}
-                              isDeleting={deleteMutation.isPending && deleteMutation.variables === item.id}
-                              deleteLabel={m.app_transcribe_delete_label()}
-                              confirmLabel={m.app_transcribe_delete_confirm()}
-                              cancelLabel={m.app_transcribe_delete_cancel()}
-                            />
-                          </div>
-                        )}
-                      </td>
+            <>
+              <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]">
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={m.app_transcribe_search_placeholder()}
+                  className="h-8 text-sm max-w-xs"
+                />
+              </div>
+              {filteredItems.length === 0 ? (
+                <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
+                  {m.app_transcribe_search_empty()}
+                </p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)]">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                        {m.app_transcribe_col_text()}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                        {m.app_transcribe_col_words()}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                        {m.app_transcribe_col_language()}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                        {m.app_transcribe_col_duration()}
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                        {m.app_transcribe_col_date()}
+                      </th>
+                      <th className="px-6 py-3 w-24" />
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {filteredItems.map((item, i) => {
+                      const isEditing = editingId === item.id
+                      const isConfirmingDelete = confirmingDeleteId === item.id
+                      const isSaving = renameMutation.isPending && renameMutation.variables?.id === item.id
+                      const isDeleting = deleteMutation.isPending && deleteMutation.variables === item.id
+                      const isCopied = copiedId === item.id
+
+                      return (
+                        <tr
+                          key={item.id}
+                          className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+                        >
+                          <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs">
+                            {isEditing ? (
+                              <Input
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveEdit(item.id)
+                                  if (e.key === 'Escape') cancelEdit()
+                                }}
+                                disabled={isSaving}
+                                autoFocus
+                                className="h-7 text-sm"
+                              />
+                            ) : item.name ? (
+                              <div>
+                                <span className="block truncate font-medium">{item.name}</span>
+                                <span className="block truncate text-xs text-[var(--color-muted-foreground)]">{item.text}</span>
+                              </div>
+                            ) : (
+                              <span className="block truncate">{item.text}</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-3 text-[var(--color-muted-foreground)] tabular-nums">
+                            {item.text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                            {item.language.toUpperCase()}
+                          </td>
+                          <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                            {formatDuration(item.duration_seconds)}
+                          </td>
+                          <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                            {formatDate(item.created_at)}
+                          </td>
+                          <td className="px-6 py-3 w-24 text-right">
+                            {isEditing ? (
+                              <div className="flex items-center justify-end gap-1">
+                                {isSaving ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => saveEdit(item.id)}
+                                      aria-label={m.app_transcribe_edit_save()}
+                                      className="flex h-7 w-7 items-center justify-center rounded bg-green-500 text-white transition-colors hover:bg-green-600"
+                                    >
+                                      <Check className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={cancelEdit}
+                                      aria-label={m.app_transcribe_edit_cancel()}
+                                      className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ) : isConfirmingDelete ? (
+                              <div className="flex items-center justify-end gap-1">
+                                {isDeleting ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setConfirmingDeleteId(null)
+                                        deleteMutation.mutate(item.id)
+                                      }}
+                                      aria-label={m.app_transcribe_delete_confirm()}
+                                      className="flex h-7 w-7 items-center justify-center rounded bg-red-500 text-white transition-colors hover:bg-red-600"
+                                    >
+                                      <Check className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => setConfirmingDeleteId(null)}
+                                      aria-label={m.app_transcribe_delete_cancel()}
+                                      className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => startEdit(item)}
+                                  aria-label={m.app_transcribe_edit_label()}
+                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => copyText(item)}
+                                  aria-label={m.app_transcribe_copy_label()}
+                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                >
+                                  {isCopied ? (
+                                    <CheckCheck className="h-3.5 w-3.5 text-green-500" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={() => setConfirmingDeleteId(item.id)}
+                                  aria-label={m.app_transcribe_delete_label()}
+                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-red-500"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
