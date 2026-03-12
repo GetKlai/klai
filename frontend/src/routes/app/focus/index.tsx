@@ -3,8 +3,9 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Plus, Trash2, Loader2, BookOpen } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { getLocale } from '@/paraglide/runtime'
+import { datetime } from '@/paraglide/registry'
 
 export const Route = createFileRoute('/app/focus/')({
   component: FocusPage,
@@ -17,10 +18,8 @@ interface Notebook {
   name: string
   description: string | null
   scope: string
-  default_mode: string
   sources_count: number
   created_at: string
-  updated_at: string
 }
 
 interface NotebookListResponse {
@@ -28,19 +27,27 @@ interface NotebookListResponse {
   total: number
 }
 
+function formatDate(isoString: string): string {
+  return datetime(getLocale(), isoString, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
 function FocusPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
-  const { data, isLoading } = useQuery<NotebookListResponse>({
+  const { data, isLoading, error } = useQuery<NotebookListResponse>({
     queryKey: ['focus-notebooks', token],
     queryFn: async () => {
       const res = await fetch(`${FOCUS_BASE}/notebooks`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('Ophalen mislukt')
+      if (!res.ok) throw new Error(m.app_focus_loading())
       return res.json()
     },
     enabled: !!token,
@@ -52,14 +59,22 @@ function FocusPage() {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
+      if (!res.ok) throw new Error(m.app_focus_source_delete() + ' mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-notebooks', token] })
+      queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
     },
   })
 
   const notebooks = data?.items ?? []
+
+  const pageError =
+    (error instanceof Error ? error.message : error ? m.app_focus_loading() : null) ??
+    (deleteMutation.error instanceof Error
+      ? deleteMutation.error.message
+      : deleteMutation.error
+        ? m.app_focus_source_delete() + ' mislukt'
+        : null)
 
   return (
     <div className="p-8 space-y-6 max-w-4xl">
@@ -73,67 +88,110 @@ function FocusPage() {
           </p>
         </div>
         <Button onClick={() => navigate({ to: '/app/focus/new' })}>
-          <Plus className="mr-2 h-4 w-4" />
           {m.app_focus_new_notebook()}
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
-        </div>
-      ) : notebooks.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <BookOpen className="mx-auto mb-3 h-8 w-8 text-[var(--color-muted-foreground)]" />
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.app_focus_empty()}</p>
-            <Button
-              className="mt-4"
-              onClick={() => navigate({ to: '/app/focus/new' })}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              {m.app_focus_new_notebook()}
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {notebooks.map((nb) => (
-            <button
-              key={nb.id}
-              className="group text-left rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
-              onClick={() => navigate({ to: '/app/focus/$notebookId', params: { notebookId: nb.id } })}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-sm text-[var(--color-purple-deep)] truncate group-hover:text-[var(--color-purple-accent)] transition-colors">
-                    {nb.name}
-                  </p>
-                  {nb.description && (
-                    <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] line-clamp-2">
-                      {nb.description}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteMutation.mutate(nb.id)
-                  }}
-                  disabled={deleteMutation.isPending && deleteMutation.variables === nb.id}
-                  className="p-1 opacity-0 group-hover:opacity-100 text-[var(--color-muted-foreground)] hover:text-red-500 transition-all disabled:opacity-50 shrink-0"
-                  aria-label={m.app_focus_source_delete()}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <p className="mt-3 text-xs text-[var(--color-muted-foreground)]">
-                {nb.sources_count} {nb.sources_count === 1 ? 'bron' : 'bronnen'}
-              </p>
-            </button>
-          ))}
-        </div>
+      {pageError && (
+        <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
       )}
+
+      <Card>
+        <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
+          {isLoading ? (
+            <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
+              {m.app_focus_loading()}
+            </p>
+          ) : notebooks.length === 0 ? (
+            <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
+              {m.app_focus_empty()}
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[var(--color-border)]">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                    {m.app_focus_notebook_name_label()}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                    {m.app_focus_sources_heading()}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                    {m.app_focus_notebook_scope_label()}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                    {m.app_focus_col_created()}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                    {m.app_focus_col_actions()}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {notebooks.map((nb, i) => (
+                  <tr
+                    key={nb.id}
+                    className={
+                      i % 2 === 0
+                        ? 'bg-[var(--color-card)]'
+                        : 'bg-[var(--color-secondary)]'
+                    }
+                  >
+                    <td
+                      className="px-6 py-3 text-[var(--color-purple-deep)] cursor-pointer hover:underline"
+                      onClick={() =>
+                        navigate({
+                          to: '/app/focus/$notebookId',
+                          params: { notebookId: nb.id },
+                        })
+                      }
+                    >
+                      <p className="font-medium">{nb.name}</p>
+                      {nb.description && (
+                        <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                          {nb.description}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                      {nb.sources_count}
+                    </td>
+                    <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                      {nb.scope === 'personal'
+                        ? m.app_focus_notebook_scope_personal()
+                        : m.app_focus_notebook_scope_org()}
+                    </td>
+                    <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                      {formatDate(nb.created_at)}
+                    </td>
+                    <td className="px-6 py-3">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={
+                          deleteMutation.isPending &&
+                          deleteMutation.variables === nb.id
+                        }
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              m.app_focus_notebook_delete_confirm({ name: nb.name }),
+                            )
+                          ) {
+                            deleteMutation.mutate(nb.id)
+                          }
+                        }}
+                      >
+                        {m.app_focus_source_delete()}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

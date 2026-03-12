@@ -106,7 +106,8 @@ function NotebookDetailPage() {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json()
+      const data = await res.json()
+      return data.items ?? data
     },
     enabled: !!token,
     refetchInterval: (query) => {
