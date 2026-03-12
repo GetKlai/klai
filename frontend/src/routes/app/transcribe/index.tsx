@@ -35,6 +35,17 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+function languageToCountryCode(lang: string): string {
+  const map: Record<string, string> = {
+    nl: 'nl', en: 'gb', de: 'de', fr: 'fr', es: 'es',
+    it: 'it', pt: 'pt', pl: 'pl', ru: 'ru', tr: 'tr',
+    ar: 'sa', zh: 'cn', ja: 'jp', ko: 'kr', sv: 'se',
+    da: 'dk', no: 'no', fi: 'fi', cs: 'cz', hu: 'hu',
+    ro: 'ro', uk: 'ua',
+  }
+  return map[lang.toLowerCase()] ?? lang.toLowerCase()
+}
+
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('nl-NL', {
     day: 'numeric',
@@ -261,7 +272,16 @@ function TranscribePage() {
                             {item.text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()}
                           </td>
                           <td className="px-6 py-3 text-[var(--color-purple-deep)]">
-                            {item.language.toUpperCase()}
+                            <div className="flex items-center gap-1.5">
+                              <img
+                                src={`https://flagcdn.com/16x12/${languageToCountryCode(item.language)}.png`}
+                                width="16"
+                                height="12"
+                                alt={item.language.toUpperCase()}
+                                className="rounded-sm shrink-0"
+                              />
+                              <span>{item.language.toUpperCase()}</span>
+                            </div>
                           </td>
                           <td className="px-6 py-3 text-[var(--color-purple-deep)]">
                             {formatDuration(item.duration_seconds)}
@@ -325,7 +345,7 @@ function TranscribePage() {
                                   <button
                                     onClick={() => startEdit(item)}
                                     aria-label={m.app_transcribe_edit_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
@@ -334,7 +354,7 @@ function TranscribePage() {
                                   <button
                                     onClick={() => copyText(item)}
                                     aria-label={m.app_transcribe_copy_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
                                   >
                                     {isCopied ? (
                                       <CheckCheck className="h-3.5 w-3.5 text-[var(--color-success)]" />
@@ -347,7 +367,7 @@ function TranscribePage() {
                                   <button
                                     onClick={() => downloadText(item)}
                                     aria-label={m.app_transcribe_download_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
                                   >
                                     <Download className="h-3.5 w-3.5" />
                                   </button>
@@ -356,7 +376,7 @@ function TranscribePage() {
                                   <button
                                     onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
                                     aria-label={m.app_transcribe_delete_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)]"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>

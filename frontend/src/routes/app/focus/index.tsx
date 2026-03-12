@@ -266,7 +266,7 @@ function FocusPage() {
                                       })
                                     }
                                     aria-label={m.app_focus_edit_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
@@ -275,7 +275,7 @@ function FocusPage() {
                                   <button
                                     onClick={() => setConfirmingDeleteId(nb.id)}
                                     aria-label={m.app_focus_delete_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)]"
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
