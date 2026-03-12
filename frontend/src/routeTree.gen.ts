@@ -27,6 +27,7 @@ import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
 import { Route as AppTranscribeRouteImport } from './routes/app/transcribe'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
+import { Route as AppResearchRouteImport } from './routes/app/research'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
@@ -126,6 +127,11 @@ const AppScribeRoute = AppScribeRouteImport.update({
   path: '/scribe',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppResearchRoute = AppResearchRouteImport.update({
+  id: '/research',
+  path: '/research',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppChatRoute = AppChatRouteImport.update({
   id: '/chat',
   path: '/chat',
@@ -183,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
+  '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
   '/app/transcribe': typeof AppTranscribeRoute
   '/password/forgot': typeof PasswordForgotRoute
@@ -209,6 +216,7 @@ export interface FileRoutesByTo {
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
+  '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
   '/app/transcribe': typeof AppTranscribeRoute
   '/password/forgot': typeof PasswordForgotRoute
@@ -238,6 +246,7 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
+  '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
   '/app/transcribe': typeof AppTranscribeRoute
   '/password/forgot': typeof PasswordForgotRoute
@@ -268,6 +277,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
+    | '/app/research'
     | '/app/scribe'
     | '/app/transcribe'
     | '/password/forgot'
@@ -294,6 +304,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
+    | '/app/research'
     | '/app/scribe'
     | '/app/transcribe'
     | '/password/forgot'
@@ -322,6 +333,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
+    | '/app/research'
     | '/app/scribe'
     | '/app/transcribe'
     | '/password/forgot'
@@ -480,6 +492,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppScribeRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/research': {
+      id: '/app/research'
+      path: '/research'
+      fullPath: '/app/research'
+      preLoaderRoute: typeof AppResearchRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/chat': {
       id: '/app/chat'
       path: '/chat'
@@ -576,6 +595,7 @@ const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
 interface AppRouteRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppChatRoute: typeof AppChatRoute
+  AppResearchRoute: typeof AppResearchRoute
   AppScribeRoute: typeof AppScribeRoute
   AppTranscribeRoute: typeof AppTranscribeRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -584,6 +604,7 @@ interface AppRouteRouteChildren {
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppChatRoute: AppChatRoute,
+  AppResearchRoute: AppResearchRoute,
   AppScribeRoute: AppScribeRoute,
   AppTranscribeRoute: AppTranscribeRoute,
   AppIndexRoute: AppIndexRoute,

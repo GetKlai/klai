@@ -2,7 +2,6 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useState, useEffect, useRef } from 'react'
 import { BookOpen, Plus, Trash2, Upload, Link, Send, ChevronDown, ChevronUp } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/research')({
