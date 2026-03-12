@@ -455,16 +455,15 @@ function AddTranscribePage() {
             <CardContent className="space-y-3">
               <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
               <div className="flex gap-3 pt-2">
+                <Button onClick={() => navigate({ to: '/app/transcribe' })}>
+                  {m.app_transcribe_save_button()}
+                </Button>
                 <Button
                   variant="outline"
-                  size="sm"
                   disabled={discardMutation.isPending}
                   onClick={() => discardMutation.mutate(result.id)}
                 >
                   {m.app_transcribe_discard_button()}
-                </Button>
-                <Button size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
-                  {m.app_transcribe_save_button()}
                 </Button>
               </div>
             </CardContent>
