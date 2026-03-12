@@ -60,6 +60,10 @@ class TranscriptionListResponse(BaseModel):
     total: int
 
 
+class TranscriptionPatch(BaseModel):
+    name: str | None = None
+
+
 # ── POST /v1/transcribe ───────────────────────────────────────────────────────
 
 @router.post("/transcribe", response_model=TranscriptionDraft, status_code=200)
@@ -188,6 +192,41 @@ async def get_transcription(
     record = result.scalar_one_or_none()
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+
+    return TranscriptionResponse(
+        id=record.id,
+        name=record.name,
+        text=record.text,
+        language=record.language,
+        duration_seconds=float(record.duration_seconds),
+        inference_time_seconds=float(record.inference_time_seconds),
+        created_at=record.created_at,
+    )
+
+
+# ── PATCH /v1/transcriptions/{id} ────────────────────────────────────────────
+
+@router.patch("/transcriptions/{txn_id}", response_model=TranscriptionResponse)
+async def patch_transcription(
+    txn_id: str,
+    body: TranscriptionPatch,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptionResponse:
+    """Update the name of a transcription."""
+    result = await db.execute(
+        select(Transcription).where(
+            Transcription.id == txn_id,
+            Transcription.user_id == user_id,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+
+    record.name = body.name
+    await db.commit()
+    await db.refresh(record)
 
     return TranscriptionResponse(
         id=record.id,
