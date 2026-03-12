@@ -25,16 +25,18 @@ import { Route as SetupMfaRouteImport } from './routes/setup/mfa'
 import { Route as Setup2faRouteImport } from './routes/setup/2fa'
 import { Route as PasswordSetRouteImport } from './routes/password/set'
 import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
-import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
-import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppScribeRouteImport } from './routes/app/scribe'
-import { Route as AppResearchRouteImport } from './routes/app/research'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
+import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
+import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
+import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
+import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 
@@ -118,24 +120,9 @@ const PasswordForgotRoute = PasswordForgotRouteImport.update({
   path: '/password/forgot',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
-  id: '/transcribe/',
-  path: '/transcribe/',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
-  id: '/transcribe/add',
-  path: '/transcribe/add',
-  getParentRoute: () => AppRouteRoute,
-} as any)
 const AppScribeRoute = AppScribeRouteImport.update({
   id: '/scribe',
   path: '/scribe',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppResearchRoute = AppResearchRouteImport.update({
-  id: '/research',
-  path: '/research',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppChatRoute = AppChatRouteImport.update({
@@ -163,10 +150,35 @@ const LocaleSignupRoute = LocaleSignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => LocaleRouteRoute,
 } as any)
+const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
+  id: '/transcribe/',
+  path: '/transcribe/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppFocusIndexRoute = AppFocusIndexRouteImport.update({
+  id: '/focus/',
+  path: '/focus/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
   id: '/users/',
   path: '/users/',
   getParentRoute: () => AdminRouteRoute,
+} as any)
+const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
+  id: '/transcribe/add',
+  path: '/transcribe/add',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppFocusNewRoute = AppFocusNewRouteImport.update({
+  id: '/focus/new',
+  path: '/focus/new',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppFocusNotebookIdRoute = AppFocusNotebookIdRouteImport.update({
+  id: '/focus/$notebookId',
+  path: '/focus/$notebookId',
+  getParentRoute: () => AppRouteRoute,
 } as any)
 const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   id: '/users/invite',
@@ -195,10 +207,7 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
-  '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
-  '/app/transcribe/add': typeof AppTranscribeAddRoute
-  '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -207,7 +216,12 @@ export interface FileRoutesByFullPath {
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
+  '/app/focus/new': typeof AppFocusNewRoute
+  '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/users/': typeof AdminUsersIndexRoute
+  '/app/focus/': typeof AppFocusIndexRoute
+  '/app/transcribe/': typeof AppTranscribeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -223,10 +237,7 @@ export interface FileRoutesByTo {
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
-  '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
-  '/app/transcribe/add': typeof AppTranscribeAddRoute
-  '/app/transcribe': typeof AppTranscribeIndexRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -235,7 +246,12 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
+  '/app/focus/new': typeof AppFocusNewRoute
+  '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/users': typeof AdminUsersIndexRoute
+  '/app/focus': typeof AppFocusIndexRoute
+  '/app/transcribe': typeof AppTranscribeIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -254,10 +270,7 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
-  '/app/research': typeof AppResearchRoute
   '/app/scribe': typeof AppScribeRoute
-  '/app/transcribe/add': typeof AppTranscribeAddRoute
-  '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/password/forgot': typeof PasswordForgotRoute
   '/password/set': typeof PasswordSetRoute
   '/setup/2fa': typeof Setup2faRoute
@@ -266,7 +279,12 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
+  '/app/focus/new': typeof AppFocusNewRoute
+  '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/users/': typeof AdminUsersIndexRoute
+  '/app/focus/': typeof AppFocusIndexRoute
+  '/app/transcribe/': typeof AppTranscribeIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -286,10 +304,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
-    | '/app/research'
     | '/app/scribe'
-    | '/app/transcribe/add'
-    | '/app/transcribe/'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -298,7 +313,12 @@ export interface FileRouteTypes {
     | '/app/'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
+    | '/app/focus/$notebookId'
+    | '/app/focus/new'
+    | '/app/transcribe/add'
     | '/admin/users/'
+    | '/app/focus/'
+    | '/app/transcribe/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -314,10 +334,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
-    | '/app/research'
     | '/app/scribe'
-    | '/app/transcribe/add'
-    | '/app/transcribe'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -326,7 +343,12 @@ export interface FileRouteTypes {
     | '/app'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
+    | '/app/focus/$notebookId'
+    | '/app/focus/new'
+    | '/app/transcribe/add'
     | '/admin/users'
+    | '/app/focus'
+    | '/app/transcribe'
   id:
     | '__root__'
     | '/'
@@ -344,10 +366,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
-    | '/app/research'
     | '/app/scribe'
-    | '/app/transcribe/add'
-    | '/app/transcribe/'
     | '/password/forgot'
     | '/password/set'
     | '/setup/2fa'
@@ -356,7 +375,12 @@ export interface FileRouteTypes {
     | '/app/'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
+    | '/app/focus/$notebookId'
+    | '/app/focus/new'
+    | '/app/transcribe/add'
     | '/admin/users/'
+    | '/app/focus/'
+    | '/app/transcribe/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -490,32 +514,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PasswordForgotRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/transcribe/': {
-      id: '/app/transcribe/'
-      path: '/transcribe'
-      fullPath: '/app/transcribe/'
-      preLoaderRoute: typeof AppTranscribeIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/transcribe/add': {
-      id: '/app/transcribe/add'
-      path: '/transcribe/add'
-      fullPath: '/app/transcribe/add'
-      preLoaderRoute: typeof AppTranscribeAddRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/app/scribe': {
       id: '/app/scribe'
       path: '/scribe'
       fullPath: '/app/scribe'
       preLoaderRoute: typeof AppScribeRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/research': {
-      id: '/app/research'
-      path: '/research'
-      fullPath: '/app/research'
-      preLoaderRoute: typeof AppResearchRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/chat': {
@@ -553,12 +556,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LocaleSignupRouteImport
       parentRoute: typeof LocaleRouteRoute
     }
+    '/app/transcribe/': {
+      id: '/app/transcribe/'
+      path: '/transcribe'
+      fullPath: '/app/transcribe/'
+      preLoaderRoute: typeof AppTranscribeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/focus/': {
+      id: '/app/focus/'
+      path: '/focus'
+      fullPath: '/app/focus/'
+      preLoaderRoute: typeof AppFocusIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/admin/users/': {
       id: '/admin/users/'
       path: '/users'
       fullPath: '/admin/users/'
       preLoaderRoute: typeof AdminUsersIndexRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/app/transcribe/add': {
+      id: '/app/transcribe/add'
+      path: '/transcribe/add'
+      fullPath: '/app/transcribe/add'
+      preLoaderRoute: typeof AppTranscribeAddRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/focus/new': {
+      id: '/app/focus/new'
+      path: '/focus/new'
+      fullPath: '/app/focus/new'
+      preLoaderRoute: typeof AppFocusNewRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/focus/$notebookId': {
+      id: '/app/focus/$notebookId'
+      path: '/focus/$notebookId'
+      fullPath: '/app/focus/$notebookId'
+      preLoaderRoute: typeof AppFocusNotebookIdRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/admin/users/invite': {
       id: '/admin/users/invite'
@@ -614,21 +652,25 @@ const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
 interface AppRouteRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppChatRoute: typeof AppChatRoute
-  AppResearchRoute: typeof AppResearchRoute
   AppScribeRoute: typeof AppScribeRoute
-  AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
-  AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppFocusNotebookIdRoute: typeof AppFocusNotebookIdRoute
+  AppFocusNewRoute: typeof AppFocusNewRoute
+  AppTranscribeAddRoute: typeof AppTranscribeAddRoute
+  AppFocusIndexRoute: typeof AppFocusIndexRoute
+  AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppChatRoute: AppChatRoute,
-  AppResearchRoute: AppResearchRoute,
   AppScribeRoute: AppScribeRoute,
-  AppTranscribeIndexRoute: AppTranscribeIndexRoute,
-  AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppIndexRoute: AppIndexRoute,
+  AppFocusNotebookIdRoute: AppFocusNotebookIdRoute,
+  AppFocusNewRoute: AppFocusNewRoute,
+  AppTranscribeAddRoute: AppTranscribeAddRoute,
+  AppFocusIndexRoute: AppFocusIndexRoute,
+  AppTranscribeIndexRoute: AppTranscribeIndexRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
