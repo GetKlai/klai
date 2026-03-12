@@ -133,37 +133,46 @@ function AddTranscribePage() {
   }, [])
 
   const startRecording = async () => {
-    try {
-      setError(null)
-      setResult(null)
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
+    setError(null)
+    setResult(null)
 
-      const audioCtx = new AudioContext()
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setError(m.app_transcribe_record_error_mic())
+      return
+    }
+
+    streamRef.current = stream
+
+    try {
+      const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const audioCtx = new AudioCtx()
       audioContextRef.current = audioCtx
       const analyser = audioCtx.createAnalyser()
       analyser.fftSize = 256
       analyserRef.current = analyser
       audioCtx.createMediaStreamSource(stream).connect(analyser)
-
-      const chunks: Blob[] = []
-      const recorder = new MediaRecorder(stream)
-      mediaRecorderRef.current = recorder
-
-      recorder.ondataavailable = (e) => chunks.push(e.data)
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' })
-        transcribeMutation.mutate(new File([blob], 'recording.webm', { type: 'audio/webm' }))
-      }
-
-      recorder.start()
-      setRecording(true)
-      setRecordDuration(0)
-      durationIntervalRef.current = window.setInterval(() => setRecordDuration((d) => d + 1), 1000)
-      updateAudioLevel()
     } catch {
-      setError(m.app_transcribe_record_error_mic())
+      // Audio visualisation unavailable — non-fatal, recording continues
     }
+
+    const chunks: Blob[] = []
+    const recorder = new MediaRecorder(stream)
+    mediaRecorderRef.current = recorder
+
+    recorder.ondataavailable = (e) => chunks.push(e.data)
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'audio/webm' })
+      transcribeMutation.mutate(new File([blob], 'recording.webm', { type: 'audio/webm' }))
+    }
+
+    recorder.start()
+    setRecording(true)
+    setRecordDuration(0)
+    durationIntervalRef.current = window.setInterval(() => setRecordDuration((d) => d + 1), 1000)
+    updateAudioLevel()
   }
 
   // Cleanup on unmount
