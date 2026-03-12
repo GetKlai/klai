@@ -195,6 +195,7 @@ async def get_notebook(
         scope=nb.scope,
         default_mode=nb.default_mode,
         save_history=nb.save_history,
+        owner_user_id=nb.owner_user_id,
         sources_count=count,
         created_at=nb.created_at,
         updated_at=nb.updated_at,
@@ -212,13 +213,15 @@ async def update_notebook(
 
     if nb.scope == "personal" and nb.owner_user_id != user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang")
-    if nb.scope == "org" and not user.is_org_admin():
+    if nb.scope == "org" and nb.owner_user_id != user.user_id and not user.is_org_admin():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang")
 
     if body.name is not None:
         nb.name = body.name
     if body.description is not None:
         nb.description = body.description
+    if body.scope is not None:
+        nb.scope = body.scope
     if body.default_mode is not None:
         nb.default_mode = body.default_mode
     if body.save_history is not None:
@@ -236,6 +239,7 @@ async def update_notebook(
         scope=nb.scope,
         default_mode=nb.default_mode,
         save_history=nb.save_history,
+        owner_user_id=nb.owner_user_id,
         sources_count=count,
         created_at=nb.created_at,
         updated_at=nb.updated_at,
@@ -252,7 +256,7 @@ async def delete_notebook(
 
     if nb.scope == "personal" and nb.owner_user_id != user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang")
-    if nb.scope == "org" and not user.is_org_admin():
+    if nb.scope == "org" and nb.owner_user_id != user.user_id and not user.is_org_admin():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang")
 
     # Delete chunks first
