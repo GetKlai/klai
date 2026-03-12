@@ -45,8 +45,8 @@ function formatDate(isoString: string): string {
 
 function RoleBadge({ role }: { role: Role }) {
   return role === 'admin'
-    ? <Badge variant="accent" size="sm">{m.admin_users_role_admin()}</Badge>
-    : <Badge variant="secondary" size="sm">{m.admin_users_role_member()}</Badge>
+    ? <Badge variant="accent">{m.admin_users_role_admin()}</Badge>
+    : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
 }
 
 const columnHelper = createColumnHelper<User>()
@@ -192,6 +192,15 @@ function UsersPage() {
                 </button>
               </Tooltip>
             )}
+            <Tooltip label={m.admin_users_edit()}>
+              <button
+                onClick={() => navigate({ to: '/admin/users/$userId_/edit', params: { userId: user.zitadel_user_id } })}
+                aria-label={m.admin_users_edit()}
+                className="flex h-7 w-7 items-center justify-center text-amber-500 transition-opacity hover:opacity-70"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
             <Tooltip label={m.admin_users_delete()}>
               <button
                 disabled={isSelf}
