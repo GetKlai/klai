@@ -39,6 +39,7 @@ import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
+import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
@@ -190,6 +191,11 @@ const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
   path: '/password/forgot',
   getParentRoute: () => LocaleRouteRoute,
 } as any)
+const AppFocusNotebookIdEditRoute = AppFocusNotebookIdEditRouteImport.update({
+  id: '/focus/$notebookId_/edit',
+  path: '/focus/$notebookId/edit',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -222,6 +228,7 @@ export interface FileRoutesByFullPath {
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
+  '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -252,6 +259,7 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
+  '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -285,6 +293,7 @@ export interface FileRoutesById {
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
+  '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -319,6 +328,7 @@ export interface FileRouteTypes {
     | '/admin/users/'
     | '/app/focus/'
     | '/app/transcribe/'
+    | '/app/focus/$notebookId/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -349,6 +359,7 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/app/focus'
     | '/app/transcribe'
+    | '/app/focus/$notebookId/edit'
   id:
     | '__root__'
     | '/'
@@ -381,6 +392,7 @@ export interface FileRouteTypes {
     | '/admin/users/'
     | '/app/focus/'
     | '/app/transcribe/'
+    | '/app/focus/$notebookId_/edit'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -612,6 +624,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LocalePasswordForgotRouteImport
       parentRoute: typeof LocaleRouteRoute
     }
+    '/app/focus/$notebookId_/edit': {
+      id: '/app/focus/$notebookId_/edit'
+      path: '/focus/$notebookId/edit'
+      fullPath: '/app/focus/$notebookId/edit'
+      preLoaderRoute: typeof AppFocusNotebookIdEditRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
@@ -659,6 +678,7 @@ interface AppRouteRouteChildren {
   AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppFocusIndexRoute: typeof AppFocusIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
+  AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -671,6 +691,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppFocusIndexRoute: AppFocusIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
+  AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

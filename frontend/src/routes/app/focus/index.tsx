@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, Loader2, Trash2, Check, X, BookOpen } from 'lucide-react'
+import { Plus, Loader2, Trash2, Check, X, BookOpen, Pencil } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
@@ -243,6 +243,20 @@ function FocusPage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-1">
+                                <Tooltip label={m.app_focus_edit_label()}>
+                                  <button
+                                    onClick={() =>
+                                      navigate({
+                                        to: '/app/focus/$notebookId/edit',
+                                        params: { notebookId: nb.id },
+                                      })
+                                    }
+                                    aria-label={m.app_focus_edit_label()}
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </Tooltip>
                                 <Tooltip label={m.app_focus_delete_label()}>
                                   <button
                                     onClick={() => setConfirmingDeleteId(nb.id)}

@@ -428,5 +428,8 @@
   "app_focus_search_empty": "Geen notebooks gevonden.",
   "app_focus_delete_label": "Verwijderen",
   "app_focus_delete_confirm_action": "Bevestigen",
-  "app_focus_delete_cancel_action": "Annuleren"
+  "app_focus_delete_cancel_action": "Annuleren",
+  "app_focus_edit_title": "Notebook bewerken",
+  "app_focus_edit_submit": "Opslaan",
+  "app_focus_edit_label": "Bewerken"
 }
