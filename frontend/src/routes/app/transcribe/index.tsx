@@ -142,7 +142,7 @@ function TranscribePage() {
       : m.app_transcribe_count({ count: String(data?.total ?? 0) })
 
   return (
-    <div className="p-8 space-y-6 max-w-4xl">
+    <div className="p-8 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
@@ -200,10 +200,10 @@ function TranscribePage() {
                   {m.app_transcribe_search_empty()}
                 </p>
               ) : (
-                <table className="w-full text-sm">
+                <table className="w-full text-sm table-fixed">
                   <thead>
                     <tr className="border-b border-[var(--color-border)]">
-                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-1/2">
                         {m.app_transcribe_col_text()}
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
