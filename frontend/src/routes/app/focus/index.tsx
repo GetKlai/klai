@@ -22,6 +22,7 @@ interface Notebook {
   name: string
   description: string | null
   scope: string
+  owner_user_id: string
   sources_count: number
   created_at: string
 }
@@ -56,6 +57,7 @@ function FocusPage() {
   const navigate = useNavigate()
 
   const isOrgAdmin = token ? parseJwtRoles(token).includes('org_admin') : false
+  const currentUserId = auth.user?.profile?.sub
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -230,7 +232,7 @@ function FocusPage() {
                             {formatDate(nb.created_at)}
                           </td>
                           <td className="px-3 py-3 w-20 text-right">
-                            {(nb.scope !== 'org' || isOrgAdmin) && (isConfirmingDelete ? (
+                            {(nb.scope !== 'org' || isOrgAdmin || nb.owner_user_id === currentUserId) && (isConfirmingDelete ? (
                               <div className="flex items-center justify-end gap-1">
                                 {isDeleting ? (
                                   <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
