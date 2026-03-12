@@ -3,6 +3,7 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
+import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Plus, Loader2, Pencil, Check, X, Trash2, Copy, CheckCheck, Mic, Download } from 'lucide-react'
@@ -320,38 +321,46 @@ function TranscribePage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-1">
-                                <button
-                                  onClick={() => startEdit(item)}
-                                  aria-label={m.app_transcribe_edit_label()}
-                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => copyText(item)}
-                                  aria-label={m.app_transcribe_copy_label()}
-                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
-                                >
-                                  {isCopied ? (
-                                    <CheckCheck className="h-3.5 w-3.5 text-[var(--color-success)]" />
-                                  ) : (
-                                    <Copy className="h-3.5 w-3.5" />
-                                  )}
-                                </button>
-                                <button
-                                  onClick={() => downloadText(item)}
-                                  aria-label={m.app_transcribe_download_label()}
-                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
-                                  aria-label={m.app_transcribe_delete_label()}
-                                  className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-red-500"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                <Tooltip label={m.app_transcribe_edit_label()}>
+                                  <button
+                                    onClick={() => startEdit(item)}
+                                    aria-label={m.app_transcribe_edit_label()}
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip label={m.app_transcribe_copy_label()}>
+                                  <button
+                                    onClick={() => copyText(item)}
+                                    aria-label={m.app_transcribe_copy_label()}
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                  >
+                                    {isCopied ? (
+                                      <CheckCheck className="h-3.5 w-3.5 text-[var(--color-success)]" />
+                                    ) : (
+                                      <Copy className="h-3.5 w-3.5" />
+                                    )}
+                                  </button>
+                                </Tooltip>
+                                <Tooltip label={m.app_transcribe_download_label()}>
+                                  <button
+                                    onClick={() => downloadText(item)}
+                                    aria-label={m.app_transcribe_download_label()}
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-purple-deep)]"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip label={m.app_transcribe_delete_label()}>
+                                  <button
+                                    onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
+                                    aria-label={m.app_transcribe_delete_label()}
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-colors hover:text-red-500"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </Tooltip>
                               </div>
                             )}
                           </td>
