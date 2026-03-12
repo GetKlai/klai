@@ -11,7 +11,7 @@ import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 
-export const Route = createFileRoute('/admin/users/$userId__/edit')({
+export const Route = createFileRoute('/admin/users/$userId_/edit')({
   component: EditUserPage,
 })
 
@@ -36,7 +36,7 @@ function EditUserPage() {
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const { userId__ } = Route.useParams()
+  const { userId_ } = Route.useParams()
 
   const [form, setForm] = useState<EditForm>({
     first_name: '',
