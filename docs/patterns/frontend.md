@@ -168,7 +168,7 @@ List page — navigate to the form route on button click:
 </Button>
 ```
 
-Form page (`routes/admin/users/invite.tsx`) — wrap in Card, navigate back on success/cancel:
+Form page (`routes/admin/users/invite.tsx`) — page header with title left and ghost cancel button right; Card has no CardHeader:
 ```tsx
 export const Route = createFileRoute('/admin/users/invite')({
   component: InviteUserPage,
@@ -184,21 +184,28 @@ function InviteUserPage() {
 
   return (
     <div className="p-8 max-w-lg">
-      <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)] mb-6">
-        Gebruiker uitnodigen
-      </h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          Gebruiker uitnodigen
+        </h1>
+        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/admin/users' })}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Annuleren
+        </Button>
+      </div>
       <Card>
-        <CardHeader>
-          <CardTitle>Gebruiker uitnodigen</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* fields */}
-            <div className="flex justify-end gap-3 pt-2">
-              <Button variant="outline" onClick={() => navigate({ to: '/admin/users' })}>
-                Annuleren
+            {inviteMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {inviteMutation.error.message}
+              </p>
+            )}
+            <div className="pt-2">
+              <Button type="submit" disabled={inviteMutation.isPending}>
+                {inviteMutation.isPending ? 'Bezig...' : 'Uitnodigen'}
               </Button>
-              <Button type="submit">Opslaan</Button>
             </div>
           </form>
         </CardContent>
@@ -207,6 +214,13 @@ function InviteUserPage() {
   )
 }
 ```
+
+Key layout rules:
+- Page header: `flex items-center justify-between mb-6` — title left, ghost cancel/back button right with ArrowLeft icon
+- Card: `<Card><CardContent className="pt-6">` — no CardHeader/CardTitle inside the card (the page h1 serves as title)
+- Single submit: `<div className="pt-2"><Button>` — cancel is in the page header, not inside the form
+- Multiple result buttons: `<div className="flex justify-end gap-3 pt-2">` — secondary left, primary right
+- Error text: `text-sm text-[var(--color-destructive)]` — never `text-red-600`
 
 **Why route-based over modal:**
 - No overlay/focus-trap complexity
