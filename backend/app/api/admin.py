@@ -61,6 +61,7 @@ class UserOut(BaseModel):
     role: Literal["admin", "member"]
     preferred_language: Literal["nl", "en"]
     created_at: datetime
+    invite_pending: bool
 
 
 class UsersResponse(BaseModel):
@@ -78,6 +79,12 @@ class InviteRequest(BaseModel):
 class InviteResponse(BaseModel):
     user_id: str
     message: str
+
+
+class UserUpdateRequest(BaseModel):
+    first_name: str
+    last_name: str
+    preferred_language: Literal["nl", "en"]
 
 
 class RoleUpdateRequest(BaseModel):
@@ -137,6 +144,7 @@ async def list_users(
             role=portal_user.role,
             preferred_language=portal_user.preferred_language,
             created_at=portal_user.created_at,
+            invite_pending=z.get("state") == "USER_STATE_INITIAL",
         ))
 
     return UsersResponse(users=users_out)
@@ -194,6 +202,46 @@ async def invite_user(
     )
 
 
+@router.patch("/users/{zitadel_user_id}", response_model=MessageResponse)
+async def update_user(
+    zitadel_user_id: str,
+    body: UserUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    try:
+        await zitadel.update_user_profile(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            preferred_language=body.preferred_language,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon gebruiker niet bijwerken: {exc}",
+        ) from exc
+
+    user.preferred_language = body.preferred_language
+    await db.commit()
+
+    return MessageResponse(message="Gebruiker bijgewerkt.")
+
+
 @router.patch("/users/{zitadel_user_id}/role", response_model=MessageResponse)
 async def update_user_role(
     zitadel_user_id: str,
@@ -244,6 +292,38 @@ async def update_org_settings(
         org.mfa_policy = body.mfa_policy
     await db.commit()
     return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
+
+
+@router.post("/users/{zitadel_user_id}/resend-invite", response_model=MessageResponse)
+async def resend_invite(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    try:
+        await zitadel.resend_init_mail(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon uitnodiging niet opnieuw sturen: {exc}",
+        ) from exc
+
+    return MessageResponse(message="Uitnodiging opnieuw verstuurd.")
 
 
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
