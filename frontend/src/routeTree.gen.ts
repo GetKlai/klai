@@ -38,6 +38,7 @@ import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/ad
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
+import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId_.edit'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 
@@ -186,6 +187,11 @@ const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   path: '/users/invite',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
+  id: '/users/$userId_/edit',
+  path: '/users/$userId/edit',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
   id: '/password/forgot',
   path: '/password/forgot',
@@ -222,6 +228,7 @@ export interface FileRoutesByFullPath {
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
@@ -253,6 +260,7 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
@@ -287,6 +295,7 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/users/$userId_/edit': typeof AdminUsersUserIdEditRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
@@ -322,6 +331,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
+    | '/admin/users/$userId/edit'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/transcribe/add'
@@ -353,6 +363,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
+    | '/admin/users/$userId/edit'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/transcribe/add'
@@ -386,6 +397,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
+    | '/admin/users/$userId_/edit'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/transcribe/add'
@@ -617,6 +629,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersInviteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/users/$userId_/edit': {
+      id: '/admin/users/$userId_/edit'
+      path: '/users/$userId/edit'
+      fullPath: '/admin/users/$userId/edit'
+      preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/$locale/password/forgot': {
       id: '/$locale/password/forgot'
       path: '/password/forgot'
@@ -653,6 +672,7 @@ interface AdminRouteRouteChildren {
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
+  AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
 }
 
@@ -661,6 +681,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
+  AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
 }
 
