@@ -218,8 +218,8 @@ function InviteUserPage() {
 Key layout rules:
 - Page header: `flex items-center justify-between mb-6` — title left, ghost cancel/back button right with ArrowLeft icon
 - Card: `<Card><CardContent className="pt-6">` — no CardHeader/CardTitle inside the card (the page h1 serves as title)
-- Single submit: `<div className="pt-2"><Button>` — cancel is in the page header, not inside the form
-- Multiple result buttons: `<div className="flex justify-end gap-3 pt-2">` — secondary left, primary right
+- Single submit: `<div className="pt-2"><Button>` — left-aligned, cancel is in the page header
+- Multiple result buttons: `<div className="flex justify-end gap-3 pt-2">` — secondary (outline) left, primary right
 - Error text: `text-sm text-[var(--color-destructive)]` — never `text-red-600`
 
 **Why route-based over modal:**
@@ -246,5 +246,6 @@ Key layout rules:
 
 ## See Also
 
+- [patterns/testing.md](testing.md) - Playwright browser testing workflow
 - [patterns/devops.md](devops.md) - Deployments, Docker
 - [patterns/infrastructure.md](infrastructure.md) - Secrets, DNS, SSH
