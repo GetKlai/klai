@@ -339,14 +339,16 @@ function NotebookDetailPage() {
   return (
     <div className="p-8 space-y-6">
       {/* Header */}
-      <div className="space-y-1">
-        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.app_focus_back()}
-        </Button>
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-          {notebook?.name ?? m.app_focus_loading()}
-        </h1>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            {notebook?.name ?? m.app_focus_loading()}
+          </h1>
+          <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.app_focus_back()}
+          </Button>
+        </div>
         {notebook?.description && (
           <p className="text-sm text-[var(--color-muted-foreground)]">{notebook.description}</p>
         )}
