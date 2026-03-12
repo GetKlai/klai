@@ -143,7 +143,7 @@ function UsersPage() {
         <div className="flex flex-col gap-1">
           <RoleBadge role={info.getValue()} />
           {info.row.original.invite_pending && (
-            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 w-fit text-xs">
+            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs">
               {m.admin_users_invite_pending()}
             </Badge>
           )}
