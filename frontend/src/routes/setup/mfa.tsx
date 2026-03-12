@@ -266,6 +266,23 @@ function EmailOTPSetup({
     }
   }
 
+  async function handleResend() {
+    setError(null)
+    setSending(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/email-otp/resend`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error()
+      setResendAt(Date.now() + 30_000)
+    } catch {
+      setError(m.error_connection())
+    } finally {
+      setSending(false)
+    }
+  }
+
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
@@ -358,7 +375,7 @@ function EmailOTPSetup({
               {canResend ? (
                 <button
                   type="button"
-                  onClick={handleSend}
+                  onClick={handleResend}
                   disabled={sending}
                   className="text-xs text-[var(--color-purple-muted)] hover:underline"
                 >
@@ -601,7 +618,7 @@ function SetupMFAPage() {
       </p>
       <div className="flex items-center gap-3 text-sm text-[var(--color-sand-mid)]">
         <Shield size={16} className="shrink-0 text-[var(--color-purple-accent)]" />
-        Passkeys, e-mailcodes, Google Authenticator
+        {m.setup_mfa_hero_methods()}
       </div>
     </>
   )

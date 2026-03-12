@@ -91,7 +91,7 @@ class OrgSettingsOut(BaseModel):
 
 
 class OrgSettingsUpdate(BaseModel):
-    default_language: Literal["nl", "en"]
+    default_language: Literal["nl", "en"] | None = None
     mfa_policy: Literal["optional", "recommended", "required"] | None = None
 
 
@@ -238,7 +238,8 @@ async def update_org_settings(
 ) -> OrgSettingsOut:
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-    org.default_language = body.default_language
+    if body.default_language is not None:
+        org.default_language = body.default_language
     if body.mfa_policy is not None:
         org.mfa_policy = body.mfa_policy
     await db.commit()

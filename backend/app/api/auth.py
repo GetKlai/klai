@@ -534,6 +534,31 @@ async def email_otp_setup(
         ) from exc
 
 
+@router.post("/auth/email-otp/resend", status_code=status.HTTP_204_NO_CONTENT)
+async def email_otp_resend(
+    user_id: str = Depends(get_current_user_id),
+) -> None:
+    """Resend the email OTP verification code by removing and re-registering the method."""
+    try:
+        await zitadel.remove_email_otp(user_id)
+    except httpx.HTTPStatusError as exc:
+        # If not registered yet, ignore — proceed to register
+        if exc.response.status_code != 404:
+            log.error("remove_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="E-mailcode opnieuw versturen mislukt, probeer het later opnieuw",
+            ) from exc
+    try:
+        await zitadel.register_email_otp(user_id)
+    except httpx.HTTPStatusError as exc:
+        log.error("register_email_otp (resend) failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="E-mailcode opnieuw versturen mislukt, probeer het later opnieuw",
+        ) from exc
+
+
 @router.post("/auth/email-otp/confirm", status_code=status.HTTP_204_NO_CONTENT)
 async def email_otp_confirm(
     body: EmailOTPConfirmRequest,

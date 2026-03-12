@@ -45,16 +45,16 @@ function CallbackPage() {
             }
           }
 
+          // Resolve role first so MFA redirect can use it
+          const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
+          sessionStorage.setItem('klai:isAdmin', String(isAdmin))
+
           // MFA not yet enrolled — send to setup
           if (!me.mfa_enrolled) {
             sessionStorage.setItem('klai:mfaPolicy', me.mfa_policy ?? 'optional')
             window.location.replace('/setup/mfa')
             return
           }
-
-          // On the correct subdomain — route by role
-          const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
-          sessionStorage.setItem('klai:isAdmin', String(isAdmin))
 
           if (isAdmin) {
             try {

@@ -297,6 +297,11 @@ class ZitadelClient:
         resp = await self._http.post(f"/v2/users/{user_id}/otp_email")
         resp.raise_for_status()
 
+    async def remove_email_otp(self, user_id: str) -> None:
+        """Remove email OTP from a user. Used before re-registration to resend the code."""
+        resp = await self._http.delete(f"/v2/users/{user_id}/otp_email")
+        resp.raise_for_status()
+
     async def verify_email_otp(self, user_id: str, code: str) -> None:
         """Verify and activate the email OTP registration using the code from the email."""
         resp = await self._http.post(

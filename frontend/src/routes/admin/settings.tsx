@@ -6,9 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { API_BASE } from '@/lib/api'
 import * as m from '@/paraglide/messages'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const Route = createFileRoute('/admin/settings')({
   component: AdminSettingsPage,
@@ -18,7 +17,8 @@ function AdminSettingsPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
 
-  const [saved, setSaved] = useState(false)
+  const [savedLang, setSavedLang] = useState(false)
+  const [savedMfa, setSavedMfa] = useState(false)
 
   const { data: settings, isLoading, error } = useQuery({
     queryKey: ['admin-settings', token],
@@ -32,23 +32,24 @@ function AdminSettingsPage() {
     enabled: !!token,
   })
 
-  const saveMutation = useMutation({
-    mutationFn: async (payload: { default_language: 'nl' | 'en'; mfa_policy: 'optional' | 'recommended' | 'required' }) => {
-      const res = await fetch(`${API_BASE}/api/admin/settings`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) throw new Error(m.admin_settings_error_save())
-      return res.json()
-    },
-    onSuccess: () => {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
-    },
+  async function patchSettings(payload: { default_language?: 'nl' | 'en'; mfa_policy?: 'optional' | 'recommended' | 'required' }) {
+    const res = await fetch(`${API_BASE}/api/admin/settings`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) throw new Error(m.admin_settings_error_save())
+    return res.json()
+  }
+
+  const langMutation = useMutation({
+    mutationFn: (lang: 'nl' | 'en') => patchSettings({ default_language: lang }),
+    onSuccess: () => { setSavedLang(true); setTimeout(() => setSavedLang(false), 2500) },
+  })
+
+  const mfaMutation = useMutation({
+    mutationFn: (policy: 'optional' | 'recommended' | 'required') => patchSettings({ mfa_policy: policy }),
+    onSuccess: () => { setSavedMfa(true); setTimeout(() => setSavedMfa(false), 2500) },
   })
 
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>('nl')
@@ -100,16 +101,16 @@ function AdminSettingsPage() {
                   <option value="en">{m.admin_settings_language_en()}</option>
                 </Select>
               </div>
-              {saveMutation.error && (
+              {langMutation.error && (
                 <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
               )}
               <Button
-                onClick={() => saveMutation.mutate({ default_language: selectedLang, mfa_policy: selectedMfa })}
-                disabled={saveMutation.isPending || saved}
+                onClick={() => langMutation.mutate(selectedLang)}
+                disabled={langMutation.isPending || savedLang}
               >
-                {saved
+                {savedLang
                   ? m.admin_settings_saved()
-                  : saveMutation.isPending
+                  : langMutation.isPending
                     ? m.admin_settings_saving()
                     : m.admin_settings_save()}
               </Button>
@@ -152,16 +153,16 @@ function AdminSettingsPage() {
                   {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
                 </p>
               </div>
-              {saveMutation.error && (
+              {mfaMutation.error && (
                 <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
               )}
               <Button
-                onClick={() => saveMutation.mutate({ default_language: selectedLang, mfa_policy: selectedMfa })}
-                disabled={saveMutation.isPending || saved}
+                onClick={() => mfaMutation.mutate(selectedMfa)}
+                disabled={mfaMutation.isPending || savedMfa}
               >
-                {saved
+                {savedMfa
                   ? m.admin_settings_saved()
-                  : saveMutation.isPending
+                  : mfaMutation.isPending
                     ? m.admin_settings_saving()
                     : m.admin_settings_save()}
               </Button>
