@@ -45,8 +45,8 @@ function formatDate(isoString: string): string {
 
 function RoleBadge({ role }: { role: Role }) {
   return role === 'admin'
-    ? <Badge variant="accent">{m.admin_users_role_admin()}</Badge>
-    : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
+    ? <Badge variant="accent" size="sm">{m.admin_users_role_admin()}</Badge>
+    : <Badge variant="secondary" size="sm">{m.admin_users_role_member()}</Badge>
 }
 
 const columnHelper = createColumnHelper<User>()
