@@ -221,6 +221,22 @@ Key layout rules:
 - Single submit: `<div className="pt-2"><Button>` — left-aligned, cancel is in the page header
 - Multiple result buttons: `<div className="flex justify-end gap-3 pt-2">` — secondary (outline) left, primary right
 - Error text: `text-sm text-[var(--color-destructive)]` — never `text-red-600`
+- Success text / positive feedback icons: `text-[var(--color-success)]` — never `text-green-500`
+- Confirm buttons (destructive action): `bg-[var(--color-destructive)] text-white hover:opacity-90`
+- Confirm buttons (save/positive action): `bg-[var(--color-success)] text-white hover:opacity-90`
+
+**Semantic color tokens** (defined in `frontend/src/index.css`):
+
+| Token | Value | Use for |
+|---|---|---|
+| `--color-purple-deep` | `#1A0F40` | Headings, primary text, active icons |
+| `--color-muted-foreground` | `#6B6B6B` | Secondary text, placeholder, muted icons |
+| `--color-destructive` | `#C0392B` | Error text, delete confirm buttons, destructive actions |
+| `--color-success` | `#27AE60` | Save confirm buttons, positive feedback icons |
+| `--color-border` | `rgba(45,27,105,0.1)` | Borders, dividers |
+| `--color-accent` | `#7C6AFF` | Focus rings, links, accent highlights |
+
+Never use raw Tailwind color classes (`text-red-600`, `bg-green-500`, etc.) for semantic states — always use the token.
 
 **Why route-based over modal:**
 - No overlay/focus-trap complexity
