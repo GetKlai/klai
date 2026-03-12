@@ -140,9 +140,40 @@ import { Select } from '@/components/ui/select'
 
 ---
 
+## Color tokens
+
+Use CSS variables for all semantic colors. Never use raw Tailwind color classes for these purposes.
+
+| Token | Use for |
+|---|---|
+| `var(--color-purple-deep)` | Headings, primary text, active icons |
+| `var(--color-muted-foreground)` | Secondary text, placeholder, disabled |
+| `var(--color-destructive)` | Error text, delete confirm buttons |
+| `var(--color-success)` | Save confirm buttons, positive feedback |
+| `var(--color-border)` | Borders, dividers, row hover backgrounds |
+| `var(--color-accent)` | Focus rings, links |
+
+```tsx
+// Error message
+<p className="text-sm text-[var(--color-destructive)]">Verwijderen mislukt</p>
+
+// Delete confirm button
+<button className="bg-[var(--color-destructive)] text-white hover:opacity-90">
+  <Check />
+</button>
+
+// Save confirm button
+<button className="bg-[var(--color-success)] text-white hover:opacity-90">
+  <Check />
+</button>
+```
+
+---
+
 ## Rules
 
 - Never write inline Tailwind field classes on `<input>` or `<select>` elements in pages - always use `<Input>` / `<Select>` from `components/ui/`
 - Add/edit forms belong in a separate route page (e.g. `/admin/users/invite`), not in modals or inline cards
 - `<Label>` always has `htmlFor` matching the field `id`
+- Never use `text-red-*`, `bg-red-*`, `text-green-*`, `bg-green-*` for semantic states — use `--color-destructive` / `--color-success`
 - See `klai-claude/docs/patterns/frontend.md` for the full portal-ui-components pattern
