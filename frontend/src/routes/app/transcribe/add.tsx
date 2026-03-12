@@ -19,13 +19,13 @@ const MAX_MB = 100
 
 type Tab = 'record' | 'upload'
 
-interface TranscriptionItem {
-  id: string
+interface TranscriptionDraft {
   text: string
   language: string
   duration_seconds: number
   inference_time_seconds: number | null
-  created_at: string
+  provider: string
+  model: string
 }
 
 function formatDuration(seconds: number): string {
@@ -42,7 +42,7 @@ function AddTranscribePage() {
 
   const [activeTab, setActiveTab] = useState<Tab>('record')
   const [language, setLanguage] = useState<string>('')
-  const [result, setResult] = useState<TranscriptionItem | null>(null)
+  const [result, setResult] = useState<TranscriptionDraft | null>(null)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -63,23 +63,6 @@ function AddTranscribePage() {
   const animFrameRef = useRef<number | null>(null)
   const durationIntervalRef = useRef<number | null>(null)
 
-  const discardMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok && res.status !== 404) {
-        throw new Error('delete failed')
-      }
-    },
-    onSuccess: () => {
-      setResult(null)
-      setError(null)
-      queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
-    },
-  })
-
   const transcribeMutation = useMutation({
     mutationFn: async (file: File) => {
       setError(null)
@@ -95,12 +78,32 @@ function AddTranscribePage() {
         const body = await res.json().catch(() => ({}))
         throw new Error(body?.detail ?? m.app_transcribe_error_generic())
       }
-      return res.json() as Promise<TranscriptionItem>
+      return res.json() as Promise<TranscriptionDraft>
     },
     onSuccess: (data) => {
       setResult(data)
       setSelectedFile(null)
+    },
+    onError: (err: Error) => {
+      setError(err.message)
+    },
+  })
+
+  const saveMutation = useMutation({
+    mutationFn: async (draft: TranscriptionDraft) => {
+      const res = await fetch(`${SCRIBE_BASE}/transcriptions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body?.detail ?? m.app_transcribe_error_generic())
+      }
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      navigate({ to: '/app/transcribe' })
     },
     onError: (err: Error) => {
       setError(err.message)
@@ -455,13 +458,18 @@ function AddTranscribePage() {
             <CardContent className="space-y-3">
               <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
               <div className="flex gap-3 pt-2">
-                <Button onClick={() => navigate({ to: '/app/transcribe' })}>
-                  {m.app_transcribe_save_button()}
+                <Button
+                  disabled={saveMutation.isPending}
+                  onClick={() => saveMutation.mutate(result)}
+                >
+                  {saveMutation.isPending ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{m.app_transcribe_processing()}</>
+                  ) : m.app_transcribe_save_button()}
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={discardMutation.isPending}
-                  onClick={() => discardMutation.mutate(result.id)}
+                  disabled={saveMutation.isPending}
+                  onClick={() => { setResult(null); setError(null) }}
                 >
                   {m.app_transcribe_discard_button()}
                 </Button>
