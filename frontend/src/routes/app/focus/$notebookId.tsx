@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronUp,
   X,
+  History,
 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import * as m from '@/paraglide/messages'
@@ -44,7 +45,15 @@ interface Notebook {
   description: string | null
   scope: string
   default_mode: string
+  save_history: boolean
   sources_count: number
+}
+
+interface HistoryMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
 }
 
 interface Citation {
@@ -184,6 +193,49 @@ function NotebookDetailPage() {
     onError: (err: Error) => setAddError(err.message),
   })
 
+  // ── History ──────────────────────────────────────────────────────────────────
+
+  const { data: historyData } = useQuery<{ items: HistoryMessage[] }>({
+    queryKey: ['focus-history', notebookId, token],
+    queryFn: async () => {
+      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Geschiedenis ophalen mislukt')
+      return res.json()
+    },
+    enabled: !!token && notebook?.save_history === true,
+  })
+
+  const toggleHistoryMutation = useMutation({
+    mutationFn: async (saveHistory: boolean) => {
+      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ save_history: saveHistory }),
+      })
+      if (!res.ok) throw new Error('Instelling opslaan mislukt')
+      return res.json()
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId, token] })
+    },
+  })
+
+  const clearHistoryMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Wissen mislukt')
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['focus-history', notebookId, token] })
+      setMessages([])
+    },
+  })
+
   // ── Chat ─────────────────────────────────────────────────────────────────────
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -197,6 +249,15 @@ function NotebookDetailPage() {
   useEffect(() => {
     if (notebook) setChatMode(notebook.default_mode as ChatMode)
   }, [notebook?.default_mode])
+
+  // Load persisted history into messages state once
+  useEffect(() => {
+    if (historyData?.items && historyData.items.length > 0 && messages.length === 0) {
+      setMessages(
+        historyData.items.map((msg) => ({ role: msg.role, content: msg.content }))
+      )
+    }
+  }, [historyData])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -220,7 +281,11 @@ function NotebookDetailPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: question, mode: chatMode }),
+        body: JSON.stringify({
+          question: question,
+          mode: chatMode,
+          history: messages.slice(-8).map((msg) => ({ role: msg.role, content: msg.content })),
+        }),
       })
       if (!res.ok) throw new Error('Chat mislukt')
       if (!res.body) throw new Error('Geen response')
@@ -275,13 +340,10 @@ function NotebookDetailPage() {
     <div className="p-8 space-y-6">
       {/* Header */}
       <div className="space-y-1">
-        <button
-          onClick={() => navigate({ to: '/app/focus' })}
-          className="flex items-center gap-1.5 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
+        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
           {m.app_focus_back()}
-        </button>
+        </Button>
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {notebook?.name ?? m.app_focus_loading()}
         </h1>
@@ -458,25 +520,63 @@ function NotebookDetailPage() {
         <Card className="flex flex-col" style={{ minHeight: '560px' }}>
           <CardHeader className="shrink-0 pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">{m.app_focus_chat_heading()}</CardTitle>
-              <div className="flex gap-1 rounded-lg p-1 bg-[var(--color-muted)]/40">
-                {(['narrow', 'broad', 'web'] as ChatMode[]).map((mode) => (
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm">{m.app_focus_chat_heading()}</CardTitle>
+                {messages.length > 0 && (
                   <button
-                    key={mode}
-                    onClick={() => setChatMode(mode)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      chatMode === mode
-                        ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
-                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
-                    }`}
+                    onClick={() => clearHistoryMutation.mutate()}
+                    disabled={clearHistoryMutation.isPending}
+                    className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                   >
-                    {mode === 'narrow'
-                      ? m.app_focus_chat_mode_narrow()
-                      : mode === 'broad'
-                        ? m.app_focus_chat_mode_broad()
-                        : m.app_focus_chat_mode_web()}
+                    {m.app_focus_chat_new_session()}
                   </button>
-                ))}
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {/* History toggle */}
+                <button
+                  onClick={() => toggleHistoryMutation.mutate(!(notebook?.save_history ?? true))}
+                  disabled={toggleHistoryMutation.isPending}
+                  title={
+                    notebook?.save_history
+                      ? m.app_focus_chat_history_on_tooltip()
+                      : m.app_focus_chat_history_off_tooltip()
+                  }
+                  className={`rounded-md p-1 transition-colors ${
+                    notebook?.save_history
+                      ? 'text-[var(--color-purple-deep)]'
+                      : 'text-[var(--color-muted-foreground)]'
+                  } hover:text-[var(--color-foreground)]`}
+                >
+                  <History className="h-3.5 w-3.5" />
+                </button>
+                {/* Mode selector */}
+                <div className="flex gap-1 rounded-lg p-1 bg-[var(--color-muted)]/40">
+                  {(['narrow', 'broad', 'web'] as ChatMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setChatMode(mode)}
+                      title={
+                        mode === 'narrow'
+                          ? m.app_focus_chat_mode_narrow_tooltip()
+                          : mode === 'broad'
+                            ? m.app_focus_chat_mode_broad_tooltip()
+                            : m.app_focus_chat_mode_web_tooltip()
+                      }
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                        chatMode === mode
+                          ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                          : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                      }`}
+                    >
+                      {mode === 'narrow'
+                        ? m.app_focus_chat_mode_narrow()
+                        : mode === 'broad'
+                          ? m.app_focus_chat_mode_broad()
+                          : m.app_focus_chat_mode_web()}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </CardHeader>
