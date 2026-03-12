@@ -38,7 +38,7 @@ import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/ad
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
-import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId_.edit'
+import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 
@@ -188,7 +188,7 @@ const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
-  id: '/users/$userId_/edit',
+  id: '/users/$userId/edit',
   path: '/users/$userId/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
@@ -295,7 +295,7 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
-  '/admin/users/$userId_/edit': typeof AdminUsersUserIdEditRoute
+  '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
@@ -397,7 +397,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/$locale/password/forgot'
     | '/admin/users/invite'
-    | '/admin/users/$userId_/edit'
+    | '/admin/users/$userId/edit'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/transcribe/add'
@@ -629,8 +629,8 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersInviteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/users/$userId_/edit': {
-      id: '/admin/users/$userId_/edit'
+    '/admin/users/$userId/edit': {
+      id: '/admin/users/$userId/edit'
       path: '/users/$userId/edit'
       fullPath: '/admin/users/$userId/edit'
       preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
