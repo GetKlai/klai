@@ -177,6 +177,7 @@
   "admin_users_field_role": "Role",
   "admin_users_role_admin": "Admin",
   "admin_users_role_member": "Member",
+  "admin_users_role_member_pending": "Member (pending)",
   "admin_users_invite_submit": "Send invitation",
   "admin_users_invite_submit_loading": "Sending...",
   "admin_users_cancel": "Cancel",

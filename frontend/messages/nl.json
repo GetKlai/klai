@@ -177,6 +177,7 @@
   "admin_users_field_role": "Rol",
   "admin_users_role_admin": "Beheerder",
   "admin_users_role_member": "Lid",
+  "admin_users_role_member_pending": "Lid (in behandeling)",
   "admin_users_invite_submit": "Uitnodiging versturen",
   "admin_users_invite_submit_loading": "Versturen...",
   "admin_users_cancel": "Annuleren",

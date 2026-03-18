@@ -43,10 +43,12 @@ function formatDate(isoString: string): string {
   })
 }
 
-function RoleBadge({ role }: { role: Role }) {
+function RoleBadge({ role, pending }: { role: Role; pending?: boolean }) {
   return role === 'admin'
     ? <Badge variant="accent">{m.admin_users_role_admin()}</Badge>
-    : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
+    : pending
+      ? <Badge variant="warning">{m.admin_users_role_member_pending()}</Badge>
+      : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
 }
 
 const columnHelper = createColumnHelper<User>()
@@ -140,14 +142,7 @@ function UsersPage() {
     columnHelper.accessor('role', {
       header: () => m.admin_users_col_role(),
       cell: (info) => (
-        <div className="flex flex-col gap-1">
-          <RoleBadge role={info.getValue()} />
-          {info.row.original.invite_pending && (
-            <Badge variant="warning">
-              {m.admin_users_invite_pending()}
-            </Badge>
-          )}
-        </div>
+        <RoleBadge role={info.getValue()} pending={info.row.original.invite_pending} />
       ),
     }),
     columnHelper.accessor('created_at', {
