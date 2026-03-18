@@ -220,7 +220,8 @@ function AddTranscribePage() {
     setRecording(true)
     setRecordDuration(0)
     durationIntervalRef.current = window.setInterval(() => setRecordDuration((d) => d + 1), 1000)
-    updateAudioLevel()
+    // Resume AudioContext in case it was suspended (can happen when created outside a direct user gesture)
+    audioContextRef.current?.resume().then(updateAudioLevel).catch(updateAudioLevel)
   }, [micPermission, updateAudioLevel, transcribeMutation])
 
   // Cleanup stream on unmount
