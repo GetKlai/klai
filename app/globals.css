@@ -1,2 +1,7 @@
 @import "tailwindcss";
+
+/* Explicit source paths for Tailwind v4 scanner in Next.js standalone builds */
+@source ".";
+@source "../components";
+
 @plugin "@tailwindcss/typography";
