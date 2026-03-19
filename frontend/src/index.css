@@ -145,3 +145,10 @@ body {
 .bn-editor p {
   line-height: 1.65;
 }
+
+/* Links: distinct from underline formatting via color */
+.bn-editor a {
+  color: var(--color-purple-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
