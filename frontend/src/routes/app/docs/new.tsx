@@ -85,14 +85,14 @@ function NewKBPage() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Bijv. Helpcenter"
+                placeholder={m.docs_kb_name_placeholder()}
                 autoFocus
                 required
               />
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="kb-visibility">Zichtbaarheid</Label>
+              <Label htmlFor="kb-visibility">{m.docs_kb_visibility_label()}</Label>
               <Select
                 id="kb-visibility"
                 value={visibility}

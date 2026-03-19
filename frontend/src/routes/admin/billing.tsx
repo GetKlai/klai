@@ -5,6 +5,8 @@ import { AlertCircle, CheckCircle, CreditCard, ExternalLink, XCircle } from 'luc
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { number } from '@/paraglide/registry'
@@ -102,14 +104,14 @@ function Field({
   placeholder?: string
 }) {
   return (
-    <div className="space-y-1">
-      <label htmlFor={name} className="block text-sm font-medium text-[var(--color-foreground)]">
+    <div className="space-y-1.5">
+      <Label htmlFor={name}>
         {label}
         {!required && (
-          <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_field_optional()}</span>
+          <span className="ml-1 text-xs text-[var(--color-muted-foreground)] font-normal">{m.admin_billing_field_optional()}</span>
         )}
-      </label>
-      <input
+      </Label>
+      <Input
         id={name}
         name={name}
         type={type}
@@ -117,7 +119,6 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         required={required}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
       />
       {hint && <p className="text-xs text-[var(--color-muted-foreground)]">{hint}</p>}
     </div>

@@ -121,7 +121,7 @@ function EditKBPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="kb-visibility">Zichtbaarheid</Label>
+              <Label htmlFor="kb-visibility">{m.docs_kb_visibility_label()}</Label>
               <Select
                 id="kb-visibility"
                 value={visibility}
@@ -137,13 +137,13 @@ function EditKBPage() {
               <p className="text-sm text-[var(--color-destructive)]">
                 {editMutation.error instanceof Error
                   ? editMutation.error.message
-                  : 'Opslaan mislukt'}
+                  : m.docs_kb_saving()}
               </p>
             )}
 
             <div className="pt-2">
               <Button type="submit" disabled={!name.trim() || editMutation.isPending || !kb}>
-                {editMutation.isPending ? 'Bezig...' : m.docs_kb_edit_save_action()}
+                {editMutation.isPending ? m.docs_kb_saving() : m.docs_kb_edit_save_action()}
               </Button>
             </div>
           </form>

@@ -177,3 +177,57 @@ Use CSS variables for all semantic colors. Never use raw Tailwind color classes 
 - `<Label>` always has `htmlFor` matching the field `id`
 - Never use `text-red-*`, `bg-red-*`, `text-green-*`, `bg-green-*` for semantic states — use `--color-destructive` / `--color-success`
 - See `klai-claude/docs/patterns/frontend.md` for the full portal-ui-components pattern
+
+---
+
+## Deletion confirmation patterns
+
+### Standard: inline row confirmation (Check / X)
+
+For single-item deletion where the action is reversible or low-impact (e.g. a transcription, a notebook):
+
+```tsx
+// Row switches to confirmation state on delete click
+isConfirmingDelete ? (
+  <>
+    <button onClick={() => deleteMutation.mutate(item.id)}
+      className="... bg-[var(--color-destructive)] text-white"><Check /></button>
+    <button onClick={() => setConfirmingDeleteId(null)}
+      className="... border border-[var(--color-border)]"><X /></button>
+  </>
+) : (
+  <button onClick={() => setConfirmingDeleteId(item.id)}><Trash2 /></button>
+)
+```
+
+### Exception: name-confirmation modal
+
+Use a **modal with name input** only when the deletion is **irreversible and high-impact** — i.e. it destroys a significant amount of data that cannot be recovered (e.g. deleting an entire knowledge base including all its pages).
+
+Rules for name-confirmation modals:
+- Explain what will be deleted and that it cannot be undone
+- Show the name in **bold** in the explanation text
+- Require the user to type the exact name before the confirm button becomes active
+- Confirm button uses `var(--color-destructive)` background only when `canDelete === true`
+- Cancel is a ghost button, confirm is on the right
+
+```tsx
+function DeleteModal({ kb, onCancel, onConfirm, isDeleting }) {
+  const [confirmName, setConfirmName] = useState('')
+  const canDelete = confirmName === kb.name
+  // ...
+  <Button
+    onClick={onConfirm}
+    disabled={!canDelete || isDeleting}
+    style={{
+      backgroundColor: canDelete ? 'var(--color-destructive)' : undefined,
+      color: canDelete ? 'white' : undefined,
+    }}
+  >
+    {isDeleting ? <Loader2 /> : 'Verwijderen'}
+  </Button>
+}
+```
+
+**Current uses of the name-confirmation modal:**
+- `routes/app/docs/index.tsx` — delete knowledge base (deletes all pages, irreversible)

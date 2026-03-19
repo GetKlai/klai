@@ -3,6 +3,7 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   ArrowLeft,
@@ -75,7 +76,7 @@ interface ChatMessage {
 
 function StatusBadge({ status }: { status: SourceStatus }) {
   if (status === 'ready')
-    return <span className="text-xs text-[var(--color-success)]00">{m.app_focus_source_status_ready()}</span>
+    return <span className="text-xs text-[var(--color-success)]">{m.app_focus_source_status_ready()}</span>
   if (status === 'error')
     return <span className="text-xs text-[var(--color-destructive)]">{m.app_focus_source_status_error()}</span>
   return (
@@ -601,12 +602,12 @@ function NotebookDetailPage() {
 
                 {addTab === 'url' && (
                   <div className="flex gap-2">
-                    <input
+                    <Input
                       type="url"
                       value={urlInput}
                       onChange={(e) => setUrlInput(e.target.value)}
                       placeholder={m.app_focus_source_url_placeholder()}
-                      className="flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-purple-accent)]"
+                      className="flex-1"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && urlInput.trim())
                           addUrlMutation.mutate(urlInput.trim())
@@ -626,7 +627,7 @@ function NotebookDetailPage() {
                   </div>
                 )}
 
-                {addError && <p className="text-xs text-[var(--color-destructive)]00">{addError}</p>}
+                {addError && <p className="text-xs text-[var(--color-destructive)]">{addError}</p>}
               </CardContent>
             </Card>
           )}
@@ -775,7 +776,7 @@ function NotebookDetailPage() {
               ))
             )}
             {chatError && (
-              <p className="text-center text-xs text-[var(--color-destructive)]00">{chatError}</p>
+              <p className="text-center text-xs text-[var(--color-destructive)]">{chatError}</p>
             )}
             <div ref={messagesEndRef} />
           </CardContent>
@@ -783,7 +784,7 @@ function NotebookDetailPage() {
           {/* Input */}
           <div className="shrink-0 border-t border-[var(--color-border)] p-4 pt-3">
             <div className="flex gap-2">
-              <input
+              <Input
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
@@ -793,7 +794,7 @@ function NotebookDetailPage() {
                     : m.app_focus_chat_disabled_hint()
                 }
                 disabled={!hasReadySources || streaming}
-                className="flex-1 rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-purple-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') sendMessage()
                 }}
