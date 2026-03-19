@@ -825,7 +825,7 @@ function NavTree({
     }
     const rect = overEl.getBoundingClientRect()
     const relY = (pointerYRef.current - rect.top) / rect.height
-    const isNestZone = relY > 0.3 && relY < 0.7
+    const isNestZone = relY > 0.15 && relY < 0.85
     const newNestTarget = isNestZone ? overId : null
     nestTargetRef.current = newNestTarget
     setNestTarget(newNestTarget)
