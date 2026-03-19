@@ -61,7 +61,7 @@ export function BlockEditor({
       const resolvedPath = filePath ?? `${slugify(title) || "untitled"}.md`;
 
       const res = await fetch(
-        `/api/orgs/${orgSlug}/kbs/${kbSlug}/pages/${resolvedPath.replace(/\.md$/, "")}`,
+        `/docs/api/orgs/${orgSlug}/kbs/${kbSlug}/pages/${resolvedPath.replace(/\.md$/, "")}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
