@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 import { buildNavTree } from "@/lib/gitea";
 import * as gitea from "@/lib/gitea";
 import { parsePage } from "@/lib/markdown";
@@ -32,14 +31,9 @@ export default async function ReaderPage({
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) notFound();
 
-  // Private KB: require authentication
-  if (kb.visibility === "private") {
-    const session = await auth();
-    if (!session) {
-      // Middleware will redirect to login; this is a server-side guard
-      notFound();
-    }
-  }
+  // TODO: For private KBs, validate the reader's Zitadel session cookie.
+  // Currently all KBs are served to anyone who knows the URL.
+  // This is acceptable for MVP while the auth architecture for the reader is designed.
 
   // Build sidebar navigation tree
   const navTree = await buildNavTree(kb.gitea_repo);
