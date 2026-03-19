@@ -6,8 +6,6 @@ import { Plus, Loader2, BookMarked, Globe, Lock, Pencil, Trash2 } from 'lucide-r
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 
@@ -118,104 +116,6 @@ function DeleteModal({ kb, onCancel, onConfirm, isDeleting }: DeleteModalProps) 
   )
 }
 
-interface EditModalProps {
-  kb: KnowledgeBase
-  onCancel: () => void
-  onSave: (name: string, visibility: 'public' | 'private') => void
-  isSaving: boolean
-  error?: string | null
-}
-
-function EditModal({ kb, onCancel, onSave, isSaving, error }: EditModalProps) {
-  const [name, setName] = useState(kb.name)
-  const [visibility, setVisibility] = useState<'public' | 'private'>(kb.visibility)
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) return
-    onSave(name, visibility)
-  }
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.4)',
-      }}
-      onClick={onCancel}
-    >
-      <div
-        style={{
-          background: 'var(--color-card)',
-          border: '1px solid var(--color-border)',
-          borderRadius: '0.75rem',
-          padding: '1.5rem',
-          width: '100%',
-          maxWidth: '420px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2
-          style={{
-            fontSize: '1.1rem',
-            fontWeight: 700,
-            color: 'var(--color-purple-deep)',
-            marginBottom: '1.25rem',
-          }}
-        >
-          {m.docs_kb_edit_modal_title()}
-        </h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-kb-name">{m.docs_kb_name_label()}</Label>
-            <Input
-              id="edit-kb-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              required
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-kb-visibility">Zichtbaarheid</Label>
-            <Select
-              id="edit-kb-visibility"
-              value={visibility}
-              onChange={(e) => setVisibility(e.target.value as 'public' | 'private')}
-              className="max-w-xs"
-            >
-              <option value="private">{m.docs_kb_visibility_private()}</option>
-              <option value="public">{m.docs_kb_visibility_public()}</option>
-            </Select>
-          </div>
-          {error && (
-            <p style={{ fontSize: '0.875rem', color: 'var(--color-destructive)' }}>{error}</p>
-          )}
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>
-            <Button type="button" variant="ghost" onClick={onCancel} disabled={isSaving}>
-              {m.docs_kb_delete_cancel_action()}
-            </Button>
-            <Button type="submit" disabled={!name.trim() || isSaving}>
-              {isSaving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                m.docs_kb_edit_save_action()
-              )}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 function DocsPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
@@ -224,7 +124,6 @@ function DocsPage() {
   const queryClient = useQueryClient()
 
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
-  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
 
   const { data: kbs = [], isLoading, error } = useQuery<KnowledgeBase[]>({
     queryKey: ['docs-kbs', orgSlug],
@@ -236,25 +135,6 @@ function DocsPage() {
       return res.json()
     },
     enabled: !!token,
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: async ({ kb, name, visibility }: { kb: KnowledgeBase; name: string; visibility: 'public' | 'private' }) => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kb.slug}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, visibility }),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error ?? 'Opslaan mislukt')
-      }
-      return res.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
-      setEditingKb(null)
-    },
   })
 
   const deleteMutation = useMutation({
@@ -278,16 +158,6 @@ function DocsPage() {
 
   return (
     <div className="p-8 space-y-6">
-      {editingKb && (
-        <EditModal
-          kb={editingKb}
-          onCancel={() => { setEditingKb(null); updateMutation.reset() }}
-          onSave={(name, visibility) => updateMutation.mutate({ kb: editingKb, name, visibility })}
-          isSaving={updateMutation.isPending}
-          error={updateMutation.error instanceof Error ? updateMutation.error.message : null}
-        />
-      )}
-
       {deletingKb && (
         <DeleteModal
           kb={deletingKb}
@@ -394,7 +264,9 @@ function DocsPage() {
                       <div className="flex items-center justify-end gap-1">
                         <Tooltip label={m.docs_kb_edit_label()}>
                           <button
-                            onClick={() => setEditingKb(kb)}
+                            onClick={() =>
+                              navigate({ to: '/app/docs/$kbSlug_/edit', params: { kbSlug: kb.slug } })
+                            }
                             aria-label={m.docs_kb_edit_label()}
                             className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                           >
