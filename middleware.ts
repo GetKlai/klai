@@ -42,11 +42,15 @@ export async function middleware(request: NextRequest) {
     requestHeaders.set("x-docs-org", orgSlug);
   }
 
-  // Protect editor routes
+  // Protect editor routes.
+  // Note: Next.js strips basePath before middleware, so pathname is /admin/...
+  // The sign-in endpoint lives at /docs/api/auth/signin (basePath + /api/auth/signin).
   if (pathname.startsWith("/admin")) {
     const session = await auth();
     if (!session) {
-      const loginUrl = new URL("/api/auth/signin", request.url);
+      const loginUrl = new URL(request.url);
+      loginUrl.pathname = "/docs/api/auth/signin";
+      loginUrl.search = "";
       loginUrl.searchParams.set("callbackUrl", request.url);
       return NextResponse.redirect(loginUrl);
     }
