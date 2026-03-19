@@ -156,7 +156,8 @@ function getProjection(
   const itemsWithoutActive = items.filter((f) => f.id !== activeId)
   const overIndexWithoutActive = itemsWithoutActive.findIndex((f) => f.id === overId)
   const prevItem = overIndexWithoutActive > 0 ? itemsWithoutActive[overIndexWithoutActive - 1] : null
-  const maxDepth = prevItem ? prevItem.depth + 1 : 0
+  // When there's no previous item (first in list), still allow nesting under overItem itself
+  const maxDepth = prevItem ? prevItem.depth + 1 : overItem.depth + 1
 
   const depthOffset = Math.round(deltaX / INDENT_WIDTH)
   const projectedDepth = Math.min(Math.max(0, baseDepth + depthOffset), maxDepth)
@@ -254,6 +255,9 @@ function KBEditorPage() {
   const [showIconPicker, setShowIconPicker] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'renamed' | 'error'>('idle')
+
+  const [showWikilinkPicker, setShowWikilinkPicker] = useState(false)
+  const [wikilinkSearch, setWikilinkSearch] = useState('')
 
   const [newPageTitle, setNewPageTitle] = useState('')
   const [showNewPage, setShowNewPage] = useState(false)
@@ -373,15 +377,44 @@ function KBEditorPage() {
     }
   }, [page])
 
+  // Collect all page slugs in the tree (recursive)
+  const collectSlugs = (nodes: NavNode[]): Set<string> => {
+    const set = new Set<string>()
+    const visit = (ns: NavNode[]) => {
+      for (const n of ns) {
+        set.add(n.path.replace(/\.md$/, ''))
+        if (n.children) visit(n.children)
+      }
+    }
+    visit(nodes)
+    return set
+  }
+
   // parentPath: null = root level, string = path of the parent node (without .md)
   const handleNewPage = async (parentPath: string | null = null) => {
     if (!newPageTitle.trim()) return
-    const slug = newPageTitle
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .trim()
-      .replace(/\s+/g, '-') || 'untitled'
+
+    // Generate a unique slug that doesn't collide with existing pages
+    const baseSlug = slugify(newPageTitle)
+    const existingSlugs = collectSlugs(displayTree)
+    let slug = baseSlug
+    let counter = 2
+    while (existingSlugs.has(slug)) {
+      slug = `${baseSlug}-${counter++}`
+    }
+
     const path = slug
+
+    // Save the currently open page before switching, to prevent losing unsaved changes
+    if (selectedPathRef.current && saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+      await doSave()
+    } else if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+
     try {
       const res = await fetch(
         `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`,
@@ -392,7 +425,6 @@ function KBEditorPage() {
         }
       )
       if (!res.ok) throw new Error('Aanmaken mislukt')
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
 
       if (parentPath !== null) {
         // Insert the new slug as a child of parentPath in the sidebar
@@ -874,6 +906,14 @@ function KBEditorPage() {
                 onChange={scheduleSave}
                 pageIndex={pageIndex}
                 kbSlug={kbSlug}
+                currentPageSlug={selectedPath ?? ''}
+                onNavigateToPage={(slug) => {
+                  if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+                  setSelectedPath(slug)
+                  setEditContent('')
+                  setEditorKey((k) => k + 1)
+                }}
+                onRequestWikilinkPicker={() => setShowWikilinkPicker(true)}
               />
             </div>
           </>
@@ -883,13 +923,82 @@ function KBEditorPage() {
           </div>
         )}
       </main>
+      {/* Wikilink picker modal — opened from slash menu "Koppelen aan pagina" */}
+      {showWikilinkPicker && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 50,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.35)',
+          }}
+          onClick={() => { setShowWikilinkPicker(false); setWikilinkSearch('') }}
+        >
+          <div
+            style={{
+              background: 'var(--color-card)',
+              border: '1px solid var(--color-border)',
+              borderRadius: '0.75rem',
+              padding: '1rem',
+              width: '360px',
+              maxWidth: '90vw',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p style={{ fontSize: '0.75rem', color: 'var(--color-muted-foreground)', marginBottom: '0.5rem' }}>
+              Koppelen aan pagina
+            </p>
+            <Input
+              autoFocus
+              placeholder="Zoek een pagina..."
+              value={wikilinkSearch}
+              onChange={(e) => setWikilinkSearch(e.target.value)}
+              className="mb-2"
+            />
+            <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
+              {pageIndex
+                .filter((p) => p.slug !== selectedPath)
+                .filter((p) =>
+                  !wikilinkSearch ||
+                  p.title.toLowerCase().includes(wikilinkSearch.toLowerCase()) ||
+                  p.slug.includes(wikilinkSearch.toLowerCase())
+                )
+                .slice(0, 15)
+                .map((p) => (
+                  <button
+                    key={p.slug}
+                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-[var(--color-secondary)] text-[var(--color-foreground)]"
+                    onClick={() => {
+                      editorRef.current?.insertWikilink(p.id ?? p.slug, p.title)
+                      setShowWikilinkPicker(false)
+                      setWikilinkSearch('')
+                    }}
+                  >
+                    <span>📄</span>
+                    {p.title}
+                  </button>
+                ))}
+              {pageIndex.filter((p) => p.slug !== selectedPath).length === 0 && (
+                <p className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">Geen andere pagina's gevonden.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── BlockNote editor ────────────────────────────────────────────────────────
 
-type BlockPageEditorHandle = { getMarkdown: () => string }
+type BlockPageEditorHandle = {
+  getMarkdown: () => string
+  insertWikilink: (pageId: string, title: string) => void
+}
 
 type PageIndexEntry = { id: string | null; slug: string; title: string }
 
@@ -907,8 +1016,11 @@ const BlockPageEditor = forwardRef<
     onChange: () => void
     pageIndex?: PageIndexEntry[]
     kbSlug?: string
+    currentPageSlug?: string
+    onNavigateToPage?: (slug: string) => void
+    onRequestWikilinkPicker?: () => void
   }
->(({ initialContent, onChange, pageIndex = [], kbSlug = '' }, ref) => {
+>(({ initialContent, onChange, pageIndex = [], kbSlug = '', currentPageSlug = '', onNavigateToPage, onRequestWikilinkPicker }, ref) => {
   const editor = useCreateBlockNote({ schema: wikilinkSchema })
 
   useEffect(() => {
@@ -920,59 +1032,87 @@ const BlockPageEditor = forwardRef<
 
   useImperativeHandle(ref, () => ({
     getMarkdown: () => editor.blocksToMarkdownLossy(editor.document),
+    insertWikilink: (pageId: string, title: string) => {
+      editor.focus()
+      editor.insertInlineContent([
+        { type: "wikilink", props: { pageId, title, kbSlug } } as any,
+        " ",
+      ])
+    },
   }))
 
   return (
-    <BlockNoteView
-      editor={editor}
-      theme="light"
+    <div
       className="min-h-full"
-      onChange={onChange}
-      slashMenu={false}
-    >
-      <SuggestionMenuController
-        triggerCharacter="/"
-        getItems={async (query) => {
-          const defaultItems = await getDefaultReactSlashMenuItems(editor)
-          const wikilinkItem = {
-            title: "Link to pagina",
-            subtext: "Koppel aan een andere pagina in deze kennisbank",
-            icon: <span style={{ fontSize: '1.1em' }}>📄</span>,
-            group: "Basisblokken",
-            onItemClick: () => {
-              editor.insertInlineContent("[[")
-            },
+      onClickCapture={(e) => {
+        const target = e.target as Element
+        const anchor = target.closest('[data-wikilink-page-id]')
+        if (anchor) {
+          e.preventDefault()
+          e.stopPropagation()
+          const pageId = anchor.getAttribute('data-wikilink-page-id')
+          if (pageId && onNavigateToPage) {
+            const page = pageIndex.find((p) => (p.id ?? p.slug) === pageId)
+            if (page) onNavigateToPage(page.slug)
           }
-          const allItems = [...defaultItems, wikilinkItem]
-          return allItems.filter((item) =>
-            query === "" || item.title.toLowerCase().includes(query.toLowerCase())
-          )
-        }}
-      />
-      <SuggestionMenuController
-        triggerCharacter="["
-        getItems={async (query) => {
-          const search = query.startsWith("[") ? query.slice(1).toLowerCase() : query.toLowerCase()
-          const filtered = pageIndex.filter((p) =>
-            search === "" ||
-            p.title.toLowerCase().includes(search) ||
-            p.slug.includes(search)
-          )
-          return filtered.slice(0, 10).map((p) => ({
-            title: p.title,
-            onItemClick: () => {
-              editor.insertInlineContent([
-                {
-                  type: "wikilink",
-                  props: { pageId: p.id ?? p.slug, title: p.title, kbSlug },
-                } as any,
-                " ",
-              ])
-            },
-          }))
-        }}
-      />
-    </BlockNoteView>
+        }
+      }}
+    >
+      <BlockNoteView
+        editor={editor}
+        theme="light"
+        className="min-h-full"
+        onChange={onChange}
+        slashMenu={false}
+      >
+        <SuggestionMenuController
+          triggerCharacter="/"
+          getItems={async (query) => {
+            const defaultItems = await getDefaultReactSlashMenuItems(editor)
+            const wikilinkItem = {
+              title: "Koppelen aan pagina",
+              subtext: "Voeg een link in naar een andere pagina",
+              icon: <span style={{ fontSize: '1.1em' }}>🔗</span>,
+              group: "Basisblokken",
+              onItemClick: () => {
+                onRequestWikilinkPicker?.()
+              },
+            }
+            const allItems = [...defaultItems, wikilinkItem]
+            return allItems.filter((item) =>
+              query === "" || item.title.toLowerCase().includes(query.toLowerCase())
+            )
+          }}
+        />
+        <SuggestionMenuController
+          triggerCharacter="["
+          getItems={async (query) => {
+            const search = query.toLowerCase()
+            const filtered = pageIndex.filter((p) => {
+              // Never show the currently open page in the picker
+              if (p.slug === currentPageSlug) return false
+              return (
+                search === "" ||
+                p.title.toLowerCase().includes(search) ||
+                p.slug.includes(search)
+              )
+            })
+            return filtered.slice(0, 10).map((p) => ({
+              title: p.title,
+              onItemClick: () => {
+                editor.insertInlineContent([
+                  {
+                    type: "wikilink",
+                    props: { pageId: p.id ?? p.slug, title: p.title, kbSlug },
+                  } as any,
+                  " ",
+                ])
+              },
+            }))
+          }}
+        />
+      </BlockNoteView>
+    </div>
   )
 })
 BlockPageEditor.displayName = 'BlockPageEditor'
