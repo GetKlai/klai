@@ -24,7 +24,7 @@ export type PageIndexEntry = {
   title: string;
 };
 
-// GET /api/orgs/{org}/kbs/{kb}/pages/index
+// GET /api/orgs/{org}/kbs/{kb}/page-index
 // Returns all pages with their stable id, slug, and title.
 // Pages without an id have id: null; the real UUID is assigned on the next save.
 export async function GET(

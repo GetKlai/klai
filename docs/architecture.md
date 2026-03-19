@@ -1,46 +1,46 @@
 # Klai Docs — Architecture
 
-## Overzicht
+## Overview
 
-Klai Docs bestaat uit twee lagen:
+Klai Docs consists of two layers:
 
-| Laag | Repo | Rol |
+| Layer | Repo | Role |
 |---|---|---|
-| **Editor UI** | `klai-portal` `/app/docs/` | KB's beheren en pagina's schrijven (in de portal SPA) |
-| **Backend + reader** | `klai-docs` | Publieke KB-pagina's renderen + API voor editor |
+| **Editor UI** | `klai-portal` `/app/docs/` | Manage KBs and write pages (inside the portal SPA) |
+| **Backend + reader** | `klai-docs` | Render public KB pages + REST API for the editor |
 
 ```
-Browser (ingelogd in portal)
+Browser (logged in to portal)
     │  Zitadel Bearer token (via react-oidc-context)
     ▼
-getklai.getklai.com/docs/api/...   ← API calls vanuit portal SPA
+getklai.getklai.com/docs/api/...   ← API calls from portal SPA
     │  Caddy → docs-app:3010
     ▼
 docs-app  (Next.js, basePath: /docs)
     │  validateBearer() → Zitadel JWKS
-    │  Gitea API voor content CRUD
+    │  Gitea API for content CRUD
     ▼
-getklai.getklai.com/docs/{kb}/...  ← Publieke reader (SSR, geen auth)
+getklai.getklai.com/docs/{kb}/...  ← Public reader (SSR, no auth)
 ```
 
 ---
 
-## Auth: hoe het nu werkt
+## Auth: how it works now
 
 ### Editor (authenticated)
 
-De editor leeft in de portal SPA (`klai-portal`). De portal heeft al een Zitadel OIDC-sessie via `react-oidc-context`. Wanneer de editor een API-call naar docs-app doet:
+The editor lives in the portal SPA (`klai-portal`). The portal already has a Zitadel OIDC session via `react-oidc-context`. When the editor makes an API call to docs-app:
 
 ```typescript
-// In de portal SPA
+// In the portal SPA
 const token = auth.user?.access_token   // Zitadel Bearer token
 
-fetch('/docs/api/orgs/voys/kbs', {
+fetch('/docs/api/orgs/getklai/kbs', {
   headers: { Authorization: `Bearer ${token}` }
 })
 ```
 
-docs-app valideert dit token direct via Zitadel's JWKS-endpoint:
+docs-app validates this token directly against Zitadel's JWKS endpoint:
 
 ```typescript
 // lib/auth.ts in docs-app
@@ -51,90 +51,95 @@ const { payload } = await jwtVerify(token, JWKS, { issuer: ISSUER })
 // payload["urn:zitadel:iam:user:resourceowner:id"] = Zitadel org ID
 ```
 
-**Voordeel:** geen dubbele login. Dezelfde sessie die Chat, Scribe en Focus gebruiken, werkt ook voor Docs.
+**Advantage:** no double login. The same session used by Chat, Scribe, and Focus works for Docs as well.
 
-### Publieke reader
+### Public reader
 
-De reader (`getklai.getklai.com/docs/{kb}/...`) is een Next.js SSR-pagina. Er is momenteel geen auth voor private KBs in de reader — alle KBs zijn bereikbaar voor wie de URL kent.
+The reader (`getklai.getklai.com/docs/{kb}/...`) is a Next.js SSR page. There is currently no auth for private KBs in the reader — all KBs are accessible to anyone with the URL.
 
-**TODO:** voor private KBs moet de reader de Zitadel-sessiecookie valideren. De aanpak: Zitadel zet een sessiescookie op `.getklai.com` na login. De reader leest dit cookie uit en valideert het via de Zitadel userinfo-endpoint (`/oidc/v1/userinfo`).
+**TODO:** for private KBs, the reader needs to validate the Zitadel session cookie. Approach: Zitadel sets a session cookie on `.getklai.com` after login. The reader reads this cookie and validates it via the Zitadel userinfo endpoint (`/oidc/v1/userinfo`).
 
 ---
 
-## Auth: hoe het werkt als standalone product
+## Auth: how it works as a standalone product
 
-Klai Docs is nu gekoppeld aan de Klai-portal voor de editor UI. Als je het als los product wil draaien — zonder `klai-portal` — heb je twee dingen nodig:
+Klai Docs is currently coupled to klai-portal for the editor UI. To run it as a standalone product — without `klai-portal` — two things are needed:
 
-### 1. Eigen OAuth2/PKCE flow voor de editor
+### 1. Own OAuth2/PKCE flow for the editor
 
-De portal-sessie is er niet meer. De editor-UI heeft dan een eigen OAuth2-flow nodig. De cleanste aanpak voor een Next.js standalone editor:
+The portal session is no longer available. The editor UI would need its own OAuth2 flow. The cleanest approach for a standalone Next.js editor:
 
-**next-auth** (al eerder geconfigureerd en verwijderd) is precies hiervoor bedoeld:
+**next-auth** (previously configured and removed) is designed exactly for this:
 
 ```typescript
-// lib/auth.ts — standalone versie
+// lib/auth.ts — standalone version
 import NextAuth from "next-auth"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
-  providers: [ZitadelProvider],   // of een andere OIDC provider
+  providers: [ZitadelProvider],   // or another OIDC provider
   ...
 })
 ```
 
-De middleware beschermt dan `/admin/*` routes en redirect naar de login-pagina:
+The middleware then protects `/admin/*` routes and redirects to the login page:
 
 ```typescript
-// middleware.ts — standalone versie
+// middleware.ts — standalone version
 if (pathname.startsWith("/admin")) {
   const session = await auth()
   if (!session) redirect to /docs/api/auth/signin
 }
 ```
 
-### 2. Eigen editor UI (BlockNote)
+### 2. Own editor UI (BlockNote)
 
-De editor UI leeft nu in de portal SPA. Standalone zou die in `klai-docs` zelf moeten zitten, als een Next.js server component + client component met BlockNote.
+The editor UI currently lives in the portal SPA. Standalone, it would need to live in `klai-docs` itself, as a Next.js server component + client component with BlockNote.
 
-De basis was al gebouwd (zie git history vóór commit `a6bebdd`) en kan worden teruggehaald.
+The foundation was already built (see git history before commit `a6bebdd`) and can be restored.
 
-### Wat er nodig is voor standalone
+### What is needed for standalone
 
-| Component | Status | Actie |
+| Component | Status | Action |
 |---|---|---|
-| NextAuth config | Verwijderd | Toevoegen uit git history |
-| Editor UI (BlockNote) | Verwijderd | Toevoegen uit git history |
-| Middleware auth guard | Vereenvoudigd | Terugzetten naar auth-versie |
-| `app/(editor)/` routes | Verwijderd | Toevoegen uit git history |
-| Zitadel OIDC app redirect URI | Aangemaakt (client ID: `364805214877777922`) | Redirect URI uitbreiden voor standalone URL |
+| NextAuth config | Removed | Restore from git history |
+| Editor UI (BlockNote) | Removed | Restore from git history |
+| Middleware auth guard | Simplified | Restore auth version |
+| `app/(editor)/` routes | Removed | Restore from git history |
+| Zitadel OIDC app redirect URI | Created (client ID: `364805214877777922`) | Extend redirect URI for standalone URL |
 
-Alles wat verwijderd is, staat in git op commit `a50797a` (de laatste commit vóór de standalone→portal migratie).
+Everything that was removed is in git at commit `a50797a` (the last commit before the standalone-to-portal migration).
 
 ---
 
-## Bestandsstructuur
+## File structure
 
 ```
 klai-docs/
   app/
-    (reader)/           ← Publieke KB-reader (SSR, geen auth)
+    (reader)/           ← Public KB reader (SSR, no auth)
       [...path]/
         page.tsx
-    api/                ← REST API (vereist Bearer token)
+    api/                ← REST API (requires Bearer token)
       orgs/[org]/kbs/
-        route.ts        ← GET lijst KBs, POST maak KB aan
+        route.ts                      ← GET list KBs, POST create KB
         [kb]/
-          pages/[...path]/route.ts   ← CRUD pagina's
-          meta/[...path]/route.ts    ← Reorder nav (_meta.yaml)
-          upload/route.ts            ← Upload .md bestand
-          tree/route.ts              ← Nav tree ophalen
+          pages/[...path]/route.ts    ← CRUD pages
+          page-rename/[...path]/route.ts ← Rename page + update _sidebar.yaml + track redirects
+          page-index/route.ts         ← List all pages with id/slug/title (for wikilink picker)
+          sidebar/route.ts            ← GET/PUT _sidebar.yaml navigation manifest
+          meta/[...path]/route.ts     ← Legacy: reorder nav (_meta.yaml fallback)
+          upload/route.ts             ← Upload .md file
+          tree/route.ts               ← Nav tree (builds from _sidebar.yaml)
   lib/
-    auth.ts             ← Zitadel Bearer token validatie (jose JWKS)
+    auth.ts             ← Zitadel Bearer token validation (jose JWKS)
     db.ts               ← PostgreSQL client (docs schema)
     gitea.ts            ← Gitea REST API client + nav tree builder
-    markdown.ts         ← Frontmatter parse/serialize, _meta.yaml helpers
-    caddy.ts            ← Tenant caddyfiles voor custom domains (toekomst)
-  middleware.ts         ← Org slug resolutie uit hostname → x-docs-org header
+    markdown.ts         ← Frontmatter parse/serialize, _sidebar.yaml helpers, slugify
+    caddy.ts            ← Tenant caddyfiles for custom domains (future)
+  middleware.ts         ← Org slug resolution from hostname → x-docs-org header
   migrations/
     001_docs_schema.sql ← PostgreSQL docs schema
+  docs/
+    architecture.md     ← This file
 ```
