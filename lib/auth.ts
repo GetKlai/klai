@@ -41,7 +41,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     session({ session, token }) {
       if (token) {
         session.user.id = token.userId as string;
-        (session as Record<string, unknown> & typeof session).orgId = token.orgId;
+        session.orgId = (token.orgId as string | null) ?? null;
       }
       return session;
     },
