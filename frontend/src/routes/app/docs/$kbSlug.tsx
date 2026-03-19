@@ -175,8 +175,21 @@ function getProjection(
     }
   }
 
-  // newIndex: position in the items-without-active list where we're dropping
-  const newIndex = overIndexWithoutActive
+  // newIndex: position in the items-without-active list where we're dropping.
+  // When hovering over the last item, dnd-kit can't switch to a "next" item,
+  // so we check the pointer Y against the item midpoint to decide before vs. after.
+  let newIndex = overIndexWithoutActive
+  const overEl = document.querySelector(`[data-flat-id="${overId}"]`)
+  if (overEl) {
+    const rect = overEl.getBoundingClientRect()
+    const midY = rect.top + rect.height / 2
+    // Use a module-level ref for pointer Y — accessed from the closure
+    const w = window as unknown as { __flatTreePointerY?: number }
+    const py = (typeof window !== 'undefined' ? w.__flatTreePointerY : undefined) ?? 0
+    if (py > midY) {
+      newIndex = overIndexWithoutActive + 1
+    }
+  }
 
   return { depth: projectedDepth, parentId, newIndex }
 }
@@ -1000,6 +1013,15 @@ function NavTree({
   const [projection, setProjection] = useState<Projection | null>(null)
   const deltaXRef = useRef(0)
 
+  // Track pointer Y globally so getProjection can decide before/after the midpoint
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      (window as unknown as { __flatTreePointerY: number }).__flatTreePointerY = e.clientY
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
@@ -1296,7 +1318,7 @@ function SortableNavItem({
   )
 
   return (
-    <div ref={setNodeRef} style={style}>
+    <div ref={setNodeRef} style={style} data-flat-id={flat.id}>
       <div
         className={`flex w-full items-center py-1 text-xs transition-colors group ${
           isSelected && !isDir

@@ -48,8 +48,13 @@ declare module '@tanstack/react-router' {
   }
 }
 
+// GlitchTip generates UUID keys with hyphens; @sentry/react v8+ only accepts keys without hyphens.
+// Strip hyphens from the key portion. GlitchTip's Python backend accepts both forms.
+const rawDsn = import.meta.env.VITE_SENTRY_DSN as string | undefined
+const dsn = rawDsn?.replace(/^(https?:\/\/)([^@]+)(@)/, (_, proto, key, at) => proto + key.replaceAll('-', '') + at)
+
 Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN as string | undefined,
+  dsn,
   environment: import.meta.env.MODE,
   sendDefaultPii: false,
   integrations: [
@@ -64,7 +69,7 @@ Sentry.init({
     if (event.user) delete event.user.ip_address
     return event
   },
-  enabled: !!import.meta.env.VITE_SENTRY_DSN,
+  enabled: !!rawDsn,
 })
 
 createRoot(document.getElementById('root')!).render(
