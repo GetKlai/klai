@@ -502,5 +502,6 @@
   "docs_access_saving": "Opslaan...",
   "docs_access_saved": "Opgeslagen",
   "docs_access_error_save": "Opslaan mislukt",
-  "docs_access_close": "Sluiten"
+  "docs_access_close": "Sluiten",
+  "docs_pages_add_subpage": "Subpagina toevoegen"
 }

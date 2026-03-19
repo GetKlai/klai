@@ -1,14 +1,34 @@
+// @ts-ignore
+import Picker from '@emoji-mart/react'
+// @ts-ignore
+import data from '@emoji-mart/data'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
-import { ChevronRight, FileText, FolderOpen, ArrowLeft, Upload, Plus, Check, X, MoreHorizontal, Loader2, Users, Lock } from 'lucide-react'
+import { ChevronRight, FolderOpen, ArrowLeft, Upload, Plus, Check, X, MoreHorizontal, Loader2, Users, Lock, GripVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
 import * as m from '@/paraglide/messages'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core'
+import type { DragEndEvent, DragStartEvent, DragOverEvent } from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 export const Route = createFileRoute('/app/docs/$kbSlug')({
   component: KBEditorPage,
@@ -23,14 +43,72 @@ function getOrgSlug(): string {
 interface NavNode {
   slug: string
   title: string
+  icon?: string
   path: string
   type: 'file' | 'dir'
   children?: NavNode[]
 }
 
+interface SidebarEntry {
+  slug: string
+  children?: SidebarEntry[]
+}
+
 interface PageData {
-  frontmatter: { title?: string; description?: string; edit_access?: 'org' | string[] }
+  frontmatter: { title?: string; description?: string; edit_access?: 'org' | string[]; icon?: string }
   content: string
+}
+
+const DEFAULT_ICON = '📄'
+
+
+// Convert NavNode[] to SidebarEntry[] (strip everything except slug + children)
+function navToSidebarEntries(nodes: NavNode[]): SidebarEntry[] {
+  return nodes.map((n) => ({
+    slug: n.path.replace(/\.md$/, ''),
+    ...(n.children?.length ? { children: navToSidebarEntries(n.children) } : {}),
+  }))
+}
+
+// Apply a reorder (same level) within the full tree, returning a new tree
+function applyReorder(
+  nodes: NavNode[],
+  parentPath: string | null,
+  oldIndex: number,
+  newIndex: number,
+): NavNode[] {
+  if (parentPath === null) {
+    // Root level
+    return arrayMove(nodes, oldIndex, newIndex)
+  }
+  return nodes.map((n) => {
+    if (n.path === parentPath) {
+      return { ...n, children: arrayMove(n.children ?? [], oldIndex, newIndex) }
+    }
+    if (n.children?.length) {
+      return { ...n, children: applyReorder(n.children, parentPath, oldIndex, newIndex) }
+    }
+    return n
+  })
+}
+
+// Add a new child slug under the node matching parentPath
+function addChildToNode(nodes: NavNode[], parentPath: string, newSlug: string): NavNode[] {
+  return nodes.map((node) => {
+    if (node.path.replace(/\.md$/, '') === parentPath) {
+      return {
+        ...node,
+        children: [
+          ...(node.children ?? []),
+          { slug: newSlug, title: newSlug, path: `${newSlug}.md`, type: 'file' as const, icon: DEFAULT_ICON },
+        ],
+      }
+    }
+    if (node.children) {
+      return { ...node, children: addChildToNode(node.children, parentPath, newSlug) }
+    }
+    return node
+  })
 }
 
 function KBEditorPage() {
@@ -42,27 +120,61 @@ function KBEditorPage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editContent, setEditContent] = useState('')
-  const [editorKey, setEditorKey] = useState(0)           // increment to force BlockPageEditor remount
+  const [pageIcon, setPageIcon] = useState(DEFAULT_ICON)
+  const [showIconPicker, setShowIconPicker] = useState(false)
+  const [editorKey, setEditorKey] = useState(0)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const [newPageTitle, setNewPageTitle] = useState('')
   const [showNewPage, setShowNewPage] = useState(false)
+  // parentPath for the pending new-page input (null = root level)
+  const [newPageParent, setNewPageParent] = useState<string | null>(null)
   const [showMenu, setShowMenu] = useState(false)
   const [showAccessPanel, setShowAccessPanel] = useState(false)
   const [accessMode, setAccessMode] = useState<'org' | 'specific'>('org')
   const [accessUsers, setAccessUsers] = useState<string[]>([])
   const [newUserId, setNewUserId] = useState('')
   const [accessSaveStatus, setAccessSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  // Optimistic local tree (null = use server tree)
+  const [localTree, setLocalTree] = useState<NavNode[] | null>(null)
+
   const editorRef = useRef<{ getMarkdown: () => string }>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const iconPickerRef = useRef<HTMLDivElement>(null)
 
-  // Stable refs for save function — avoids stale closures entirely
+  useEffect(() => {
+    if (!showMenu) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showMenu])
+
+  useEffect(() => {
+    if (!showIconPicker) return
+    const handler = (e: MouseEvent) => {
+      if (iconPickerRef.current && !iconPickerRef.current.contains(e.target as Node)) {
+        setShowIconPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showIconPicker])
+
+  // Stable refs for save function
   const tokenRef = useRef(token)
   const selectedPathRef = useRef(selectedPath)
   const editTitleRef = useRef(editTitle)
+  const pageIconRef = useRef(pageIcon)
   tokenRef.current = token
   selectedPathRef.current = selectedPath
   editTitleRef.current = editTitle
+  pageIconRef.current = pageIcon
 
   const authHeader = `Bearer ${token}`
 
@@ -76,7 +188,15 @@ function KBEditorPage() {
       return res.json()
     },
     enabled: !!token,
+    select: (data) => data,
   })
+
+  // Clear local tree when the server tree refreshes
+  useEffect(() => {
+    setLocalTree(null)
+  }, [tree])
+
+  const displayTree = localTree ?? tree
 
   const { data: page } = useQuery<PageData>({
     queryKey: ['docs-page', orgSlug, kbSlug, selectedPath],
@@ -95,8 +215,9 @@ function KBEditorPage() {
     if (page) {
       setEditTitle(page.frontmatter.title ?? '')
       setEditContent(page.content)
+      setPageIcon(page.frontmatter.icon ?? DEFAULT_ICON)
       setSaveStatus('idle')
-      setEditorKey((k) => k + 1)   // remount editor with fresh content
+      setEditorKey((k) => k + 1)
       const ea = page.frontmatter.edit_access
       if (!ea || ea === 'org') {
         setAccessMode('org')
@@ -110,7 +231,8 @@ function KBEditorPage() {
     }
   }, [page])
 
-  const handleNewPage = async () => {
+  // parentPath: null = root level, string = path of the parent node (without .md)
+  const handleNewPage = async (parentPath: string | null = null) => {
     if (!newPageTitle.trim()) return
     const slug = newPageTitle
       .toLowerCase()
@@ -128,16 +250,24 @@ function KBEditorPage() {
         }
       )
       if (!res.ok) throw new Error('Aanmaken mislukt')
-      // Cancel any pending autosave for the old page
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      await refetchTree()
-      // Reset editor immediately to avoid flashing old content
+
+      if (parentPath !== null) {
+        // Insert the new slug as a child of parentPath in the sidebar
+        const currentTree = localTree ?? tree
+        const updatedTree = addChildToNode(currentTree, parentPath, slug)
+        await handleSidebarUpdate(updatedTree)
+      } else {
+        await refetchTree()
+      }
+
       setSelectedPath(path)
       setEditTitle(newPageTitle)
       setEditContent('')
       setEditorKey((k) => k + 1)
       setNewPageTitle('')
       setShowNewPage(false)
+      setNewPageParent(null)
     } catch {
       // silently fail; tree refetch will show state
     }
@@ -158,7 +288,6 @@ function KBEditorPage() {
     onSuccess: () => refetchTree(),
   })
 
-  // Stable save function — reads all live values from refs, no stale closures
   const doSave = useCallback(async () => {
     const path = selectedPathRef.current
     const title = editTitleRef.current
@@ -172,7 +301,7 @@ function KBEditorPage() {
         {
           method: 'PUT',
           headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, content }),
+          body: JSON.stringify({ title, content, icon: pageIconRef.current }),
         }
       )
       if (!res.ok) throw new Error('Save failed')
@@ -183,9 +312,8 @@ function KBEditorPage() {
       setSaveStatus('error')
       setTimeout(() => setSaveStatus('idle'), 3000)
     }
-  }, [orgSlug, kbSlug, refetchTree])   // orgSlug/kbSlug are stable; refetchTree is stable
+  }, [orgSlug, kbSlug, refetchTree])
 
-  // Stable debounce — always uses latest doSave which reads from refs
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(doSave, 1500)
@@ -202,7 +330,7 @@ function KBEditorPage() {
         {
           method: 'PUT',
           headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: editTitleRef.current, content, edit_access: editAccess }),
+          body: JSON.stringify({ title: editTitleRef.current, content, icon: pageIconRef.current, edit_access: editAccess }),
         }
       )
       if (!res.ok) throw new Error('Save failed')
@@ -213,6 +341,39 @@ function KBEditorPage() {
       setTimeout(() => setAccessSaveStatus('idle'), 3000)
     }
   }, [selectedPath, orgSlug, kbSlug, authHeader, accessMode, accessUsers])
+
+  // Called by NavTree when the user reorders items via drag-and-drop.
+  // newTree is the full updated tree after the operation.
+  const handleSidebarUpdate = useCallback(async (newTree: NavNode[]) => {
+    const previousTree = localTree ?? tree
+    // Optimistic update
+    setLocalTree(newTree)
+
+    const pages = navToSidebarEntries(newTree)
+    try {
+      const res = await fetch(
+        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/sidebar`,
+        {
+          method: 'PUT',
+          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pages }),
+        }
+      )
+      if (!res.ok) throw new Error('Sidebar update failed')
+      // Clear optimistic state — next refetch gives fresh data
+      await refetchTree()
+    } catch {
+      // Revert on failure
+      setLocalTree(previousTree)
+    }
+  }, [orgSlug, kbSlug, authHeader, localTree, tree, refetchTree])
+
+  // Opens the new-page input anchored under a specific parent
+  const handleAddSubpage = useCallback((parentPath: string) => {
+    setNewPageParent(parentPath)
+    setNewPageTitle('')
+    setShowNewPage(true)
+  }, [])
 
   return (
     <div className="flex h-full">
@@ -228,13 +389,13 @@ function KBEditorPage() {
           </Link>
         </div>
         <div className="flex-1 overflow-y-auto py-2">
-          {tree.length === 0 ? (
+          {displayTree.length === 0 ? (
             <p className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
               {m.docs_pages_empty()}
             </p>
           ) : (
             <NavTree
-              nodes={tree}
+              nodes={displayTree}
               selectedPath={selectedPath}
               onSelect={(node) => {
                 if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -242,11 +403,21 @@ function KBEditorPage() {
                 setEditContent('')
                 setEditorKey((k) => k + 1)
               }}
+              activeTitle={editTitle}
+              activePath={selectedPath}
+              fullTree={displayTree}
+              onSidebarUpdate={handleSidebarUpdate}
+              onAddSubpage={handleAddSubpage}
+              addingSubpageUnder={showNewPage ? newPageParent : null}
+              newPageTitle={newPageTitle}
+              onNewPageTitleChange={setNewPageTitle}
+              onNewPageConfirm={handleNewPage}
+              onNewPageCancel={() => { setShowNewPage(false); setNewPageTitle(''); setNewPageParent(null) }}
             />
           )}
         </div>
         <div className="px-3 py-3 border-t border-[var(--color-border)] space-y-2">
-          {showNewPage ? (
+          {showNewPage && newPageParent === null ? (
             <div className="space-y-1.5">
               <Input
                 value={newPageTitle}
@@ -255,7 +426,7 @@ function KBEditorPage() {
                 className="h-7 text-xs"
                 autoFocus
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleNewPage()
+                  if (e.key === 'Enter') handleNewPage(null)
                   if (e.key === 'Escape') { setShowNewPage(false); setNewPageTitle('') }
                 }}
               />
@@ -263,7 +434,7 @@ function KBEditorPage() {
                 <Button
                   size="sm"
                   className="flex-1 h-6 text-xs"
-                  onClick={handleNewPage}
+                  onClick={() => handleNewPage(null)}
                   disabled={!newPageTitle.trim() || saveStatus === 'saving'}
                 >
                   <Check size={11} className="mr-1" />
@@ -284,7 +455,7 @@ function KBEditorPage() {
               variant="outline"
               size="sm"
               className="w-full"
-              onClick={() => setShowNewPage(true)}
+              onClick={() => { setNewPageParent(null); setShowNewPage(true) }}
             >
               <Plus size={12} className="mr-1.5" />
               {m.docs_pages_new()}
@@ -314,6 +485,40 @@ function KBEditorPage() {
         {selectedPath ? (
           <>
             <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--color-border)]">
+              {/* Emoji icon zone */}
+              <div className="relative shrink-0" ref={iconPickerRef}>
+                <button
+                  className="flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--color-muted-foreground)]/10 text-xl leading-none transition-colors"
+                  onClick={() => setShowIconPicker((v) => !v)}
+                  title="Pictogram kiezen"
+                  type="button"
+                >
+                  {pageIcon}
+                </button>
+                {showIconPicker && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      zIndex: 50,
+                    }}
+                  >
+                    <Picker
+                      data={data}
+                      onEmojiSelect={(emoji: { native: string }) => {
+                        setPageIcon(emoji.native)
+                        scheduleSave()
+                        setShowIconPicker(false)
+                      }}
+                      theme="light"
+                      locale="nl"
+                      previewPosition="none"
+                      skinTonePosition="none"
+                    />
+                  </div>
+                )}
+              </div>
               <Input
                 value={editTitle}
                 onChange={(e) => {
@@ -324,7 +529,6 @@ function KBEditorPage() {
                 className="flex-1 text-base font-medium border-none shadow-none focus-visible:ring-0 p-0 h-auto"
               />
               <div className="flex items-center gap-2 shrink-0">
-                {/* Save status indicator */}
                 {saveStatus === 'saving' && (
                   <span className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
                     <Loader2 size={12} className="animate-spin" />
@@ -340,8 +544,7 @@ function KBEditorPage() {
                 {saveStatus === 'error' && (
                   <span className="text-xs text-[var(--color-destructive)]">Opslaan mislukt</span>
                 )}
-                {/* Settings menu */}
-                <div className="relative">
+                <div className="relative" ref={menuRef}>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -538,82 +741,490 @@ BlockPageEditor.displayName = 'BlockPageEditor'
 
 // ─── Nav tree ─────────────────────────────────────────────────────────────────
 
+interface NavTreeProps {
+  nodes: NavNode[]
+  selectedPath: string | null
+  onSelect: (node: NavNode) => void
+  depth?: number
+  activeTitle?: string
+  activePath?: string | null
+  // The full root tree (needed to compute full-tree mutations for sidebar API)
+  fullTree: NavNode[]
+  onSidebarUpdate: (newTree: NavNode[]) => void
+  // Internal: path of the parent node (null = root level)
+  parentPath?: string | null
+  // Subpage creation
+  onAddSubpage: (parentPath: string) => void
+  addingSubpageUnder: string | null
+  newPageTitle: string
+  onNewPageTitleChange: (val: string) => void
+  onNewPageConfirm: (parentPath: string) => void
+  onNewPageCancel: () => void
+}
+
 function NavTree({
   nodes,
   selectedPath,
   onSelect,
   depth = 0,
-}: {
-  nodes: NavNode[]
-  selectedPath: string | null
-  onSelect: (node: NavNode) => void
-  depth?: number
-}) {
+  activeTitle,
+  activePath,
+  fullTree,
+  onSidebarUpdate,
+  parentPath = null,
+  onAddSubpage,
+  addingSubpageUnder,
+  newPageTitle,
+  onNewPageTitleChange,
+  onNewPageConfirm,
+  onNewPageCancel,
+}: NavTreeProps) {
+  const [activeNode, setActiveNode] = useState<NavNode | null>(null)
+  const [nestTarget, setNestTarget] = useState<string | null>(null)
+  const nestTargetRef = useRef<string | null>(null)
+  const pointerYRef = useRef(0)
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => { pointerYRef.current = e.clientY }
+    document.addEventListener('mousemove', onMove)
+    return () => document.removeEventListener('mousemove', onMove)
+  }, [])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    })
+  )
+
+  function handleDragStart(event: DragStartEvent) {
+    const node = nodes.find((n) => n.path === event.active.id)
+    setActiveNode(node ?? null)
+    setNestTarget(null)
+    nestTargetRef.current = null
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    const { over } = event
+    if (!over) {
+      nestTargetRef.current = null
+      setNestTarget(null)
+      return
+    }
+    const overId = String(over.id)
+    // Skip nesting into self
+    if (overId === String(event.active.id)) {
+      nestTargetRef.current = null
+      setNestTarget(null)
+      return
+    }
+    const overEl = document.querySelector(`[data-sortable-path="${overId}"]`)
+    if (!overEl) {
+      nestTargetRef.current = null
+      setNestTarget(null)
+      return
+    }
+    const rect = overEl.getBoundingClientRect()
+    const relY = (pointerYRef.current - rect.top) / rect.height
+    const isNestZone = relY > 0.3 && relY < 0.7
+    const newNestTarget = isNestZone ? overId : null
+    nestTargetRef.current = newNestTarget
+    setNestTarget(newNestTarget)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const currentNestTarget = nestTargetRef.current
+    setActiveNode(null)
+    setNestTarget(null)
+    nestTargetRef.current = null
+
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const activeId = active.id as string
+    const overId = over.id as string
+
+    // Nest operation: drop onto the center of a target item
+    if (currentNestTarget && currentNestTarget === overId) {
+      const activeNodeFull = nodes.find((n) => n.path === activeId)
+      if (!activeNodeFull) return
+      // Remove from current level
+      const withoutActive = nodes.filter((n) => n.path !== activeId)
+      // Rebuild full tree without active at current level
+      let updatedTree: NavNode[]
+      if (parentPath === null) {
+        updatedTree = withoutActive
+      } else {
+        updatedTree = fullTree.map(function patchParent(n: NavNode): NavNode {
+          if (n.path === parentPath) {
+            return { ...n, children: withoutActive }
+          }
+          if (n.children?.length) {
+            return { ...n, children: n.children.map(patchParent) }
+          }
+          return n
+        })
+      }
+      // Add as child of overId (strip .md for addChildToNode matching)
+      const overPathClean = overId.replace(/\.md$/, '')
+      const finalTree = addChildToNode(updatedTree, overPathClean, activeNodeFull.slug)
+      onSidebarUpdate(finalTree)
+      return
+    }
+
+    const oldIndex = nodes.findIndex((n) => n.path === activeId)
+    const newIndex = nodes.findIndex((n) => n.path === overId)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    // Reorder within the same level
+    const newTree = applyReorder(fullTree, parentPath, oldIndex, newIndex)
+    onSidebarUpdate(newTree)
+  }
+
   return (
-    <>
-      {nodes.map((node) => (
-        <NavItem
-          key={node.path}
-          node={node}
-          selectedPath={selectedPath}
-          onSelect={onSelect}
-          depth={depth}
-        />
-      ))}
-    </>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext
+        items={nodes.map((n) => n.path)}
+        strategy={verticalListSortingStrategy}
+      >
+        {nodes.map((node) => (
+          <SortableNavItem
+            key={node.path}
+            node={node}
+            selectedPath={selectedPath}
+            onSelect={onSelect}
+            depth={depth}
+            activeTitle={activeTitle}
+            activePath={activePath}
+            fullTree={fullTree}
+            onSidebarUpdate={onSidebarUpdate}
+            onAddSubpage={onAddSubpage}
+            addingSubpageUnder={addingSubpageUnder}
+            newPageTitle={newPageTitle}
+            onNewPageTitleChange={onNewPageTitleChange}
+            onNewPageConfirm={onNewPageConfirm}
+            onNewPageCancel={onNewPageCancel}
+            nestTarget={nestTarget}
+          />
+        ))}
+      </SortableContext>
+      <DragOverlay>
+        {activeNode && (
+          <NavItemOverlay node={activeNode} depth={depth} activeTitle={activeTitle} activePath={activePath} />
+        )}
+      </DragOverlay>
+    </DndContext>
   )
 }
 
-function NavItem({
-  node,
-  selectedPath,
-  onSelect,
-  depth,
-}: {
+interface NavItemProps {
   node: NavNode
   selectedPath: string | null
   onSelect: (node: NavNode) => void
   depth: number
-}) {
-  const [open, setOpen] = useState(true)
-  const isSelected = selectedPath === node.path.replace(/\.md$/, '')
+  activeTitle?: string
+  activePath?: string | null
+  fullTree: NavNode[]
+  onSidebarUpdate: (newTree: NavNode[]) => void
+  onAddSubpage: (parentPath: string) => void
+  addingSubpageUnder: string | null
+  newPageTitle: string
+  onNewPageTitleChange: (val: string) => void
+  onNewPageConfirm: (parentPath: string) => void
+  onNewPageCancel: () => void
+  nestTarget?: string | null
+}
 
-  if (node.type === 'dir') {
-    return (
-      <div>
+function SortableNavItem(props: NavItemProps) {
+  const {
+    node,
+    selectedPath,
+    onSelect,
+    depth,
+    activeTitle,
+    activePath,
+    fullTree,
+    onSidebarUpdate,
+    onAddSubpage,
+    addingSubpageUnder,
+    newPageTitle,
+    onNewPageTitleChange,
+    onNewPageConfirm,
+    onNewPageCancel,
+    nestTarget,
+  } = props
+
+  const isExpandable = !!(node.children && node.children.length > 0)
+  const [open, setOpen] = useState(true)
+  const [hovered, setHovered] = useState(false)
+  const isSelected = selectedPath === node.path.replace(/\.md$/, '')
+  const nodePath = node.path.replace(/\.md$/, '')
+  const isAddingSubpageHere = addingSubpageUnder === nodePath
+  const isNestTarget = nestTarget === node.path
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: node.path })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  }
+
+  // Inline sub-page input shown directly below this item when active
+  const subpageInput = isAddingSubpageHere && (
+    <div className="py-1 pr-2" style={{ paddingLeft: `${20 + depth * 12}px` }}>
+      <div className="flex gap-1 items-center">
+        <Input
+          value={newPageTitle}
+          onChange={(e) => onNewPageTitleChange(e.target.value)}
+          placeholder={m.docs_editor_title_placeholder()}
+          className="h-6 text-xs flex-1"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onNewPageConfirm(nodePath)
+            if (e.key === 'Escape') onNewPageCancel()
+          }}
+        />
         <button
-          className="flex w-full items-center gap-1.5 px-3 py-1 text-xs font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-          style={{ paddingLeft: `${12 + depth * 12}px` }}
-          onClick={() => setOpen((o) => !o)}
+          type="button"
+          className="shrink-0 text-[var(--color-purple-deep)] hover:opacity-70 disabled:opacity-30"
+          disabled={!newPageTitle.trim()}
+          onClick={() => onNewPageConfirm(nodePath)}
+          aria-label={m.docs_kb_create()}
         >
-          <ChevronRight size={11} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
-          <FolderOpen size={13} />
-          {node.title}
+          <Check size={12} />
         </button>
+        <button
+          type="button"
+          className="shrink-0 text-[var(--color-muted-foreground)] hover:opacity-70"
+          onClick={onNewPageCancel}
+          aria-label="Annuleren"
+        >
+          <X size={12} />
+        </button>
+      </div>
+    </div>
+  )
+
+  if (node.type === 'dir' && !isExpandable) {
+    // Non-expandable folder label (empty dir, no children)
+    return (
+      <div ref={setNodeRef} style={style} data-sortable-path={node.path}>
+        <div
+          className={`flex w-full items-center${isNestTarget ? ' border-l-2 border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5' : ''}`}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <button
+            className="flex flex-1 items-center gap-1.5 py-1 text-xs font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] min-w-0"
+            style={{ paddingLeft: `${12 + depth * 12}px` }}
+            disabled
+          >
+            <FolderOpen size={13} className="shrink-0" />
+            <span className="truncate">{node.title}</span>
+          </button>
+          <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
+            {hovered && (
+              <button
+                type="button"
+                className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+                onClick={() => onAddSubpage(nodePath)}
+                title={m.docs_pages_add_subpage()}
+                aria-label={m.docs_pages_add_subpage()}
+              >
+                <Plus size={10} />
+              </button>
+            )}
+            <span className="cursor-grab touch-none" {...attributes} {...listeners}>
+              <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
+            </span>
+          </div>
+        </div>
+        {subpageInput}
+      </div>
+    )
+  }
+
+  if (isExpandable) {
+    // Expandable node: could be dir or file with children
+    const isDir = node.type === 'dir'
+
+    return (
+      <div ref={setNodeRef} style={style} data-sortable-path={node.path}>
+        <div
+          className={`flex w-full items-center group${isNestTarget ? ' border-l-2 border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5' : ''}`}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <button
+            className={`flex flex-1 items-center gap-1.5 py-1 text-xs min-w-0 ${
+              isDir
+                ? 'font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                : isSelected
+                  ? 'text-[var(--color-purple-deep)] font-medium'
+                  : 'text-[var(--color-foreground)] hover:text-[var(--color-foreground)]'
+            }`}
+            style={{ paddingLeft: `${12 + depth * 12}px` }}
+            onClick={() => {
+              if (!isDir) onSelect(node)
+            }}
+          >
+            {/* Emoji + chevron overlay — same physical space */}
+            <div className="relative w-5 h-5 shrink-0 flex items-center justify-center">
+              {/* Emoji (or folder icon for dirs): always visible, hidden on hover */}
+              {isDir
+                ? <FolderOpen size={13} className="shrink-0 transition-opacity group-hover:opacity-0" />
+                : <span className="text-sm leading-none transition-opacity group-hover:opacity-0 select-none">{node.icon ?? DEFAULT_ICON}</span>
+              }
+              {/* Chevron: only visible on hover, overlaid on top */}
+              <button
+                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
+                tabIndex={-1}
+                aria-label={open ? 'Inklappen' : 'Uitklappen'}
+                type="button"
+              >
+                <ChevronRight
+                  size={12}
+                  className={`text-[var(--color-muted-foreground)] transition-transform ${open ? 'rotate-90' : ''}`}
+                />
+              </button>
+            </div>
+            <span className="truncate">
+              {!isDir && activePath && activePath === node.path.replace(/\.md$/, '')
+                ? (activeTitle ?? node.title)
+                : node.title}
+            </span>
+          </button>
+          <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
+            {hovered && (
+              <button
+                type="button"
+                className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+                onClick={() => { setOpen(true); onAddSubpage(nodePath) }}
+                title={m.docs_pages_add_subpage()}
+                aria-label={m.docs_pages_add_subpage()}
+              >
+                <Plus size={10} />
+              </button>
+            )}
+            <span className="cursor-grab touch-none" {...attributes} {...listeners}>
+              <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
+            </span>
+          </div>
+        </div>
+        {subpageInput}
         {open && node.children && (
           <NavTree
             nodes={node.children}
             selectedPath={selectedPath}
             onSelect={onSelect}
             depth={depth + 1}
+            activeTitle={activeTitle}
+            activePath={activePath}
+            fullTree={fullTree}
+            onSidebarUpdate={onSidebarUpdate}
+            parentPath={node.path}
+            onAddSubpage={onAddSubpage}
+            addingSubpageUnder={addingSubpageUnder}
+            newPageTitle={newPageTitle}
+            onNewPageTitleChange={onNewPageTitleChange}
+            onNewPageConfirm={onNewPageConfirm}
+            onNewPageCancel={onNewPageCancel}
           />
         )}
       </div>
     )
   }
 
+  // Plain file node (no children)
+  const displayTitle =
+    activePath && activePath === node.path.replace(/\.md$/, '')
+      ? (activeTitle ?? node.title)
+      : node.title
+
   return (
-    <button
-      className={`flex w-full items-center gap-1.5 py-1 text-xs transition-colors ${
-        isSelected
-          ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
-          : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
-      }`}
-      style={{ paddingLeft: `${16 + depth * 12}px`, paddingRight: '12px' }}
-      onClick={() => onSelect(node)}
+    <div ref={setNodeRef} style={style} data-sortable-path={node.path}>
+      <div
+        className={`flex w-full items-center py-1 text-xs transition-colors ${
+          isSelected
+            ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
+            : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
+        }${isNestTarget ? ' border-l-2 border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5' : ''}`}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <button
+          className="flex flex-1 items-center gap-1.5 min-w-0"
+          style={{ paddingLeft: `${16 + depth * 12}px` }}
+          onClick={() => onSelect(node)}
+        >
+          <span className="shrink-0 text-sm leading-none">{node.icon ?? DEFAULT_ICON}</span>
+          <span className="truncate">{displayTitle}</span>
+        </button>
+        <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
+          {hovered && (
+            <button
+              type="button"
+              className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+              onClick={() => onAddSubpage(nodePath)}
+              title={m.docs_pages_add_subpage()}
+              aria-label={m.docs_pages_add_subpage()}
+            >
+              <Plus size={10} />
+            </button>
+          )}
+          <span className="cursor-grab touch-none" {...attributes} {...listeners}>
+            <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
+          </span>
+        </div>
+      </div>
+      {subpageInput}
+    </div>
+  )
+}
+
+// Overlay shown while dragging
+function NavItemOverlay({
+  node,
+  depth,
+  activeTitle,
+  activePath,
+}: {
+  node: NavNode
+  depth: number
+  activeTitle?: string
+  activePath?: string | null
+}) {
+  const displayTitle =
+    activePath && activePath === node.path.replace(/\.md$/, '')
+      ? (activeTitle ?? node.title)
+      : node.title
+
+  const isDir = node.type === 'dir'
+
+  return (
+    <div
+      className="flex items-center gap-1.5 rounded text-xs font-medium bg-[var(--color-card)] border border-[var(--color-border)] shadow-md py-1 pr-2 text-[var(--color-purple-deep)]"
+      style={{ paddingLeft: `${(isDir ? 12 : 16) + depth * 12}px` }}
     >
-      <FileText size={13} className="shrink-0" />
-      <span className="truncate">{node.title}</span>
-    </button>
+      {isDir
+        ? <FolderOpen size={13} className="shrink-0" />
+        : <span className="shrink-0 text-sm leading-none">{node.icon ?? DEFAULT_ICON}</span>
+      }
+      <span className="truncate">{displayTitle}</span>
+    </div>
   )
 }

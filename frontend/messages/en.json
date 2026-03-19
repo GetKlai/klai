@@ -502,5 +502,6 @@
   "docs_access_saving": "Saving...",
   "docs_access_saved": "Saved",
   "docs_access_error_save": "Save failed",
-  "docs_access_close": "Close"
+  "docs_access_close": "Close",
+  "docs_pages_add_subpage": "Add subpage"
 }

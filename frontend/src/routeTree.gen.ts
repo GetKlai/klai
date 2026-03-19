@@ -217,11 +217,12 @@ const AppFocusNotebookIdEditRoute = AppFocusNotebookIdEditRouteImport.update({
   path: '/focus/$notebookId/edit',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppFocusNotebookIdAddSourceRoute = AppFocusNotebookIdAddSourceRouteImport.update({
-  id: '/focus/$notebookId_/add-source',
-  path: '/focus/$notebookId/add-source',
-  getParentRoute: () => AppRouteRoute,
-} as any)
+const AppFocusNotebookIdAddSourceRoute =
+  AppFocusNotebookIdAddSourceRouteImport.update({
+    id: '/focus/$notebookId_/add-source',
+    path: '/focus/$notebookId/add-source',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppDocsKbSlugEditRoute = AppDocsKbSlugEditRouteImport.update({
   id: '/docs/$kbSlug_/edit',
   path: '/docs/$kbSlug/edit',
@@ -269,8 +270,8 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
-  '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
+  '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -306,8 +307,8 @@ export interface FileRoutesByTo {
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
-  '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
+  '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -346,8 +347,8 @@ export interface FileRoutesById {
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
-  '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
+  '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -387,8 +388,8 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/edit'
-    | '/app/focus/$notebookId/edit'
     | '/app/focus/$notebookId/add-source'
+    | '/app/focus/$notebookId/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -424,8 +425,8 @@ export interface FileRouteTypes {
     | '/app/transcribe'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/edit'
-    | '/app/focus/$notebookId/edit'
     | '/app/focus/$notebookId/add-source'
+    | '/app/focus/$notebookId/edit'
   id:
     | '__root__'
     | '/'
@@ -463,8 +464,8 @@ export interface FileRouteTypes {
     | '/app/transcribe/'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug_/edit'
-    | '/app/focus/$notebookId_/edit'
     | '/app/focus/$notebookId_/add-source'
+    | '/app/focus/$notebookId_/edit'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -798,8 +799,8 @@ interface AppRouteRouteChildren {
   AppFocusIndexRoute: typeof AppFocusIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
-  AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
+  AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -816,8 +817,8 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppFocusIndexRoute: AppFocusIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
-  AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,
+  AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

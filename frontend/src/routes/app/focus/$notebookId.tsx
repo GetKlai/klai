@@ -395,7 +395,7 @@ function NotebookDetailPage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm">{m.app_focus_sources_heading()}</CardTitle>
                 <button
-                  onClick={() => navigate({ to: '/app/focus/$notebookId_/add-source', params: { notebookId } })}
+                  onClick={() => navigate({ to: '/app/focus/$notebookId/add-source', params: { notebookId } })}
                   className="flex items-center gap-1 text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" />
