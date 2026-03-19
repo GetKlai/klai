@@ -75,7 +75,7 @@ export async function PUT(
 
 // DELETE /api/orgs/{org}/kbs/{kb}/pages/{...path}
 export async function DELETE(
-  _req: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
   const payload = await requireAuth(request);
