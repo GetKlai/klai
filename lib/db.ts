@@ -1,10 +1,24 @@
 import { Pool } from "pg";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-});
+// Use individual params to avoid URL-encoding issues with special chars in password.
+// DATABASE_URL is kept as a fallback for local dev convenience.
+const pool = new Pool(
+  process.env.POSTGRES_HOST
+    ? {
+        host: process.env.POSTGRES_HOST,
+        database: process.env.POSTGRES_DATABASE ?? "klai",
+        user: process.env.POSTGRES_USER ?? "klai",
+        password: process.env.POSTGRES_PASSWORD,
+        port: Number(process.env.POSTGRES_PORT ?? 5432),
+        max: 10,
+        idleTimeoutMillis: 30_000,
+      }
+    : {
+        connectionString: process.env.DATABASE_URL,
+        max: 10,
+        idleTimeoutMillis: 30_000,
+      }
+);
 
 export const db = {
   query: pool.query.bind(pool),
