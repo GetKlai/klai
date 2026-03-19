@@ -7,12 +7,13 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
+import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Trash2, Send, Loader2, Pencil } from 'lucide-react'
+import { Trash2, Send, Loader2, Pencil, Check, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -59,6 +60,8 @@ function UsersPage() {
   const currentUserId = auth.user?.profile?.sub
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-users', token],
@@ -117,11 +120,7 @@ function UsersPage() {
     },
   })
 
-  function handleDelete(user: User) {
-    const name = `${user.first_name} ${user.last_name}`
-    if (!window.confirm(m.admin_users_confirm_delete({ name }))) return
-    deleteMutation.mutate(user)
-  }
+
 
   const pageError =
     (error instanceof Error ? error.message : error ? m.admin_users_error_generic() : null) ??
@@ -161,6 +160,38 @@ function UsersPage() {
         const isResending =
           resendInviteMutation.isPending &&
           resendInviteMutation.variables?.zitadel_user_id === user.zitadel_user_id
+        const isConfirmingDelete = confirmingDeleteId === user.zitadel_user_id
+        const isDeleting =
+          deleteMutation.isPending &&
+          deleteMutation.variables?.zitadel_user_id === user.zitadel_user_id
+
+        if (isConfirmingDelete) {
+          return (
+            <div className="flex items-center gap-1">
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+              ) : (
+                <>
+                  <button
+                    onClick={() => { setConfirmingDeleteId(null); deleteMutation.mutate(user) }}
+                    aria-label={m.admin_users_delete()}
+                    className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setConfirmingDeleteId(null)}
+                    aria-label={m.admin_users_col_actions()}
+                    className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          )
+        }
+
         return (
           <div className="flex items-center gap-2">
             <Select
@@ -199,7 +230,7 @@ function UsersPage() {
             <Tooltip label={m.admin_users_delete()}>
               <button
                 disabled={isSelf}
-                onClick={() => handleDelete(user)}
+                onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
                 aria-label={m.admin_users_delete()}
                 className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70 disabled:opacity-40"
               >
