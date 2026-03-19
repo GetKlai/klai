@@ -275,10 +275,10 @@ function AddTranscribePage() {
                 className="max-w-xs"
               >
                 <option value="">{m.app_transcribe_language_auto()}</option>
-                <option value="nl">Nederlands</option>
-                <option value="en">English</option>
-                <option value="de">Deutsch</option>
-                <option value="fr">Français</option>
+                <option value="nl">{m.app_transcribe_language_nl()}</option>
+                <option value="en">{m.app_transcribe_language_en()}</option>
+                <option value="de">{m.app_transcribe_language_de()}</option>
+                <option value="fr">{m.app_transcribe_language_fr()}</option>
               </Select>
             </div>
 

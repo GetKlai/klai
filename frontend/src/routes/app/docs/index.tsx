@@ -227,7 +227,7 @@ function DocsPage() {
                     {m.docs_kb_name_label()}
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-32">
-                    Zichtbaarheid
+                    {m.docs_kb_visibility_label()}
                   </th>
                   <th className="px-3 py-3 w-20" />
                 </tr>
@@ -265,7 +265,7 @@ function DocsPage() {
                         <Tooltip label={m.docs_kb_edit_label()}>
                           <button
                             onClick={() =>
-                              navigate({ to: '/app/docs/$kbSlug_/edit', params: { kbSlug: kb.slug } })
+                              navigate({ to: '/app/docs/$kbSlug/edit', params: { kbSlug: kb.slug } })
                             }
                             aria-label={m.docs_kb_edit_label()}
                             className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"

@@ -8,7 +8,6 @@ import { Tooltip } from '@/components/ui/tooltip'
 import {
   ArrowLeft,
   Trash2,
-  Upload,
   Send,
   Plus,
   Loader2,
@@ -32,8 +31,6 @@ const FOCUS_BASE = '/research/v1'
 
 type SourceStatus = 'processing' | 'ready' | 'error'
 type ChatMode = 'narrow' | 'broad' | 'web'
-type AddTab = 'file' | 'url'
-
 interface Source {
   id: string
   name: string
@@ -161,72 +158,6 @@ function NotebookDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
     },
-  })
-
-  // ── Add source ───────────────────────────────────────────────────────────────
-
-  const [showAdd, setShowAdd] = useState(false)
-  const [addTab, setAddTab] = useState<AddTab>('file')
-  const [urlInput, setUrlInput] = useState('')
-  const [addError, setAddError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [dragging, setDragging] = useState(false)
-
-  const addFileMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const form = new FormData()
-      form.append('file', file)
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
-      })
-      if (!res.ok) throw new Error('Uploaden mislukt')
-      return res.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
-      setShowAdd(false)
-      setAddError(null)
-    },
-    onError: (err: Error) => setAddError(err.message),
-  })
-
-  function detectUrlType(url: string): 'url' | 'youtube' {
-    try {
-      const u = new URL(url)
-      if (
-        u.hostname === 'www.youtube.com' ||
-        u.hostname === 'youtube.com' ||
-        u.hostname === 'm.youtube.com' ||
-        u.hostname === 'youtu.be'
-      ) {
-        return 'youtube'
-      }
-    } catch {}
-    return 'url'
-  }
-
-  const addUrlMutation = useMutation({
-    mutationFn: async (url: string) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/url`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url, type: detectUrlType(url) }),
-      })
-      if (!res.ok) throw new Error('Toevoegen mislukt')
-      return res.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
-      setUrlInput('')
-      setShowAdd(false)
-      setAddError(null)
-    },
-    onError: (err: Error) => setAddError(err.message),
   })
 
   // ── History ──────────────────────────────────────────────────────────────────
@@ -463,18 +394,13 @@ function NotebookDetailPage() {
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm">{m.app_focus_sources_heading()}</CardTitle>
-                {!showAdd && (
-                  <button
-                    onClick={() => {
-                      setShowAdd(true)
-                      setAddError(null)
-                    }}
-                    className="flex items-center gap-1 text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {m.app_focus_add_source()}
-                  </button>
-                )}
+                <button
+                  onClick={() => navigate({ to: '/app/focus/$notebookId_/add-source', params: { notebookId } })}
+                  className="flex items-center gap-1 text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {m.app_focus_add_source()}
+                </button>
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -512,125 +438,6 @@ function NotebookDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Add source inline */}
-          {showAdd && (
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm">{m.app_focus_add_source()}</CardTitle>
-                  <button
-                    onClick={() => {
-                      setShowAdd(false)
-                      setAddError(null)
-                    }}
-                    className="flex items-center gap-1 text-xs font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    {m.app_focus_create_cancel()}
-                  </button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* Tabs */}
-                <div className="flex gap-1 p-1 bg-[var(--color-muted)]/40 rounded-lg w-fit">
-                  {(['file', 'url'] as AddTab[]).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => {
-                        setAddTab(tab)
-                        setAddError(null)
-                      }}
-                      className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                        addTab === tab
-                          ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
-                          : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
-                      }`}
-                    >
-                      {tab === 'file' ? m.app_focus_source_add_tab_file() : 'URL / YouTube'}
-                    </button>
-                  ))}
-                </div>
-
-                {addTab === 'file' && (
-                  <div
-                    className={`cursor-pointer rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
-                      dragging
-                        ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
-                        : 'border-[var(--color-border)] hover:border-[var(--color-purple-accent)]/50'
-                    }`}
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(e) => {
-                      e.preventDefault()
-                      setDragging(true)
-                    }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      setDragging(false)
-                      const f = e.dataTransfer.files[0]
-                      if (f) addFileMutation.mutate(f)
-                    }}
-                  >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".pdf,.docx,.txt,.md"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0]
-                        if (f) addFileMutation.mutate(f)
-                      }}
-                    />
-                    {addFileMutation.isPending ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                        <span className="text-xs text-[var(--color-muted-foreground)]">
-                          {m.app_focus_source_uploading()}
-                        </span>
-                      </div>
-                    ) : (
-                      <div>
-                        <Upload className="mx-auto mb-1.5 h-5 w-5 text-[var(--color-muted-foreground)]" />
-                        <p className="text-xs font-medium">{m.app_focus_source_file_hint()}</p>
-                        <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                          PDF, DOCX, TXT, MD
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {addTab === 'url' && (
-                  <div className="flex gap-2">
-                    <Input
-                      type="url"
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      placeholder={m.app_focus_source_url_placeholder()}
-                      className="flex-1"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && urlInput.trim())
-                          addUrlMutation.mutate(urlInput.trim())
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => addUrlMutation.mutate(urlInput.trim())}
-                      disabled={!urlInput.trim() || addUrlMutation.isPending}
-                    >
-                      {addUrlMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        m.app_focus_source_add_button()
-                      )}
-                    </Button>
-                  </div>
-                )}
-
-                {addError && <p className="text-xs text-[var(--color-destructive)]">{addError}</p>}
-              </CardContent>
-            </Card>
-          )}
         </div>
 
         {/* Chat panel */}
