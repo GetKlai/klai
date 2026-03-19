@@ -59,16 +59,28 @@ export async function PUT(
     }
   }
 
-  const { title, content, icon, sha } = await request.json();
+  const { title, content, icon, sha, edit_access } = await request.json();
   const filePath = `${pagePath}.md`;
-
-  const frontmatter: { title: string; icon?: string } = { title: title ?? pagePath.split("/").at(-1) };
-  if (icon !== undefined && icon !== null) frontmatter.icon = icon;
-  const fileContent = serializePage(frontmatter, content ?? "");
 
   const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
   const currentSha = file?.sha ?? sha;
   const isNewPage = !currentSha;
+
+  // Read existing frontmatter to preserve fields (e.g. id, redirects)
+  const existingRaw = !isNewPage ? await gitea.getFileContent(resolved.kb.gitea_repo, filePath) : null;
+  const existingFm = existingRaw ? parsePage(existingRaw).frontmatter : {};
+
+  // Assign a stable UUID on first save; preserve existing id thereafter
+  const pageId = existingFm.id ?? crypto.randomUUID();
+
+  const frontmatter: Record<string, unknown> = {
+    ...existingFm,
+    id: pageId,
+    title: title ?? pagePath.split("/").at(-1),
+  };
+  if (icon !== undefined && icon !== null) frontmatter.icon = icon;
+  if (edit_access !== undefined) frontmatter.edit_access = edit_access;
+  const fileContent = serializePage(frontmatter as Parameters<typeof serializePage>[0], content ?? "");
 
   await gitea.putFile(
     resolved.kb.gitea_repo,

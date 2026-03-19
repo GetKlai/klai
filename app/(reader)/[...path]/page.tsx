@@ -6,7 +6,7 @@ import * as gitea from "@/lib/gitea";
 import { parsePage, parseSidebar } from "@/lib/markdown";
 import type { SidebarEntry } from "@/lib/markdown";
 import { Sidebar } from "@/components/reader/Sidebar";
-import { PageRenderer } from "@/components/reader/PageRenderer";
+import { PageRenderer, type PageIndexEntry } from "@/components/reader/PageRenderer";
 
 /**
  * Collects all slug strings from a sidebar manifest tree.
@@ -53,6 +53,33 @@ async function findRedirectTarget(
 }
 
 /**
+ * Builds a lightweight page index (id + slug + title) for wikilink resolution.
+ * Reads each page's frontmatter from Gitea. Capped at 100 pages.
+ */
+async function buildPageIndex(repo: string): Promise<PageIndexEntry[]> {
+  const sidebarRaw = await gitea.getFileContent(repo, "_sidebar.yaml");
+  if (!sidebarRaw) return [];
+
+  const manifest = parseSidebar(sidebarRaw);
+  const slugs = collectSlugs(manifest.pages).slice(0, 100);
+  const entries: PageIndexEntry[] = [];
+
+  for (const slug of slugs) {
+    const raw = await gitea.getFileContent(repo, `${slug}.md`);
+    if (!raw) continue;
+    const { frontmatter } = parsePage(raw);
+    if (!frontmatter.id) continue;
+    entries.push({
+      id: frontmatter.id,
+      slug,
+      title: frontmatter.title,
+    });
+  }
+
+  return entries;
+}
+
+/**
  * Route: /{kb}/[...slug]  OR  /{kb}/
  *
  * path[0] = kb slug
@@ -80,8 +107,11 @@ export default async function ReaderPage({
   // Currently all KBs are served to anyone who knows the URL.
   // This is acceptable for MVP while the auth architecture for the reader is designed.
 
-  // Build sidebar navigation tree
-  const navTree = await buildNavTree(kb.gitea_repo);
+  // Build sidebar navigation tree and page index for wikilink resolution
+  const [navTree, pageIndex] = await Promise.all([
+    buildNavTree(kb.gitea_repo),
+    buildPageIndex(kb.gitea_repo),
+  ]);
 
   // Determine article file path
   const articlePath =
@@ -126,7 +156,7 @@ export default async function ReaderPage({
             {description && (
               <p className="text-gray-500 mb-8">{description}</p>
             )}
-            <PageRenderer content={content} />
+            <PageRenderer content={content} pageIndex={pageIndex} kbSlug={kbSlug} />
           </>
         ) : (
           <div>

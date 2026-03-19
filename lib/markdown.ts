@@ -2,6 +2,7 @@ import matter from "gray-matter";
 import yaml from "js-yaml";
 
 export type PageFrontmatter = {
+  id?: string;         // UUID v4, assigned once on first save, never changed
   title?: string;
   description?: string;
   icon?: string;
