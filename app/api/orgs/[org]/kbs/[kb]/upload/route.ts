@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import { parsePage, parseMeta, serializeMeta } from "@/lib/markdown";
@@ -12,8 +12,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const payload = await requireAuth(request);
+  if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { org: orgSlug, kb: kbSlug } = await params;
   const org = await db.getOrgBySlug(orgSlug);

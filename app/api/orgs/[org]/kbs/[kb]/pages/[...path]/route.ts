@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import { serializePage, parsePage } from "@/lib/markdown";
@@ -35,8 +35,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id)
+  const payload = await requireAuth(request);
+  if (!payload?.sub)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { org: orgSlug, kb: kbSlug, path } = await params;
@@ -48,7 +48,7 @@ export async function PUT(
   // Check edit permissions
   const restriction = await db.getPageEditRestriction(resolved.kb.id, pagePath);
   if (restriction?.user_ids?.length > 0) {
-    if (!restriction.user_ids.includes(session.user.id)) {
+    if (!restriction.user_ids.includes(payload.sub)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
@@ -78,8 +78,8 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id)
+  const payload = await requireAuth(request);
+  if (!payload?.sub)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { org: orgSlug, kb: kbSlug, path } = await params;
