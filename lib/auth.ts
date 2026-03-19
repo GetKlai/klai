@@ -27,6 +27,8 @@ const ZitadelProvider: Provider = {
 };
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // Trust X-Forwarded-Host from Caddy so any *.getklai.com subdomain works
+  trustHost: true,
   providers: [ZitadelProvider],
   callbacks: {
     jwt({ token, profile }) {
