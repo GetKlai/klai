@@ -404,6 +404,7 @@
   "docs_kb_empty": "No knowledge bases yet.",
   "docs_editor_save": "Save",
   "docs_editor_saving": "Saving...",
+  "docs_editor_url_updated": "URL updated",
   "docs_editor_back": "Back",
   "docs_editor_title_placeholder": "Page title",
   "docs_pages_empty": "No pages yet. Upload a .md file or create a new page.",

@@ -40,6 +40,17 @@ function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]
 }
 
+function slugify(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-') || 'untitled'
+  )
+}
+
 interface NavNode {
   slug: string
   title: string
@@ -123,7 +134,7 @@ function KBEditorPage() {
   const [pageIcon, setPageIcon] = useState(DEFAULT_ICON)
   const [showIconPicker, setShowIconPicker] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'renamed' | 'error'>('idle')
 
   const [newPageTitle, setNewPageTitle] = useState('')
   const [showNewPage, setShowNewPage] = useState(false)
@@ -294,10 +305,41 @@ function KBEditorPage() {
     const tok = tokenRef.current
     if (!path || !tok) return
     const content = editorRef.current?.getMarkdown() ?? ''
+
+    const currentSlug = path.replace(/\.md$/, '')
+    const newSlug = slugify(title)
+
     setSaveStatus('saving')
+
+    if (newSlug !== currentSlug) {
+      // Title changed enough to alter the slug — rename instead of a plain save
+      try {
+        const res = await fetch(
+          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}/rename`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ newSlug, title, content, icon: pageIconRef.current }),
+          }
+        )
+        if (!res.ok) throw new Error('Rename failed')
+        // Update local selection to new slug
+        selectedPathRef.current = newSlug
+        setSelectedPath(newSlug)
+        setSaveStatus('renamed')
+        setTimeout(() => setSaveStatus('idle'), 2500)
+        refetchTree()
+      } catch {
+        setSaveStatus('error')
+        setTimeout(() => setSaveStatus('idle'), 3000)
+      }
+      return
+    }
+
+    // Normal save — slug unchanged
     try {
       const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`,
+        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`,
         {
           method: 'PUT',
           headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
@@ -539,6 +581,12 @@ function KBEditorPage() {
                   <span className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
                     <Check size={12} />
                     {m.docs_editor_save()}
+                  </span>
+                )}
+                {saveStatus === 'renamed' && (
+                  <span className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+                    <Check size={12} />
+                    {m.docs_editor_url_updated()}
                   </span>
                 )}
                 {saveStatus === 'error' && (
