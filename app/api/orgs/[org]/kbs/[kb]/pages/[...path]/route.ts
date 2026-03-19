@@ -59,10 +59,11 @@ export async function PUT(
     }
   }
 
-  const { title, content, sha } = await request.json();
+  const { title, content, icon, sha } = await request.json();
   const filePath = `${pagePath}.md`;
 
-  const frontmatter = { title: title ?? pagePath.split("/").at(-1) };
+  const frontmatter: { title: string; icon?: string } = { title: title ?? pagePath.split("/").at(-1) };
+  if (icon !== undefined && icon !== null) frontmatter.icon = icon;
   const fileContent = serializePage(frontmatter, content ?? "");
 
   const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
