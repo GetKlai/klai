@@ -1,11 +1,56 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { buildNavTree } from "@/lib/gitea";
 import * as gitea from "@/lib/gitea";
-import { parsePage } from "@/lib/markdown";
+import { parsePage, parseSidebar } from "@/lib/markdown";
+import type { SidebarEntry } from "@/lib/markdown";
 import { Sidebar } from "@/components/reader/Sidebar";
 import { PageRenderer } from "@/components/reader/PageRenderer";
+
+/**
+ * Collects all slug strings from a sidebar manifest tree.
+ */
+function collectSlugs(entries: SidebarEntry[]): string[] {
+  const result: string[] = [];
+  for (const e of entries) {
+    result.push(e.slug);
+    if (e.children?.length) result.push(...collectSlugs(e.children));
+  }
+  return result;
+}
+
+/**
+ * Looks up a redirect target for the given slug by scanning all pages'
+ * frontmatter `redirects` arrays. Returns the new slug if found, else null.
+ * Only runs when the sidebar has fewer than 50 pages.
+ */
+async function findRedirectTarget(
+  repo: string,
+  requestedSlug: string
+): Promise<string | null> {
+  const sidebarRaw = await gitea.getFileContent(repo, "_sidebar.yaml");
+  if (!sidebarRaw) return null;
+
+  const manifest = parseSidebar(sidebarRaw);
+  const slugs = collectSlugs(manifest.pages);
+
+  if (slugs.length >= 50) return null;
+
+  const results = await Promise.all(
+    slugs.map(async (slug) => {
+      const raw = await gitea.getFileContent(repo, `${slug}.md`);
+      if (!raw) return null;
+      const { frontmatter } = parsePage(raw);
+      if (Array.isArray(frontmatter.redirects) && frontmatter.redirects.includes(requestedSlug)) {
+        return slug;
+      }
+      return null;
+    })
+  );
+
+  return results.find((r) => r !== null) ?? null;
+}
 
 /**
  * Route: /{kb}/[...slug]  OR  /{kb}/
@@ -50,7 +95,15 @@ export default async function ReaderPage({
 
   if (articlePath) {
     const raw = await gitea.getFileContent(kb.gitea_repo, articlePath);
-    if (!raw) notFound();
+    if (!raw) {
+      // Check if any existing page declares this slug in its redirects array
+      const requestedSlug = articleSegments.join("/");
+      const newSlug = await findRedirectTarget(kb.gitea_repo, requestedSlug);
+      if (newSlug) {
+        redirect(`/${kbSlug}/${newSlug}`);
+      }
+      notFound();
+    }
 
     const parsed = parsePage(raw);
     content = parsed.content;

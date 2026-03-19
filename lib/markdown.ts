@@ -6,6 +6,7 @@ export type PageFrontmatter = {
   description?: string;
   icon?: string;
   edit_access?: "org" | string[];
+  redirects?: string[];
 };
 
 export type ParsedPage = {
@@ -84,9 +85,32 @@ export function removeSlugFromSidebar(
  * Returns a slug-safe string from a title.
  */
 export function slugify(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
+  return (
+    title
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // strip accents
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-") || "untitled"
+  );
+}
+
+/**
+ * Renames a slug in the sidebar manifest tree in-place.
+ * All occurrences of oldSlug are replaced with newSlug.
+ */
+export function renameSidebarSlug(
+  manifest: SidebarManifest,
+  oldSlug: string,
+  newSlug: string
+): SidebarManifest {
+  function renameInEntries(entries: SidebarEntry[]): SidebarEntry[] {
+    return entries.map((e) => ({
+      slug: e.slug === oldSlug ? newSlug : e.slug,
+      ...(e.children ? { children: renameInEntries(e.children) } : {}),
+    }));
+  }
+  return { pages: renameInEntries(manifest.pages) };
 }
