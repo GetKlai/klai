@@ -9,7 +9,7 @@ type Props = {
 
 export function PageRenderer({ content }: Props) {
   return (
-    <article className="prose prose-gray max-w-none">
+    <article className="prose prose-gray max-w-none prose-a:text-blue-600 prose-a:underline">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSlug, rehypeHighlight]}
