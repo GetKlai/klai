@@ -9,9 +9,11 @@ import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHand
 import { ChevronRight, FolderOpen, ArrowLeft, Upload, Plus, Check, X, MoreHorizontal, Loader2, Users, Lock, GripVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useCreateBlockNote } from '@blocknote/react'
+import { useCreateBlockNote, SuggestionMenuController, getDefaultReactSlashMenuItems } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
+import { BlockNoteSchema, defaultInlineContentSpecs } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
+import { WikiLink } from './WikiLink'
 import * as m from '@/paraglide/messages'
 import {
   DndContext,
@@ -21,12 +23,11 @@ import {
   useSensors,
   closestCenter,
 } from '@dnd-kit/core'
-import type { DragEndEvent, DragStartEvent, DragOverEvent } from '@dnd-kit/core'
+import type { DragEndEvent, DragStartEvent, DragMoveEvent } from '@dnd-kit/core'
 import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
-  arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
@@ -81,28 +82,6 @@ function navToSidebarEntries(nodes: NavNode[]): SidebarEntry[] {
   }))
 }
 
-// Apply a reorder (same level) within the full tree, returning a new tree
-function applyReorder(
-  nodes: NavNode[],
-  parentPath: string | null,
-  oldIndex: number,
-  newIndex: number,
-): NavNode[] {
-  if (parentPath === null) {
-    // Root level
-    return arrayMove(nodes, oldIndex, newIndex)
-  }
-  return nodes.map((n) => {
-    if (n.path === parentPath) {
-      return { ...n, children: arrayMove(n.children ?? [], oldIndex, newIndex) }
-    }
-    if (n.children?.length) {
-      return { ...n, children: applyReorder(n.children, parentPath, oldIndex, newIndex) }
-    }
-    return n
-  })
-}
-
 // Add a new child slug under the node matching parentPath
 function addChildToNode(nodes: NavNode[], parentPath: string, newSlug: string): NavNode[] {
   return nodes.map((node) => {
@@ -120,6 +99,133 @@ function addChildToNode(nodes: NavNode[], parentPath: string, newSlug: string): 
     }
     return node
   })
+}
+
+// ─── Flat-list DnD utilities ──────────────────────────────────────────────────
+
+interface FlatNode {
+  id: string          // node.path
+  depth: number
+  parentId: string | null
+  node: NavNode
+}
+
+function flattenTree(
+  nodes: NavNode[],
+  collapsed: Set<string>,
+  depth = 0,
+  parentId: string | null = null,
+): FlatNode[] {
+  const result: FlatNode[] = []
+  for (const node of nodes) {
+    result.push({ id: node.path, depth, parentId, node })
+    if (node.children?.length && !collapsed.has(node.path)) {
+      result.push(...flattenTree(node.children, collapsed, depth + 1, node.path))
+    }
+  }
+  return result
+}
+
+interface Projection {
+  depth: number
+  parentId: string | null
+  newIndex: number
+}
+
+const INDENT_WIDTH = 12
+
+function getProjection(
+  items: FlatNode[],
+  activeId: string,
+  overId: string,
+  deltaX: number,
+): Projection {
+  const overIndex = items.findIndex((f) => f.id === overId)
+  const activeIndex = items.findIndex((f) => f.id === activeId)
+
+  if (overIndex === -1 || activeIndex === -1) {
+    const fallback = items.findIndex((f) => f.id === activeId)
+    return { depth: 0, parentId: null, newIndex: fallback === -1 ? 0 : fallback }
+  }
+
+  const overItem = items[overIndex]
+  const baseDepth = overItem.depth
+
+  // Determine the maximum allowable depth (prev item depth + 1)
+  // Look backwards from overIndex (skipping the active item itself)
+  const itemsWithoutActive = items.filter((f) => f.id !== activeId)
+  const overIndexWithoutActive = itemsWithoutActive.findIndex((f) => f.id === overId)
+  const prevItem = overIndexWithoutActive > 0 ? itemsWithoutActive[overIndexWithoutActive - 1] : null
+  const maxDepth = prevItem ? prevItem.depth + 1 : 0
+
+  const depthOffset = Math.round(deltaX / INDENT_WIDTH)
+  const projectedDepth = Math.min(Math.max(0, baseDepth + depthOffset), maxDepth)
+
+  // Find the parentId: look backwards for the first item at projectedDepth - 1
+  let parentId: string | null = null
+  if (projectedDepth > 0) {
+    for (let i = overIndexWithoutActive - 1; i >= 0; i--) {
+      if (itemsWithoutActive[i].depth === projectedDepth - 1) {
+        parentId = itemsWithoutActive[i].id
+        break
+      }
+      if (itemsWithoutActive[i].depth < projectedDepth - 1) {
+        break
+      }
+    }
+  }
+
+  // newIndex: position in the items-without-active list where we're dropping
+  const newIndex = overIndexWithoutActive
+
+  return { depth: projectedDepth, parentId, newIndex }
+}
+
+function buildTree(flatNodes: FlatNode[], projection: Projection, activeId: string): NavNode[] {
+  // Remove active node from flat list
+  const withoutActive = flatNodes.filter((f) => f.id !== activeId)
+  const activeFlat = flatNodes.find((f) => f.id === activeId)!
+
+  // Insert active at newIndex with updated depth/parentId
+  const inserted: FlatNode[] = [
+    ...withoutActive.slice(0, projection.newIndex),
+    { ...activeFlat, depth: projection.depth, parentId: projection.parentId },
+    ...withoutActive.slice(projection.newIndex),
+  ]
+
+  // Rebuild hierarchical NavNode[] from the flat list
+  // We do this by traversing the flat list and assigning children based on parentId
+  const nodeMap = new Map<string, NavNode>()
+  const roots: NavNode[] = []
+
+  for (const flat of inserted) {
+    // Clone the NavNode without children
+    const node: NavNode = { ...flat.node, children: [] }
+    nodeMap.set(flat.id, node)
+
+    if (flat.parentId === null) {
+      roots.push(node)
+    } else {
+      const parent = nodeMap.get(flat.parentId)
+      if (parent) {
+        parent.children = parent.children ?? []
+        parent.children.push(node)
+      } else {
+        // Parent not found (shouldn't happen in a valid tree) — fall to root
+        roots.push(node)
+      }
+    }
+  }
+
+  // Strip empty children arrays to keep the data clean
+  function stripEmpty(nodes: NavNode[]): NavNode[] {
+    return nodes.map((n) => ({
+      ...n,
+      children: n.children?.length ? stripEmpty(n.children) : undefined,
+    }))
+  }
+
+  return stripEmpty(roots)
 }
 
 function KBEditorPage() {
@@ -222,6 +328,18 @@ function KBEditorPage() {
     enabled: !!token && !!selectedPath,
   })
 
+  const { data: pageIndex = [] } = useQuery<Array<{ id: string | null; slug: string; title: string }>>({
+    queryKey: ['docs-page-index', orgSlug, kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`, {
+        headers: { Authorization: authHeader },
+      })
+      if (!res.ok) return []
+      return res.json()
+    },
+    enabled: !!token,
+  })
+
   useEffect(() => {
     if (page) {
       setEditTitle(page.frontmatter.title ?? '')
@@ -315,7 +433,7 @@ function KBEditorPage() {
       // Title changed enough to alter the slug — rename instead of a plain save
       try {
         const res = await fetch(
-          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}/rename`,
+          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`,
           {
             method: 'POST',
             headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
@@ -447,7 +565,6 @@ function KBEditorPage() {
               }}
               activeTitle={editTitle}
               activePath={selectedPath}
-              fullTree={displayTree}
               onSidebarUpdate={handleSidebarUpdate}
               onAddSubpage={handleAddSubpage}
               addingSubpageUnder={showNewPage ? newPageParent : null}
@@ -742,6 +859,8 @@ function KBEditorPage() {
                 ref={editorRef}
                 initialContent={editContent}
                 onChange={scheduleSave}
+                pageIndex={pageIndex}
+                kbSlug={kbSlug}
               />
             </div>
           </>
@@ -759,11 +878,25 @@ function KBEditorPage() {
 
 type BlockPageEditorHandle = { getMarkdown: () => string }
 
+type PageIndexEntry = { id: string | null; slug: string; title: string }
+
+const wikilinkSchema = BlockNoteSchema.create({
+  inlineContentSpecs: {
+    ...defaultInlineContentSpecs,
+    wikilink: WikiLink,
+  },
+})
+
 const BlockPageEditor = forwardRef<
   BlockPageEditorHandle,
-  { initialContent: string; onChange: () => void }
->(({ initialContent, onChange }, ref) => {
-  const editor = useCreateBlockNote()
+  {
+    initialContent: string
+    onChange: () => void
+    pageIndex?: PageIndexEntry[]
+    kbSlug?: string
+  }
+>(({ initialContent, onChange, pageIndex = [], kbSlug = '' }, ref) => {
+  const editor = useCreateBlockNote({ schema: wikilinkSchema })
 
   useEffect(() => {
     if (!initialContent) return
@@ -782,26 +915,64 @@ const BlockPageEditor = forwardRef<
       theme="light"
       className="min-h-full"
       onChange={onChange}
-    />
+      slashMenu={false}
+    >
+      <SuggestionMenuController
+        triggerCharacter="/"
+        getItems={async (query) => {
+          const defaultItems = await getDefaultReactSlashMenuItems(editor)
+          const wikilinkItem = {
+            title: "Link to pagina",
+            subtext: "Koppel aan een andere pagina in deze kennisbank",
+            icon: <span style={{ fontSize: '1.1em' }}>📄</span>,
+            group: "Basisblokken",
+            onItemClick: () => {
+              editor.insertInlineContent("[[")
+            },
+          }
+          const allItems = [...defaultItems, wikilinkItem]
+          return allItems.filter((item) =>
+            query === "" || item.title.toLowerCase().includes(query.toLowerCase())
+          )
+        }}
+      />
+      <SuggestionMenuController
+        triggerCharacter="["
+        getItems={async (query) => {
+          const search = query.startsWith("[") ? query.slice(1).toLowerCase() : query.toLowerCase()
+          const filtered = pageIndex.filter((p) =>
+            search === "" ||
+            p.title.toLowerCase().includes(search) ||
+            p.slug.includes(search)
+          )
+          return filtered.slice(0, 10).map((p) => ({
+            title: p.title,
+            onItemClick: () => {
+              editor.insertInlineContent([
+                {
+                  type: "wikilink",
+                  props: { pageId: p.id ?? p.slug, title: p.title, kbSlug },
+                } as any,
+                " ",
+              ])
+            },
+          }))
+        }}
+      />
+    </BlockNoteView>
   )
 })
 BlockPageEditor.displayName = 'BlockPageEditor'
 
-// ─── Nav tree ─────────────────────────────────────────────────────────────────
+// ─── Nav tree (flat-list, single DndContext) ───────────────────────────────────
 
 interface NavTreeProps {
   nodes: NavNode[]
   selectedPath: string | null
   onSelect: (node: NavNode) => void
-  depth?: number
   activeTitle?: string
   activePath?: string | null
-  // The full root tree (needed to compute full-tree mutations for sidebar API)
-  fullTree: NavNode[]
   onSidebarUpdate: (newTree: NavNode[]) => void
-  // Internal: path of the parent node (null = root level)
-  parentPath?: string | null
-  // Subpage creation
   onAddSubpage: (parentPath: string) => void
   addingSubpageUnder: string | null
   newPageTitle: string
@@ -814,12 +985,9 @@ function NavTree({
   nodes,
   selectedPath,
   onSelect,
-  depth = 0,
   activeTitle,
   activePath,
-  fullTree,
   onSidebarUpdate,
-  parentPath = null,
   onAddSubpage,
   addingSubpageUnder,
   newPageTitle,
@@ -827,157 +995,162 @@ function NavTree({
   onNewPageConfirm,
   onNewPageCancel,
 }: NavTreeProps) {
-  const [activeNode, setActiveNode] = useState<NavNode | null>(null)
-  const [nestTarget, setNestTarget] = useState<string | null>(null)
-  const nestTargetRef = useRef<string | null>(null)
-  const pointerYRef = useRef(0)
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => { pointerYRef.current = e.clientY }
-    document.addEventListener('mousemove', onMove)
-    return () => document.removeEventListener('mousemove', onMove)
-  }, [])
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [projection, setProjection] = useState<Projection | null>(null)
+  const deltaXRef = useRef(0)
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
 
+  const flatNodes = flattenTree(nodes, collapsedIds)
+
   function handleDragStart(event: DragStartEvent) {
-    const node = nodes.find((n) => n.path === event.active.id)
-    setActiveNode(node ?? null)
-    setNestTarget(null)
-    nestTargetRef.current = null
+    setActiveId(event.active.id as string)
+    setProjection(null)
+    deltaXRef.current = 0
   }
 
-  function handleDragOver(event: DragOverEvent) {
-    const { over } = event
-    if (!over) {
-      nestTargetRef.current = null
-      setNestTarget(null)
+  function handleDragMove(event: DragMoveEvent) {
+    deltaXRef.current = event.delta.x
+    const { active, over } = event
+    if (!over || active.id === over.id) {
+      setProjection(null)
       return
     }
-    const overId = String(over.id)
-    // Skip nesting into self
-    if (overId === String(event.active.id)) {
-      nestTargetRef.current = null
-      setNestTarget(null)
-      return
-    }
-    const overEl = document.querySelector(`[data-sortable-path="${overId}"]`)
-    if (!overEl) {
-      nestTargetRef.current = null
-      setNestTarget(null)
-      return
-    }
-    const rect = overEl.getBoundingClientRect()
-    const relY = (pointerYRef.current - rect.top) / rect.height
-    const isNestZone = relY > 0.15 && relY < 0.85
-    const newNestTarget = isNestZone ? overId : null
-    nestTargetRef.current = newNestTarget
-    setNestTarget(newNestTarget)
+    setProjection(
+      getProjection(flatNodes, active.id as string, over.id as string, event.delta.x)
+    )
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    const currentNestTarget = nestTargetRef.current
-    setActiveNode(null)
-    setNestTarget(null)
-    nestTargetRef.current = null
-
     const { active, over } = event
+    setActiveId(null)
+    setProjection(null)
+    deltaXRef.current = 0
+
     if (!over || active.id === over.id) return
 
-    const activeId = active.id as string
-    const overId = over.id as string
+    const proj = getProjection(
+      flatNodes,
+      active.id as string,
+      over.id as string,
+      deltaXRef.current,
+    )
 
-    // Nest operation: drop onto the center of a target item
-    if (currentNestTarget && currentNestTarget === overId) {
-      const activeNodeFull = nodes.find((n) => n.path === activeId)
-      if (!activeNodeFull) return
-      // Remove from current level
-      const withoutActive = nodes.filter((n) => n.path !== activeId)
-      // Rebuild full tree without active at current level
-      let updatedTree: NavNode[]
-      if (parentPath === null) {
-        updatedTree = withoutActive
-      } else {
-        updatedTree = fullTree.map(function patchParent(n: NavNode): NavNode {
-          if (n.path === parentPath) {
-            return { ...n, children: withoutActive }
-          }
-          if (n.children?.length) {
-            return { ...n, children: n.children.map(patchParent) }
-          }
-          return n
-        })
-      }
-      // Add as child of overId (strip .md for addChildToNode matching)
-      const overPathClean = overId.replace(/\.md$/, '')
-      const finalTree = addChildToNode(updatedTree, overPathClean, activeNodeFull.slug)
-      onSidebarUpdate(finalTree)
-      return
-    }
-
-    const oldIndex = nodes.findIndex((n) => n.path === activeId)
-    const newIndex = nodes.findIndex((n) => n.path === overId)
-    if (oldIndex === -1 || newIndex === -1) return
-
-    // Reorder within the same level
-    const newTree = applyReorder(fullTree, parentPath, oldIndex, newIndex)
+    const newTree = buildTree(flatNodes, proj, active.id as string)
     onSidebarUpdate(newTree)
   }
+
+  const activeFlat = activeId ? flatNodes.find((f) => f.id === activeId) : null
+
+  // Projected depth for the overlay — live update during drag
+  const projectedDepth = projection?.depth ?? activeFlat?.depth ?? 0
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
+      onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={nodes.map((n) => n.path)}
+        items={flatNodes.map((f) => f.id)}
         strategy={verticalListSortingStrategy}
       >
-        {nodes.map((node) => (
-          <SortableNavItem
-            key={node.path}
-            node={node}
-            selectedPath={selectedPath}
-            onSelect={onSelect}
-            depth={depth}
-            activeTitle={activeTitle}
-            activePath={activePath}
-            fullTree={fullTree}
-            onSidebarUpdate={onSidebarUpdate}
-            onAddSubpage={onAddSubpage}
-            addingSubpageUnder={addingSubpageUnder}
-            newPageTitle={newPageTitle}
-            onNewPageTitleChange={onNewPageTitleChange}
-            onNewPageConfirm={onNewPageConfirm}
-            onNewPageCancel={onNewPageCancel}
-            nestTarget={nestTarget}
-          />
-        ))}
+        <div className="relative">
+          {flatNodes.map((flat, index) => {
+            // Determine if we should render a drop indicator above this item
+            const showDropLineAbove =
+              projection !== null &&
+              activeId !== null &&
+              projection.newIndex === index &&
+              flat.id !== activeId
+
+            // Also check if drop indicator should appear at the very end
+            const isLast = index === flatNodes.length - 1
+            const showDropLineBelow =
+              isLast &&
+              projection !== null &&
+              activeId !== null &&
+              projection.newIndex >= flatNodes.length
+
+            return (
+              <div key={flat.id}>
+                {showDropLineAbove && (
+                  <div
+                    style={{
+                      height: '2px',
+                      background: 'var(--color-purple-accent)',
+                      marginLeft: `${projection.depth * INDENT_WIDTH + 8}px`,
+                      marginRight: '8px',
+                      borderRadius: '1px',
+                    }}
+                  />
+                )}
+                <SortableNavItem
+                  flat={flat}
+                  selectedPath={selectedPath}
+                  onSelect={onSelect}
+                  activeTitle={activeTitle}
+                  activePath={activePath}
+                  onSidebarUpdate={onSidebarUpdate}
+                  onAddSubpage={onAddSubpage}
+                  addingSubpageUnder={addingSubpageUnder}
+                  newPageTitle={newPageTitle}
+                  onNewPageTitleChange={onNewPageTitleChange}
+                  onNewPageConfirm={onNewPageConfirm}
+                  onNewPageCancel={onNewPageCancel}
+                  isCollapsed={collapsedIds.has(flat.id)}
+                  onToggleCollapse={(id) => {
+                    setCollapsedIds((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(id)) next.delete(id)
+                      else next.add(id)
+                      return next
+                    })
+                  }}
+                  flatNodes={flatNodes}
+                  isDraggingActive={!!activeId}
+                />
+                {showDropLineBelow && (
+                  <div
+                    style={{
+                      height: '2px',
+                      background: 'var(--color-purple-accent)',
+                      marginLeft: `${projection.depth * INDENT_WIDTH + 8}px`,
+                      marginRight: '8px',
+                      borderRadius: '1px',
+                    }}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
       </SortableContext>
       <DragOverlay>
-        {activeNode && (
-          <NavItemOverlay node={activeNode} depth={depth} activeTitle={activeTitle} activePath={activePath} />
+        {activeFlat && (
+          <NavItemOverlay
+            node={activeFlat.node}
+            projectedDepth={projectedDepth}
+            activeTitle={activeTitle}
+            activePath={activePath}
+          />
         )}
       </DragOverlay>
     </DndContext>
   )
 }
 
-interface NavItemProps {
-  node: NavNode
+interface SortableNavItemProps {
+  flat: FlatNode
   selectedPath: string | null
   onSelect: (node: NavNode) => void
-  depth: number
   activeTitle?: string
   activePath?: string | null
-  fullTree: NavNode[]
   onSidebarUpdate: (newTree: NavNode[]) => void
   onAddSubpage: (parentPath: string) => void
   addingSubpageUnder: string | null
@@ -985,35 +1158,40 @@ interface NavItemProps {
   onNewPageTitleChange: (val: string) => void
   onNewPageConfirm: (parentPath: string) => void
   onNewPageCancel: () => void
-  nestTarget?: string | null
+  isCollapsed: boolean
+  onToggleCollapse: (id: string) => void
+  flatNodes: FlatNode[]
+  isDraggingActive: boolean
 }
 
-function SortableNavItem(props: NavItemProps) {
-  const {
-    node,
-    selectedPath,
-    onSelect,
-    depth,
-    activeTitle,
-    activePath,
-    fullTree,
-    onSidebarUpdate,
-    onAddSubpage,
-    addingSubpageUnder,
-    newPageTitle,
-    onNewPageTitleChange,
-    onNewPageConfirm,
-    onNewPageCancel,
-    nestTarget,
-  } = props
-
-  const isExpandable = !!(node.children && node.children.length > 0)
-  const [open, setOpen] = useState(true)
+function SortableNavItem({
+  flat,
+  selectedPath,
+  onSelect,
+  activeTitle,
+  activePath,
+  onSidebarUpdate,
+  onAddSubpage,
+  addingSubpageUnder,
+  newPageTitle,
+  onNewPageTitleChange,
+  onNewPageConfirm,
+  onNewPageCancel,
+  isCollapsed,
+  onToggleCollapse,
+  flatNodes,
+  isDraggingActive,
+}: SortableNavItemProps) {
+  const { node, depth } = flat
   const [hovered, setHovered] = useState(false)
+  const [showContextMenu, setShowContextMenu] = useState(false)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+
+  const hasChildren = !!(node.children && node.children.length > 0)
+  const isDir = node.type === 'dir'
   const isSelected = selectedPath === node.path.replace(/\.md$/, '')
   const nodePath = node.path.replace(/\.md$/, '')
   const isAddingSubpageHere = addingSubpageUnder === nodePath
-  const isNestTarget = nestTarget === node.path
 
   const {
     attributes,
@@ -1027,12 +1205,63 @@ function SortableNavItem(props: NavItemProps) {
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.4 : 1,
+    opacity: isDragging ? 0 : 1,
   }
 
-  // Inline sub-page input shown directly below this item when active
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!showContextMenu) return
+    const handler = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setShowContextMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showContextMenu])
+
+  const paddingLeft = depth * INDENT_WIDTH + 8
+
+  const displayTitle =
+    activePath && activePath === node.path.replace(/\.md$/, '')
+      ? (activeTitle ?? node.title)
+      : node.title
+
+  // Context menu actions
+  function handleMoveToRoot() {
+    setShowContextMenu(false)
+    // Find the active flat node and rebuild with depth=0 and parentId=null
+    const proj: Projection = { depth: 0, parentId: null, newIndex: flatNodes.length - 1 }
+    const newTree = buildTree(flatNodes, proj, node.path)
+    onSidebarUpdate(newTree)
+  }
+
+  function handlePromote() {
+    setShowContextMenu(false)
+    if (flat.depth === 0) return
+    // Move to depth-1, find new parent
+    const currentIndex = flatNodes.findIndex((f) => f.id === node.path)
+    let newParentId: string | null = null
+    if (flat.depth >= 2) {
+      for (let i = currentIndex - 1; i >= 0; i--) {
+        if (flatNodes[i].depth === flat.depth - 2) {
+          newParentId = flatNodes[i].id
+          break
+        }
+      }
+    }
+    const proj: Projection = {
+      depth: flat.depth - 1,
+      parentId: newParentId,
+      newIndex: currentIndex,
+    }
+    const newTree = buildTree(flatNodes, proj, node.path)
+    onSidebarUpdate(newTree)
+  }
+
+  // Inline sub-page input shown below this item when active
   const subpageInput = isAddingSubpageHere && (
-    <div className="py-1 pr-2" style={{ paddingLeft: `${20 + depth * 12}px` }}>
+    <div className="py-1 pr-2" style={{ paddingLeft: `${paddingLeft + 12}px` }}>
       <div className="flex gap-1 items-center">
         <Input
           value={newPageTitle}
@@ -1066,25 +1295,67 @@ function SortableNavItem(props: NavItemProps) {
     </div>
   )
 
-  if (node.type === 'dir' && !isExpandable) {
-    // Non-expandable folder label (empty dir, no children)
-    return (
-      <div ref={setNodeRef} style={style} data-sortable-path={node.path}>
-        <div
-          className={`flex w-full items-center${isNestTarget ? ' border-l-2 border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5' : ''}`}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
+  return (
+    <div ref={setNodeRef} style={style}>
+      <div
+        className={`flex w-full items-center py-1 text-xs transition-colors group ${
+          isSelected && !isDir
+            ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
+            : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
+        }`}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        {/* Indent spacer */}
+        <span style={{ width: `${paddingLeft}px`, flexShrink: 0 }} />
+
+        {/* Collapse/expand chevron or icon */}
+        <div className="relative w-5 h-5 shrink-0 flex items-center justify-center mr-1">
+          {hasChildren ? (
+            <>
+              {isDir
+                ? <FolderOpen size={13} className="shrink-0 transition-opacity group-hover:opacity-0" />
+                : <span className="text-sm leading-none transition-opacity group-hover:opacity-0 select-none">{node.icon ?? DEFAULT_ICON}</span>
+              }
+              <button
+                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => { e.stopPropagation(); onToggleCollapse(node.path) }}
+                tabIndex={-1}
+                aria-label={isCollapsed ? 'Uitklappen' : 'Inklappen'}
+                type="button"
+              >
+                <ChevronRight
+                  size={12}
+                  className={`text-[var(--color-muted-foreground)] transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                />
+              </button>
+            </>
+          ) : (
+            isDir
+              ? <FolderOpen size={13} className="shrink-0 text-[var(--color-muted-foreground)]" />
+              : <span className="shrink-0 text-sm leading-none select-none">{node.icon ?? DEFAULT_ICON}</span>
+          )}
+        </div>
+
+        {/* Title button */}
+        <button
+          className={`flex flex-1 items-center min-w-0 text-left ${
+            isDir
+              ? 'font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+              : isSelected
+                ? 'text-[var(--color-purple-deep)] font-medium'
+                : 'text-[var(--color-foreground)]'
+          }`}
+          onClick={() => { if (!isDir) onSelect(node) }}
+          disabled={isDir && !hasChildren}
         >
-          <button
-            className="flex flex-1 items-center gap-1.5 py-1 text-xs font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] min-w-0"
-            style={{ paddingLeft: `${12 + depth * 12}px` }}
-            disabled
-          >
-            <FolderOpen size={13} className="shrink-0" />
-            <span className="truncate">{node.title}</span>
-          </button>
-          <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
-            {hovered && (
+          <span className="truncate">{displayTitle}</span>
+        </button>
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
+          {(hovered || showContextMenu) && !isDraggingActive && (
+            <>
               <button
                 type="button"
                 className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
@@ -1094,145 +1365,42 @@ function SortableNavItem(props: NavItemProps) {
               >
                 <Plus size={10} />
               </button>
-            )}
-            <span className="cursor-grab touch-none" {...attributes} {...listeners}>
-              <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
-            </span>
-          </div>
-        </div>
-        {subpageInput}
-      </div>
-    )
-  }
-
-  if (isExpandable) {
-    // Expandable node: could be dir or file with children
-    const isDir = node.type === 'dir'
-
-    return (
-      <div ref={setNodeRef} style={style} data-sortable-path={node.path}>
-        <div
-          className={`flex w-full items-center group${isNestTarget ? ' border-l-2 border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5' : ''}`}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-        >
-          <button
-            className={`flex flex-1 items-center gap-1.5 py-1 text-xs min-w-0 ${
-              isDir
-                ? 'font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
-                : isSelected
-                  ? 'text-[var(--color-purple-deep)] font-medium'
-                  : 'text-[var(--color-foreground)] hover:text-[var(--color-foreground)]'
-            }`}
-            style={{ paddingLeft: `${12 + depth * 12}px` }}
-            onClick={() => {
-              if (!isDir) onSelect(node)
-            }}
-          >
-            {/* Emoji + chevron overlay — same physical space */}
-            <div className="relative w-5 h-5 shrink-0 flex items-center justify-center">
-              {/* Emoji (or folder icon for dirs): always visible, hidden on hover */}
-              {isDir
-                ? <FolderOpen size={13} className="shrink-0 transition-opacity group-hover:opacity-0" />
-                : <span className="text-sm leading-none transition-opacity group-hover:opacity-0 select-none">{node.icon ?? DEFAULT_ICON}</span>
-              }
-              {/* Chevron: only visible on hover, overlaid on top */}
-              <button
-                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
-                tabIndex={-1}
-                aria-label={open ? 'Inklappen' : 'Uitklappen'}
-                type="button"
-              >
-                <ChevronRight
-                  size={12}
-                  className={`text-[var(--color-muted-foreground)] transition-transform ${open ? 'rotate-90' : ''}`}
-                />
-              </button>
-            </div>
-            <span className="truncate">
-              {!isDir && activePath && activePath === node.path.replace(/\.md$/, '')
-                ? (activeTitle ?? node.title)
-                : node.title}
-            </span>
-          </button>
-          <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
-            {hovered && (
-              <button
-                type="button"
-                className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
-                onClick={() => { setOpen(true); onAddSubpage(nodePath) }}
-                title={m.docs_pages_add_subpage()}
-                aria-label={m.docs_pages_add_subpage()}
-              >
-                <Plus size={10} />
-              </button>
-            )}
-            <span className="cursor-grab touch-none" {...attributes} {...listeners}>
-              <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
-            </span>
-          </div>
-        </div>
-        {subpageInput}
-        {open && node.children && (
-          <NavTree
-            nodes={node.children}
-            selectedPath={selectedPath}
-            onSelect={onSelect}
-            depth={depth + 1}
-            activeTitle={activeTitle}
-            activePath={activePath}
-            fullTree={fullTree}
-            onSidebarUpdate={onSidebarUpdate}
-            parentPath={node.path}
-            onAddSubpage={onAddSubpage}
-            addingSubpageUnder={addingSubpageUnder}
-            newPageTitle={newPageTitle}
-            onNewPageTitleChange={onNewPageTitleChange}
-            onNewPageConfirm={onNewPageConfirm}
-            onNewPageCancel={onNewPageCancel}
-          />
-        )}
-      </div>
-    )
-  }
-
-  // Plain file node (no children)
-  const displayTitle =
-    activePath && activePath === node.path.replace(/\.md$/, '')
-      ? (activeTitle ?? node.title)
-      : node.title
-
-  return (
-    <div ref={setNodeRef} style={style} data-sortable-path={node.path}>
-      <div
-        className={`flex w-full items-center py-1 text-xs transition-colors ${
-          isSelected
-            ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
-            : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
-        }${isNestTarget ? ' border-l-2 border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5' : ''}`}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <button
-          className="flex flex-1 items-center gap-1.5 min-w-0"
-          style={{ paddingLeft: `${16 + depth * 12}px` }}
-          onClick={() => onSelect(node)}
-        >
-          <span className="shrink-0 text-sm leading-none">{node.icon ?? DEFAULT_ICON}</span>
-          <span className="truncate">{displayTitle}</span>
-        </button>
-        <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
-          {hovered && (
-            <button
-              type="button"
-              className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
-              onClick={() => onAddSubpage(nodePath)}
-              title={m.docs_pages_add_subpage()}
-              aria-label={m.docs_pages_add_subpage()}
-            >
-              <Plus size={10} />
-            </button>
+              <div className="relative" ref={contextMenuRef}>
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+                  onClick={() => setShowContextMenu((v) => !v)}
+                  aria-label="Meer opties"
+                >
+                  <MoreHorizontal size={10} />
+                </button>
+                {showContextMenu && (
+                  <div className="absolute right-0 top-5 z-20 w-44 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md py-1">
+                    {flat.depth > 0 && (
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]"
+                        onClick={handlePromote}
+                      >
+                        {m.docs_tree_promote()}
+                      </button>
+                    )}
+                    {flat.depth > 0 && (
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]"
+                        onClick={handleMoveToRoot}
+                      >
+                        {m.docs_tree_move_to_root()}
+                      </button>
+                    )}
+                    {flat.depth === 0 && (
+                      <p className="px-3 py-1.5 text-xs text-[var(--color-muted-foreground)] italic">
+                        Al op rootniveau
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
           )}
           <span className="cursor-grab touch-none" {...attributes} {...listeners}>
             <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
@@ -1244,15 +1412,15 @@ function SortableNavItem(props: NavItemProps) {
   )
 }
 
-// Overlay shown while dragging
+// Overlay shown while dragging — reflects live projected depth
 function NavItemOverlay({
   node,
-  depth,
+  projectedDepth,
   activeTitle,
   activePath,
 }: {
   node: NavNode
-  depth: number
+  projectedDepth: number
   activeTitle?: string
   activePath?: string | null
 }) {
@@ -1262,11 +1430,12 @@ function NavItemOverlay({
       : node.title
 
   const isDir = node.type === 'dir'
+  const paddingLeft = projectedDepth * INDENT_WIDTH + 8
 
   return (
     <div
       className="flex items-center gap-1.5 rounded text-xs font-medium bg-[var(--color-card)] border border-[var(--color-border)] shadow-md py-1 pr-2 text-[var(--color-purple-deep)]"
-      style={{ paddingLeft: `${(isDir ? 12 : 16) + depth * 12}px` }}
+      style={{ paddingLeft: `${paddingLeft}px` }}
     >
       {isDir
         ? <FolderOpen size={13} className="shrink-0" />
