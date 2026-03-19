@@ -4,6 +4,7 @@ import yaml from "js-yaml";
 export type PageFrontmatter = {
   title?: string;
   description?: string;
+  icon?: string;
   edit_access?: "org" | string[];
 };
 
@@ -38,6 +39,46 @@ export function parseMeta(raw: string): FolderMeta {
 export function serializeMeta(meta: FolderMeta): string {
   return yaml.dump(meta, { lineWidth: -1 });
 }
+
+// ─── Sidebar manifest ─────────────────────────────────────────────────────────
+
+export type SidebarEntry = {
+  slug: string;
+  children?: SidebarEntry[];
+};
+
+export type SidebarManifest = {
+  pages: SidebarEntry[];
+};
+
+export function parseSidebar(raw: string): SidebarManifest {
+  const data = (yaml.load(raw) ?? {}) as { pages?: SidebarEntry[] };
+  return { pages: data.pages ?? [] };
+}
+
+export function serializeSidebar(manifest: SidebarManifest): string {
+  return yaml.dump(manifest, { lineWidth: -1 });
+}
+
+/**
+ * Recursively removes all occurrences of `slug` from the sidebar manifest tree.
+ */
+export function removeSlugFromSidebar(
+  manifest: SidebarManifest,
+  slug: string
+): SidebarManifest {
+  function filterEntries(entries: SidebarEntry[]): SidebarEntry[] {
+    return entries
+      .filter((e) => e.slug !== slug)
+      .map((e) => ({
+        ...e,
+        ...(e.children ? { children: filterEntries(e.children) } : {}),
+      }));
+  }
+  return { pages: filterEntries(manifest.pages) };
+}
+
+// ─── Slug helpers ─────────────────────────────────────────────────────────────
 
 /**
  * Returns a slug-safe string from a title.

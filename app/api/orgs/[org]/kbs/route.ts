@@ -53,6 +53,12 @@ export async function POST(
     `title: ${name}\norder: []\n`,
     "Initialize knowledge base"
   );
+  await gitea.putFile(
+    giteaRepo,
+    "_sidebar.yaml",
+    "pages: []\n",
+    "Initialize navigation"
+  );
 
   const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo);
   return NextResponse.json(kb, { status: 201 });

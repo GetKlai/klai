@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
-import { serializePage, parsePage } from "@/lib/markdown";
+import {
+  serializePage,
+  parsePage,
+  parseSidebar,
+  serializeSidebar,
+  removeSlugFromSidebar,
+} from "@/lib/markdown";
 
 type Params = { org: string; kb: string; path: string[] };
 
@@ -61,6 +67,7 @@ export async function PUT(
 
   const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
   const currentSha = file?.sha ?? sha;
+  const isNewPage = !currentSha;
 
   await gitea.putFile(
     resolved.kb.gitea_repo,
@@ -69,6 +76,23 @@ export async function PUT(
     `Update ${filePath}`,
     currentSha
   );
+
+  // Append new slug to _sidebar.yaml when creating a new page
+  if (isNewPage) {
+    const sidebarFile = await gitea.getFile(resolved.kb.gitea_repo, "_sidebar.yaml");
+    if (sidebarFile) {
+      const sidebarRaw = await gitea.getFileContent(resolved.kb.gitea_repo, "_sidebar.yaml");
+      const manifest = sidebarRaw ? parseSidebar(sidebarRaw) : { pages: [] };
+      manifest.pages.push({ slug: pagePath });
+      await gitea.putFile(
+        resolved.kb.gitea_repo,
+        "_sidebar.yaml",
+        serializeSidebar(manifest),
+        `Add ${pagePath} to navigation`,
+        sidebarFile.sha
+      );
+    }
+  }
 
   return NextResponse.json({ ok: true });
 }
@@ -96,6 +120,23 @@ export async function DELETE(
     file.sha,
     `Delete ${filePath}`
   );
+
+  // Remove slug from _sidebar.yaml after deleting the page
+  const sidebarFile = await gitea.getFile(resolved.kb.gitea_repo, "_sidebar.yaml");
+  if (sidebarFile) {
+    const sidebarRaw = await gitea.getFileContent(resolved.kb.gitea_repo, "_sidebar.yaml");
+    if (sidebarRaw) {
+      const slug = path.join("/");
+      const updated = removeSlugFromSidebar(parseSidebar(sidebarRaw), slug);
+      await gitea.putFile(
+        resolved.kb.gitea_repo,
+        "_sidebar.yaml",
+        serializeSidebar(updated),
+        `Remove ${slug} from navigation`,
+        sidebarFile.sha
+      );
+    }
+  }
 
   return NextResponse.json({ ok: true });
 }

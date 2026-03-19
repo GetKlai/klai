@@ -133,23 +133,76 @@ export async function deleteFile(
 export type NavNode = {
   slug: string;
   title: string;
+  icon?: string;      // emoji from frontmatter
   path: string;       // full path from repo root, no leading slash
   type: "file" | "dir";
   children?: NavNode[];
 };
 
 import yaml from "js-yaml";
+import { parseSidebar, type SidebarEntry } from "./markdown";
+
+// ─── Sidebar-based nav tree ───────────────────────────────────────────────────
 
 /**
- * Build the navigation tree for a KB by reading _meta.yaml files recursively.
- * Returns the ordered tree used to render the sidebar.
+ * Fetch a page's title and icon from its frontmatter.
+ * Returns defaults derived from the slug if the file is missing.
  */
-export async function buildNavTree(
+async function fetchPageMeta(
+  repo: string,
+  slug: string
+): Promise<{ title: string; icon?: string; path: string }> {
+  const filePath = `${slug}.md`;
+  const raw = await getFileContent(repo, filePath);
+  const defaultTitle = slug.split("/").at(-1)!.replace(/-/g, " ");
+
+  if (!raw) return { title: defaultTitle, path: filePath };
+
+  const titleMatch = raw.match(/^---[\s\S]*?^title:\s*(.+)$/m);
+  const iconMatch = raw.match(/^---[\s\S]*?^icon:\s*(.+)$/m);
+
+  const title = titleMatch
+    ? titleMatch[1].trim().replace(/^["']|["']$/g, "")
+    : defaultTitle;
+  const icon = iconMatch
+    ? iconMatch[1].trim().replace(/^["']|["']$/g, "")
+    : undefined;
+
+  return { title, icon, path: filePath };
+}
+
+async function buildNavTreeFromSidebar(
+  repo: string,
+  entries: SidebarEntry[]
+): Promise<NavNode[]> {
+  const nodes: NavNode[] = [];
+
+  for (const entry of entries) {
+    const { title, icon, path } = await fetchPageMeta(repo, entry.slug);
+    const node: NavNode = {
+      slug: entry.slug,
+      title,
+      path,
+      type: "file",
+      ...(icon ? { icon } : {}),
+      ...(entry.children?.length
+        ? { children: await buildNavTreeFromSidebar(repo, entry.children) }
+        : {}),
+    };
+    nodes.push(node);
+  }
+
+  return nodes;
+}
+
+// ─── Legacy _meta.yaml nav tree ───────────────────────────────────────────────
+
+async function buildNavTreeFromMeta(
   repo: string,
   dirPath = "",
   depth = 0
 ): Promise<NavNode[]> {
-  if (depth > 5) return []; // guard against deep nesting
+  if (depth > 5) return [];
 
   const entries = await listDir(repo, dirPath);
   const metaFile = entries.find((e) => e.name === "_meta.yaml" && e.type === "file");
@@ -168,7 +221,6 @@ export async function buildNavTree(
 
   const nodes: NavNode[] = [];
 
-  // Items in explicit order first, then remaining alphabetically
   const nonMeta = entries.filter((e) => e.name !== "_meta.yaml");
   const orderedEntries = [
     ...order
@@ -184,7 +236,7 @@ export async function buildNavTree(
     const path = entry.path;
 
     if (entry.type === "dir") {
-      const children = await buildNavTree(repo, path, depth + 1);
+      const children = await buildNavTreeFromMeta(repo, path, depth + 1);
       nodes.push({
         slug,
         title: labels[slug] ?? slug.replace(/-/g, " "),
@@ -193,7 +245,6 @@ export async function buildNavTree(
         children,
       });
     } else if (entry.name.endsWith(".md")) {
-      // Read title from frontmatter if available
       const content = await getFileContent(repo, path);
       let title = labels[slug] ?? slug.replace(/-/g, " ");
       if (content) {
@@ -205,4 +256,27 @@ export async function buildNavTree(
   }
 
   return nodes;
+}
+
+// ─── Public entry point ───────────────────────────────────────────────────────
+
+/**
+ * Build the navigation tree for a KB.
+ * Tries _sidebar.yaml first; falls back to _meta.yaml directory scanning.
+ */
+export async function buildNavTree(
+  repo: string,
+  dirPath = "",
+  depth = 0
+): Promise<NavNode[]> {
+  // Only check for _sidebar.yaml at the root level
+  if (depth === 0) {
+    const sidebarRaw = await getFileContent(repo, "_sidebar.yaml");
+    if (sidebarRaw) {
+      const manifest = parseSidebar(sidebarRaw);
+      return buildNavTreeFromSidebar(repo, manifest.pages);
+    }
+  }
+
+  return buildNavTreeFromMeta(repo, dirPath, depth);
 }
