@@ -19,14 +19,14 @@ function collectSlugs(entries: SidebarEntry[]): string[] {
 }
 
 export type PageIndexEntry = {
-  id: string;
+  id: string | null;
   slug: string;
   title: string;
 };
 
 // GET /api/orgs/{org}/kbs/{kb}/pages/index
 // Returns all pages with their stable id, slug, and title.
-// Pages without an id (never saved since this feature launched) are excluded.
+// Pages without an id have id: null; the real UUID is assigned on the next save.
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<Params> }
@@ -56,11 +56,10 @@ export async function GET(
     if (!raw) continue;
 
     const { frontmatter } = parsePage(raw);
-    if (!frontmatter.id) continue;
 
     const defaultTitle = slug.split("/").at(-1)!.replace(/-/g, " ");
     entries.push({
-      id: frontmatter.id,
+      id: frontmatter.id ?? null,
       slug,
       title: frontmatter.title ?? defaultTitle,
     });
