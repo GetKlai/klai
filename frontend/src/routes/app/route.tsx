@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, Mic, BookOpen } from 'lucide-react'
+import { MessageSquare, Mic, BookOpen, BookMarked } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
@@ -18,6 +18,7 @@ function AppLayout() {
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
     { to: '/app/focus', label: m.app_tool_focus_title(), icon: BookOpen },
+    { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
   ]
 
   useEffect(() => {

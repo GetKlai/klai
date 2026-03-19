@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, Mic, BookOpen } from 'lucide-react'
+import { MessageSquare, Mic, BookOpen, BookMarked } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/')({
@@ -36,6 +36,12 @@ function AppHome() {
       description: m.app_tool_focus_description(),
       icon: BookOpen,
       href: '/app/focus',
+    },
+    {
+      title: m.app_tool_docs_title(),
+      description: m.app_tool_docs_description(),
+      icon: BookMarked,
+      href: '/app/docs',
     },
   ]
 
