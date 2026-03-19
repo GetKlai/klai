@@ -257,11 +257,14 @@ class ZitadelClient:
         put_resp.raise_for_status()
 
     async def resend_init_mail(self, org_id: str, user_id: str) -> None:
-        """Resend the initialization email to a user who hasn't completed setup."""
+        """Resend the invite email to a user who hasn't completed setup.
+
+        Uses the Zitadel v2 invite_code API. The Management v1 resend_init_mail
+        endpoint returns NOT_FOUND once the original init code expires (72h TTL).
+        """
         resp = await self._http.post(
-            f"/management/v1/users/{user_id}/resend_init_mail",
-            headers={"x-zitadel-orgid": org_id},
-            json={},
+            f"/v2/users/{user_id}/invite_code",
+            json={"sendCode": {}},
         )
         resp.raise_for_status()
 
