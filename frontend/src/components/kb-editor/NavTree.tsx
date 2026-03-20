@@ -11,7 +11,7 @@ import {
 } from '@dnd-kit/core'
 import type { DragEndEvent, DragStartEvent, DragMoveEvent, CollisionDetection } from '@dnd-kit/core'
 import { INDENT_WIDTH, getDropTarget, applyDrop } from '@/lib/kb-editor/tree-utils'
-import type { NavNode, FlatNode, DropTarget, DropIntent } from '@/lib/kb-editor/tree-utils'
+import type { NavNode, FlatNode, DropTarget } from '@/lib/kb-editor/tree-utils'
 import { useTreeNavigation } from '@/lib/kb-editor/useTreeNavigation'
 import { SortableNavItem } from './SortableNavItem'
 import { NavItemOverlay } from './NavItemOverlay'

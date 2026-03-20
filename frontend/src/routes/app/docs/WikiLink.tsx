@@ -61,6 +61,7 @@ export const WikiLink = createReactInlineContentSpec(
       <a
         data-wikilink={inlineContent.props.pageId}
         data-title={inlineContent.props.title}
+        data-icon={inlineContent.props.icon}
       >
         {inlineContent.props.title}
       </a>
@@ -72,6 +73,7 @@ export const WikiLink = createReactInlineContentSpec(
         pageId,
         title: element.getAttribute("data-title") ?? element.textContent ?? "Untitled",
         kbSlug: "",
+        icon: element.getAttribute("data-icon") ?? "",
       }
     },
   }

@@ -35,13 +35,18 @@ export const BlockPageEditor = forwardRef<
 
   useEffect(() => {
     if (!initialContent) return
-    const blocks = editor.tryParseMarkdownToBlocks(initialContent)
+    // HTML content (saved after wikilink support): parse as HTML so custom
+    // inline specs (wikilink) are restored via their parse() method.
+    // Legacy markdown content (no leading '<'): fall back to markdown parser.
+    const blocks = initialContent.trimStart().startsWith('<')
+      ? editor.tryParseHTMLToBlocks(initialContent)
+      : editor.tryParseMarkdownToBlocks(initialContent)
     editor.replaceBlocks(editor.document, blocks)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useImperativeHandle(ref, () => ({
-    getMarkdown: () => editor.blocksToMarkdownLossy(editor.document),
+    getMarkdown: () => editor.blocksToHTMLLossy(editor.document),
     insertWikilink: (pageId: string, title: string, icon?: string) => {
       editor.focus()
       editor.insertInlineContent([
