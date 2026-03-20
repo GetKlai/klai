@@ -172,7 +172,7 @@ export function TreeItem({
         </span>
 
         <div className="w-5 h-5 shrink-0 flex items-center justify-center mr-1">
-          {hasChildren ? (
+          {hasChildren && hovered ? (
             <button
               className="flex items-center justify-center w-full h-full"
               onClick={(e) => { e.stopPropagation(); onToggleCollapse(node.path) }}
@@ -185,10 +185,10 @@ export function TreeItem({
                 className={`text-[var(--color-muted-foreground)] transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
               />
             </button>
+          ) : isDir ? (
+            <FolderOpen size={13} className="shrink-0 text-[var(--color-muted-foreground)]" />
           ) : (
-            isDir
-              ? <FolderOpen size={13} className="shrink-0 text-[var(--color-muted-foreground)]" />
-              : null
+            <span className="shrink-0 text-sm leading-none select-none">{node.icon ?? DEFAULT_ICON}</span>
           )}
         </div>
 
@@ -203,10 +203,7 @@ export function TreeItem({
           onClick={() => { if (!isDir) onSelect(node) }}
           disabled={isDir && !hasChildren}
         >
-          {isDir
-            ? <FolderOpen size={13} className="shrink-0" />
-            : <span className="shrink-0 text-sm leading-none select-none">{node.icon ?? DEFAULT_ICON}</span>
-          }
+          {isDir && <FolderOpen size={13} className="shrink-0" />}
           <span className="truncate">{displayTitle}</span>
         </button>
 
