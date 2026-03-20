@@ -230,4 +230,29 @@ Do NOT add `Content-Security-Policy` here. Each application sets its own.
 
 ---
 
+## infra-never-modify-env-secrets
+
+**Severity:** CRIT
+
+**Trigger:** Any session that needs to add, change, or fix a variable in `/opt/klai/.env` on core-01
+
+NEVER modify existing secret values (PATs, API tokens, passwords) in `/opt/klai/.env` via shell commands like `echo >>`, `sed -i`, or manual editing. These operations are fragile: dollar signs get interpolated, values get truncated, and the result is a silently broken deployment where every auth call returns 401.
+
+**What has gone wrong (multiple times):**
+1. A session used `echo "VAR=value$with_dollar"` -- the shell ate the `$with_dollar` part
+2. A session used `sed -i` to update a PAT -- the replacement value was wrong/truncated
+3. The portal-api kept running with the corrupted PAT, returning 401 on every login attempt
+4. Diagnosing the issue is hard because the server appears healthy and the PAT "looks" valid
+
+**Rules:**
+1. **NEVER overwrite** `PORTAL_API_ZITADEL_PAT`, `PORTAL_API_DB_PASSWORD`, or any other existing secret
+2. **Adding a NEW variable** is allowed but must use single-quoted values: `echo 'NEW_VAR=value' >> /opt/klai/.env`
+3. If a secret needs changing, tell the user to do it manually or use SOPS
+4. After ANY `.env` change, verify the value inside the container: `docker exec <container> printenv VAR_NAME`
+
+**If login breaks with "Errors.Token.Invalid":**
+The PAT in the `.env` is almost certainly corrupted. Ask the user for the correct value from the Zitadel console. Do NOT assume the PAT expired -- it expires in 2030.
+
+---
+
 *(Add more entries here with `/retro "description"` after infrastructure incidents.)*
