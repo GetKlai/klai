@@ -1,12 +1,12 @@
 """
 Auth endpoints for the custom login UI.
 
-POST /api/auth/login          — email+password → Zitadel session → OIDC callback URL
-POST /api/auth/totp-login     — complete login with TOTP code (when user has 2FA)
-POST /api/auth/sso-complete   — reuse portal session to silently complete LibreChat OIDC
-POST /api/auth/logout         — clear the SSO cookie
-POST /api/auth/totp/setup     — initiate TOTP registration (requires Bearer token)
-POST /api/auth/totp/confirm   — activate TOTP after scanning QR (requires Bearer token)
+POST /api/auth/login          -- email+password -> Zitadel session -> OIDC callback URL
+POST /api/auth/totp-login     -- complete login with TOTP code (when user has 2FA)
+POST /api/auth/sso-complete   -- reuse portal session to silently complete LibreChat OIDC
+POST /api/auth/logout         -- clear the SSO cookie
+POST /api/auth/totp/setup     -- initiate TOTP registration (requires Bearer token)
+POST /api/auth/totp/confirm   -- activate TOTP after scanning QR (requires Bearer token)
 
 The authRequestId is issued by Zitadel when it redirects to the custom login UI:
   https://my.getklai.com/login?authRequest=<id>
@@ -16,20 +16,27 @@ for the finalize step to succeed.
 
 SSO cookie mechanism
 --------------------
-When a user logs in, the portal stores their Zitadel session (session_id + session_token)
-in an in-memory cache and sets a ``klai_sso`` cookie scoped to ``.getklai.com``.
+When a user logs in, the portal encrypts their Zitadel session (session_id + session_token)
+into the ``klai_sso`` cookie using Fernet symmetric encryption.  The cookie is scoped to
+``.getklai.com`` so all subdomains can send it.
 
 When LibreChat later opens an OIDC flow in an iframe, Zitadel redirects to
 ``my.getklai.com/login?authRequest=<id>``.  The login page sends the cookie to
-``/api/auth/sso-complete``, which reuses the cached session to finalize the auth
-request automatically — no second password prompt.
+``/api/auth/sso-complete``, which decrypts it and reuses the session to finalize the auth
+request automatically -- no second password prompt.
+
+This is fully stateless on the server side: no in-memory cache, survives restarts, and
+scales horizontally.  Zitadel is the sole authority on session validity -- if the session
+has expired there, ``finalize_auth_request`` will fail and the user sees the login form.
 """
+import json
 import logging
 import secrets
 import time
 from urllib.parse import urlparse
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
@@ -75,12 +82,27 @@ class TTLCache:
 
 
 # ---------------------------------------------------------------------------
-# In-memory SSO session cache
-# Maps an opaque token (stored in the klai_sso cookie) to a Zitadel session.
-# Single-instance only — good enough for the portal-api deployment.
+# Stateless SSO cookie (Fernet-encrypted)
+# The cookie value contains the Zitadel session_id + session_token, encrypted
+# with a server-side key.  No server-side state is needed -- Zitadel is the
+# authority on whether the session is still valid.
 # ---------------------------------------------------------------------------
-_SSO_TTL = 3600  # seconds (1 hour)
-_sso_cache = TTLCache(_SSO_TTL)
+_fernet = Fernet(settings.sso_cookie_key.encode())
+
+
+def _encrypt_sso(session_id: str, session_token: str) -> str:
+    """Encrypt session credentials into an opaque cookie value."""
+    payload = json.dumps({"sid": session_id, "stk": session_token}).encode()
+    return _fernet.encrypt(payload).decode()
+
+
+def _decrypt_sso(cookie_value: str) -> dict | None:
+    """Decrypt the SSO cookie.  Returns {"sid": ..., "stk": ...} or None."""
+    try:
+        payload = _fernet.decrypt(cookie_value.encode())
+        return json.loads(payload)
+    except (InvalidToken, json.JSONDecodeError, Exception):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -151,15 +173,14 @@ async def _finalize_and_set_cookie(
             detail="Inloggen mislukt, probeer het later opnieuw",
         ) from exc
 
-    sso_token = _sso_cache.put({"session_id": session_id, "session_token": session_token})
     response.set_cookie(
         key="klai_sso",
-        value=sso_token,
+        value=_encrypt_sso(session_id, session_token),
         domain=f".{settings.domain}",
         httponly=True,
         secure=True,
         samesite="lax",
-        max_age=_SSO_TTL,
+        max_age=settings.sso_cookie_max_age,
     )
     return LoginResponse(callback_url=_validate_callback_url(callback_url))
 
@@ -378,25 +399,26 @@ async def sso_complete(
 ) -> LoginResponse:
     """Auto-complete a Zitadel OIDC auth request using the portal SSO session.
 
-    Called by the custom login page when it loads inside the LibreChat iframe.
+    Called by the custom login page when it loads inside the LibreChat iframe
+    (and by silent-renew iframes from react-oidc-context).
     Returns 401 if no valid SSO session exists (frontend falls back to the login form).
     """
     if not klai_sso:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No SSO session")
 
-    session_data = _sso_cache.get(klai_sso)
+    session_data = _decrypt_sso(klai_sso)
     if not session_data:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SSO session expired")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="SSO cookie invalid")
 
     try:
         callback_url = await zitadel.finalize_auth_request(
             auth_request_id=body.auth_request_id,
-            session_id=session_data["session_id"],
-            session_token=session_data["session_token"],
+            session_id=session_data["sid"],
+            session_token=session_data["stk"],
         )
     except httpx.HTTPStatusError as exc:
         log.error("sso finalize failed %s: %s", exc.response.status_code, exc.response.text)
-        # Session may have expired in Zitadel — tell the frontend to show the login form
+        # Session expired in Zitadel -- tell the frontend to show the login form
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="SSO session no longer valid",
@@ -406,10 +428,8 @@ async def sso_complete(
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response, klai_sso: str | None = Cookie(default=None)) -> None:
+async def logout(response: Response) -> None:
     """Clear the SSO cookie on logout."""
-    if klai_sso:
-        _sso_cache.pop(klai_sso)
     response.delete_cookie(key="klai_sso", domain=f".{settings.domain}")
 
 

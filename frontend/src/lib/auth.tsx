@@ -13,9 +13,12 @@ const oidcConfig = {
   scope: 'openid profile email',
   // Always call Zitadel end_session on logout (clears Zitadel session too)
   revokeTokensOnSignout: true,
-  // Silent renew is not needed: the portal always does a full redirect login.
-  // Disabling prevents any background re-authentication after signout.
-  automaticSilentRenew: false,
+  // Automatically renew the access token before it expires using a hidden iframe.
+  // The iframe triggers an OIDC authorize request; Zitadel redirects to /login
+  // where sso-complete auto-finalizes using the encrypted klai_sso cookie.
+  // This keeps both the portal session and the SSO cookie alive indefinitely
+  // (as long as the Zitadel session is valid).
+  automaticSilentRenew: true,
 }
 
 function SentryUserSync() {
