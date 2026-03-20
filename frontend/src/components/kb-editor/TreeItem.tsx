@@ -188,7 +188,7 @@ export function TreeItem({
           ) : (
             isDir
               ? <FolderOpen size={13} className="shrink-0 text-[var(--color-muted-foreground)]" />
-              : <span className="shrink-0 text-sm leading-none select-none">{node.icon ?? DEFAULT_ICON}</span>
+              : null
           )}
         </div>
 
