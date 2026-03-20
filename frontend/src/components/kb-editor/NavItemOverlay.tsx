@@ -1,5 +1,5 @@
 import { FolderOpen } from 'lucide-react'
-import { INDENT_WIDTH, DEFAULT_ICON } from '@/lib/kb-editor/tree-utils'
+import { INDENT_WIDTH, DEFAULT_ICON, stripMdExt } from '@/lib/kb-editor/tree-utils'
 import type { NavNode } from '@/lib/kb-editor/tree-utils'
 
 interface NavItemOverlayProps {
@@ -11,7 +11,7 @@ interface NavItemOverlayProps {
 
 export function NavItemOverlay({ node, projectedDepth, activeTitle, activePath }: NavItemOverlayProps) {
   const displayTitle =
-    activePath && activePath === node.path.replace(/\.md$/, '')
+    activePath && activePath === stripMdExt(node.path)
       ? (activeTitle ?? node.title)
       : node.title
 

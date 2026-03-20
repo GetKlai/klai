@@ -506,5 +506,10 @@
   "docs_access_close": "Sluiten",
   "docs_pages_add_subpage": "Subpagina toevoegen",
   "docs_tree_move_to_root": "Naar root verplaatsen",
-  "docs_tree_promote": "Niveau omhoog"
+  "docs_tree_promote": "Niveau omhoog",
+  "docs_tree_more_options": "Meer opties",
+  "docs_tree_already_at_root": "Al op rootniveau",
+  "docs_tree_expand": "Uitklappen",
+  "docs_tree_collapse": "Inklappen",
+  "docs_tree_cancel": "Annuleren"
 }

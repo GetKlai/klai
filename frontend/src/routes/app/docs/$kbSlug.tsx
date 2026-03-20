@@ -12,6 +12,7 @@ import {
   collectSlugs,
   navToSidebarEntries,
   addChildToNode,
+  stripMdExt,
 } from '@/lib/kb-editor/tree-utils'
 import type { NavNode } from '@/lib/kb-editor/tree-utils'
 
@@ -284,7 +285,7 @@ function KBEditorPage() {
     if (!path || !tok) return
     const content = editorRef.current?.getMarkdown() ?? ''
 
-    const currentSlug = path.replace(/\.md$/, '')
+    const currentSlug = stripMdExt(path)
     const newSlug = slugify(title)
 
     setSaveStatus('saving')
@@ -406,7 +407,7 @@ function KBEditorPage() {
         newPageTitle={newPageTitle}
         saveStatus={saveStatus}
         onSelect={async (node) => {
-          const newPath = node.path.replace(/\.md$/, '')
+          const newPath = stripMdExt(node.path)
           if (newPath === selectedPath) return
           if (saveTimerRef.current) {
             clearTimeout(saveTimerRef.current)

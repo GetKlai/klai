@@ -10,6 +10,10 @@ export function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]
 }
 
+export function stripMdExt(path: string): string {
+  return path.replace(/\.md$/, '')
+}
+
 export function slugify(title: string): string {
   return (
     title
@@ -56,7 +60,7 @@ export interface DropTarget {
 // Convert NavNode[] to SidebarEntry[] (strip everything except slug + children)
 export function navToSidebarEntries(nodes: NavNode[]): SidebarEntry[] {
   return nodes.map((n) => ({
-    slug: n.path.replace(/\.md$/, ''),
+    slug: stripMdExt(n.path),
     ...(n.children?.length ? { children: navToSidebarEntries(n.children) } : {}),
   }))
 }
@@ -64,7 +68,7 @@ export function navToSidebarEntries(nodes: NavNode[]): SidebarEntry[] {
 // Add a new child slug under the node matching parentPath
 export function addChildToNode(nodes: NavNode[], parentPath: string, newSlug: string): NavNode[] {
   return nodes.map((node) => {
-    if (node.path.replace(/\.md$/, '') === parentPath) {
+    if (stripMdExt(node.path) === parentPath) {
       return {
         ...node,
         children: [
@@ -85,7 +89,7 @@ export function collectSlugs(nodes: NavNode[]): Set<string> {
   const set = new Set<string>()
   const visit = (ns: NavNode[]) => {
     for (const n of ns) {
-      set.add(n.path.replace(/\.md$/, ''))
+      set.add(stripMdExt(n.path))
       if (n.children) visit(n.children)
     }
   }

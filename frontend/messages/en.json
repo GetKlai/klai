@@ -506,5 +506,10 @@
   "docs_access_close": "Close",
   "docs_pages_add_subpage": "Add subpage",
   "docs_tree_move_to_root": "Move to root",
-  "docs_tree_promote": "Promote one level"
+  "docs_tree_promote": "Promote one level",
+  "docs_tree_more_options": "More options",
+  "docs_tree_already_at_root": "Already at root level",
+  "docs_tree_expand": "Expand",
+  "docs_tree_collapse": "Collapse",
+  "docs_tree_cancel": "Cancel"
 }

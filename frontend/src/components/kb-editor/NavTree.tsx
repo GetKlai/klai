@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -13,7 +13,7 @@ import type { DragEndEvent, DragStartEvent, DragMoveEvent, CollisionDetection } 
 import { INDENT_WIDTH, getDropTarget, applyDrop } from '@/lib/kb-editor/tree-utils'
 import type { NavNode, FlatNode, DropTarget } from '@/lib/kb-editor/tree-utils'
 import { useTreeNavigation } from '@/lib/kb-editor/useTreeNavigation'
-import { SortableNavItem } from './SortableNavItem'
+import { TreeItem } from './TreeItem'
 import { NavItemOverlay } from './NavItemOverlay'
 
 // Prefer pointerWithin (item the pointer is literally in), fall back to closestCenter
@@ -52,18 +52,22 @@ export function NavTree({
   onNewPageConfirm,
   onNewPageCancel,
 }: NavTreeProps) {
-  const { collapsedIds, flatNodes, toggleCollapse } = useTreeNavigation(nodes)
+  const { collapsedIds, flatNodes, toggleCollapse, expandNode, collapseNode } = useTreeNavigation(nodes)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+  const [focusedId, setFocusedId] = useState<string | null>(null)
   const pointerRef = useRef({ x: 0, y: 0 })
+  const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const expandTargetRef = useRef<string | null>(null)
 
   useEffect(() => {
+    if (!activeId) return
     const onMove = (e: MouseEvent) => {
       pointerRef.current = { x: e.clientX, y: e.clientY }
     }
     window.addEventListener('mousemove', onMove)
     return () => window.removeEventListener('mousemove', onMove)
-  }, [])
+  }, [activeId])
 
   // Sentinel droppable at the bottom of the tree -- catches drops below all items
   const { setNodeRef: setSentinelRef } = useDroppable({ id: '__root-end__' })
@@ -77,18 +81,42 @@ export function NavTree({
     setDropTarget(null)
   }
 
+  const clearExpandTimer = useCallback(() => {
+    if (expandTimerRef.current) {
+      clearTimeout(expandTimerRef.current)
+      expandTimerRef.current = null
+    }
+    expandTargetRef.current = null
+  }, [])
+
   function handleDragMove(event: DragMoveEvent) {
     const { active, over } = event
     if (!over || !activeId) {
       setDropTarget(null)
+      clearExpandTimer()
       return
     }
-    setDropTarget(
-      getDropTarget(flatNodes, active.id as string, over.id as string, pointerRef.current.x, pointerRef.current.y)
-    )
+    const target = getDropTarget(flatNodes, active.id as string, over.id as string, pointerRef.current.x, pointerRef.current.y)
+    setDropTarget(target)
+
+    // Auto-expand collapsed items after 500ms of hovering with "inside" intent
+    if (target?.intent === 'inside' && collapsedIds.has(target.targetId)) {
+      if (expandTargetRef.current !== target.targetId) {
+        clearExpandTimer()
+        expandTargetRef.current = target.targetId
+        expandTimerRef.current = setTimeout(() => {
+          expandNode(target.targetId)
+          expandTimerRef.current = null
+          expandTargetRef.current = null
+        }, 500)
+      }
+    } else {
+      clearExpandTimer()
+    }
   }
 
   function handleDragEnd(_event: DragEndEvent) {
+    clearExpandTimer()
     const target = dropTarget
     const draggedId = activeId
     setActiveId(null)
@@ -159,6 +187,67 @@ export function NavTree({
     }
   }
 
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (activeId) return // Don't navigate while dragging
+
+    const currentIdx = focusedId ? flatNodes.findIndex((f) => f.id === focusedId) : -1
+    const currentFlat = currentIdx !== -1 ? flatNodes[currentIdx] : null
+
+    switch (e.key) {
+      case 'ArrowDown': {
+        e.preventDefault()
+        const nextIdx = currentIdx < flatNodes.length - 1 ? currentIdx + 1 : 0
+        setFocusedId(flatNodes[nextIdx].id)
+        break
+      }
+      case 'ArrowUp': {
+        e.preventDefault()
+        const prevIdx = currentIdx > 0 ? currentIdx - 1 : flatNodes.length - 1
+        setFocusedId(flatNodes[prevIdx].id)
+        break
+      }
+      case 'ArrowRight': {
+        e.preventDefault()
+        if (!currentFlat) break
+        const hasChildren = !!(currentFlat.node.children?.length)
+        if (hasChildren && collapsedIds.has(currentFlat.id)) {
+          expandNode(currentFlat.id)
+        } else if (hasChildren && currentIdx < flatNodes.length - 1) {
+          setFocusedId(flatNodes[currentIdx + 1].id)
+        }
+        break
+      }
+      case 'ArrowLeft': {
+        e.preventDefault()
+        if (!currentFlat) break
+        const hasChildren = !!(currentFlat.node.children?.length)
+        if (hasChildren && !collapsedIds.has(currentFlat.id)) {
+          collapseNode(currentFlat.id)
+        } else if (currentFlat.parentId) {
+          setFocusedId(currentFlat.parentId)
+        }
+        break
+      }
+      case 'Enter': {
+        e.preventDefault()
+        if (currentFlat && currentFlat.node.type !== 'dir') {
+          onSelect(currentFlat.node)
+        }
+        break
+      }
+      case 'Home': {
+        e.preventDefault()
+        if (flatNodes.length) setFocusedId(flatNodes[0].id)
+        break
+      }
+      case 'End': {
+        e.preventDefault()
+        if (flatNodes.length) setFocusedId(flatNodes[flatNodes.length - 1].id)
+        break
+      }
+    }
+  }
+
   return (
     <DndContext
       sensors={sensors}
@@ -167,21 +256,16 @@ export function NavTree({
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
     >
-      <div className="relative">
+      <div className="relative outline-none" role="tree" tabIndex={0} onKeyDown={handleKeyDown}>
         {flatNodes.map((flat) => (
           <div key={flat.id}>
             {dropLineBefore === flat.id && (
               <div
-                style={{
-                  height: '2px',
-                  background: 'var(--color-purple-accent)',
-                  marginLeft: `${dropLineDepth * INDENT_WIDTH + 8}px`,
-                  marginRight: '8px',
-                  borderRadius: '1px',
-                }}
+                className="h-0.5 mr-2 rounded-sm bg-[var(--color-purple-accent)]"
+                style={{ marginLeft: `${dropLineDepth * INDENT_WIDTH + 8}px` }}
               />
             )}
-            <SortableNavItem
+            <TreeItem
               flat={flat}
               selectedPath={selectedPath}
               onSelect={onSelect}
@@ -198,17 +282,13 @@ export function NavTree({
               onToggleCollapse={toggleCollapse}
               isDraggingActive={!!activeId}
               dropIntent={dropHighlight === flat.id ? 'inside' : null}
+              isFocused={focusedId === flat.id}
               nodes={nodes}
             />
             {dropLineAfter === flat.id && (
               <div
-                style={{
-                  height: '2px',
-                  background: 'var(--color-purple-accent)',
-                  marginLeft: `${dropLineDepth * INDENT_WIDTH + 8}px`,
-                  marginRight: '8px',
-                  borderRadius: '1px',
-                }}
+                className="h-0.5 mr-2 rounded-sm bg-[var(--color-purple-accent)]"
+                style={{ marginLeft: `${dropLineDepth * INDENT_WIDTH + 8}px` }}
               />
             )}
           </div>

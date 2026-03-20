@@ -1,17 +1,24 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { ChevronRight, FolderOpen, Plus, Check, X, MoreHorizontal, GripVertical } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import * as m from '@/paraglide/messages'
 import {
   INDENT_WIDTH,
   DEFAULT_ICON,
+  stripMdExt,
   moveToRoot,
   promoteNode,
 } from '@/lib/kb-editor/tree-utils'
 import type { NavNode, FlatNode, DropIntent } from '@/lib/kb-editor/tree-utils'
 
-export interface SortableNavItemProps {
+export interface TreeItemProps {
   flat: FlatNode
   selectedPath: string | null
   onSelect: (node: NavNode) => void
@@ -28,10 +35,11 @@ export interface SortableNavItemProps {
   onToggleCollapse: (id: string) => void
   isDraggingActive: boolean
   dropIntent: DropIntent | null
+  isFocused: boolean
   nodes: NavNode[]
 }
 
-export function SortableNavItem({
+export function TreeItem({
   flat,
   selectedPath,
   onSelect,
@@ -48,17 +56,17 @@ export function SortableNavItem({
   onToggleCollapse,
   isDraggingActive,
   dropIntent,
+  isFocused,
   nodes,
-}: SortableNavItemProps) {
+}: TreeItemProps) {
   const { node, depth } = flat
   const [hovered, setHovered] = useState(false)
-  const [showContextMenu, setShowContextMenu] = useState(false)
-  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const hasChildren = !!(node.children && node.children.length > 0)
   const isDir = node.type === 'dir'
-  const isSelected = selectedPath === node.path.replace(/\.md$/, '')
-  const nodePath = node.path.replace(/\.md$/, '')
+  const isSelected = selectedPath === stripMdExt(node.path)
+  const nodePath = stripMdExt(node.path)
   const isAddingSubpageHere = addingSubpageUnder === nodePath
 
   const {
@@ -76,33 +84,19 @@ export function SortableNavItem({
     setDropRef(el)
   }
 
-  // Close context menu on outside click
-  useEffect(() => {
-    if (!showContextMenu) return
-    const handler = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
-        setShowContextMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showContextMenu])
-
   const paddingLeft = depth * INDENT_WIDTH + 8
 
   const displayTitle =
-    activePath && activePath === node.path.replace(/\.md$/, '')
+    activePath && activePath === stripMdExt(node.path)
       ? (activeTitle ?? node.title)
       : node.title
 
   function handleMoveToRoot() {
-    setShowContextMenu(false)
     const newTree = moveToRoot(nodes, node.path)
     onSidebarUpdate(newTree)
   }
 
   function handlePromote() {
-    setShowContextMenu(false)
     if (flat.depth === 0) return
     const newTree = promoteNode(nodes, node.path)
     onSidebarUpdate(newTree)
@@ -135,7 +129,7 @@ export function SortableNavItem({
           type="button"
           className="shrink-0 text-[var(--color-muted-foreground)] hover:opacity-70"
           onClick={onNewPageCancel}
-          aria-label="Annuleren"
+          aria-label={m.docs_tree_cancel()}
         >
           <X size={12} />
         </button>
@@ -147,7 +141,15 @@ export function SortableNavItem({
   const isInsideTarget = dropIntent === 'inside'
 
   return (
-    <div ref={setNodeRef} data-flat-id={flat.id} style={{ opacity: isDragging ? 0 : 1 }}>
+    <div
+      ref={setNodeRef}
+      data-flat-id={flat.id}
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-selected={isSelected && !isDir}
+      {...(hasChildren ? { 'aria-expanded': !isCollapsed } : {})}
+      style={{ opacity: isDragging ? 0 : 1 }}
+    >
       <div
         className={`flex w-full items-center py-1 text-xs transition-colors group ${
           isInsideTarget
@@ -155,32 +157,34 @@ export function SortableNavItem({
             : isSelected && !isDir
               ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
               : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
-        }`}
+        } ${isFocused ? 'ring-1 ring-[var(--color-purple-accent)] rounded' : ''}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <span style={{ width: `${paddingLeft}px`, flexShrink: 0 }} />
+        <span className="relative shrink-0" style={{ width: `${paddingLeft}px` }}>
+          {Array.from({ length: depth }, (_, i) => (
+            <span
+              key={i}
+              className="absolute top-0 bottom-0 w-px bg-[var(--color-border)]"
+              style={{ left: `${i * INDENT_WIDTH + 8 + INDENT_WIDTH / 2}px` }}
+            />
+          ))}
+        </span>
 
-        <div className="relative w-5 h-5 shrink-0 flex items-center justify-center mr-1">
+        <div className="w-5 h-5 shrink-0 flex items-center justify-center mr-1">
           {hasChildren ? (
-            <>
-              {isDir
-                ? <FolderOpen size={13} className="shrink-0 transition-opacity group-hover:opacity-0" />
-                : <span className="text-sm leading-none transition-opacity group-hover:opacity-0 select-none">{node.icon ?? DEFAULT_ICON}</span>
-              }
-              <button
-                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={(e) => { e.stopPropagation(); onToggleCollapse(node.path) }}
-                tabIndex={-1}
-                aria-label={isCollapsed ? 'Uitklappen' : 'Inklappen'}
-                type="button"
-              >
-                <ChevronRight
-                  size={12}
-                  className={`text-[var(--color-muted-foreground)] transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
-                />
-              </button>
-            </>
+            <button
+              className="flex items-center justify-center w-full h-full"
+              onClick={(e) => { e.stopPropagation(); onToggleCollapse(node.path) }}
+              tabIndex={-1}
+              aria-label={isCollapsed ? m.docs_tree_expand() : m.docs_tree_collapse()}
+              type="button"
+            >
+              <ChevronRight
+                size={12}
+                className={`text-[var(--color-muted-foreground)] transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+              />
+            </button>
           ) : (
             isDir
               ? <FolderOpen size={13} className="shrink-0 text-[var(--color-muted-foreground)]" />
@@ -189,7 +193,7 @@ export function SortableNavItem({
         </div>
 
         <button
-          className={`flex flex-1 items-center min-w-0 text-left ${
+          className={`flex flex-1 items-center gap-1.5 min-w-0 text-left ${
             isDir
               ? 'font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
               : isSelected
@@ -199,11 +203,15 @@ export function SortableNavItem({
           onClick={() => { if (!isDir) onSelect(node) }}
           disabled={isDir && !hasChildren}
         >
+          {isDir
+            ? <FolderOpen size={13} className="shrink-0" />
+            : <span className="shrink-0 text-sm leading-none select-none">{node.icon ?? DEFAULT_ICON}</span>
+          }
           <span className="truncate">{displayTitle}</span>
         </button>
 
         <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
-          {(hovered || showContextMenu) && !isDraggingActive && (
+          {(hovered || menuOpen) && !isDraggingActive && (
             <>
               <button
                 type="button"
@@ -214,41 +222,33 @@ export function SortableNavItem({
               >
                 <Plus size={10} />
               </button>
-              <div className="relative" ref={contextMenuRef}>
-                <button
-                  type="button"
-                  className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
-                  onClick={() => setShowContextMenu((v) => !v)}
-                  aria-label="Meer opties"
-                >
-                  <MoreHorizontal size={10} />
-                </button>
-                {showContextMenu && (
-                  <div className="absolute right-0 top-5 z-20 w-44 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md py-1">
-                    {flat.depth > 0 && (
-                      <button
-                        className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]"
-                        onClick={handlePromote}
-                      >
+              <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+                    aria-label={m.docs_tree_more_options()}
+                  >
+                    <MoreHorizontal size={10} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  {flat.depth > 0 ? (
+                    <>
+                      <DropdownMenuItem className="text-xs" onSelect={handlePromote}>
                         {m.docs_tree_promote()}
-                      </button>
-                    )}
-                    {flat.depth > 0 && (
-                      <button
-                        className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]"
-                        onClick={handleMoveToRoot}
-                      >
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="text-xs" onSelect={handleMoveToRoot}>
                         {m.docs_tree_move_to_root()}
-                      </button>
-                    )}
-                    {flat.depth === 0 && (
-                      <p className="px-3 py-1.5 text-xs text-[var(--color-muted-foreground)] italic">
-                        Al op rootniveau
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuItem className="text-xs text-[var(--color-muted-foreground)] italic" disabled>
+                      {m.docs_tree_already_at_root()}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
           <span className="cursor-grab touch-none" {...attributes} {...listeners}>

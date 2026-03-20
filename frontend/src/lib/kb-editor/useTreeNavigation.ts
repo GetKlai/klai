@@ -19,5 +19,23 @@ export function useTreeNavigation(nodes: NavNode[]) {
     })
   }, [])
 
-  return { collapsedIds, flatNodes, toggleCollapse }
+  const expandNode = useCallback((id: string) => {
+    setCollapsedIds((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
+
+  const collapseNode = useCallback((id: string) => {
+    setCollapsedIds((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }, [])
+
+  return { collapsedIds, flatNodes, toggleCollapse, expandNode, collapseNode }
 }
