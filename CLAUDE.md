@@ -11,6 +11,17 @@ Read these two documents first. They contain the component rules, form page patt
 
 The reference implementation is `klai-portal/frontend/src/routes/admin/users/invite.tsx`.
 
+## Deploy workflow
+
+After every commit to klai-portal:
+
+1. `git push`
+2. `gh run watch --exit-status` — wait for the GitHub Action to complete
+
+The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before `gh run watch --exit-status` succeeds.
+
+Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
+
 ## Stack
 
 - **Backend:** FastAPI (Python), SQLAlchemy, Alembic, PostgreSQL
