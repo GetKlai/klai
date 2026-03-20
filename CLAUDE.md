@@ -6,10 +6,10 @@ Project-specific instructions for the klai-portal monorepo (FastAPI backend + Re
 
 Read these two documents first. They contain the component rules, form page patterns, and button alignment standards for klai-portal:
 
-@klai-claude/docs/patterns/frontend.md
-@klai-portal/docs/ui-components.md
+@../klai-claude/docs/patterns/frontend.md
+@docs/ui-components.md
 
-The reference implementation is `klai-portal/frontend/src/routes/admin/users/invite.tsx`.
+The reference implementation is `frontend/src/routes/admin/users/invite.tsx`.
 
 ## Deploy workflow
 
