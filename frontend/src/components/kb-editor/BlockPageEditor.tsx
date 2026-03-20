@@ -36,7 +36,7 @@ export const BlockPageEditor = forwardRef<
 
   useEffect(() => {
     if (!initialContent) {
-      editorLogger.warn('initialContent empty on mount')
+      editorLogger.debug('initialContent empty on mount')
       return
     }
     // HTML content (saved after wikilink support): parse as HTML so custom
