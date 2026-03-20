@@ -406,12 +406,14 @@ function KBEditorPage() {
         newPageTitle={newPageTitle}
         saveStatus={saveStatus}
         onSelect={async (node) => {
+          const newPath = node.path.replace(/\.md$/, '')
+          if (newPath === selectedPath) return
           if (saveTimerRef.current) {
             clearTimeout(saveTimerRef.current)
             saveTimerRef.current = null
             await doSave()
           }
-          setSelectedPath(node.path.replace(/\.md$/, ''))
+          setSelectedPath(newPath)
           setEditContent('')
           setEditorKey((k) => k + 1)
         }}
