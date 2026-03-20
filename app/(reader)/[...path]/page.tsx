@@ -136,7 +136,8 @@ export default async function ReaderPage({
     }
 
     const parsed = parsePage(raw);
-    content = parsed.content;
+    // Strip a leading "# Title" line — the page already renders the title from frontmatter
+    content = parsed.content.replace(/^# [^\n]+\n?/, "");
     title = parsed.frontmatter.title ?? title;
     description = parsed.frontmatter.description ?? "";
   }
