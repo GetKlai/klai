@@ -1,6 +1,6 @@
 # SPEC: KB Editor Architectuur Refactoring
 
-**Status:** DRAFT — awaiting approval
+**Status:** DONE
 **Scope:** `frontend/src/routes/app/docs/$kbSlug.tsx` (~1500 regels) + bijbehorende extracties
 **Doel:** Structurele refactoring zonder functionaliteitswijziging (D+ → B)
 
