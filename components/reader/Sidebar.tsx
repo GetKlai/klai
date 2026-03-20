@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 import type { NavNode } from "@/lib/gitea";
 
 type Props = {
@@ -69,73 +68,14 @@ function NavItem({
   const href = `/${kbSlug}/${articlePath}`;
   const isActive = pathname === href;
   const isExpandable = !!(node.children && node.children.length > 0);
-  const [open, setOpen] = useState(true);
 
-  if (node.type === "dir" && !isExpandable) {
+  if (node.type === "dir") {
     return (
       <li>
         <span className="block text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[rgba(26,26,26,0.35)] mt-4 mb-1">
           {node.title}
         </span>
-      </li>
-    );
-  }
-
-  if (node.type === "dir") {
-    return (
-      <li>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1 w-full text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[rgba(26,26,26,0.35)] mt-4 mb-1 hover:text-[var(--color-purple-deep)] transition-colors"
-        >
-          <span
-            className="inline-block transition-transform"
-            style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
-          >
-            &#9658;
-          </span>
-          {node.title}
-        </button>
-        {open && (
-          <NavList
-            nodes={node.children!}
-            kbSlug={kbSlug}
-            pathname={pathname}
-            depth={depth + 1}
-          />
-        )}
-      </li>
-    );
-  }
-
-  if (isExpandable) {
-    return (
-      <li>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="flex items-center justify-center shrink-0 text-[rgba(26,26,26,0.3)] hover:text-[var(--color-purple-deep)] transition-colors"
-            aria-label={open ? "Collapse" : "Expand"}
-          >
-            <span
-              className="inline-block transition-transform text-xs"
-              style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
-            >
-              &#9658;
-            </span>
-          </button>
-          <Link
-            href={href}
-            className={`block text-sm py-1 rounded px-2 -mx-2 transition-colors flex-1 ${
-              isActive
-                ? "bg-[rgba(124,106,255,0.07)] text-[var(--color-purple-accent)] font-medium"
-                : "text-[rgba(26,26,26,0.6)] hover:text-[var(--color-purple-deep)] hover:bg-[rgba(45,27,105,0.04)]"
-            }`}
-          >
-            {node.title}
-          </Link>
-        </div>
-        {open && (
+        {isExpandable && (
           <NavList
             nodes={node.children!}
             kbSlug={kbSlug}
@@ -159,6 +99,14 @@ function NavItem({
       >
         {node.title}
       </Link>
+      {isExpandable && (
+        <NavList
+          nodes={node.children!}
+          kbSlug={kbSlug}
+          pathname={pathname}
+          depth={depth + 1}
+        />
+      )}
     </li>
   );
 }
