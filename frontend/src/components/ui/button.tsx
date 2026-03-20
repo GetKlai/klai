@@ -1,22 +1,23 @@
 import * as React from 'react'
+import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
         default:
-          'bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:bg-[var(--color-purple-muted)]',
+          'bg-primary text-primary-foreground hover:bg-[var(--color-purple-muted)]',
         secondary:
-          'bg-[var(--color-secondary)] text-[var(--color-secondary-foreground)] hover:bg-[var(--color-sand-mid)]',
+          'bg-secondary text-secondary-foreground hover:bg-[var(--color-sand-mid)]',
         ghost:
-          'hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)]',
+          'hover:bg-secondary hover:text-primary',
         outline:
-          'border border-[var(--color-border)] bg-transparent hover:bg-[var(--color-secondary)]',
+          'border border-border bg-transparent hover:bg-secondary',
         destructive:
-          'bg-[var(--color-destructive)] text-white hover:opacity-90',
+          'bg-destructive text-white hover:opacity-90',
         link:
           'text-[var(--color-purple-muted)] underline-offset-4 hover:underline',
       },
@@ -36,12 +37,15 @@ const buttonVariants = cva(
 
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {}
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean
+}
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : 'button'
     return (
-      <button
+      <Comp
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
         {...props}

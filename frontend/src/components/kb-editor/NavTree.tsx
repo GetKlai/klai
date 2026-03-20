@@ -80,11 +80,9 @@ export function NavTree({
   function handleDragMove(event: DragMoveEvent) {
     const { active, over } = event
     if (!over || !activeId) {
-      if (!over) console.log('[DnD] dragMove: over is null (pointer outside all droppables)')
       setDropTarget(null)
       return
     }
-    console.log('[DnD] dragMove: over =', over.id)
     setDropTarget(
       getDropTarget(flatNodes, active.id as string, over.id as string, pointerRef.current.x, pointerRef.current.y)
     )
@@ -93,17 +91,11 @@ export function NavTree({
   function handleDragEnd(_event: DragEndEvent) {
     const target = dropTarget
     const draggedId = activeId
-    console.log('[DnD] dragEnd:', { draggedId, target })
     setActiveId(null)
     setDropTarget(null)
 
-    if (!target || !draggedId) {
-      console.log('[DnD] dragEnd: CANCELLED (no target or no draggedId)')
-      return
-    }
-    const newTree = applyDrop(nodes, draggedId, target)
-    console.log('[DnD] dragEnd: applied drop, new tree root slugs:', newTree.map(n => n.slug || n.path))
-    onSidebarUpdate(newTree)
+    if (!target || !draggedId) return
+    onSidebarUpdate(applyDrop(nodes, draggedId, target))
   }
 
   const activeFlat = activeId ? flatNodes.find((f) => f.id === activeId) : null

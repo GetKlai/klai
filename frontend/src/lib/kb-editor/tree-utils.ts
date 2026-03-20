@@ -132,34 +132,21 @@ export function getDropTarget(
 ): DropTarget | null {
   // Sentinel: drop at end of root level
   if (overId === '__root-end__') {
-    console.log('[DnD] sentinel hit -> root-end')
     return { targetId: '__root-end__', intent: 'after' }
   }
 
-  if (activeId === overId) {
-    console.log('[DnD] over self, returning null')
-    return null
-  }
+  if (activeId === overId) return null
 
   const activeIdx = flatNodes.findIndex((f) => f.id === activeId)
   const overIdx = flatNodes.findIndex((f) => f.id === overId)
-  if (activeIdx === -1 || overIdx === -1) {
-    console.log('[DnD] idx not found:', { activeIdx, overIdx })
-    return null
-  }
+  if (activeIdx === -1 || overIdx === -1) return null
 
   // Prevent dropping on a descendant of the dragged item
-  if (isDescendantInFlat(flatNodes, activeIdx, overIdx)) {
-    console.log('[DnD] over is descendant of active, returning null')
-    return null
-  }
+  if (isDescendantInFlat(flatNodes, activeIdx, overIdx)) return null
 
   // Get the DOM rect of the hovered item for zone calculation
   const overEl = document.querySelector(`[data-flat-id="${overId}"]`)
-  if (!overEl) {
-    console.log('[DnD] overEl not found in DOM for:', overId)
-    return null
-  }
+  if (!overEl) return null
   const rect = overEl.getBoundingClientRect()
   const relY = pointerY - rect.top
   const quarter = rect.height / 4
@@ -171,17 +158,6 @@ export function getDropTarget(
 
   const overItem = flatNodes[overIdx]
 
-  console.log('[DnD] zone:', {
-    over: overId,
-    overDepth: overItem.depth,
-    intent,
-    relY: Math.round(relY),
-    height: Math.round(rect.height),
-    quarter: Math.round(quarter),
-    pointerX: Math.round(pointerX),
-    rectLeft: Math.round(rect.left),
-  })
-
   // For "after" on nested items, use pointer X to determine the drop depth.
   // Moving the cursor to the left means the user wants a shallower level.
   if (intent === 'after' && overItem.depth > 0) {
@@ -189,14 +165,11 @@ export function getDropTarget(
     const cursorDepth = Math.max(0, Math.round((relX - 8) / INDENT_WIDTH))
     const clampedDepth = Math.min(cursorDepth, overItem.depth)
 
-    console.log('[DnD] after-depth:', { relX: Math.round(relX), cursorDepth, clampedDepth, overDepth: overItem.depth })
-
     if (clampedDepth < overItem.depth) {
       // Walk backward in the flat list to find the ancestor at the desired depth
       for (let i = overIdx; i >= 0; i--) {
         if (flatNodes[i].id === activeId) continue
         if (flatNodes[i].depth === clampedDepth) {
-          console.log('[DnD] -> redirect to ancestor:', flatNodes[i].id, 'at depth', clampedDepth)
           return { targetId: flatNodes[i].id, intent: 'after' }
         }
         if (flatNodes[i].depth < clampedDepth) break
@@ -204,7 +177,6 @@ export function getDropTarget(
     }
   }
 
-  console.log('[DnD] -> result:', { targetId: overId, intent })
   return { targetId: overId, intent }
 }
 
