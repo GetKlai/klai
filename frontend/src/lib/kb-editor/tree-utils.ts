@@ -5,6 +5,11 @@
 export const DOCS_BASE = '/docs/api'
 export const DEFAULT_ICON = '📄'
 export const INDENT_WIDTH = 12
+// Wider zones for pointer-X depth detection during drag-and-drop.
+// The visual indent is 12px, but 12px is too narrow for comfortable depth
+// switching. 24px per level (VS Code / react-arborist standard) gives users
+// a comfortable target area without needing to drag outside the panel.
+export const DROP_DEPTH_WIDTH = 24
 
 export function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]
@@ -162,7 +167,7 @@ export function getDropTarget(
   // Moving the cursor to the left means the user wants a shallower level.
   if (intent === 'after' && overItem.depth > 0) {
     const relX = pointerX - rect.left
-    const cursorDepth = Math.max(0, Math.round((relX - 8) / INDENT_WIDTH))
+    const cursorDepth = Math.max(0, Math.round((relX - 8) / DROP_DEPTH_WIDTH))
     const clampedDepth = Math.min(cursorDepth, overItem.depth)
 
     if (clampedDepth < overItem.depth) {
