@@ -29,14 +29,36 @@ Both public keys are registered in `klai-infra/.sops.yaml`. Either key can encry
 
 ---
 
+## env-modification-rules
+
+**When to use:** ANY time you need to add or change a variable in `/opt/klai/.env` on core-01
+
+**See also:** pitfall `infra-never-modify-env-secrets` for what goes wrong when these rules are not followed.
+
+| Action | Allowed? | How |
+|--------|----------|-----|
+| Add a NEW variable | Yes | `ssh core-01 "echo 'NEW_VAR=value' >> /opt/klai/.env"` (single quotes!) |
+| Change an existing secret | NO | Ask the user, or use SOPS (`sops-secret-edit` pattern below) |
+| Delete a variable | NO | Ask the user |
+| Read a variable | Yes | `ssh core-01 'grep "^VAR_NAME=" /opt/klai/.env'` |
+
+After ANY `.env` change:
+1. Restart the service: `ssh core-01 'cd /opt/klai && docker compose up -d <service>'`
+2. Verify inside the container: `ssh core-01 'docker exec <container> printenv VAR_NAME'`
+3. Update SOPS: add the new variable to `core-01/.env.sops` so the encrypted backup stays in sync
+
+---
+
 ## sops-secret-edit
 
 **When to use:** Changing an existing secret or adding a new one to core-01
 
+**Important:** This is the ONLY safe way to change existing secrets. Never use `sed -i` or `echo` to overwrite secret values on the server.
+
 ```bash
 cd klai-infra
 
-# Open and edit — decrypts in your $EDITOR, re-encrypts on save
+# Open and edit -- decrypts in your $EDITOR, re-encrypts on save
 SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops core-01/.env.sops
 
 # Stage and commit the updated encrypted file
