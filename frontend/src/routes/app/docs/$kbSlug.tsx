@@ -170,7 +170,7 @@ function KBEditorPage() {
     enabled: !!token && !!selectedPath,
   })
 
-  const { data: pageIndex = [] } = useQuery<Array<{ id: string | null; slug: string; title: string }>>({
+  const { data: pageIndex = [] } = useQuery<Array<{ id: string | null; slug: string; title: string; icon?: string }>>({
     queryKey: ['docs-page-index', orgSlug, kbSlug],
     queryFn: async () => {
       const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`, {
@@ -531,7 +531,7 @@ function KBEditorPage() {
                       setWikilinkSearch('')
                     }}
                   >
-                    <span>📄</span>
+                    <span>{p.icon ?? '📄'}</span>
                     {p.title}
                   </button>
                 ))}

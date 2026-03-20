@@ -10,7 +10,7 @@ export type BlockPageEditorHandle = {
   insertWikilink: (pageId: string, title: string) => void
 }
 
-export type PageIndexEntry = { id: string | null; slug: string; title: string }
+export type PageIndexEntry = { id: string | null; slug: string; title: string; icon?: string }
 
 const wikilinkSchema = BlockNoteSchema.create({
   inlineContentSpecs: {
@@ -108,6 +108,7 @@ export const BlockPageEditor = forwardRef<
             })
             return filtered.slice(0, 10).map((p) => ({
               title: p.title,
+              icon: <span style={{ fontSize: '1em' }}>{p.icon ?? '📄'}</span>,
               onItemClick: () => {
                 editor.insertInlineContent([
                   {
