@@ -142,26 +142,26 @@ export default async function ReaderPage({
   }
 
   return (
-    <div className="flex min-h-screen bg-white">
+    <div className="flex min-h-screen bg-[var(--color-off-white)]">
       <Sidebar
         tree={navTree}
         orgSlug={orgSlug}
         kbSlug={kbSlug}
         kbName={kb.name}
       />
-      <main className="flex-1 px-8 py-10 max-w-3xl">
+      <main className="flex-1 px-16 py-12 max-w-[780px]">
         {articlePath ? (
           <>
-            <h1 className="text-3xl font-bold mb-2">{title}</h1>
+            <h1 className="font-[family-name:var(--font-serif)] text-[2rem] font-bold text-[var(--color-purple-deep)] mb-6 leading-tight">{title}</h1>
             {description && (
-              <p className="text-gray-500 mb-8">{description}</p>
+              <p className="text-[rgba(26,26,26,0.6)] text-[0.9375rem] leading-relaxed mb-8">{description}</p>
             )}
             <PageRenderer content={content} pageIndex={pageIndex} kbSlug={kbSlug} />
           </>
         ) : (
           <div>
-            <h1 className="text-3xl font-bold mb-2">{kb.name}</h1>
-            <p className="text-gray-500">Select a page from the sidebar.</p>
+            <h1 className="font-[family-name:var(--font-serif)] text-[2rem] font-bold text-[var(--color-purple-deep)] mb-6 leading-tight">{kb.name}</h1>
+            <p className="text-[rgba(26,26,26,0.6)] text-[0.9375rem]">Select a page from the sidebar.</p>
           </div>
         )}
       </main>

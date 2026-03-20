@@ -16,10 +16,10 @@ export function Sidebar({ tree, orgSlug, kbSlug, kbName }: Props) {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 shrink-0 border-r border-gray-100 bg-gray-50 min-h-screen px-4 py-6">
+    <aside className="w-64 shrink-0 border-r border-[rgba(45,27,105,0.08)] bg-[var(--color-sand-light)] min-h-screen px-5 py-6">
       <Link
         href={`/${kbSlug}`}
-        className="block text-sm font-semibold text-gray-800 mb-4 hover:text-blue-600"
+        className="block text-sm font-semibold text-[var(--color-purple-deep)] mb-6 hover:text-[var(--color-purple-accent)] transition-colors"
       >
         {kbName}
       </Link>
@@ -74,7 +74,7 @@ function NavItem({
   if (node.type === "dir" && !isExpandable) {
     return (
       <li>
-        <span className="block text-xs font-semibold uppercase tracking-wide text-gray-400 mt-4 mb-1">
+        <span className="block text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[rgba(26,26,26,0.35)] mt-4 mb-1">
           {node.title}
         </span>
       </li>
@@ -86,7 +86,7 @@ function NavItem({
       <li>
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1 w-full text-xs font-semibold uppercase tracking-wide text-gray-400 mt-4 mb-1 hover:text-gray-600"
+          className="flex items-center gap-1 w-full text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[rgba(26,26,26,0.35)] mt-4 mb-1 hover:text-[var(--color-purple-deep)] transition-colors"
         >
           <span
             className="inline-block transition-transform"
@@ -114,7 +114,7 @@ function NavItem({
         <div className="flex items-center gap-1">
           <button
             onClick={() => setOpen((v) => !v)}
-            className="flex items-center justify-center shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+            className="flex items-center justify-center shrink-0 text-[rgba(26,26,26,0.3)] hover:text-[var(--color-purple-deep)] transition-colors"
             aria-label={open ? "Collapse" : "Expand"}
           >
             <span
@@ -128,8 +128,8 @@ function NavItem({
             href={href}
             className={`block text-sm py-1 rounded px-2 -mx-2 transition-colors flex-1 ${
               isActive
-                ? "bg-blue-50 text-blue-700 font-medium"
-                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                ? "bg-[rgba(124,106,255,0.07)] text-[var(--color-purple-accent)] font-medium"
+                : "text-[rgba(26,26,26,0.6)] hover:text-[var(--color-purple-deep)] hover:bg-[rgba(45,27,105,0.04)]"
             }`}
           >
             {node.title}
@@ -153,8 +153,8 @@ function NavItem({
         href={href}
         className={`block text-sm py-1 rounded px-2 -mx-2 transition-colors ${
           isActive
-            ? "bg-blue-50 text-blue-700 font-medium"
-            : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            ? "bg-[rgba(124,106,255,0.07)] text-[var(--color-purple-accent)] font-medium"
+            : "text-[rgba(26,26,26,0.6)] hover:text-[var(--color-purple-deep)] hover:bg-[rgba(45,27,105,0.04)]"
         }`}
       >
         {node.title}

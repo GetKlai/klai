@@ -46,7 +46,7 @@ export function PageRenderer({ content, pageIndex, kbSlug }: Props) {
       : content;
 
   return (
-    <article className="prose prose-gray max-w-none prose-a:text-blue-600 prose-a:underline">
+    <article className="prose max-w-none klai-prose">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, rehypeSlug, rehypeHighlight]}

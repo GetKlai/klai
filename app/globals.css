@@ -5,3 +5,58 @@
 @source "../components";
 
 @plugin "@tailwindcss/typography";
+
+@theme {
+  --color-purple-deep: #1A0F40;
+  --color-purple-primary: #2D1B69;
+  --color-purple-accent: #7C6AFF;
+  --color-purple-muted: #4A3A8A;
+  --color-sand-light: #F5F0E8;
+  --color-sand-mid: #EAE3D5;
+  --color-off-white: #FAFAF8;
+
+  --font-serif: 'Libre Baskerville', Georgia, serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+/* Prose theme — purple brand identity */
+.klai-prose {
+  --tw-prose-body: rgba(26, 26, 26, 0.72);
+  --tw-prose-headings: #1A0F40;
+  --tw-prose-links: #7C6AFF;
+  --tw-prose-bold: #1A0F40;
+  --tw-prose-counters: #7C6AFF;
+  --tw-prose-bullets: #7C6AFF;
+  --tw-prose-hr: rgba(45, 27, 105, 0.1);
+  --tw-prose-quotes: #2D1B69;
+  --tw-prose-quote-borders: #7C6AFF;
+  --tw-prose-captions: rgba(26, 26, 26, 0.4);
+  --tw-prose-code: #2D1B69;
+  --tw-prose-pre-code: rgba(255, 255, 255, 0.85);
+  --tw-prose-pre-bg: #1A0F40;
+  --tw-prose-th-borders: rgba(45, 27, 105, 0.15);
+  --tw-prose-td-borders: rgba(45, 27, 105, 0.08);
+}
+
+.klai-prose h1,
+.klai-prose h2 {
+  font-family: var(--font-serif);
+}
+
+.klai-prose a {
+  text-decoration: none;
+  border-bottom: 1px solid rgba(124, 106, 255, 0.4);
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.klai-prose a:hover {
+  color: #2D1B69;
+  border-bottom-color: #2D1B69;
+}
+
+.klai-prose code:not(pre code) {
+  background: rgba(45, 27, 105, 0.06);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.875em;
+}
