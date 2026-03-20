@@ -43,6 +43,10 @@
   font-family: var(--font-serif);
 }
 
+.klai-prose h1 {
+  font-size: 1.75rem;
+}
+
 .klai-prose a {
   text-decoration: none;
   border-bottom: 1px solid rgba(124, 106, 255, 0.4);
