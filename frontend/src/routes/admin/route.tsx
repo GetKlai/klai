@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { STORAGE_KEYS } from '@/lib/storage'
+import { authLogger } from '@/lib/logger'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
@@ -41,7 +42,7 @@ function AdminLayout() {
       .then((me) => {
         if (me?.requires_2fa_setup) window.location.replace('/setup/2fa')
       })
-      .catch(() => undefined)
+      .catch((err) => authLogger.warn('2FA re-check failed in admin route guard', err))
   }, [auth.isLoading, auth.isAuthenticated, isAdmin, auth.user, navigate])
 
   if (auth.isLoading || !auth.isAuthenticated || !isAdmin) {

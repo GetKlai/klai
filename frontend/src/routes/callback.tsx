@@ -5,6 +5,7 @@ import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { API_BASE } from '@/lib/api'
 import { STORAGE_KEYS } from '@/lib/storage'
+import { authLogger } from '@/lib/logger'
 
 const ADMIN_ROLES = ['org:owner', 'org:admin']
 
@@ -69,8 +70,8 @@ function CallbackPage() {
                   return
                 }
               }
-            } catch {
-              // Ignore — go to admin dashboard
+            } catch (err) {
+              authLogger.warn('Billing status check failed during post-login routing', err)
             }
             window.location.replace('/admin')
           } else {
@@ -78,11 +79,12 @@ function CallbackPage() {
           }
           return
         }
-      } catch {
-        // fall through to default
+      } catch (err) {
+        authLogger.error('Post-login routing failed: /api/me unreachable', err)
       }
 
       // /api/me failed (e.g. backend not running) — go to /app
+      authLogger.warn('Post-login routing fell through to default /app')
       sessionStorage.setItem(STORAGE_KEYS.isAdmin, 'false')
       window.location.replace('/app')
     }

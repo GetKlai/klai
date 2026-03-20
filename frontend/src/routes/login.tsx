@@ -6,6 +6,7 @@ import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { API_BASE } from '@/lib/api'
 import { useLocale } from '@/lib/locale'
+import { authLogger } from '@/lib/logger'
 
 type SearchParams = {
   authRequest?: string
@@ -53,8 +54,8 @@ function LoginPage() {
           window.location.href = callback_url
           return
         }
-      } catch {
-        // Network error — fall through to login form
+      } catch (err) {
+        authLogger.warn('Silent SSO completion failed', err)
       }
       setCheckingSSO(false)
     }
@@ -106,7 +107,8 @@ function LoginPage() {
 
       // Navigate to the OIDC callback URL — react-oidc-context picks it up from there
       window.location.href = data.callback_url
-    } catch {
+    } catch (err) {
+      authLogger.warn('Password login request failed', err)
       setError(m.error_connection())
     } finally {
       setLoading(false)
@@ -137,7 +139,8 @@ function LoginPage() {
 
       const { callback_url } = await resp.json()
       window.location.href = callback_url
-    } catch {
+    } catch (err) {
+      authLogger.warn('TOTP verification request failed', err)
       setError(m.error_connection())
     } finally {
       setLoading(false)

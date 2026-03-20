@@ -5,6 +5,7 @@ import { MessageSquare, Mic, BookOpen, BookMarked } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
+import { authLogger } from '@/lib/logger'
 
 export const Route = createFileRoute('/app')({
   component: AppLayout,
@@ -35,7 +36,7 @@ function AppLayout() {
       .then((me) => {
         if (me?.requires_2fa_setup) window.location.replace('/setup/2fa')
       })
-      .catch(() => undefined)
+      .catch((err) => authLogger.warn('2FA re-check failed in app route guard', err))
   }, [auth.isLoading, auth.isAuthenticated, auth.user, navigate])
 
   if (auth.isLoading || !auth.isAuthenticated) {
