@@ -68,7 +68,7 @@ export function SortableNavItem({
     isDragging,
   } = useDraggable({ id: node.path })
 
-  const { setNodeRef: setDropRef } = useDroppable({ id: node.path })
+  const { setNodeRef: setDropRef } = useDroppable({ id: node.path, disabled: isDragging })
 
   // Combine drag and drop refs on the same element
   const setNodeRef = (el: HTMLDivElement | null) => {

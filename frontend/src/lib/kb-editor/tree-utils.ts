@@ -118,13 +118,23 @@ export function flattenTree(
  * - Top 25%    = "before" (insert as sibling above)
  * - Middle 50% = "inside" (insert as child)
  * - Bottom 25% = "after"  (insert as sibling below)
+ *
+ * For "after" drops on nested items, the pointer X position determines the
+ * depth: cursor left = shallower (root), cursor right = same level as target.
+ * This is the same pattern used by react-arborist and VS Code.
  */
 export function getDropTarget(
   flatNodes: FlatNode[],
   activeId: string,
   overId: string,
+  pointerX: number,
   pointerY: number,
 ): DropTarget | null {
+  // Sentinel: drop at end of root level
+  if (overId === '__root-end__') {
+    return { targetId: '__root-end__', intent: 'after' }
+  }
+
   if (activeId === overId) return null
 
   const activeIdx = flatNodes.findIndex((f) => f.id === activeId)
@@ -146,6 +156,27 @@ export function getDropTarget(
   else if (relY > rect.height - quarter) intent = 'after'
   else intent = 'inside'
 
+  const overItem = flatNodes[overIdx]
+
+  // For "after" on nested items, use pointer X to determine the drop depth.
+  // Moving the cursor to the left means the user wants a shallower level.
+  if (intent === 'after' && overItem.depth > 0) {
+    const relX = pointerX - rect.left
+    const cursorDepth = Math.max(0, Math.round((relX - 8) / INDENT_WIDTH))
+    const clampedDepth = Math.min(cursorDepth, overItem.depth)
+
+    if (clampedDepth < overItem.depth) {
+      // Walk backward in the flat list to find the ancestor at the desired depth
+      for (let i = overIdx; i >= 0; i--) {
+        if (flatNodes[i].id === activeId) continue
+        if (flatNodes[i].depth === clampedDepth) {
+          return { targetId: flatNodes[i].id, intent: 'after' }
+        }
+        if (flatNodes[i].depth < clampedDepth) break
+      }
+    }
+  }
+
   return { targetId: overId, intent }
 }
 
@@ -166,6 +197,10 @@ function isDescendantInFlat(
 
 /** Apply a drag-and-drop operation directly on the tree structure. */
 export function applyDrop(tree: NavNode[], activeId: string, target: DropTarget): NavNode[] {
+  // Sentinel: move to end of root level
+  if (target.targetId === '__root-end__') {
+    return moveToRoot(tree, activeId)
+  }
   const { tree: treeWithout, removed } = removeFromTree(tree, activeId)
   if (!removed) return tree
   const { result, found } = findAndInsert(treeWithout, removed, target.targetId, target.intent)
