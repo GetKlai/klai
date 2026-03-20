@@ -2,7 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2 } from 'lucide-react'
+import * as m from '@/paraglide/messages'
+import { Input } from '@/components/ui/input'
 import {
   DOCS_BASE,
   DEFAULT_ICON,
@@ -12,10 +13,10 @@ import {
   navToSidebarEntries,
   addChildToNode,
 } from '@/lib/kb-editor/tree-utils'
-import type { NavNode, SidebarEntry } from '@/lib/kb-editor/tree-utils'
+import type { NavNode } from '@/lib/kb-editor/tree-utils'
 
 import { BlockPageEditor } from '@/components/kb-editor/BlockPageEditor'
-import type { BlockPageEditorHandle, PageIndexEntry } from '@/components/kb-editor/BlockPageEditor'
+import type { BlockPageEditorHandle } from '@/components/kb-editor/BlockPageEditor'
 import { AccessControlPanel } from '@/components/kb-editor/AccessControlPanel'
 import { EditorHeader } from '@/components/kb-editor/EditorHeader'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
@@ -121,7 +122,7 @@ function KBEditorPage() {
   const setAccessSaveStatus = (s: typeof accessState.saveStatus) =>
     setAccessState((a) => ({ ...a, saveStatus: s }))
 
-  const editorRef = useRef<{ getMarkdown: () => string }>(null)
+  const editorRef = useRef<BlockPageEditorHandle>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Stable refs for save function

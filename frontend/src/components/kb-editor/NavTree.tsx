@@ -14,7 +14,7 @@ import {
   getProjection,
   buildTree,
 } from '@/lib/kb-editor/tree-utils'
-import type { NavNode, FlatNode, Projection } from '@/lib/kb-editor/tree-utils'
+import type { NavNode, Projection } from '@/lib/kb-editor/tree-utils'
 import { useTreeNavigation } from '@/lib/kb-editor/useTreeNavigation'
 import { SortableNavItem } from './SortableNavItem'
 import { NavItemOverlay } from './NavItemOverlay'
