@@ -11,11 +11,11 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 | Category | File | Entries |
 |----------|------|---------|
-| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 13 entries |
+| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
-| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 0 entries |
-| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 2 entries |
-| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 12 entries |
+| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
+| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
+| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 25 entries |
 
 ## Project pitfalls
 
@@ -31,7 +31,7 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 ## Quick Reference
 
-### Process (13)
+### Process (14)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -48,6 +48,7 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | `process-ask-before-retry` | **HIGH** | Operation failed 2x | STOP, summarize findings, ask before retrying |
 | `process-debug-data-before-theory` | **HIGH** | Investigating a bug | Check actual data BEFORE forming theories |
 | `process-verify-full-flow` | **HIGH** | Multi-step bugfix | Verify ALL downstream steps, not just the one you touched |
+| `process-check-process-not-curl` | **HIGH** | Checking if server is running | Use lsof, not curl (blocks indefinitely) |
 
 ### Git (4)
 
@@ -58,20 +59,26 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | `git-commit-specific-files` | **HIGH** | Stage specific files, not git add . |
 | `git-verify-before-commit` | **HIGH** | Always git diff --staged before committing |
 
-### DevOps
+### DevOps (2)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
-| *(add with `/retro` after incidents)* | | | |
+| `devops-image-versions-from-training-data` | **HIGH** | Writing compose with pinned versions | Never use version numbers from AI training data |
+| `devops-compose-restart-does-not-reload-env` | **HIGH** | Updating .env then restarting | Use `docker compose up -d`, not `restart` |
 
-### Infrastructure (2)
+### Infrastructure (6)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
 | `infra-env-not-synced` | **HIGH** | After adding to config.sops.env | Also update Coolify env vars manually |
 | `infra-sops-missing-main-env` | **HIGH** | After setting up SOPS for services | Also encrypt the main docker-compose .env in SOPS |
+| `infra-sops-dotenv-dollar-sign` | **HIGH** | Secret with $ in SOPS dotenv | Use $$ for literal $ in docker-compose .env |
+| `infra-docker-user-container-ip-stale` | **CRIT** | DOCKER-USER iptables with container IPs | Use port-based rules, not container IPs |
+| `infra-zitadel-console-http-api` | **CRIT** | Zitadel console broken, API calls fail | Remove --tlsMode disabled, use ZITADEL_TLS_ENABLED env |
+| `infra-caddy-no-global-csp` | **HIGH** | Adding CSP to Caddy global header | No global CSP -- apps manage their own |
+| `infra-never-modify-env-secrets` | **CRIT** | Modifying secrets in /opt/klai/.env | NEVER modify existing secrets via shell commands |
 
-### Platform (12)
+### Platform (25)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -87,6 +94,19 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | `platform-caddy-cloud86-no-plugin` | **HIGH** | Wildcard TLS setup | Cloud86 has no Caddy plugin — use Hetzner DNS |
 | `platform-caddy-not-auto-routing` | **HIGH** | Adding a new tenant | Caddy doesn't auto-discover containers |
 | `platform-rag-api-non-lite-image` | **HIGH** | RAG deployment (Phase 2) | Use non-lite image for TEI embeddings |
+| `platform-caddy-admin-off-reload` | **HIGH** | Reloading Caddy with admin off | Restart container via Docker SDK, not Admin API |
+| `platform-whisper-cuda-version` | **HIGH** | Deploying faster-whisper | CTranslate2 requires CUDA 12 + cuDNN 9 |
+| `platform-fastapi-background-tasks-db-session` | **CRIT** | Passing db session to BackgroundTasks | Open new session in task, don't pass request-scoped |
+| `caddy-basicauth-monitoring-conflict` | **HIGH** | Adding basic_auth to monitored route | Add health path bypass BEFORE basic_auth |
+| `caddy-log-not-in-handle` | **MED** | Putting log inside handle block | log is site-level, place outside handle |
+| `caddy-basicauth-deprecated` | **LOW** | Using basicauth in Caddyfile | Use basic_auth (underscore) instead |
+| `platform-zitadel-project-grant-vs-user-grant` | **HIGH** | Assigning role to user in Zitadel | Use /users/{id}/grants, not /projects/{id}/grants |
+| `platform-zitadel-resourceowner-claim-unreliable` | **HIGH** | Using resourceowner claim for org lookup | Use sub -> portal_users -> portal_orgs instead |
+| `platform-sso-cache-single-instance` | **HIGH** | Scaling portal-api to multiple instances | In-memory SSO cache not shared across replicas |
+| `caddy-permissions-policy-blocks-mediadevices` | **CRIT** | Browser API silently fails | Use microphone=self, not microphone=() |
+| `platform-alembic-shared-postgres-schema-conflict` | **CRIT** | Two FastAPI services sharing Postgres | Scope alembic_version to service-specific schema |
+| `platform-zitadel-login-v2-recovery` | **CRIT** | Login V2 breaks all OIDC flows | Delete login_v2 row from projections to recover |
+| `platform-zitadel-pat-invalid-after-upgrade` | **CRIT** | PAT invalid after Zitadel upgrade | Rotate PAT via Zitadel console |
 
 ---
 
