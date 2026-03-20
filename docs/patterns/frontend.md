@@ -260,6 +260,84 @@ Never use raw Tailwind color classes (`text-red-600`, `bg-green-500`, etc.) for 
 
 ---
 
+## logging
+
+**Scope:** klai-portal frontend
+
+**Decision:** `consola` + `Sentry.createConsolaReporter()` for structured, environment-aware logging.
+
+### Why
+
+- `@sentry/react ^10.43.0` already installed — `createConsolaReporter()` is a native one-liner
+- Environment-aware: all levels in dev, warn/error/fatal forwarded to Sentry in prod
+- Per-module tagging via `withTag()` — no boilerplate
+- No raw `console.log` in application code
+
+### Setup (already done in klai-portal)
+
+`frontend/src/lib/logger.ts` — the single source for all loggers:
+
+```ts
+import { createConsola } from 'consola/browser'
+import * as Sentry from '@sentry/react'
+
+const logger = createConsola({
+  level: import.meta.env.DEV ? 4 : 1, // 4=debug in dev, 1=warn in prod
+})
+
+if (!import.meta.env.DEV) {
+  logger.addReporter(Sentry.createConsolaReporter())
+}
+
+export const authLogger   = logger.withTag('auth')
+export const editorLogger = logger.withTag('editor')
+export const queryLogger  = logger.withTag('query')
+export const treeLogger   = logger.withTag('tree')
+```
+
+`frontend/src/main.tsx` — Sentry init includes:
+```ts
+Sentry.init({
+  enableLogs: true,
+  integrations: [
+    Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
+  ],
+})
+```
+
+### How to use (for every new file)
+
+```ts
+// Import the right tagged logger — NEVER use console.log directly
+import { editorLogger } from '@/lib/logger'
+
+editorLogger.debug('Parsing content', { format, length })  // dev only, never reaches Sentry
+editorLogger.info('Page saved', { path, ms })              // business-significant action
+editorLogger.warn('Page index empty')                       // recoverable issue
+editorLogger.error('Save failed', { path, status })        // user-facing failure
+```
+
+### Which logger to use where
+
+| Logger | Use for |
+|---|---|
+| `authLogger` | Token refresh, session expiry, login/logout |
+| `editorLogger` | Content load/save, wikilink insert, format detection |
+| `queryLogger` | Cache misses, fetch errors, stale data |
+| `treeLogger` | DnD events, drop target, tree mutations |
+
+Add a new `logger.withTag('name')` export for new domains — keep it in `lib/logger.ts`.
+
+### Rules
+
+- **Never** use `console.log` in application code — always use the logger
+- **Never** export the root `logger` — always use a tagged sub-logger
+- `debug` is free to use liberally in dev; it never ships to Sentry
+- `warn`/`error` go to Sentry in production — write them with context objects, not string concatenation
+- When debugging a bug: add `logger.debug(...)` calls first, reproduce, then fix. Remove noisy debug calls before committing if they add no long-term value.
+
+---
+
 ## See Also
 
 - [patterns/testing.md](testing.md) - Playwright browser testing workflow
