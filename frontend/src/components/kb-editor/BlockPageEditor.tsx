@@ -80,10 +80,10 @@ export const BlockPageEditor = forwardRef<
           getItems={async (query) => {
             const defaultItems = await getDefaultReactSlashMenuItems(editor)
             const wikilinkItem = {
-              title: "Koppelen aan pagina",
-              subtext: "Voeg een link in naar een andere pagina",
+              title: "Link to page",
+              subtext: "Insert a link to another page",
               icon: <span style={{ fontSize: '1.1em' }}>🔗</span>,
-              group: "Basisblokken",
+              group: "Basic blocks",
               onItemClick: () => {
                 onRequestWikilinkPicker?.()
               },
