@@ -22,6 +22,7 @@ export type PageIndexEntry = {
   id: string | null;
   slug: string;
   title: string;
+  icon?: string;
 };
 
 // GET /api/orgs/{org}/kbs/{kb}/page-index
@@ -62,6 +63,7 @@ export async function GET(
       id: frontmatter.id ?? null,
       slug,
       title: frontmatter.title ?? defaultTitle,
+      ...(frontmatter.icon ? { icon: frontmatter.icon } : {}),
     });
   }
 
