@@ -1,6 +1,6 @@
 # SPEC: Reader styling — match klai-website design
 
-**Status:** DRAFT — awaiting approval
+**Status:** DONE
 **Scope:** `klai-docs` public reader only (no editor, no API changes)
 **Goal:** Apply the `www.getklai.com/docs/` visual identity to the `{org}.getklai.com/docs/{kb}` reader
 
