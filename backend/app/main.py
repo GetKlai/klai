@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -14,9 +15,30 @@ from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.services.zitadel import zitadel
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Validate the Zitadel PAT before accepting traffic.
+    # A wrong PAT makes ALL auth endpoints fail with 401, so crash early.
+    import httpx
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{settings.zitadel_base_url}/auth/v1/users/me",
+            headers={"Authorization": f"Bearer {settings.zitadel_pat}"},
+        )
+    if resp.status_code != 200:
+        logger.critical(
+            "ZITADEL_PAT validation failed (HTTP %s). "
+            "The PAT in the environment is invalid or corrupted. "
+            "Fix PORTAL_API_ZITADEL_PAT in .env and restart.",
+            resp.status_code,
+        )
+        raise SystemExit(1)
+    logger.info("Zitadel PAT validated successfully")
+
     yield
     await zitadel.close()
 
