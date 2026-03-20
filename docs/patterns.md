@@ -83,3 +83,7 @@ This enables splitting files later without breaking code references.
 3. Include copy-paste ready commands or code
 4. Update the quick reference in this file
 5. Run `/retro` to do this automatically after a solved problem
+
+## Context loading strategy
+
+Pattern files are NEVER @imported in CLAUDE.md. They load on-demand via `knowledge.md` references when Claude works in the relevant domain. This keeps CLAUDE.md lean and avoids wasting context tokens on domain knowledge that isn't needed every session.

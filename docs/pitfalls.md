@@ -33,22 +33,8 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 ### Process (14)
 
-| ID | Sev | Trigger | Rule |
-|----|-----|---------|------|
-| `process-validate-before-code-change` | **HIGH** | Fixing a bug | Validate hypothesis BEFORE changing code |
-| `process-verify-completion-claims` | **CRIT** | AI reports task complete | Verify with git diff, don't trust |
-| `process-server-restart-protocol` | **CRIT** | Restarting a service | NEVER use run_in_background for servers |
-| `process-test-user-facing-not-imports` | **HIGH** | Completing a fix | Test actual endpoints, not just imports |
-| `process-debug-logging-first` | **HIGH** | Investigating API errors | Add logging FIRST, look at real data |
-| `process-trust-user-feedback` | **CRIT** | User says it's broken | STOP testing, investigate exact scenario |
-| `process-read-spec-first` | **CRIT** | Starting a SPEC task | Read the full SPEC before implementing |
-| `process-minimal-changes` | **HIGH** | Any task | Only what was asked, nothing more |
-| `process-wait-after-question` | **HIGH** | After asking a question | STOP, wait for answer — do not continue |
-| `process-listen-before-acting` | **CRIT** | User explains a problem | Read the FULL explanation before acting |
-| `process-ask-before-retry` | **HIGH** | Operation failed 2x | STOP, summarize findings, ask before retrying |
-| `process-debug-data-before-theory` | **HIGH** | Investigating a bug | Check actual data BEFORE forming theories |
-| `process-verify-full-flow` | **HIGH** | Multi-step bugfix | Verify ALL downstream steps, not just the one you touched |
-| `process-check-process-not-curl` | **HIGH** | Checking if server is running | Use lsof, not curl (blocks indefinitely) |
+See `pitfalls/process-rules.md` (compact table, @imported in CLAUDE.md every session).
+Full descriptions with examples: `pitfalls/process.md`.
 
 ### Git (4)
 
@@ -120,7 +106,22 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 ## Adding new pitfalls
 
-1. Run `/retro "description"` — manager-learn handles everything
+1. Run `/retro "description"` -- manager-learn handles everything
 2. Or manually: add entry to the appropriate category file
 3. If project-specific, add to `[project]/docs/pitfalls/` instead
 4. Update quick reference table above with ID, severity, and one-line rule
+
+## Context loading strategy
+
+CLAUDE.md @imports are loaded every session and cost context tokens. Domain-specific files are loaded on-demand via `knowledge.md`.
+
+| Type | Where it lives | How it loads | When to use |
+|------|---------------|-------------|-------------|
+| Universal process rules | `pitfalls/process-rules.md` | @import in CLAUDE.md (every session) | Rules that apply to ALL sessions regardless of domain |
+| Domain pitfalls (infra, platform, devops, git) | `pitfalls/[category].md` | On-demand via `knowledge.md` reference | Domain-specific mistakes, read when working in that domain |
+
+**Rules:**
+- NEVER @import domain-specific pitfall files in CLAUDE.md -- use `knowledge.md` references instead
+- Only `process-rules.md` (compact table, ~20 lines) is @imported -- it contains universal AI dev workflow rules
+- The full `process.md` (with examples, do/don't sections) remains as detailed reference
+- When adding a new process pitfall: update both `process.md` (full) and `process-rules.md` (compact table row)

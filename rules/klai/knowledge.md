@@ -13,7 +13,7 @@ Always consult this before working on a relevant domain.
 | Infrastructure (Hetzner, SOPS, env, DNS) | `klai-claude/docs/patterns/infrastructure.md` | `klai-claude/docs/pitfalls/infrastructure.md` |
 | Platform (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) | `klai-claude/docs/patterns/platform.md` | `klai-claude/docs/pitfalls/platform.md` |
 | Frontend (i18n, component patterns) | `klai-claude/docs/patterns/frontend.md` | — |
-| UI design system (colors, typography, buttons) | `klai-claude/docs/styleguide.md` (full) / auto-loaded via `klai-claude/rules/klai/klai-ui-styleguide.md` | — |
+| UI design system (colors, typography, buttons) | `klai-claude/docs/styleguide.md` (full) / auto-loaded via `.claude/rules/klai/klai-ui-styleguide.md` | — |
 
 ## Project knowledge
 
