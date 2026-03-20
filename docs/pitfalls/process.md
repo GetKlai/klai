@@ -289,6 +289,26 @@ curl --connect-timeout 2 --max-time 3 -s http://localhost:8010/health
 
 ---
 
+## process-no-prompt-files
+
+**Severity:** HIGH
+
+**Trigger:** Writing a prompt, audit template, or instruction for a follow-up task
+
+NEVER write prompts or audit instructions to MD files. Always output them directly in the session conversation.
+
+**What NOT to do:**
+- Create `LOGGING_AUDIT_PROMPT.md` or similar files with task instructions
+- Write prompts to disk that are only meant to guide the next AI action
+
+**What to do:**
+- Output the prompt/audit template directly in the chat as a message
+- Let the user copy it if they want to persist it
+
+**Why:** Prompts are ephemeral workflow artifacts, not project documentation. Writing them to files clutters the repo with single-use content that quickly becomes stale.
+
+---
+
 ## See Also
 
 - [pitfalls/platform.md](platform.md) - Platform-specific mistakes (LiteLLM, LibreChat, Caddy)
