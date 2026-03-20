@@ -5,19 +5,22 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  pointerWithin,
   closestCenter,
 } from '@dnd-kit/core'
-import type { DragEndEvent, DragStartEvent, DragMoveEvent } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import {
-  INDENT_WIDTH,
-  getProjection,
-  buildTree,
-} from '@/lib/kb-editor/tree-utils'
-import type { NavNode, Projection } from '@/lib/kb-editor/tree-utils'
+import type { DragEndEvent, DragStartEvent, DragMoveEvent, CollisionDetection } from '@dnd-kit/core'
+import { INDENT_WIDTH, getDropTarget, applyDrop } from '@/lib/kb-editor/tree-utils'
+import type { NavNode, DropTarget, DropIntent } from '@/lib/kb-editor/tree-utils'
 import { useTreeNavigation } from '@/lib/kb-editor/useTreeNavigation'
 import { SortableNavItem } from './SortableNavItem'
 import { NavItemOverlay } from './NavItemOverlay'
+
+// Prefer pointerWithin (item the pointer is literally in), fall back to closestCenter
+const treeCollisionDetection: CollisionDetection = (args) => {
+  const pw = pointerWithin(args)
+  if (pw.length > 0) return pw
+  return closestCenter(args)
+}
 
 export interface NavTreeProps {
   nodes: NavNode[]
@@ -50,8 +53,7 @@ export function NavTree({
 }: NavTreeProps) {
   const { collapsedIds, flatNodes, toggleCollapse } = useTreeNavigation(nodes)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [projection, setProjection] = useState<Projection | null>(null)
-  const deltaXRef = useRef(0)
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const pointerYRef = useRef<number>(0)
 
   useEffect(() => {
@@ -66,124 +68,108 @@ export function NavTree({
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
-    setProjection(null)
-    deltaXRef.current = 0
+    setDropTarget(null)
   }
 
   function handleDragMove(event: DragMoveEvent) {
-    deltaXRef.current = event.delta.x
     const { active, over } = event
-    if (!over || active.id === over.id) {
-      setProjection(null)
+    if (!over || !activeId) {
+      setDropTarget(null)
       return
     }
-    setProjection(
-      getProjection(flatNodes, active.id as string, over.id as string, event.delta.x, pointerYRef.current)
+    setDropTarget(
+      getDropTarget(flatNodes, active.id as string, over.id as string, pointerYRef.current)
     )
   }
 
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event
+  function handleDragEnd(_event: DragEndEvent) {
+    const target = dropTarget
+    const draggedId = activeId
     setActiveId(null)
-    setProjection(null)
-    deltaXRef.current = 0
+    setDropTarget(null)
 
-    if (!over || active.id === over.id) return
-
-    const proj = getProjection(
-      flatNodes,
-      active.id as string,
-      over.id as string,
-      deltaXRef.current,
-      pointerYRef.current,
-    )
-
-    const newTree = buildTree(flatNodes, proj, active.id as string)
+    if (!target || !draggedId) return
+    const newTree = applyDrop(nodes, draggedId, target)
     onSidebarUpdate(newTree)
   }
 
   const activeFlat = activeId ? flatNodes.find((f) => f.id === activeId) : null
-  const projectedDepth = projection?.depth ?? activeFlat?.depth ?? 0
+
+  // Projected depth for the drag overlay ghost
+  let overlayDepth = activeFlat?.depth ?? 0
+  if (dropTarget) {
+    const targetFlat = flatNodes.find((f) => f.id === dropTarget.targetId)
+    if (targetFlat) {
+      overlayDepth = dropTarget.intent === 'inside' ? targetFlat.depth + 1 : targetFlat.depth
+    }
+  }
 
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={treeCollisionDetection}
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext
-        items={flatNodes.map((f) => f.id)}
-        strategy={verticalListSortingStrategy}
-      >
-        <div className="relative">
-          {flatNodes.map((flat, index) => {
-            const showDropLineAbove =
-              projection !== null &&
-              activeId !== null &&
-              projection.newIndex === index &&
-              flat.id !== activeId
+      <div className="relative">
+        {flatNodes.map((flat) => {
+          const isTarget = dropTarget?.targetId === flat.id
+          const intent: DropIntent | null = isTarget ? dropTarget!.intent : null
+          const lineDepth = flat.depth
 
-            const isLast = index === flatNodes.length - 1
-            const showDropLineBelow =
-              isLast &&
-              projection !== null &&
-              activeId !== null &&
-              projection.newIndex >= flatNodes.length
-
-            return (
-              <div key={flat.id}>
-                {showDropLineAbove && (
-                  <div
-                    style={{
-                      height: '2px',
-                      background: 'var(--color-purple-accent)',
-                      marginLeft: `${projection.depth * INDENT_WIDTH + 8}px`,
-                      marginRight: '8px',
-                      borderRadius: '1px',
-                    }}
-                  />
-                )}
-                <SortableNavItem
-                  flat={flat}
-                  selectedPath={selectedPath}
-                  onSelect={onSelect}
-                  activeTitle={activeTitle}
-                  activePath={activePath}
-                  onSidebarUpdate={onSidebarUpdate}
-                  onAddSubpage={onAddSubpage}
-                  addingSubpageUnder={addingSubpageUnder}
-                  newPageTitle={newPageTitle}
-                  onNewPageTitleChange={onNewPageTitleChange}
-                  onNewPageConfirm={onNewPageConfirm}
-                  onNewPageCancel={onNewPageCancel}
-                  isCollapsed={collapsedIds.has(flat.id)}
-                  onToggleCollapse={toggleCollapse}
-                  flatNodes={flatNodes}
-                  isDraggingActive={!!activeId}
+          return (
+            <div key={flat.id}>
+              {intent === 'before' && (
+                <div
+                  style={{
+                    height: '2px',
+                    background: 'var(--color-purple-accent)',
+                    marginLeft: `${lineDepth * INDENT_WIDTH + 8}px`,
+                    marginRight: '8px',
+                    borderRadius: '1px',
+                  }}
                 />
-                {showDropLineBelow && (
-                  <div
-                    style={{
-                      height: '2px',
-                      background: 'var(--color-purple-accent)',
-                      marginLeft: `${projection.depth * INDENT_WIDTH + 8}px`,
-                      marginRight: '8px',
-                      borderRadius: '1px',
-                    }}
-                  />
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </SortableContext>
+              )}
+              <SortableNavItem
+                flat={flat}
+                selectedPath={selectedPath}
+                onSelect={onSelect}
+                activeTitle={activeTitle}
+                activePath={activePath}
+                onSidebarUpdate={onSidebarUpdate}
+                onAddSubpage={onAddSubpage}
+                addingSubpageUnder={addingSubpageUnder}
+                newPageTitle={newPageTitle}
+                onNewPageTitleChange={onNewPageTitleChange}
+                onNewPageConfirm={onNewPageConfirm}
+                onNewPageCancel={onNewPageCancel}
+                isCollapsed={collapsedIds.has(flat.id)}
+                onToggleCollapse={toggleCollapse}
+                isDraggingActive={!!activeId}
+                dropIntent={intent}
+                nodes={nodes}
+              />
+              {intent === 'after' && (
+                <div
+                  style={{
+                    height: '2px',
+                    background: 'var(--color-purple-accent)',
+                    marginLeft: `${lineDepth * INDENT_WIDTH + 8}px`,
+                    marginRight: '8px',
+                    borderRadius: '1px',
+                  }}
+                />
+              )}
+            </div>
+          )
+        })}
+      </div>
       <DragOverlay>
         {activeFlat && (
           <NavItemOverlay
             node={activeFlat.node}
-            projectedDepth={projectedDepth}
+            projectedDepth={overlayDepth}
             activeTitle={activeTitle}
             activePath={activePath}
           />

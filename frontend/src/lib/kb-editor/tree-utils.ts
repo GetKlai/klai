@@ -44,10 +44,11 @@ export interface FlatNode {
   node: NavNode
 }
 
-export interface Projection {
-  depth: number
-  parentId: string | null
-  newIndex: number
+export type DropIntent = 'before' | 'inside' | 'after'
+
+export interface DropTarget {
+  targetId: string
+  intent: DropIntent
 }
 
 // ─── Tree transformations ─────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ export function collectSlugs(nodes: NavNode[]): Set<string> {
   return set
 }
 
-// ─── Flat-list DnD utilities ──────────────────────────────────────────────────
+// ─── Flat-list utilities ────────────────────────────────────────────────────
 
 export function flattenTree(
   nodes: NavNode[],
@@ -110,105 +111,158 @@ export function flattenTree(
   return result
 }
 
-export function getProjection(
-  items: FlatNode[],
+// ─── Drag-and-drop: three-zone detection ────────────────────────────────────
+
+/**
+ * Industry-standard 25/50/25 zone split for tree drag-and-drop:
+ * - Top 25%    = "before" (insert as sibling above)
+ * - Middle 50% = "inside" (insert as child)
+ * - Bottom 25% = "after"  (insert as sibling below)
+ */
+export function getDropTarget(
+  flatNodes: FlatNode[],
   activeId: string,
   overId: string,
-  deltaX: number,
   pointerY: number,
-): Projection {
-  const overIndex = items.findIndex((f) => f.id === overId)
-  const activeIndex = items.findIndex((f) => f.id === activeId)
+): DropTarget | null {
+  if (activeId === overId) return null
 
-  if (overIndex === -1 || activeIndex === -1) {
-    const fallback = items.findIndex((f) => f.id === activeId)
-    return { depth: 0, parentId: null, newIndex: fallback === -1 ? 0 : fallback }
-  }
+  const activeIdx = flatNodes.findIndex((f) => f.id === activeId)
+  const overIdx = flatNodes.findIndex((f) => f.id === overId)
+  if (activeIdx === -1 || overIdx === -1) return null
 
-  const overItem = items[overIndex]
-  const baseDepth = overItem.depth
+  // Prevent dropping on a descendant of the dragged item
+  if (isDescendantInFlat(flatNodes, activeIdx, overIdx)) return null
 
-  // Determine the maximum allowable depth (prev item depth + 1)
-  // Look backwards from overIndex (skipping the active item itself)
-  const itemsWithoutActive = items.filter((f) => f.id !== activeId)
-  const overIndexWithoutActive = itemsWithoutActive.findIndex((f) => f.id === overId)
-  const prevItem = overIndexWithoutActive > 0 ? itemsWithoutActive[overIndexWithoutActive - 1] : null
-  // When there is no previous item (first in list), still allow nesting under overItem itself
-  const maxDepth = prevItem ? prevItem.depth + 1 : overItem.depth + 1
-
-  const depthOffset = Math.round(deltaX / INDENT_WIDTH)
-  const projectedDepth = Math.min(Math.max(0, baseDepth + depthOffset), maxDepth)
-
-  // Find the parentId: look backwards for the first item at projectedDepth - 1
-  let parentId: string | null = null
-  if (projectedDepth > 0) {
-    for (let i = overIndexWithoutActive - 1; i >= 0; i--) {
-      if (itemsWithoutActive[i].depth === projectedDepth - 1) {
-        parentId = itemsWithoutActive[i].id
-        break
-      }
-      if (itemsWithoutActive[i].depth < projectedDepth - 1) {
-        break
-      }
-    }
-  }
-
-  // newIndex: position in the items-without-active list where we drop.
-  // When hovering over the last item, dnd-kit cannot switch to a "next" item,
-  // so we check the pointer Y against the item midpoint to decide before vs. after.
-  let newIndex = overIndexWithoutActive
+  // Get the DOM rect of the hovered item for zone calculation
   const overEl = document.querySelector(`[data-flat-id="${overId}"]`)
-  if (overEl) {
-    const rect = overEl.getBoundingClientRect()
-    const midY = rect.top + rect.height / 2
-    if (pointerY > midY) {
-      newIndex = overIndexWithoutActive + 1
-    }
-  }
+  if (!overEl) return null
+  const rect = overEl.getBoundingClientRect()
+  const relY = pointerY - rect.top
+  const quarter = rect.height / 4
 
-  return { depth: projectedDepth, parentId, newIndex }
+  let intent: DropIntent
+  if (relY < quarter) intent = 'before'
+  else if (relY > rect.height - quarter) intent = 'after'
+  else intent = 'inside'
+
+  return { targetId: overId, intent }
 }
 
-export function buildTree(flatNodes: FlatNode[], projection: Projection, activeId: string): NavNode[] {
-  // Remove active node from flat list
-  const withoutActive = flatNodes.filter((f) => f.id !== activeId)
-  const activeFlat = flatNodes.find((f) => f.id === activeId)!
+function isDescendantInFlat(
+  flatNodes: FlatNode[],
+  ancestorIdx: number,
+  candidateIdx: number,
+): boolean {
+  if (candidateIdx <= ancestorIdx) return false
+  const ancestorDepth = flatNodes[ancestorIdx].depth
+  for (let i = ancestorIdx + 1; i <= candidateIdx; i++) {
+    if (flatNodes[i].depth <= ancestorDepth) return false
+  }
+  return true
+}
 
-  // Insert active at newIndex with updated depth/parentId
-  const inserted: FlatNode[] = [
-    ...withoutActive.slice(0, projection.newIndex),
-    { ...activeFlat, depth: projection.depth, parentId: projection.parentId },
-    ...withoutActive.slice(projection.newIndex),
-  ]
+// ─── Tree mutations (work directly on the tree, preserving collapsed children) ─
 
-  // Rebuild hierarchical NavNode[] from the flat list
-  const nodeMap = new Map<string, NavNode>()
-  const roots: NavNode[] = []
+/** Apply a drag-and-drop operation directly on the tree structure. */
+export function applyDrop(tree: NavNode[], activeId: string, target: DropTarget): NavNode[] {
+  const { tree: treeWithout, removed } = removeFromTree(tree, activeId)
+  if (!removed) return tree
+  const { result, found } = findAndInsert(treeWithout, removed, target.targetId, target.intent)
+  return found ? result : tree
+}
 
-  for (const flat of inserted) {
-    const node: NavNode = { ...flat.node, children: [] }
-    nodeMap.set(flat.id, node)
+/** Move a node to the end of the root level. */
+export function moveToRoot(tree: NavNode[], nodeId: string): NavNode[] {
+  const { tree: treeWithout, removed } = removeFromTree(tree, nodeId)
+  if (!removed) return tree
+  return [...treeWithout, removed]
+}
 
-    if (flat.parentId === null) {
-      roots.push(node)
+/** Promote a node one level up (insert after its current parent). */
+export function promoteNode(tree: NavNode[], nodeId: string): NavNode[] {
+  const parentPath = findParentPath(tree, nodeId)
+  if (parentPath === null) return tree // already at root
+  const { tree: treeWithout, removed } = removeFromTree(tree, nodeId)
+  if (!removed) return tree
+  const { result, found } = findAndInsert(treeWithout, removed, parentPath, 'after')
+  return found ? result : tree
+}
+
+// ─── Internal helpers ───────────────────────────────────────────────────────
+
+function removeFromTree(
+  nodes: NavNode[],
+  nodeId: string,
+): { tree: NavNode[]; removed: NavNode | null } {
+  let removed: NavNode | null = null
+  const result: NavNode[] = []
+
+  for (const node of nodes) {
+    if (node.path === nodeId) {
+      removed = node
+      continue
+    }
+    if (node.children?.length) {
+      const sub = removeFromTree(node.children, nodeId)
+      if (sub.removed) removed = sub.removed
+      result.push({ ...node, children: sub.tree.length ? sub.tree : undefined })
     } else {
-      const parent = nodeMap.get(flat.parentId)
-      if (parent) {
-        parent.children = parent.children ?? []
-        parent.children.push(node)
-      } else {
-        roots.push(node)
-      }
+      result.push(node)
     }
   }
 
-  // Strip empty children arrays
-  function stripEmpty(nodes: NavNode[]): NavNode[] {
-    return nodes.map((n) => ({
-      ...n,
-      children: n.children?.length ? stripEmpty(n.children) : undefined,
-    }))
+  return { tree: result, removed }
+}
+
+function findAndInsert(
+  nodes: NavNode[],
+  item: NavNode,
+  targetId: string,
+  intent: DropIntent,
+): { result: NavNode[]; found: boolean } {
+  const idx = nodes.findIndex((n) => n.path === targetId)
+
+  if (idx !== -1) {
+    const result = [...nodes]
+    switch (intent) {
+      case 'before':
+        result.splice(idx, 0, item)
+        break
+      case 'after':
+        result.splice(idx + 1, 0, item)
+        break
+      case 'inside': {
+        const target = result[idx]
+        result[idx] = { ...target, children: [...(target.children ?? []), item] }
+        break
+      }
+    }
+    return { result, found: true }
   }
 
-  return stripEmpty(roots)
+  // Recurse into children
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    if (!node.children?.length) continue
+    const sub = findAndInsert(node.children, item, targetId, intent)
+    if (sub.found) {
+      const result = [...nodes]
+      result[i] = { ...node, children: sub.result }
+      return { result, found: true }
+    }
+  }
+
+  return { result: nodes, found: false }
+}
+
+function findParentPath(nodes: NavNode[], nodeId: string): string | null {
+  for (const node of nodes) {
+    if (node.children?.some((c) => c.path === nodeId)) return node.path
+    if (node.children?.length) {
+      const found = findParentPath(node.children, nodeId)
+      if (found !== null) return found
+    }
+  }
+  return null
 }

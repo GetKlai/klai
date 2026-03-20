@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronRight, FolderOpen, Plus, Check, X, MoreHorizontal, GripVertical } from 'lucide-react'
 import { Input } from '@/components/ui/input'
-import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { useDraggable, useDroppable } from '@dnd-kit/core'
 import * as m from '@/paraglide/messages'
 import {
   INDENT_WIDTH,
   DEFAULT_ICON,
-  buildTree,
+  moveToRoot,
+  promoteNode,
 } from '@/lib/kb-editor/tree-utils'
-import type { NavNode, FlatNode, Projection } from '@/lib/kb-editor/tree-utils'
+import type { NavNode, FlatNode, DropIntent } from '@/lib/kb-editor/tree-utils'
 
 export interface SortableNavItemProps {
   flat: FlatNode
@@ -26,8 +26,9 @@ export interface SortableNavItemProps {
   onNewPageCancel: () => void
   isCollapsed: boolean
   onToggleCollapse: (id: string) => void
-  flatNodes: FlatNode[]
   isDraggingActive: boolean
+  dropIntent: DropIntent | null
+  nodes: NavNode[]
 }
 
 export function SortableNavItem({
@@ -45,8 +46,9 @@ export function SortableNavItem({
   onNewPageCancel,
   isCollapsed,
   onToggleCollapse,
-  flatNodes,
   isDraggingActive,
+  dropIntent,
+  nodes,
 }: SortableNavItemProps) {
   const { node, depth } = flat
   const [hovered, setHovered] = useState(false)
@@ -62,16 +64,16 @@ export function SortableNavItem({
   const {
     attributes,
     listeners,
-    setNodeRef,
-    transform,
-    transition,
+    setNodeRef: setDragRef,
     isDragging,
-  } = useSortable({ id: node.path })
+  } = useDraggable({ id: node.path })
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0 : 1,
+  const { setNodeRef: setDropRef } = useDroppable({ id: node.path })
+
+  // Combine drag and drop refs on the same element
+  const setNodeRef = (el: HTMLDivElement | null) => {
+    setDragRef(el)
+    setDropRef(el)
   }
 
   // Close context menu on outside click
@@ -95,30 +97,14 @@ export function SortableNavItem({
 
   function handleMoveToRoot() {
     setShowContextMenu(false)
-    const proj: Projection = { depth: 0, parentId: null, newIndex: flatNodes.length - 1 }
-    const newTree = buildTree(flatNodes, proj, node.path)
+    const newTree = moveToRoot(nodes, node.path)
     onSidebarUpdate(newTree)
   }
 
   function handlePromote() {
     setShowContextMenu(false)
     if (flat.depth === 0) return
-    const currentIndex = flatNodes.findIndex((f) => f.id === node.path)
-    let newParentId: string | null = null
-    if (flat.depth >= 2) {
-      for (let i = currentIndex - 1; i >= 0; i--) {
-        if (flatNodes[i].depth === flat.depth - 2) {
-          newParentId = flatNodes[i].id
-          break
-        }
-      }
-    }
-    const proj: Projection = {
-      depth: flat.depth - 1,
-      parentId: newParentId,
-      newIndex: currentIndex,
-    }
-    const newTree = buildTree(flatNodes, proj, node.path)
+    const newTree = promoteNode(nodes, node.path)
     onSidebarUpdate(newTree)
   }
 
@@ -157,13 +143,18 @@ export function SortableNavItem({
     </div>
   )
 
+  // Visual highlight for "drop inside" intent
+  const isInsideTarget = dropIntent === 'inside'
+
   return (
-    <div ref={setNodeRef} style={style} data-flat-id={flat.id}>
+    <div ref={setNodeRef} data-flat-id={flat.id} style={{ opacity: isDragging ? 0 : 1 }}>
       <div
         className={`flex w-full items-center py-1 text-xs transition-colors group ${
-          isSelected && !isDir
-            ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
-            : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
+          isInsideTarget
+            ? 'bg-[var(--color-purple-accent)]/20 ring-1 ring-[var(--color-purple-accent)] rounded'
+            : isSelected && !isDir
+              ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
+              : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
         }`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
