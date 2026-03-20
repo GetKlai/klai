@@ -17,6 +17,7 @@ export const WikiLink = createReactInlineContentSpec(
       pageId: { default: "" },
       title: { default: "Untitled" },
       kbSlug: { default: "" },
+      icon: { default: "" },
     },
     content: "none" as const,
   },
@@ -35,6 +36,9 @@ export const WikiLink = createReactInlineContentSpec(
         }}
         title={`Ga naar: ${inlineContent.props.title}`}
       >
+        {inlineContent.props.icon && (
+          <span style={{ marginRight: "3px" }}>{inlineContent.props.icon}</span>
+        )}
         {inlineContent.props.title}
         <svg
           width="11"

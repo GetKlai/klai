@@ -7,7 +7,7 @@ import { WikiLink } from '@/routes/app/docs/WikiLink'
 
 export type BlockPageEditorHandle = {
   getMarkdown: () => string
-  insertWikilink: (pageId: string, title: string) => void
+  insertWikilink: (pageId: string, title: string, icon?: string) => void
 }
 
 export type PageIndexEntry = { id: string | null; slug: string; title: string; icon?: string }
@@ -42,10 +42,10 @@ export const BlockPageEditor = forwardRef<
 
   useImperativeHandle(ref, () => ({
     getMarkdown: () => editor.blocksToMarkdownLossy(editor.document),
-    insertWikilink: (pageId: string, title: string) => {
+    insertWikilink: (pageId: string, title: string, icon?: string) => {
       editor.focus()
       editor.insertInlineContent([
-        { type: "wikilink", props: { pageId, title, kbSlug } } as any,
+        { type: "wikilink", props: { pageId, title, kbSlug, icon: icon ?? '' } } as any,
         " ",
       ])
     },
@@ -113,7 +113,7 @@ export const BlockPageEditor = forwardRef<
                 editor.insertInlineContent([
                   {
                     type: "wikilink",
-                    props: { pageId: p.id ?? p.slug, title: p.title, kbSlug },
+                    props: { pageId: p.id ?? p.slug, title: p.title, kbSlug, icon: p.icon ?? '' },
                   } as any,
                   " ",
                 ])

@@ -526,7 +526,7 @@ function KBEditorPage() {
                     key={p.slug}
                     className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-[var(--color-secondary)] text-[var(--color-foreground)]"
                     onClick={() => {
-                      editorRef.current?.insertWikilink(p.id ?? p.slug, p.title)
+                      editorRef.current?.insertWikilink(p.id ?? p.slug, p.title, p.icon)
                       setShowWikilinkPicker(false)
                       setWikilinkSearch('')
                     }}
