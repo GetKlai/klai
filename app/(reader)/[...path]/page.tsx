@@ -152,7 +152,7 @@ export default async function ReaderPage({
       <main className="flex-1 px-16 py-12 max-w-[780px]">
         {articlePath ? (
           <>
-            <h1 className="font-[family-name:var(--font-serif)] text-[2.75rem] font-bold text-[var(--color-purple-deep)] mb-6 leading-tight">{title}</h1>
+            <h1 className="font-[family-name:var(--font-serif)] text-[2.5rem] font-bold text-[var(--color-purple-deep)] mb-6 leading-tight">{title}</h1>
             {description && (
               <p className="text-[rgba(26,26,26,0.6)] text-[0.9375rem] leading-relaxed mb-8">{description}</p>
             )}
