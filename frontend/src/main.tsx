@@ -58,8 +58,10 @@ Sentry.init({
   dsn,
   environment: import.meta.env.MODE,
   sendDefaultPii: false,
+  enableLogs: true,
   integrations: [
     Sentry.tanstackRouterBrowserTracingIntegration(router),
+    Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
     // Disable console + DOM breadcrumbs: console logs may contain user data,
     // DOM click trails are behavioural data we don't need for debugging.
     Sentry.breadcrumbsIntegration({ console: false, dom: false }),

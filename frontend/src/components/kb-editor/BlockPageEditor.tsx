@@ -4,6 +4,7 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultInlineContentSpecs } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
 import { WikiLink } from '@/routes/app/docs/WikiLink'
+import { editorLogger } from '@/lib/logger'
 
 export type BlockPageEditorHandle = {
   getMarkdown: () => string
@@ -34,11 +35,16 @@ export const BlockPageEditor = forwardRef<
   const editor = useCreateBlockNote({ schema: wikilinkSchema })
 
   useEffect(() => {
-    if (!initialContent) return
+    if (!initialContent) {
+      editorLogger.warn('initialContent empty on mount')
+      return
+    }
     // HTML content (saved after wikilink support): parse as HTML so custom
     // inline specs (wikilink) are restored via their parse() method.
     // Legacy markdown content (no leading '<'): fall back to markdown parser.
-    const blocks = initialContent.trimStart().startsWith('<')
+    const format = initialContent.trimStart().startsWith('<') ? 'html' : 'markdown'
+    editorLogger.debug('Loading content', { format, length: initialContent.length })
+    const blocks = format === 'html'
       ? editor.tryParseHTMLToBlocks(initialContent)
       : editor.tryParseMarkdownToBlocks(initialContent)
     editor.replaceBlocks(editor.document, blocks)
@@ -48,6 +54,7 @@ export const BlockPageEditor = forwardRef<
   useImperativeHandle(ref, () => ({
     getMarkdown: () => editor.blocksToHTMLLossy(editor.document),
     insertWikilink: (pageId: string, title: string, icon?: string) => {
+      editorLogger.debug('Inserting wikilink', { pageId, title, icon })
       editor.focus()
       editor.insertInlineContent([
         { type: "wikilink", props: { pageId, title, kbSlug, icon: icon ?? '' } } as any,
