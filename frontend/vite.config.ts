@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 import { paraglideVitePlugin } from '@inlang/paraglide-js'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
+import { visualizer } from 'rollup-plugin-visualizer'
 import path from 'path'
 
 export default defineConfig({
@@ -25,6 +26,12 @@ export default defineConfig({
       url: 'https://errors.getklai.com',
       sourcemaps: { filesToDeleteAfterUpload: ['dist/**/*.map'] },
       silent: !process.env.SENTRY_AUTH_TOKEN,
+    }),
+    process.env.ANALYZE === 'true' && visualizer({
+      open: true,
+      filename: 'dist/bundle-report.html',
+      gzipSize: true,
+      brotliSize: true,
     }),
   ],
   build: {

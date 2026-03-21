@@ -146,7 +146,7 @@ function DocsPage() {
       if (!res.ok) throw new Error('Verwijderen mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
       setDeletingKb(null)
     },
   })

@@ -62,7 +62,7 @@ function PasswordSetPage() {
       }
 
       setDone(true)
-      setTimeout(() => navigate({ to: '/' }), 2500)
+      setTimeout(() => void navigate({ to: '/' }), 2500)
     } catch {
       setError(m.error_connection())
     } finally {

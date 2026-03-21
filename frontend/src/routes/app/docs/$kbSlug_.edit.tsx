@@ -77,8 +77,8 @@ function EditKBPage() {
       return res.json()
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
-      navigate({ to: '/app/docs' })
+      void queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
+      void navigate({ to: '/app/docs' })
     },
   })
 

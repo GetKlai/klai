@@ -525,7 +525,9 @@ async def passkey_confirm(
 ) -> None:
     """Complete passkey registration by submitting the browser's PublicKeyCredential."""
     try:
-        await zitadel.verify_passkey_registration(user_id, body.passkey_id, body.public_key_credential, body.passkey_name)
+        await zitadel.verify_passkey_registration(
+            user_id, body.passkey_id, body.public_key_credential, body.passkey_name
+        )
     except httpx.HTTPStatusError as exc:
         log.error("verify_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):

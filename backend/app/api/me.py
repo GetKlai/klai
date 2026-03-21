@@ -13,12 +13,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
-
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
 bearer = HTTPBearer()
@@ -76,7 +76,7 @@ async def me(
     workspace_url: str | None = None
     provisioning_status: str = "pending"
     mfa_policy: str = "optional"
-    preferred_language: str = "nl"
+    preferred_language: Literal["nl", "en"] = "nl"
     if zitadel_user_id:
         result = await db.execute(
             select(PortalOrg, PortalUser)
@@ -97,8 +97,8 @@ async def me(
     if zitadel_user_id:
         try:
             mfa_enrolled = await zitadel.has_any_mfa(zitadel_user_id)
-        except Exception:
-            pass  # Don't block login if the check fails
+        except Exception:  # noqa: S110 — intentional: MFA check must not block login
+            pass
 
     return MeResponse(
         user_id=zitadel_user_id,

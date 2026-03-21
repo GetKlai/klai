@@ -86,7 +86,7 @@ function UsersPage() {
       if (!res.ok) throw new Error(m.admin_users_error_resend_invite({ status: String(res.status) }))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     },
   })
 
@@ -99,7 +99,7 @@ function UsersPage() {
       if (!res.ok) throw new Error(m.admin_users_error_delete({ status: String(res.status) }))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     },
   })
 
@@ -116,7 +116,7 @@ function UsersPage() {
       if (!res.ok) throw new Error(m.admin_users_error_role({ status: String(res.status) }))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     },
   })
 

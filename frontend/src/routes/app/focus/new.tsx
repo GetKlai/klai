@@ -62,8 +62,8 @@ function NewFocusPage() {
       return res.json() as Promise<NotebookResponse>
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
-      navigate({ to: '/app/focus/$notebookId', params: { notebookId: data.id } })
+      void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
+      void navigate({ to: '/app/focus/$notebookId', params: { notebookId: data.id } })
     },
   })
 
@@ -73,7 +73,7 @@ function NewFocusPage() {
   }
 
   function handleCancel() {
-    navigate({ to: '/app/focus' })
+    void navigate({ to: '/app/focus' })
   }
 
   return (

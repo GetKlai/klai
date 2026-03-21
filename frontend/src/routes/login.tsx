@@ -60,13 +60,13 @@ function LoginPage() {
       setCheckingSSO(false)
     }
 
-    trySSO()
+    void trySSO()
   }, [authRequestId])
 
   // If Zitadel didn't supply an authRequestId, the user arrived here directly.
   // Send them back to / so signinRedirect() can start the OIDC flow properly.
   if (!authRequestId) {
-    navigate({ to: '/' })
+    void navigate({ to: '/' })
     return null
   }
 

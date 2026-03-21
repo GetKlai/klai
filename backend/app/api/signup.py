@@ -81,7 +81,9 @@ def _to_slug(name: str, suffix: str = "") -> str:
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> SignupResponse:
+async def signup(
+    body: SignupRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)
+) -> SignupResponse:
     # 1. Create Zitadel org
     try:
         org_data = await zitadel.create_org(_slugify(body.company_name))

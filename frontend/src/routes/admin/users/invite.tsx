@@ -72,8 +72,8 @@ function InviteUserPage() {
       if (!res.ok) throw new Error(m.admin_users_error_invite({ status: String(res.status) }))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      navigate({ to: '/admin/users' })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      void navigate({ to: '/admin/users' })
     },
   })
 
@@ -83,7 +83,7 @@ function InviteUserPage() {
   }
 
   function handleCancel() {
-    navigate({ to: '/admin/users' })
+    void navigate({ to: '/admin/users' })
   }
 
   return (

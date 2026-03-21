@@ -83,7 +83,7 @@ function FocusPage() {
       if (!res.ok) throw new Error(m.app_focus_delete_label() + ' mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
       setConfirmingDeleteId(null)
     },
   })

@@ -20,6 +20,7 @@ function ProvisioningPage() {
   const auth = useAuth()
   const [status, setStatus] = useState<Status>('polling')
   const [dots, setDots] = useState('')
+  // eslint-disable-next-line react-hooks/purity
   const startedAt = useRef(Date.now())
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -76,7 +77,7 @@ function ProvisioningPage() {
       }
     }
 
-    poll()
+    void poll()
     return () => {
       if (timer.current) clearTimeout(timer.current)
     }

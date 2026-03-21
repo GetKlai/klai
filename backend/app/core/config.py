@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
 
+    # Dev mode — enables Swagger UI and /openapi.json; NEVER enable in production
+    debug: bool = False
+
     # CORS — static origins + wildcard regex for tenant subdomains
     cors_origins: str = "http://localhost:5174"
     cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
@@ -79,4 +82,4 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",")]
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env

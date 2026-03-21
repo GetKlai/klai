@@ -55,7 +55,7 @@ function VerifyEmailPage() {
       }
     }
 
-    verify()
+    void verify()
   }, [code, userId, organization])
 
   const leftContent = (

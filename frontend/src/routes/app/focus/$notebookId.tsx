@@ -106,7 +106,7 @@ function NotebookDetailPage() {
   function dismissOnboarding() {
     try {
       localStorage.setItem('focus_onboarding_dismissed', '1')
-    } catch {}
+    } catch { /* localStorage unavailable in sandboxed contexts */ }
     setShowOnboarding(false)
   }
 
@@ -156,7 +156,7 @@ function NotebookDetailPage() {
       if (!res.ok) throw new Error('Verwijderen mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
     },
   })
 
@@ -186,7 +186,7 @@ function NotebookDetailPage() {
     },
     onSuccess: () => {
       // Only refreshes notebook metadata — does NOT reset the current chat session
-      queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId, token] })
     },
   })
 
@@ -199,7 +199,7 @@ function NotebookDetailPage() {
       if (!res.ok) throw new Error('Wissen mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-history', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-history', notebookId, token] })
       setMessages([])
     },
   })
@@ -603,7 +603,7 @@ function NotebookDetailPage() {
                 disabled={!hasReadySources || streaming}
                 className="flex-1"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') sendMessage()
+                  if (e.key === 'Enter') void sendMessage()
                 }}
               />
               <Button

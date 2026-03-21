@@ -89,7 +89,7 @@ function CallbackPage() {
       window.location.replace('/app')
     }
 
-    resolveDestination()
+    void resolveDestination()
   }, [auth.isLoading, auth.isAuthenticated, auth.user])
 
   if (auth.error) {

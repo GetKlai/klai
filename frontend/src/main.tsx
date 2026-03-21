@@ -29,6 +29,7 @@ function stringifySearch(search: Record<string, unknown>): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(search)) {
     if (value !== undefined && value !== null) {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
       params.set(key, String(value))
     }
   }

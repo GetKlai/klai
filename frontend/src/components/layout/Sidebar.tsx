@@ -88,7 +88,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                 </a>
               ) : (
                 <Link
-                  to={item.to!}
+                  to={item.to ?? '/'}
                   activeOptions={item.end ? { exact: true } : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
@@ -204,7 +204,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             // sendBeacon is guaranteed to fire even when the page navigates away,
             // unlike fetch which gets cancelled by signoutRedirect().
             navigator.sendBeacon('/api/auth/logout')
-            auth.signoutRedirect()
+            void auth.signoutRedirect()
           }}
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(

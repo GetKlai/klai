@@ -47,8 +47,8 @@ function NewKBPage() {
       return res.json()
     },
     onSuccess: (kb) => {
-      queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
-      navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })
+      void queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })
+      void navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })
     },
   })
 

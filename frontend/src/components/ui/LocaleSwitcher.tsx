@@ -13,7 +13,7 @@ export function LocaleSwitcher() {
     const path = window.location.pathname
     if (/^\/(nl|en)(\/|$)/.test(path)) {
       const newPath = path.replace(/^\/(nl|en)/, `/${newLocale}`)
-      navigate({ to: newPath })
+      void navigate({ to: newPath })
       return
     }
 

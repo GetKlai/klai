@@ -90,9 +90,9 @@ function EditFocusPage() {
       return res.json()
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
-      queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId] })
-      navigate({ to: '/app/focus' })
+      void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId] })
+      void navigate({ to: '/app/focus' })
     },
   })
 
@@ -102,7 +102,7 @@ function EditFocusPage() {
   }
 
   function handleCancel() {
-    navigate({ to: '/app/focus' })
+    void navigate({ to: '/app/focus' })
   }
 
   return (

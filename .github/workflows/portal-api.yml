@@ -12,7 +12,36 @@ permissions:
   packages: write
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (pyright)
+        run: uv run --with pyright pyright
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit
+
   build-push:
+    needs: quality
     runs-on: ubuntu-latest
 
     steps:

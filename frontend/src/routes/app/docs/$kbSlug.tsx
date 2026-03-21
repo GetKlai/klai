@@ -307,7 +307,7 @@ function KBEditorPage() {
         setSelectedPath(newSlug)
         setSaveStatus('renamed')
         setTimeout(() => setSaveStatus('idle'), 2500)
-        refetchTree()
+        void refetchTree()
       } catch {
         setSaveStatus('error')
         setTimeout(() => setSaveStatus('idle'), 3000)
@@ -328,7 +328,7 @@ function KBEditorPage() {
       if (!res.ok) throw new Error('Save failed')
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
-      refetchTree()
+      void refetchTree()
     } catch {
       setSaveStatus('error')
       setTimeout(() => setSaveStatus('idle'), 3000)

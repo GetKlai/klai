@@ -14,7 +14,7 @@ function LoginPage() {
 
   useEffect(() => {
     if (!auth.isLoading && !auth.isAuthenticated && auth.activeNavigator !== 'signoutRedirect') {
-      auth.signinRedirect({ extraQueryParams: { ui_locales: locale } })
+      void auth.signinRedirect({ extraQueryParams: { ui_locales: locale } })
     }
   }, [auth.isLoading, auth.isAuthenticated, auth.activeNavigator, locale])
 

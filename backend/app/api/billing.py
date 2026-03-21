@@ -1,4 +1,5 @@
-from typing import AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse

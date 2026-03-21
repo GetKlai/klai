@@ -87,7 +87,7 @@ function TranscribePage() {
       if (!res.ok) throw new Error('Verwijderen mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
     },
   })
 
@@ -104,7 +104,7 @@ function TranscribePage() {
       if (!res.ok) throw new Error('Opslaan mislukt')
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
       setEditingId(null)
     },
   })

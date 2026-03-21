@@ -81,8 +81,8 @@ function EditUserPage() {
       if (!res.ok) throw new Error(m.admin_users_error_edit({ status: String(res.status) }))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      navigate({ to: '/admin/users' })
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      void navigate({ to: '/admin/users' })
     },
   })
 
@@ -92,7 +92,7 @@ function EditUserPage() {
   }
 
   function handleCancel() {
-    navigate({ to: '/admin/users' })
+    void navigate({ to: '/admin/users' })
   }
 
   return (

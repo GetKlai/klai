@@ -25,7 +25,7 @@ function AppLayout() {
   useEffect(() => {
     if (auth.isLoading) return
     if (!auth.isAuthenticated) {
-      navigate({ to: '/' })
+      void navigate({ to: '/' })
       return
     }
     // Re-check 2FA requirement in case user navigated directly here without going through /callback

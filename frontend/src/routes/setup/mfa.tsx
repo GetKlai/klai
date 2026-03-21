@@ -384,7 +384,7 @@ function EmailOTPSetup({
                 </button>
               ) : (
                 <span className="text-xs text-[var(--color-muted-foreground)]">
-                  {m.setup_mfa_email_resend()} ({Math.ceil((resendAt! - now) / 1000)}s)
+                  {m.setup_mfa_email_resend()} ({Math.ceil((resendAt - now) / 1000)}s)
                 </span>
               )}
             </div>

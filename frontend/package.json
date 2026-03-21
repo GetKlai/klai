@@ -8,7 +8,8 @@
     "dev": "npm run i18n:compile && vite",
     "build": "npm run i18n:compile && tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "analyze": "npm run i18n:compile && ANALYZE=true vite build"
   },
   "dependencies": {
     "@blocknote/core": "^0.47.1",
@@ -63,6 +64,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.0.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",

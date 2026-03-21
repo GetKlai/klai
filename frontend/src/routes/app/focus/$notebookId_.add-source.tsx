@@ -40,7 +40,7 @@ function AddSourcePage() {
       ) {
         return 'youtube'
       }
-    } catch {}
+    } catch { /* invalid URL — treat as plain url type */ }
     return 'url'
   }
 
@@ -57,8 +57,8 @@ function AddSourcePage() {
       return res.json()
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
-      navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
+      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
+      void navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
     },
     onError: (err: Error) => setAddError(err.message),
   })
@@ -77,8 +77,8 @@ function AddSourcePage() {
       return res.json()
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
-      navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
+      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
+      void navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
     },
     onError: (err: Error) => setAddError(err.message),
   })

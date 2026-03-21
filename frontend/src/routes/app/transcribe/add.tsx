@@ -107,8 +107,8 @@ function AddTranscribePage() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
-      navigate({ to: '/app/transcribe' })
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      void navigate({ to: '/app/transcribe' })
     },
     onError: (err: Error) => {
       setError(err.message)
@@ -127,7 +127,7 @@ function AddTranscribePage() {
 
   const handleCopy = () => {
     if (!result) return
-    navigator.clipboard.writeText(result.text).then(() => {
+    void navigator.clipboard.writeText(result.text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
@@ -139,6 +139,7 @@ function AddTranscribePage() {
     analyserRef.current.getByteFrequencyData(data)
     const avg = data.reduce((a, b) => a + b, 0) / data.length
     setAudioLevel(Math.min(100, (avg / 128) * 100))
+    // eslint-disable-next-line react-hooks/immutability
     animFrameRef.current = requestAnimationFrame(updateAudioLevel)
   }, [])
 
@@ -178,7 +179,7 @@ function AddTranscribePage() {
   useEffect(() => {
     if (activeTab !== 'record') return
     if (streamRef.current) return // already have stream
-    requestMicAccess()
+    void requestMicAccess()
   }, [activeTab, requestMicAccess])
 
   const stopRecording = useCallback(() => {
@@ -221,7 +222,7 @@ function AddTranscribePage() {
     setRecordDuration(0)
     durationIntervalRef.current = window.setInterval(() => setRecordDuration((d) => d + 1), 1000)
     // Resume AudioContext in case it was suspended (can happen when created outside a direct user gesture)
-    audioContextRef.current?.resume().then(updateAudioLevel).catch(updateAudioLevel)
+    void audioContextRef.current?.resume().then(updateAudioLevel).catch(updateAudioLevel)
   }, [micPermission, updateAudioLevel, transcribeMutation])
 
   // Cleanup stream on unmount
@@ -229,7 +230,7 @@ function AddTranscribePage() {
     () => () => {
       stopRecording()
       streamRef.current?.getTracks().forEach((t) => t.stop())
-      audioContextRef.current?.close()
+      void audioContextRef.current?.close()
     },
     [stopRecording],
   )

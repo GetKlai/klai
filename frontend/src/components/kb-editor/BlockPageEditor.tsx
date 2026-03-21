@@ -57,6 +57,7 @@ export const BlockPageEditor = forwardRef<
       editorLogger.debug('Inserting wikilink', { pageId, title, icon })
       editor.focus()
       editor.insertInlineContent([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         { type: "wikilink", props: { pageId, title, kbSlug, icon: icon ?? '' } } as any,
         " ",
       ])
@@ -89,8 +90,8 @@ export const BlockPageEditor = forwardRef<
       >
         <SuggestionMenuController
           triggerCharacter="/"
-          getItems={async (query) => {
-            const defaultItems = await getDefaultReactSlashMenuItems(editor)
+          getItems={(query) => {
+            const defaultItems = getDefaultReactSlashMenuItems(editor)
             const wikilinkItem = {
               title: "Link to page",
               subtext: "Insert a link to another page",
@@ -108,7 +109,7 @@ export const BlockPageEditor = forwardRef<
         />
         <SuggestionMenuController
           triggerCharacter="["
-          getItems={async (query) => {
+          getItems={(query) => {
             const search = query.toLowerCase()
             const filtered = pageIndex.filter((p) => {
               if (p.slug === currentPageSlug) return false
@@ -126,6 +127,7 @@ export const BlockPageEditor = forwardRef<
                   {
                     type: "wikilink",
                     props: { pageId: p.id ?? p.slug, title: p.title, kbSlug, icon: p.icon ?? '' },
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   } as any,
                   " ",
                 ])

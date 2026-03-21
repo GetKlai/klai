@@ -8,8 +8,8 @@ import secrets
 from pathlib import Path
 
 import docker
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -24,7 +24,8 @@ _caddy_lock = asyncio.Lock()
 
 def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
     """Generate a unique slug from org name."""
-    import re, unicodedata
+    import re
+    import unicodedata
     n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     n = re.sub(r"[^a-zA-Z0-9\s-]", "", n)
     n = re.sub(r"\s+", "-", n).strip("-").lower()
@@ -152,15 +153,15 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
     try:
         old = client.containers.get(container_name)
         old.remove(force=True)
-    except docker.errors.NotFound:
+    except docker.errors.NotFound:  # type: ignore[attr-defined]
         pass
 
     librechat_host_base = settings.librechat_host_data_path
-    client.containers.run(
+    client.containers.run(  # type: ignore[call-overload]
         image=settings.librechat_image,
         name=container_name,
         detach=True,
-        restart_policy={"Name": "unless-stopped"},
+        restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
         volumes={
             env_file_host_path: {"bind": "/app/.env", "mode": "ro"},
             f"{librechat_host_base}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
@@ -194,7 +195,6 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     org = result.scalar_one()
 
     # Get existing slugs to ensure uniqueness
-    from sqlalchemy import func as sa_func
     slugs_result = await db.execute(select(PortalOrg.slug))
     existing_slugs = {row[0] for row in slugs_result.fetchall() if row[0]}
 
@@ -254,6 +254,6 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         try:
             org.provisioning_status = "failed"
             await db.commit()
-        except Exception:
-            pass
+        except Exception as db_exc:
+            logger.warning("Could not persist failed status for org_id=%d: %s", org_id, db_exc)
         raise

@@ -3,6 +3,7 @@ Zitadel management API client.
 All calls use the portal-api service account PAT — never exposed to the browser.
 """
 import httpx
+
 from app.core.config import settings
 
 
