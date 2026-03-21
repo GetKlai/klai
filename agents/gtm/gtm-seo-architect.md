@@ -71,4 +71,7 @@ Adapted for: Klai website (Astro 5, Keystatic, NL/EN, getklai.com)
 - `gtm-content-strategist`: Align keywords with editorial calendar
 - `gtm-blog-writer`: Hand off keyword brief for blog posts
 - `gtm-content-optimizer`: Post-publish SEO validation
+- `gtm-cro-specialist`: Ensure CRO changes don't hurt organic rankings
+- `gtm-paid-specialist`: Avoid bidding on keywords where organic rank is strong
+- `gtm-launch-strategist`: Programmatic SEO and free tools as part of GTM strategy
 - `expert-frontend`: Implement technical SEO in Astro components

@@ -84,4 +84,7 @@ Adapted for: Klai website (Astro 5, Keystatic, NL/EN, getklai.com)
 
 - `gtm-voice-editor`: Brand voice consistency check
 - `gtm-content-strategist`: Align with campaign narrative
+- `gtm-cro-specialist`: CRO recommendations to back up the copy with conversion mechanics
+- `gtm-email-specialist`: Hand off for multi-email sequence design
+- `gtm-paid-specialist`: Ad copy fits into broader campaign structure
 - `expert-frontend`: Implement copy in Astro components
