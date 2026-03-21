@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import { slugify } from "@/lib/markdown";
@@ -26,13 +26,13 @@ export async function POST(
   { params }: { params: Promise<{ org: string }> }
 ) {
   const { org: orgSlug } = await params;
-  const payload = await requireAuth(request);
+  const payload = await requireAuthOrService(request);
   if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { name, visibility = "private" } = await request.json();
+  const { name, slug: reqSlug, visibility = "private" } = await request.json();
   if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
-  const slug = slugify(name);
+  const slug = reqSlug ?? slugify(name);
   if (!slug) return NextResponse.json({ error: "Invalid name" }, { status: 400 });
 
   let org = await db.getOrgBySlug(orgSlug);

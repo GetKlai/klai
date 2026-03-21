@@ -1,14 +1,29 @@
 import matter from "gray-matter";
 import yaml from "js-yaml";
 
+export type KnowledgeFrontmatter = {
+  provenance_type?: "observed" | "extracted" | "synthesized" | "revised";
+  assertion_mode?: "factual" | "procedural" | "quoted" | "belief" | "hypothesis";
+  synthesis_depth?: 0 | 1 | 2 | 3 | 4;
+  confidence?: "high" | "medium" | "low";
+  belief_time_start?: string;    // quoted ISO date string — never bare YAML date
+  belief_time_end?: string | null;
+  superseded_by?: string | null; // UUID of replacement artifact
+  derived_from?: string[];       // UUID refs to parent artifacts
+  source_note?: string;
+  tags?: string[];
+  created_by?: string;           // Zitadel user_id
+  system_time?: string;          // ISO date, set at save time
+};
+
 export type PageFrontmatter = {
   id?: string;         // UUID v4, assigned once on first save, never changed
   title?: string;
   description?: string;
   icon?: string;
-  edit_access?: "org" | string[];
+  edit_access?: "org" | "owner" | string[];
   redirects?: string[];
-};
+} & KnowledgeFrontmatter;
 
 export type ParsedPage = {
   frontmatter: PageFrontmatter;
