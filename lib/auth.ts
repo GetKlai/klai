@@ -48,3 +48,28 @@ export async function requireAuth(
 ): Promise<AuthPayload | null> {
   return validateBearer(request.headers.get("authorization"));
 }
+
+/**
+ * Accept either a Zitadel Bearer token OR an internal service secret.
+ *
+ * Internal service calls (e.g. klai-knowledge-mcp) set:
+ *   X-Internal-Secret: <DOCS_INTERNAL_SECRET>
+ *   X-User-ID:         <zitadel user UUID>
+ *
+ * When the secret matches, X-User-ID is trusted as the acting user.
+ * Bypasses Zitadel JWT validation for same-cluster service calls only.
+ */
+export async function requireAuthOrService(
+  request: Request
+): Promise<AuthPayload | null> {
+  const secret = process.env.DOCS_INTERNAL_SECRET;
+  if (secret) {
+    const incoming = request.headers.get("x-internal-secret");
+    if (incoming === secret) {
+      const sub = request.headers.get("x-user-id");
+      if (!sub) return null;
+      return { sub, iss: "internal-service" } as AuthPayload;
+    }
+  }
+  return validateBearer(request.headers.get("authorization"));
+}

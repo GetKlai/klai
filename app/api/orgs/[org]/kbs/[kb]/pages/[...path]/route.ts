@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import {
@@ -41,7 +41,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const payload = await requireAuth(request);
+  const payload = await requireAuthOrService(request);
   if (!payload?.sub)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -59,7 +59,7 @@ export async function PUT(
     }
   }
 
-  const { title, content, icon, sha, edit_access } = await request.json();
+  const { title, content, icon, sha, edit_access, frontmatter: extraFm } = await request.json();
   const filePath = `${pagePath}.md`;
 
   const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
@@ -75,6 +75,9 @@ export async function PUT(
 
   const frontmatter: Record<string, unknown> = {
     ...existingFm,
+    // Spread extra knowledge model fields (e.g. from klai-knowledge-mcp) before
+    // applying mandatory fields — mandatory fields always win on conflict.
+    ...(extraFm && typeof extraFm === "object" ? extraFm : {}),
     id: pageId,
     title: title ?? pagePath.split("/").at(-1),
   };
@@ -115,7 +118,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const payload = await requireAuth(request);
+  const payload = await requireAuthOrService(request);
   if (!payload?.sub)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
