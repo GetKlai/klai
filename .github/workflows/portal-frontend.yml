@@ -25,6 +25,14 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Dependency vulnerability scan (npm audit)
+        run: npm audit --audit-level=high
+        working-directory: frontend
+
+      - name: Lint (ESLint)
+        run: npm run lint
+        working-directory: frontend
+
       - name: Build
         run: npm run build
         working-directory: frontend
