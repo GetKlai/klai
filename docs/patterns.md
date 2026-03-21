@@ -16,6 +16,7 @@
 | [patterns/infrastructure.md](patterns/infrastructure.md) | Hetzner, SOPS secrets, env management, DNS, SSH |
 | [patterns/platform.md](patterns/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, MongoDB per-tenant |
 | [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions, button placement |
+| [patterns/code-quality.md](patterns/code-quality.md) | ruff, pyright, ESLint, pre-commit, CI quality gates |
 | [patterns/testing.md](patterns/testing.md) | Playwright browser testing, permissions, GlitchTip debugging |
 
 ## Project Pattern Files
@@ -48,6 +49,12 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 
 - **[i18n-paraglide](patterns/frontend.md#i18n-paraglide)** - i18n with Paraglide JS (React + Vite + TanStack Router)
 - **[portal-ui-components](patterns/frontend.md#portal-ui-components)** - Button placement, form structure, component rules
+
+### Code Quality
+
+- **[code-quality-portal-backend](patterns/code-quality.md#klai-portalbackend)** - ruff + pyright + pip-audit: run locally and in CI
+- **[code-quality-portal-frontend](patterns/code-quality.md#klai-portalfrontend)** - ESLint + tsc: run locally and in CI
+- **[code-quality-no-console](patterns/code-quality.md#the-no-console-rule)** - Use tagged logger, never console.log
 
 ### Testing
 
