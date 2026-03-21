@@ -25,6 +25,7 @@ class PortalOrg(Base):
     librechat_container: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    litellm_team_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     provisioning_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending", server_default="pending"
     )

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Generate with: openssl rand -hex 32
     internal_secret: str = ""
 
+    # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
+    docs_internal_secret: str = ""
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
