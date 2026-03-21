@@ -15,9 +15,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        'portal_orgs',
-        sa.Column('litellm_team_key', sa.Text(), nullable=True),
+    # Use raw SQL with IF NOT EXISTS to be safe if column was added out-of-band
+    op.execute(
+        "ALTER TABLE portal_orgs ADD COLUMN IF NOT EXISTS litellm_team_key TEXT"
     )
 
 
