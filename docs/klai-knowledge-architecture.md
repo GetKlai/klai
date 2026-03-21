@@ -30,6 +30,54 @@ With Klai Knowledge:
 
 ---
 
+## 0. Current State vs. Target Architecture
+
+This document describes the **target architecture** for Klai Knowledge. Most of it does not exist yet. This section captures what is already running in production (core-01) so the gap is clear.
+
+### What exists today
+
+**Deployed infrastructure (core-01 docker-compose):**
+
+| Service | What it is | Notes |
+|---|---|---|
+| `docs-app` (klai-docs) | Next.js app — reader + REST API | KB publication and CRUD; editor UI lives in klai-portal |
+| `research-api` (klai-research) | FastAPI — document Q&A | Klai Focus backend; uses pgvector (not Qdrant) |
+| `docling-serve` | Document chunker | HybridChunker; already shared with research-api |
+| `tei` | Text embeddings (BGE-M3, dense only) | TEI does not produce BGE-M3 sparse; only dense embeddings today |
+| `gitea` | Self-hosted Git | One repo per org KB; content store for klai-docs |
+| `whisper-server` | Audio transcription | Used by klai-portal Scribe/Transcribe features |
+| `searxng` | Self-hosted web search | Used by research-api for web mode; not Tavily/Brave |
+| PostgreSQL (pgvector) | Relational + vector store | `docs` schema (orgs, KBs, pages); `portal` schema (tenants, billing) |
+| LiteLLM + Ollama | LLM routing | Claude via Mistral API; Ollama as CPU fallback |
+| Zitadel | Auth/OIDC | Tenant isolation; all services use same instance |
+
+**What does NOT exist yet:**
+
+| Component | Where described | Status |
+|---|---|---|
+| Qdrant | §5.1 | Not deployed; not in docker-compose |
+| `knowledge` schema (PostgreSQL) | §5.2 | Not created; only `docs` and `portal` schemas exist |
+| Unified Ingest API | §4 | Not built; no service between adapters and vector store |
+| Gap detection | §8 | Not built |
+| Personal knowledge scopes | §10.2 | Not built |
+| FlagEmbedding / sparse embeddings | §4.2 | Not running; TEI gives dense only |
+| Retrieval orchestration (Haystack) | §14 | Not deployed |
+| Knowledge model fields in frontmatter | §5.4 | Not implemented; `PageFrontmatter` has no knowledge fields |
+
+### The key migrations required
+
+**research-api → Qdrant:** The current research-api uses `VECTOR_BACKEND: pgvector`. Moving to Qdrant requires rebuilding the ingestion pipeline, not just swapping a config value.
+
+**TEI → FlagEmbedding:** TEI is already running BGE-M3 but produces dense embeddings only. Sparse (SPLADE-style) requires switching to FlagEmbedding. This is a new service, not an upgrade.
+
+**SearXNG → TBD:** The architecture document originally mentioned Tavily/Brave as web search options. SearXNG is already self-hosted and deployed. Whether to replace it is an open decision — see §13.8.
+
+### Component ownership today
+
+The BlockNote editor **currently lives in `klai-portal`** (frontend SPA). It was previously in klai-docs but was migrated to the portal for a unified session flow. klai-docs now contains only the reader and the REST API. A standalone editor in klai-docs can be restored from git (commit `a50797a`) if needed.
+
+---
+
 ## 2. Platform Service Architecture
 
 Klai Knowledge does not exist in isolation. It is one of two knowledge-oriented products on the platform. Understanding the boundary between them — and what they share — is a prerequisite for building either correctly.
@@ -77,20 +125,50 @@ Both products run on top of shared platform services. Neither owns these service
 └─────────────────┘          └──────────────────────┘
 ```
 
+### 2.7 LibreChat integration via LiteLLM hook
+
+LibreChat tenants access organizational knowledge automatically through a pre-call hook in the LiteLLM proxy. This is the primary consumer interface for §9.5.
+
+```
+LibreChat-{slug} container
+  │  LITELLM_API_KEY = team-scoped key (metadata: org_id)
+  ▼
+LiteLLM proxy (klai-core stack)
+  │  KlaiKnowledgeHook.async_pre_call_hook
+  │    ├── trivial? → skip
+  │    ├── GET org_id from key metadata
+  │    └── POST /knowledge/v1/retrieve  (2s timeout, graceful degrade)
+  ▼
+Mistral Small 3.1 (klai-llm) / Ollama fallback (klai-fallback)
+```
+
+Tenant isolation: one LiteLLM team key per LibreChat container, carrying `org_id` in key metadata. The hook uses this to scope every retrieval query. Containers provisioned before this change (using master key) will skip retrieval — no breakage, no context injection.
+
 **No tech stack duplication.** If Focus chunks a PDF, it calls the shared chunking-service. If Knowledge chunks a help article, it calls the same service. BGE-M3 runs once. Qdrant runs once.
 
 ### 2.3 Qdrant scope conventions
 
-All scopes live in one Qdrant collection with `tenant_id` payload indexing:
+All scopes live in one Qdrant collection with `tenant_id` payload indexing.
+
+**Scope identifiers use Zitadel IDs** — the stable cross-system identifiers available on `PortalOrg.zitadel_org_id` and `PortalUser.zitadel_user_id`. Not PostgreSQL integer PKs (internal only), not UUIDs (no UUID column exists on these models).
 
 | `tenant_id` pattern | Owner | Used by |
 |---|---|---|
-| `org_{org_uuid}` | Organization | Knowledge Service (org KB) |
-| `user_{org_uuid}_{user_uuid}` | User | Knowledge Service (personal KB) |
+| `org_{zitadel_org_id}` | Organization | Knowledge Service (org KB) |
+| `user_{zitadel_org_id}_{zitadel_user_id}` | User | Knowledge Service (personal KB) |
 | `notebook_{notebook_uuid}` | User | Focus Service |
-| `gap_{org_uuid}` | Organization | Knowledge Service (gap registry) |
+| `gap_{zitadel_org_id}` | Organization | Knowledge Service (gap registry) |
 
 Focus owns the `notebook_*` scopes. Knowledge owns the rest. Neither reads the other's scopes directly — cross-scope retrieval goes through the owning service's API.
+
+**Interface-to-scope mapping:**
+
+| Interface | Org scope | Personal scope | Notes |
+|---|---|---|---|
+| LiteLLM pre-call hook | Yes (`org_{zitadel_org_id}`) | No | Automatic enrichment; no user identity available at this layer |
+| MCP server tools | Yes | Yes | Explicit user action; Zitadel session provides both IDs |
+
+The hook retrieves org scope only — the team key metadata carries `zitadel_org_id`, but the hook has no reliable way to obtain the Zitadel user ID from a shared-key LibreChat request. Personal scope retrieval and saving go through the MCP server, which runs within a Zitadel-authenticated session.
 
 ### 2.4 Chat modes in Focus
 
@@ -717,24 +795,83 @@ The AI is a lens on organizational knowledge, not an owner of it.
 
 ### 9.2 MCP integration
 
-The AI interface (Claude or a local model) connects via MCP (Model Context Protocol). The MCP server exposes semantic operations, not raw vault access:
+The AI interface (Claude or a local model) connects via MCP (Model Context Protocol). The MCP server exposes semantic operations, not raw vault access.
 
+**The MCP server resolves org and user identity from the authenticated Zitadel session** — tools do not accept `org_id` or `user_id` as caller parameters. This prevents scope confusion and cross-user writes. Every tool call is implicitly scoped to the caller's org and (where relevant) their personal scope.
+
+**Read tools:**
 ```
-search(query, type, time_range, org_id)
+search(query, scope: "org" | "personal" | "both", type?, time_range?)
 related_concepts(concept_id, depth)
 belief_evolution(topic, from_date, to_date)
 provenance_chain(claim_id)
-recent(days, type, org_id)
+recent(days, type, scope: "org" | "personal" | "both")
 ```
 
-This model-agnostic design means the retrieval layer is independent of which model is used. Claude is one possible client; a self-hosted model via Ollama is another.
+**Write tools — `klai-knowledge-mcp` (deployed 2026-03-21):**
+
+Personal saves from LibreChat are handled by a dedicated MCP server with streamable-http transport. V1 only supports personal scope; org-scope writes are deferred.
+
+```
+save_to_personal_kb(
+  title: string,          # agent-generated, max 80 chars
+  content: string,        # text to save (markdown)
+  assertion_mode: string, # factual | procedural | belief | hypothesis | quoted
+  tags: string[],         # agent-suggested, 1–5 tags
+  source_note?: string    # optional source reference (V1 — resolved to UUID in V2)
+)
+```
+
+Identity: `X-User-ID` + `X-Org-Slug` headers sent by LibreChat (see §9.2 LibreChat config).
+Auth: internal service token (`DOCS_INTERNAL_SECRET`) — bypasses Zitadel JWT for same-cluster calls.
+Storage: writes via klai-docs PUT API; YAML frontmatter with knowledge model fields is the V1 store.
+Qdrant indexing: deferred until the Knowledge Service is built. Frontmatter is the source of truth.
+
+V1 limitation: `derived_from` field stores `[]` (empty UUID list); source attribution is stored in
+`source_note` as a human-readable string. When the Knowledge Service is built, it will resolve
+`source_note` references to proper UUID provenance entries.
+
+**LibreChat config** (per tenant in `librechat.yaml`):
+```yaml
+mcpServers:
+  klai-knowledge:
+    type: streamable-http
+    url: http://klai-knowledge-mcp:8080/mcp
+    headers:
+      X-User-ID: "{{LIBRECHAT_USER_ID}}"
+      X-Org-Slug: "${KLAI_ORG_SLUG}"   # set per tenant in LibreChat .env
+    mcpSettings:
+      allowedDomains:
+        - klai-knowledge-mcp
+```
+
+Implementation: `klai-infra/core-01/klai-knowledge-mcp/main.py`
+Agent system prompt: `klai-infra/core-01/klai-knowledge-mcp/agent-system-prompt.md`
+
+This design is model-agnostic — the write layer is independent of which model drives the agent.
+
+**Known risks and V1 limitations:**
+
+*Service token scope* — `DOCS_INTERNAL_SECRET` is a shared symmetric secret. If the MCP
+container is compromised, an attacker can write to any user's personal KB by supplying any
+`X-User-ID` value. Mitigation path: replace with a Zitadel machine user token (scoped, rotatable,
+auditable). Acceptable for V1 on an internal Docker network; must be addressed before the MCP
+server is exposed to an untrusted network.
+
+*Saves are not semantically searchable in V1* — content written via `save_to_personal_kb` lands
+in Gitea (YAML frontmatter + markdown) but is not indexed in Qdrant. This means:
+- The LiteLLM pre-call hook (§9.5) does NOT retrieve personal saves as context in chat answers
+- The user cannot find their saves via semantic search
+- Personal saves are only accessible by browsing the knowledge base in the portal
+This is the expected V1 behaviour. Full-text + semantic search becomes available when the
+Knowledge Service is built and retroactively indexes the existing frontmatter files.
 
 ### 9.3 Routing: RAG vs. structured queries
 
-Two complementary mechanisms determine whether a question goes to Qdrant (semantic) or SQLite (analytical):
+Two complementary mechanisms determine whether a question goes to Qdrant (semantic) or PostgreSQL (analytical):
 
 **Hardcoded router (for known patterns):**
-Analytic signals ("how many", "most common", "trend", "rate") → SQLite
+Analytic signals ("how many", "most common", "trend", "rate") → PostgreSQL (`knowledge` schema)
 Content signals ("what does", "how does", "explain", "steps for") → Qdrant
 Ambiguous → both
 
@@ -749,6 +886,112 @@ All AI responses must cite sources. The response format includes:
 - Handoff option: `true` if retrieval confidence is below threshold or if user requests human escalation
 
 If an answer is not found in retrieved sources, the system explicitly says so. It does not hallucinate.
+
+### 9.5 LibreChat automatic context injection via LiteLLM pre-call hook
+
+**Status: decided 2026-03-21. Implementation is greenfield — Klai Knowledge service does not exist yet.**
+
+Every LibreChat chat message is automatically enriched with relevant organizational knowledge before it reaches the model. This is transparent to the user and to LibreChat.
+
+#### Architecture
+
+```
+LibreChat (per-tenant container)
+  → POST /chat/completions  (with team-scoped API key)
+  → LiteLLM proxy
+      → async_pre_call_hook (KlaiKnowledgeHook)
+          1. Extract last user message as retrieval query
+          2. Skip if trivial (short message, ack, greeting)
+          3. GET org_id from key metadata
+          4. POST /knowledge/v1/retrieve  (timeout: 2s)
+          5. Inject chunks as system message prefix
+          6. Degrade silently on any failure
+      → model (Mistral Small 3.1 or Ollama fallback)
+  → response back to LibreChat
+```
+
+The hook is a `CustomLogger` subclass mounted as a Python file into the LiteLLM container. No custom image build required.
+
+#### Retrieval API interface
+
+```
+POST /knowledge/v1/retrieve
+Authorization: Bearer <internal-service-token>
+
+{
+  "query": string,          // last user message text
+  "org_id": string,         // raw org UUID (no prefix — service applies org_ internally)
+  "top_k": 5,               // maximum chunks to return
+  "max_tokens": 2000        // hard budget; service truncates server-side
+}
+
+→ 200 OK (always — empty chunks = no relevant context)
+{
+  "chunks": [
+    {
+      "id": string,
+      "content": string,
+      "title": string,
+      "score": float,
+      "source_url": string | null
+    }
+  ],
+  "total_tokens": int
+}
+```
+
+The service translates `org_id` → Qdrant scope `org_{org_id}` internally. Callers never need to know Qdrant scope conventions.
+
+#### Token budget
+
+Injected knowledge context is capped at **2,000 tokens** per request. Rationale:
+
+| Budget item | Allocation |
+|---|---|
+| LibreChat system prompt | ~500 tokens |
+| Conversation history | ~8,000 tokens |
+| User message | ~200 tokens |
+| Model response headroom | ~2,000 tokens |
+| **Injected knowledge context** | **2,000 tokens** |
+
+Truncation: server-side in the retrieval API. Chunks ranked by score. Greedily fill from top score down. If cumulative tokens exceed 2,000: stop, optionally trim last chunk at word boundary. Target chunk size at ingestion: 400–500 tokens (docling-serve `HybridChunker` default).
+
+#### Query classifier
+
+Heuristic only — no LLM call:
+1. `len(query) < 15` → skip retrieval
+2. Regex match against trivial patterns (acks, greetings, continuations in NL/EN) → skip
+3. Otherwise → retrieve
+
+False positive cost: one 2s API call. False negative cost: worse answer. Classifier calibrated toward retrieval.
+
+#### Tenant isolation via LiteLLM team keys
+
+Each LibreChat tenant has a **LiteLLM team-scoped key** instead of the master key. The hook reads `org_id` from the key's `metadata` field. Master key usage → no `org_id` in metadata → hook skips retrieval.
+
+Migration required for existing tenants: see §9.5 provisioning changes.
+
+#### Provisioning changes
+
+At tenant creation, provisioning adds a step:
+1. `POST /team/new` — creates a LiteLLM team (alias = org slug)
+2. `POST /key/generate` — creates a team key with `metadata: {org_id: "<zitadel_org_id>"}` and `models: ["klai-llm", "klai-fallback"]`
+3. The returned key replaces `settings.litellm_master_key` as `LITELLM_API_KEY` in the LibreChat `.env`
+
+`zitadel_org_id` is used (not the integer PK) — it is the stable cross-system identifier available on `PortalOrg.zitadel_org_id`, and the correct key for Qdrant scope `org_{zitadel_org_id}`.
+
+`klai-infra/core-01/litellm/config.yaml` change:
+```yaml
+litellm_settings:
+  callbacks:
+    - klai_knowledge.KlaiKnowledgeHook
+```
+
+Hook file: `klai-infra/core-01/litellm/klai_knowledge.py`, mounted read-only at `/app/custom/` with `PYTHONPATH=/app/custom` in the container env.
+
+#### Graceful degradation
+
+Any failure in `async_pre_call_hook` (timeout, connection refused, 5xx, any exception) logs a WARNING and returns `data` unchanged. LibreChat receives a normal response. This is the expected behavior when the Knowledge Service is not yet deployed.
 
 ---
 
@@ -772,7 +1015,7 @@ Every user in an organization has access to two distinct knowledge scopes:
 **The isolation is hard, not soft.** There is no API route that an org admin, org owner, or any other org member can use to query another user's personal knowledge scope. This is enforced at the retrieval API layer, not by access control configuration. The org has no window into personal knowledge, period.
 
 **Personal knowledge in V1 is explicitly scoped:**
-- Notes the user creates themselves via the editor
+- Notes the user creates themselves via the editor or LibreChat (`klai-knowledge-mcp`)
 - No helpdesk transcript extraction, no document ingestion from org sources flowing into personal scope
 - Not processed by the contextual retrieval or HyPE enrichment pipeline (BGE-M3 direct embedding only — avoids LLM processing of personal content until the legal basis is formally established)
 - Not processed by any third-party cloud LLM — self-hosted pipeline only, consistent with the platform-wide no-external-LLM rule
@@ -781,6 +1024,23 @@ Every user in an organization has access to two distinct knowledge scopes:
 - A staging area for org knowledge (though it can be used that way voluntarily — see §10.4)
 - Visible to org administrators under any normal circumstance
 - Subject to org-level gap detection, taxonomy, or analytics
+
+**Gitea storage layout for personal knowledge (decided 2026-03-21):**
+
+One shared `personal` KB per org in Gitea. User content is stored at:
+```
+personal/
+  users/{user_uuid}/{slug}-{uuid_prefix}.md
+```
+
+Rationale: zero per-user repos (avoids Gitea repo proliferation at scale), clean namespace
+separation, compatible with the existing klai-docs path API. The `user_{org_uuid}_{user_uuid}`
+Qdrant scope mirrors the same user isolation without requiring separate Gitea repos.
+
+The `personal` KB is created at tenant provisioning time (one per org). No per-user provisioning
+is required — the MCP server writes to `users/{user_uuid}/` paths which are created on first save.
+Access control: each page is written with `edit_access: owner` (only the owning user can edit via
+the portal UI). The klai-docs API enforces this via `db.getPageEditRestriction`.
 
 ### 10.3 Visibility model within org knowledge
 
@@ -1051,6 +1311,56 @@ Does Klai want to enable knowledge sharing between organizations? If yes, this r
 
 No existing tool combines: Notion-quality web editor + Git as storage + wikilinks with bidirectional backlinks + markdown-native. BlockNote + Gitea covers most of this but lacks native wikilink support with cross-document backlinks. This is a known limitation accepted for V1. Evaluate whether to build wikilink support into the BlockNote integration or defer.
 
+**Current state:** BlockNote is integrated in `klai-portal` (not klai-docs). The editor was previously in klai-docs but migrated to the portal SPA for a unified Zitadel session flow. Commit `a50797a` in klai-docs contains the standalone version if needed.
+
+### 13.8 Web search backend [DEPLOYED — March 2026]
+
+**Current production state (core-01):**
+- SearXNG reconfigured: Google and Bing removed; Startpage + DuckDuckGo active
+- Mojeek engine configured but disabled (API key needed to activate; see settings.yml)
+- LibreChat webSearch enabled: SearXNG + Firecrawl scraper + Infinity reranker (bge-reranker-v2-m3, CPU)
+- Infinity reranker is shared infrastructure — will also serve the Knowledge retrieval pipeline (§7.1) when deployed
+
+The platform currently uses SearXNG (self-hosted, `http://searxng:8888`) for web search in LibreChat and Klai Focus. Web search is a user-initiated, opt-in action — not part of the Knowledge ingestion pipeline.
+
+**Platform constraint:** all components must be open-source and privacy-friendly. Cloud APIs that send queries to US companies (Tavily, Brave Search API) are excluded regardless of GDPR compliance claims.
+
+#### The SearXNG problem (quality, not privacy)
+
+SearXNG's privacy posture is fine — self-hosted, queries routed via server IP, not the user's. The problem is reliability. SearXNG has no index of its own; it aggregates upstream engines. Two of its three main sources are now effectively dead on datacenter IPs:
+
+- **Google**: actively blocks datacenter IP ranges via TLS/HTTP2 fingerprinting. Not fixable by rotating IPs. Only 25 of 91 public instances had a working Google engine in 2025/2026.
+- **Bing**: shut down its public search API in August 2025. Gone entirely.
+- **DuckDuckGo**: still works but applies aggressive rate limits.
+
+**Fix: strip Google and Bing entirely, use engines with independent indexes.** Viable non-blocking engines for SearXNG: Startpage (Google partnership, works from datacenter IPs), DuckDuckGo (rate-limited but functional), and Mojeek (independent crawler, API-based).
+
+#### Landscape of EU privacy-friendly alternatives (researched March 2026)
+
+| Option | Index | Self-hostable | EU/privacy fit | Quality | Verdict |
+|---|---|---|---|---|---|
+| **SearXNG (reconfigured)** | Metasearch (Startpage + DDG) | Yes (AGPL) | Fine — self-hosted | Medium | Short-term fix |
+| **Mojeek API** | Own crawler (9B+ pages) | No (API) | UK company, EU adequacy until 2031, no query retention | Below Google, acceptable for B2B | Best strategic fit |
+| **MetaGer (self-hosted)** | Metasearch | Technically yes (AGPL) | German non-profit | Same blocking problem as SearXNG | Not worth the added complexity |
+| **Stract** | Own crawler | Yes (Rust) | Danish founder | Not production-ready — no deployment guide, poor quality | Promising future, not today |
+| **YaCy** | Federated P2P | Yes (GPL) | Decentralized | Poor for B2B general queries | Wrong tool |
+| **Whoogle** | Google proxy | Yes (MIT) | N/A | **Dead since Jan 2025** — Google required JS | Do not use |
+| **Common Crawl** | Own crawl data | Theoretical | Neutral | No turnkey product exists | Engineering project, not a solution |
+
+#### Recommended path
+
+**Short term:** Reconfigure SearXNG — disable Google and Bing, enable Startpage + DuckDuckGo + Mojeek (via API engine). This is the lowest-effort fix and keeps everything self-hosted.
+
+**Medium term:** Replace SearXNG with the **Mojeek API** directly. Mojeek is the only option satisfying all platform criteria: independent index (own crawler since 2004, 9B+ pages), UK company with EU adequacy (renewed December 2025, valid until 2031), no query data retained. Quality is below Google for technical queries — validate on a representative sample of Focus queries before committing. Pricing: £1–3 per 1,000 requests.
+
+**Not pursued:** Stract (not production-ready), Whoogle (dead), YaCy (wrong use case), MetaGer self-hosted (same blocking root cause, higher complexity).
+
+### 13.9 Whisper/transcription → Knowledge pipeline [OPEN QUESTION]
+
+`whisper-server` is deployed on core-01 and used by the klai-portal Scribe/Transcribe features (audio → transcript). These transcripts are a natural feed into the helpdesk extraction adapter (§4.3). The connection between the transcription pipeline and the Knowledge ingestion pipeline is not yet designed.
+
+**Open question:** Does the transcription service write transcripts to a store that the Knowledge ingestion pipeline can poll, or does it POST directly to the Unified Ingest API? The answer depends on whether the transcript pipeline is batch (end-of-call) or streaming. Design this interface before building the helpdesk adapter.
+
 ---
 
 ## 14. Technology Stack
@@ -1061,13 +1371,14 @@ No existing tool combines: Notion-quality web editor + Git as storage + wikilink
 | **Extraction** | Instructor + Qwen2.5-14B or Mistral Small 3.1 (both self-hosted) | Self-hosted only for transcript data; no cloud API |
 | **Document parsing** | docling-serve (self-hosted) | HybridChunker for token-aware, structure-preserving chunking |
 | **Web crawling** | Crawl4AI | Open source, async, sitemap-aware |
-| **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse |
-| **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. |
+| **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse. **Today:** TEI already runs BGE-M3 (dense only) for research-api — switching to FlagEmbedding is a new service. |
+| **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. **Today:** not deployed; research-api uses pgvector. |
+| **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |
 | **Graph layer** | None (V1) | Deferred: evidence does not support graph RAG for B2B single-hop/procedural query patterns. Gate condition: if >20% of real queries are multi-hop relational, evaluate HippoRAG2 + SpaCy. Kùzu (previously suggested) archived Oct 2025 by Apple acquisition. |
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
 | **Taxonomy discovery** | BERTopic + HDBSCAN | Starting point; human approval gate required |
 | **Retrieval orchestration** | Haystack | Production-grade, Qdrant native, exposes as REST/MCP via Hayhooks |
-| **Reranking** | bge-reranker-v2-m3 | Multilingual, pairs with BGE-M3 |
+| **Reranking** | bge-reranker-v2-m3 via Infinity server (self-hosted, CPU) | **Deployed** (March 2026) as `infinity-reranker` on core-01. Jina-compatible `/v1/rerank` endpoint. Currently serves LibreChat webSearch; will also serve Knowledge retrieval pipeline. |
 | **LLM interface** | Claude via LiteLLM | Grounded responses with source citations |
 | **PII detection** | Presidio + GLiNER (gliner_multi-v2.1) | For Dutch transcripts; pseudonymization, not anonymization |
 | **Knowledge storage** | Gitea (self-hosted) | Git-backed, org-per-tenant, webhook → ingest pipeline |
@@ -1083,7 +1394,7 @@ No existing tool combines: Notion-quality web editor + Git as storage + wikilink
 
 | Existing component | Role in Klai Knowledge |
 |---|---|
-| `klai-docs` | Publication layer — renders KB sites, hosts BlockNote editor via portal |
+| `klai-docs` | Publication layer — renders KB sites + REST API; editor UI lives in klai-portal (see §13.7) |
 | `klai-portal` | Editorial interface — editorial inbox, article management, gap review |
 | `klai-research/research-api` | Reference implementation — same ingestion pattern (docling-serve, BackgroundTasks), different store (pgvector → Qdrant) |
 | `docling-serve` (in research-api) | Shared document parser — already self-hosted, already producing HybridChunker output |
