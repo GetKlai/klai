@@ -24,12 +24,15 @@
     "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.0.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.10",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0"
   }
