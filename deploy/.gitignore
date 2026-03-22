@@ -1,0 +1,6 @@
+*.sops*
+*.sops.env
+.env
+.env.*
+!.env.example
+config.env
