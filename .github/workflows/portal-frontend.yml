@@ -1,0 +1,54 @@
+name: Build and deploy portal-frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'portal/frontend/**'
+      - '.github/workflows/portal-frontend.yml'
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: portal/frontend
+
+      - name: Dependency vulnerability scan (npm audit)
+        run: npm audit --audit-level=high
+        working-directory: portal/frontend
+
+      - name: Lint (ESLint)
+        run: npm run lint
+        working-directory: portal/frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: portal/frontend
+        env:
+          VITE_OIDC_AUTHORITY: https://auth.getklai.com
+          VITE_OIDC_CLIENT_ID: "362901948573220875"
+          VITE_API_BASE_URL: ""
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.CORE01_DEPLOY_KEY }}
+
+      - name: Add core-01 to known_hosts
+        run: ssh-keyscan -H ${{ secrets.CORE01_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy dist to core-01
+        run: rsync -av --delete portal/frontend/dist/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/portal-dist/
