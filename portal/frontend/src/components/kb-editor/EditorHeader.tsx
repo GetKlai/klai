@@ -1,6 +1,4 @@
-// @ts-expect-error — @emoji-mart/react has no type declarations
 import Picker from '@emoji-mart/react'
-// @ts-expect-error — @emoji-mart/data has no type declarations
 import data from '@emoji-mart/data'
 import { useState, useRef, useEffect } from 'react'
 import { Check, Loader2, MoreHorizontal } from 'lucide-react'

@@ -90,7 +90,7 @@ export const BlockPageEditor = forwardRef<
       >
         <SuggestionMenuController
           triggerCharacter="/"
-          getItems={(query) => {
+          getItems={async (query) => {
             const defaultItems = getDefaultReactSlashMenuItems(editor)
             const wikilinkItem = {
               title: "Link to page",
@@ -109,7 +109,7 @@ export const BlockPageEditor = forwardRef<
         />
         <SuggestionMenuController
           triggerCharacter="["
-          getItems={(query) => {
+          getItems={async (query) => {
             const search = query.toLowerCase()
             const filtered = pageIndex.filter((p) => {
               if (p.slug === currentPageSlug) return false
