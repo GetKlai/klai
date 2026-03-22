@@ -115,3 +115,7 @@ push_exec klai-core-portal-api-1 \
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://tei:8080/health')\"" \
     "${KUMA_TOKEN_TEI:-}" "Embeddings"
+
+# ── Meeting bots ──────────────────────────────────────────────────────────────
+# vexa-bot-manager: meeting bot lifecycle manager (Docker-native healthcheck)
+push_healthcheck klai-core-vexa-bot-manager-1 "${KUMA_TOKEN_VEXA:-}" "Meeting bot manager"
