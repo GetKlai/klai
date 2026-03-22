@@ -1,0 +1,48 @@
+use_default_settings: true
+
+general:
+  instance_name: "Klai Research"
+  privacypolicy_url: false
+  donation_url: false
+  contact_url: false
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  default_lang: "nl"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "${SEARXNG_SECRET}"
+  bind_address: "0.0.0.0:8888"
+  image_proxy: false
+  http_protocol_version: "1.0"
+
+ui:
+  static_use_hash: true
+
+# Only enable engines that work reliably from datacenter IPs.
+# Google and Bing are disabled: Google blocks datacenter IPs via TLS fingerprinting;
+# Bing shut down its public search API in August 2025.
+engines:
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    weight: 2.0
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    weight: 1.0
+  # Mojeek: independent crawler (9B+ pages), UK company, EU adequacy until 2031,
+  # no query retention. Best long-term fit. Enable when API key is available.
+  # - name: mojeek
+  #   engine: mojeek
+  #   api_key: "${MOJEEK_API_KEY}"
+  #   shortcut: mjk
+  #   weight: 1.5
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 30.0

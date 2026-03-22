@@ -1,0 +1,89 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Klai core-01 — Grafana Alloy monitoring config
+//
+// Collects:
+//   - Docker container logs    → VictoriaLogs
+//   - Docker container metrics → VictoriaMetrics (via cAdvisor)
+//   - Node metrics (CPU, mem, disk, net) → VictoriaMetrics
+//
+// When monitor-01 is provisioned: update the endpoint URLs below to point
+// to the remote server instead of localhost services.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Docker container log collection ─────────────────────────────────────────
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Labels must be applied via discovery.relabel BEFORE loki.source.docker.
+// loki.relabel only sees log stream labels, not __meta_docker_* metadata.
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  // Strip leading slash from container name: /klai-core-caddy-1 → klai-core-caddy-1
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  // Add compose service label
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  // Tag all logs with the source host
+  rule {
+    target_label = "host"
+    replacement  = "core-01"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.write.victorialogs.receiver]
+}
+
+// ─── Forward logs to VictoriaLogs ─────────────────────────────────────────────
+
+loki.write "victorialogs" {
+  endpoint {
+    // _msg_field=msg: use the "msg" JSON key as the main log message field.
+    // Fixes MongoDB structured logs showing "missing _msg field" in Grafana.
+    url = "http://victorialogs:9428/insert/loki/api/v1/push?_msg_field=msg"
+  }
+}
+
+// ─── Node metrics (CPU, memory, disk, filesystem, network) ───────────────────
+
+prometheus.exporter.unix "node" {
+  include_exporter_metrics = true
+  disable_collectors       = ["wifi", "arp"]
+}
+
+prometheus.scrape "node" {
+  targets         = prometheus.exporter.unix.node.targets
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  job_name        = "node"
+}
+
+// ─── Container metrics from cAdvisor ─────────────────────────────────────────
+
+prometheus.scrape "cadvisor" {
+  targets = [{
+    __address__ = "cadvisor:8080",
+  }]
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  job_name        = "cadvisor"
+}
+
+// ─── Forward metrics to VictoriaMetrics ──────────────────────────────────────
+
+prometheus.remote_write "victoriametrics" {
+  endpoint {
+    url = "http://victoriametrics:8428/api/v1/write"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "uid": "klai-logs",
+  "title": "Core-01: Container Logs",
+  "tags": ["klai", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 2,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+        "query": {
+          "query": "label_values(container_last_seen, container_label_com_docker_compose_service)",
+          "refId": "A"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Logs — $service",
+      "type": "logs",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 25},
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "targets": [
+        {
+          "expr": "service:~\"$service\"",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      }
+    }
+  ]
+}

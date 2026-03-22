@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="nl" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+  <title>{{ subject }}</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings>
+    <o:PixelsPerInch>96</o:PixelsPerInch>
+  </o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style>
+    /* Client-specific resets */
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
+
+    /* Base — Sand light (#F5F0E8) is the official Klai brand background for sections/cards */
+    body { margin: 0 !important; padding: 0 !important; background-color: #F5F0E8; width: 100% !important; }
+
+    /* Responsive */
+    @media only screen and (max-width: 640px) {
+      .email-card { width: 100% !important; border-radius: 0 !important; }
+      .email-body { padding: 24px 20px !important; }
+      .email-header { padding: 24px 20px 20px !important; }
+      .email-footer { padding: 20px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#F5F0E8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+
+  {# Preheader: visible in inbox preview, hidden in email body #}
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#F5F0E8;line-height:1px;">
+    {{ preheader }}
+    {# Zero-width non-joiner padding to push other content out of preview #}
+    &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
+
+  {# Outer wrapper #}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="background-color:#F5F0E8;width:100%;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+
+        {# Email card — max 600px #}
+        <table role="presentation" class="email-card" cellpadding="0" cellspacing="0" border="0"
+               style="width:100%;max-width:600px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(28,15,64,0.08);">
+
+          {# ── Header: logo ────────────────────────────────────────────── #}
+          <tr>
+            <td class="email-header" align="center"
+                style="padding:32px 40px 24px;border-bottom:1px solid #EEECF3;background-color:#ffffff;">
+              <a href="{{ brand_url }}" style="text-decoration:none;">
+                <img src="{{ logo_url }}" alt="Klai" width="{{ logo_width }}"
+                     style="display:block;max-width:{{ logo_width }}px;height:auto;border:0;">
+              </a>
+            </td>
+          </tr>
+
+          {# ── Body: markdown-rendered content ─────────────────────────── #}
+          <tr>
+            <td class="email-body"
+                style="padding:32px 40px;color:#1a0f40;font-size:16px;line-height:1.625;">
+              {{ body_html | safe }}
+            </td>
+          </tr>
+
+          {# ── CTA button (only when has_button=True and button_url is set) #}
+          {% if has_button and button_url %}
+          <tr>
+            <td align="center" style="padding:4px 40px 36px;">
+
+              {# Outlook VML button — the only way to get a real button in Outlook #}
+              <!--[if mso]>
+              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml"
+                           xmlns:w="urn:schemas-microsoft-com:office:word"
+                           href="{{ button_url }}"
+                           style="height:48px;width:220px;v-text-anchor:middle;"
+                           arcsize="17%"
+                           strokecolor="#7c6aff"
+                           fillcolor="#7c6aff">
+                <w:anchorlock/>
+                <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:600;">
+                  {{ button_text }}
+                </center>
+              </v:roundrect>
+              <![endif]-->
+
+              {# All other clients #}
+              <!--[if !mso]><!-->
+              <a href="{{ button_url }}"
+                 style="display:inline-block;background-color:#7c6aff;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;padding:14px 32px;border-radius:8px;letter-spacing:0.01em;line-height:1;mso-hide:all;">
+                {{ button_text }}
+              </a>
+              <!--<![endif]-->
+
+            </td>
+          </tr>
+          {% endif %}
+
+          {# ── Footer ──────────────────────────────────────────────────── #}
+          <tr>
+            <td class="email-footer"
+                style="padding:24px 40px;border-top:1px solid #EEECF3;background-color:#FAFAF8;">
+              <p style="margin:0;color:#6b7280;font-size:13px;line-height:1.5;text-align:center;">
+                Klai &bull;
+                <a href="{{ brand_url }}" style="color:#4A3A8A;text-decoration:none;">{{ brand_url }}</a>
+              </p>
+              {% if footer_note %}
+              <p style="margin:10px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;text-align:center;">
+                {{ footer_note }}
+              </p>
+              {% endif %}
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

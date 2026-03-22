@@ -1,0 +1,52 @@
+# Zitadel Message Texts — Nederlands (nl)
+#
+# Configure via: Zitadel console > Instance > Message Texts > Language: nl
+# Available variables per type: https://zitadel.com/docs/guides/manage/customize/texts
+#
+# These texts are pre-rendered by Zitadel and sent to klai-mailer in templateData.
+# klai-mailer wraps them in the Klai HTML email template.
+
+InitCode:
+  subject: "Activeer je Klai-account"
+  preHeader: "Nog één klik en je Klai-omgeving is actief"
+  title: "Account activeren"
+  greeting: "Hallo {{.FirstName}},"
+  text: "We hebben een Klai-account voor je aangemaakt. Activeer deze via de knop hieronder en kies je wachtwoord. Daarna log je in op my.${DOMAIN}."
+  buttonText: "Account activeren"
+  footerText: "Had je deze e-mail niet verwacht? Dan mag je hem gewoon negeren."
+
+VerifyEmail:
+  subject: "Bevestig je e-mailadres bij Klai"
+  preHeader: "Even controleren of dit werkelijk het juiste e-mailadres is."
+  title: "E-mailadres bevestigen"
+  greeting: "Hallo {{.FirstName}},"
+  text: "Bevestig je e-mailadres via de knop hieronder om je Klai-account volledig te activeren."
+  buttonText: "E-mailadres bevestigen"
+  footerText: "Heb je dit niet aangevraagd? Dan kun je deze e-mail veilig negeren."
+
+PasswordReset:
+  subject: "Nieuw wachtwoord instellen"
+  preHeader: "Hier is de link die je nodig hebt"
+  title: "Wachtwoord opnieuw instellen"
+  greeting: "Hallo {{.FirstName}},"
+  text: "Je vroeg een nieuw wachtwoord aan voor je Klai-account ({{.LastEmail}}). Klik op de knop om het in te stellen. De link is 24 uur geldig."
+  buttonText: "Nieuw wachtwoord instellen"
+  footerText: "Wil je geen nieuw wachtwoord instellen? Waarschijnlijk heeft iemand je e-mailadres verkeerd ingetypt. Je wachtwoord is niet gewijzigd, je kunt deze e-mail negeren."
+
+PasswordChange:
+  subject: "Je wachtwoord is gewijzigd"
+  preHeader: "Beveiligingsmelding voor je Klai-account"
+  title: "Wachtwoord gewijzigd"
+  greeting: "Hallo {{.FirstName}},"
+  text: "Het wachtwoord van je Klai-account ({{.VerifiedEmail}}) is zojuist gewijzigd.\n\nWas jij dat? Mooi, dan is er niets aan de hand.\n\nNiet jij? Neem dan direct contact op via mail@${DOMAIN}."
+  buttonText: ""
+  footerText: "Wachtwoord niet zelf gewijzigd? Mail ons direct via mail@${DOMAIN}."
+
+InviteUser:
+  subject: "Je bent uitgenodigd voor Klai"
+  preHeader: "Jouw toegang staat klaar"
+  title: "Uitnodiging"
+  greeting: "Hallo {{.FirstName}},"
+  text: "Eén van je collega's nodigt je uit om gebruik te maken van Klai. Klai is dé privacyvriendelijke AI oplossing voor bedrijven. Gevoelige informatie en persoonlijke gegevens blijven zo veilig. Je data blijft van jou."
+  buttonText: "Account instellen"
+  footerText: "Had je deze e-mail niet verwacht? Dan mag je hem gewoon negeren."
