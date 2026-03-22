@@ -90,7 +90,7 @@ export const BlockPageEditor = forwardRef<
       >
         <SuggestionMenuController
           triggerCharacter="/"
-          getItems={async (query) => {
+          getItems={(query) => {
             const defaultItems = getDefaultReactSlashMenuItems(editor)
             const wikilinkItem = {
               title: "Link to page",
@@ -102,14 +102,14 @@ export const BlockPageEditor = forwardRef<
               },
             }
             const allItems = [...defaultItems, wikilinkItem]
-            return allItems.filter((item) =>
+            return Promise.resolve(allItems.filter((item) =>
               query === "" || item.title.toLowerCase().includes(query.toLowerCase())
-            )
+            ))
           }}
         />
         <SuggestionMenuController
           triggerCharacter="["
-          getItems={async (query) => {
+          getItems={(query) => {
             const search = query.toLowerCase()
             const filtered = pageIndex.filter((p) => {
               if (p.slug === currentPageSlug) return false
@@ -119,7 +119,7 @@ export const BlockPageEditor = forwardRef<
                 p.slug.includes(search)
               )
             })
-            return filtered.slice(0, 10).map((p) => ({
+            return Promise.resolve(filtered.slice(0, 10).map((p) => ({
               title: p.title,
               icon: <span style={{ fontSize: '1em' }}>{p.icon ?? '📄'}</span>,
               onItemClick: () => {
@@ -132,7 +132,7 @@ export const BlockPageEditor = forwardRef<
                   " ",
                 ])
               },
-            }))
+            })))
           }}
         />
       </BlockNoteView>
