@@ -1,8 +1,9 @@
 # SPEC: Klai Knowledge — Implementation Plan
 
-> Status: Phase 2 complete — retrieval live
+> Status: ✅ DONE — all core phases complete (2026-03-22)
 > Architecture reference: `klai-claude/docs/klai-knowledge-architecture.md`
-> Last updated: 2026-03-21
+> Remaining low-priority items: `klai-claude/docs/specs/klai-knowledge-improvements.md`
+> Last updated: 2026-03-22
 
 ---
 
@@ -125,16 +126,16 @@ Deferred. Prerequisites:
 
 ---
 
-## Open items
+## Open items — all resolved
 
-| # | Item | Priority | Notes |
-|---|---|---|---|
-| O1 | ~~Existing tenant (`getklai`) LiteLLM key migration~~ | ~~HIGH~~ | ✅ Done — scoped key deployed, retrieval verified for getklai |
-| O4 | ~~Gitea webhook for `personal` KB repos~~ | ~~MEDIUM~~ | ✅ Done — auto-created on KB creation in klai-docs; existing tenants need manual setup |
-| O5 | ~~Web crawl enrichment adapter~~ | ~~MEDIUM~~ | ✅ Done — `POST /ingest/v1/crawl` deployed |
-| O2 | Sparse embeddings (BGE-M3 SPLADE) | LOW | Dense sufficient; revisit at >1K docs |
-| O3 | `klai-docs` PUT handler Zod validation for frontmatter | LOW | Currently loose cast |
-| O6 | Helpdesk transcript adapter | LOW | Blocked on PII detection |
+| # | Item | Status |
+|---|---|---|
+| O1 | Existing tenant (`getklai`) LiteLLM key migration | ✅ Done |
+| O4 | Gitea webhook for `personal` KB repos | ✅ Done |
+| O5 | Web crawl enrichment adapter | ✅ Done |
+| O2 | Sparse embeddings | moved → `klai-knowledge-improvements.md` |
+| O3 | `klai-docs` Zod frontmatter validation | moved → `klai-knowledge-improvements.md` |
+| O6 | Helpdesk transcript adapter | moved → `klai-knowledge-improvements.md` |
 
 ---
 
