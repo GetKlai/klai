@@ -244,8 +244,6 @@ async function buildNavTreeFromMeta(
     }
   }
 
-  const nodes: NavNode[] = [];
-
   const nonMeta = entries.filter((e) => e.name !== "_meta.yaml");
   const orderedEntries = [
     ...order
@@ -256,31 +254,28 @@ async function buildNavTreeFromMeta(
       .sort((a, b) => a.name.localeCompare(b.name)),
   ];
 
-  for (const entry of orderedEntries) {
-    const slug = entry.name.replace(/\.md$/, "");
-    const path = entry.path;
+  const resolved = await Promise.all(
+    orderedEntries.map(async (entry) => {
+      const slug = entry.name.replace(/\.md$/, "");
+      const path = entry.path;
 
-    if (entry.type === "dir") {
-      const children = await buildNavTreeFromMeta(repo, path, depth + 1);
-      nodes.push({
-        slug,
-        title: labels[slug] ?? slug.replace(/-/g, " "),
-        path,
-        type: "dir",
-        children,
-      });
-    } else if (entry.name.endsWith(".md")) {
-      const content = await getFileContent(repo, path);
-      let title = labels[slug] ?? slug.replace(/-/g, " ");
-      if (content) {
-        const match = content.match(/^---[\s\S]*?^title:\s*(.+)$/m);
-        if (match) title = match[1].trim().replace(/^["']|["']$/g, "");
+      if (entry.type === "dir") {
+        const children = await buildNavTreeFromMeta(repo, path, depth + 1);
+        return { slug, title: labels[slug] ?? slug.replace(/-/g, " "), path, type: "dir" as const, children };
+      } else if (entry.name.endsWith(".md")) {
+        const content = await getFileContent(repo, path);
+        let title = labels[slug] ?? slug.replace(/-/g, " ");
+        if (content) {
+          const match = content.match(/^---[\s\S]*?^title:\s*(.+)$/m);
+          if (match) title = match[1].trim().replace(/^["']|["']$/g, "");
+        }
+        return { slug, title, path, type: "file" as const };
       }
-      nodes.push({ slug, title, path, type: "file" });
-    }
-  }
+      return null;
+    })
+  );
 
-  return nodes;
+  return resolved.filter((n): n is NavNode => n !== null);
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
