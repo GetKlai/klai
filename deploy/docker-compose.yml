@@ -37,6 +37,7 @@ networks:
     # NOT internal — bot containers need internet egress to join meeting platforms
 
 volumes:
+  firecrawl-postgres-data:
   caddy-data:
   caddy-config:
   caddy-tenants:
@@ -735,28 +736,68 @@ services:
           cpus: '4'
           memory: 3G
 
-  # Firecrawl: self-hosted web scraper for LibreChat full-page content extraction.
-  # Uses existing Redis for rate-limit tracking. No RabbitMQ or worker needed:
-  # LibreChat calls /v1/scrape which is synchronous (no async job queue required).
-  # If JS-rendered pages are needed in future, add playwright-service and set
-  # PLAYWRIGHT_MICROSERVICE_URL=http://playwright:3000.
+  # Firecrawl v1.x: self-hosted web scraper for LibreChat full-page content extraction.
+  # Requires dedicated Postgres (NUQ job queue) and RabbitMQ (worker coordination).
+  # NUQ schema is auto-initialized via firecrawl-nuq-init.sql on first Postgres start.
+  # Redis URL must use %-encoded password (special chars break ioredis URL parsing).
+  # Image built from source — ghcr.io/mendableai/firecrawl is a private registry.
+  # Build: cd /tmp/firecrawl/apps/api && docker build -t ghcr.io/mendableai/firecrawl:latest .
+  firecrawl-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: firecrawl
+      POSTGRES_PASSWORD: firecrawl_pass
+      POSTGRES_DB: firecrawl
+    networks:
+      - klai-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firecrawl -d firecrawl"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - firecrawl-postgres-data:/var/lib/postgresql/data
+      - ./firecrawl-nuq-init.sql:/docker-entrypoint-initdb.d/nuq-schema.sql:ro
+
+  firecrawl-rabbitmq:
+    image: rabbitmq:3-alpine
+    restart: unless-stopped
+    networks:
+      - klai-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   firecrawl-api:
     image: ghcr.io/mendableai/firecrawl:latest
     restart: unless-stopped
     environment:
       PORT: "3002"
       HOST: "0.0.0.0"
-      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
-      REDIS_RATE_LIMIT_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      # Redis password contains special chars — must be %-encoded in the URL.
+      # Plain ${REDIS_PASSWORD} substitution breaks ioredis URL parsing (falls back to 127.0.0.1).
+      REDIS_URL: "${FIRECRAWL_REDIS_URL}"
+      REDIS_RATE_LIMIT_URL: "${FIRECRAWL_REDIS_URL}"
       USE_DB_AUTHENTICATION: "false"
       FIRECRAWL_API_KEY: "${FIRECRAWL_INTERNAL_KEY}"
       NUM_WORKERS_PER_QUEUE: "2"
       LOGGING_LEVEL: "INFO"
+      NUQ_DATABASE_URL: "postgresql://firecrawl:firecrawl_pass@firecrawl-postgres:5432/firecrawl"
+      NUQ_RABBITMQ_URL: "amqp://firecrawl-rabbitmq:5672"
     networks:
       - klai-net
       - net-redis
     depends_on:
       redis:
+        condition: service_healthy
+      firecrawl-postgres:
+        condition: service_healthy
+      firecrawl-rabbitmq:
         condition: service_healthy
     # NOT exposed via Caddy — internal Docker network only
     deploy:
