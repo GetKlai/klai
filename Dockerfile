@@ -6,6 +6,8 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
+# Ensure musl-specific native binaries are present for Alpine
+RUN npm rebuild lightningcss 2>/dev/null || true
 
 # Build
 FROM base AS builder
