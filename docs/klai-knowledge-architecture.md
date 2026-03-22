@@ -1,8 +1,33 @@
 # Klai Knowledge — Platform Architecture
 
-> Status: Working document. Sections marked **[RESEARCH NEEDED]** require further investigation before implementation decisions can be made. Sections marked **[DECISION NEEDED]** have clear options but no selected approach yet.
+> Status: Active reference. Research phases complete for §§ 1–12. §13.5 (cross-org federation) remains an open decision. Implementation tracking: `klai-claude/docs/specs/klai-knowledge-implementation.md`.
 >
 > Source synthesis: `helpdesk-extractie-pipeline.md` (2026-03-18) + `Sovereign Knowledge, Augmented` (2026-01-13). The helpdesk pipeline is now treated as one ingestion adapter, not the product goal. The product goal is Klai Knowledge.
+>
+> *Last updated: 2026-03-22. For platform-wide infrastructure and stack decisions, see [architecture/platform.md](architecture/platform.md).*
+
+---
+
+## Contents
+
+| § | Section | Status |
+|---|---|---|
+| 0 | [Current State vs. Target Architecture](#0-current-state-vs-target-architecture) | Reference |
+| 1 | [What Klai Knowledge Is](#1-what-klai-knowledge-is) | Stable |
+| 2 | [Platform Service Architecture](#2-platform-service-architecture) | Stable |
+| 3 | [Knowledge Model](#3-knowledge-model) | Stable |
+| 4 | [Ingestion Architecture](#4-ingestion-architecture) | Stable |
+| 5 | [Storage Architecture](#5-storage-architecture) | Stable |
+| 6 | [Taxonomy](#6-taxonomy) | Researched |
+| 7 | [Retrieval Architecture](#7-retrieval-architecture) | Stable |
+| 8 | [Gap Detection](#8-gap-detection) | Stable |
+| 9 | [AI Interface](#9-ai-interface) | Stable |
+| 10 | [Multi-tenancy, Personal Knowledge, Federated Knowledge](#10-multi-tenancy-personal-knowledge-and-federated-knowledge) | Stable |
+| 11 | [Publication Layer](#11-publication-layer) | Stable |
+| 12 | [The Self-Improving Loop](#12-the-self-improving-loop) | Stable |
+| 13 | [Open Questions](#13-open-questions-requiring-resolution) | Mixed — see table in §13 |
+| 14 | [Technology Stack](#14-technology-stack) | Stable |
+| — | [Appendix: Relation to Existing Klai Components](#appendix-relation-to-existing-klai-components) | Reference |
 
 ---
 
@@ -51,24 +76,30 @@ This document describes the **target architecture** for Klai Knowledge. Most of 
 | LiteLLM + Ollama | LLM routing | Claude via Mistral API; Ollama as CPU fallback |
 | Zitadel | Auth/OIDC | Tenant isolation; all services use same instance |
 
-**What does NOT exist yet:**
+### What was recently built (March 2026)
+
+| Component | Status |
+|---|---|
+| Qdrant | ✅ Deployed — `klai_knowledge` collection, `org_id` + `kb_slug` payload indexes |
+| `knowledge` schema (PostgreSQL) | ✅ Created — migration `001_knowledge_schema.sql`; tables exist, not yet populated (Phase 4+) |
+| Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/retrieve` |
+| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook`, retrieval verified for `getklai` tenant |
+| Knowledge model fields in frontmatter | ✅ `KnowledgeFrontmatter` in klai-docs; Zod validation deferred |
+
+### What does NOT exist yet
 
 | Component | Where described | Status |
 |---|---|---|
-| Qdrant | §5.1 | Not deployed; not in docker-compose |
-| `knowledge` schema (PostgreSQL) | §5.2 | Not created; only `docs` and `portal` schemas exist |
-| Unified Ingest API | §4 | Not built; no service between adapters and vector store |
-| Gap detection | §8 | Not built |
-| Personal knowledge scopes | §10.2 | Not built |
-| FlagEmbedding / sparse embeddings | §4.2 | Not running; TEI gives dense only |
-| Retrieval orchestration (Haystack) | §14 | Not deployed |
-| Knowledge model fields in frontmatter | §5.4 | Not implemented; `PageFrontmatter` has no knowledge fields |
+| Gap detection | §8 | Not built — deferred pending >50 indexed docs |
+| Personal knowledge scopes | §10.2 | Partial — webhook auto-provisioned on KB creation; retrieval not yet personal-scoped |
+| Sparse embeddings (FlagEmbedding) | §4.2 | Deferred — TEI dense-only until >1K docs |
+| Retrieval orchestration (Haystack) | §14 | Removed from V1 scope — direct Qdrant client used |
 
 ### The key migrations required
 
 **research-api → Qdrant:** The current research-api uses `VECTOR_BACKEND: pgvector`. Moving to Qdrant requires rebuilding the ingestion pipeline, not just swapping a config value.
 
-**TEI → FlagEmbedding:** TEI is already running BGE-M3 but produces dense embeddings only. Sparse (SPLADE-style) requires switching to FlagEmbedding. This is a new service, not an upgrade.
+**TEI → FlagEmbedding:** Decision made to defer. TEI (BGE-M3 dense) is sufficient for current scale (<1K documents). Revisit when document count exceeds 1,000 or retrieval quality issues appear.
 
 **SearXNG → TBD:** The architecture document originally mentioned Tavily/Brave as web search options. SearXNG is already self-hosted and deployed. Whether to replace it is an open decision — see §13.8.
 
@@ -1182,6 +1213,18 @@ This loop also closes the gap between what an organization knows (formal knowled
 
 ## 13. Open Questions Requiring Resolution
 
+| § | Question | Status |
+|---|---|---|
+| 13.1 | Taxonomy evolution | Researched — findings in §6 |
+| 13.2 | Bi-temporal query infrastructure | Researched — V1 achievable with Qdrant + PostgreSQL simplification |
+| 13.3 | Graph layer decision | Researched — deferred; gate condition defined |
+| 13.4 | Epistemic labeling automation | Researched — 3-way V1 model recommended |
+| 13.5 | Cross-organizational knowledge federation | **Decision needed** |
+| 13.6 | Enrichment and extraction LLM | Decided — Mistral Small 3.2 (128K) + Qwen3-8B (fast extraction) |
+| 13.7 | Editor gap | Known limitation — no short-term resolution |
+| 13.8 | Web search backend | **Deployed** — SearXNG (March 2026) |
+| 13.9 | Whisper/transcription → Knowledge pipeline | **Open** |
+
 ### 13.1 Taxonomy evolution [RESEARCHED — see §6]
 
 Completed. Full findings integrated in §6. Summary: "self-managing taxonomy" claim is significantly overstated for B2B. BERTopic requires human approval gate; minimum viable corpus ~1,000 documents; online learning causes semantic drift by design. Tiered approach by tenant size is the recommended architecture.
@@ -1367,8 +1410,8 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 
 | Layer | Component | Notes |
 |---|---|---|
-| **Enrichment LLM** | Mistral Small 3.1 via API (ramp-up) → Qwen2.5-14B self-hosted (scale) | No Anthropic API anywhere. Mistral API allowed for non-sensitive enrichment. Transcript extraction self-hosted only (GDPR). See §13.6. |
-| **Extraction** | Instructor + Qwen2.5-14B or Mistral Small 3.1 (both self-hosted) | Self-hosted only for transcript data; no cloud API |
+| **Enrichment LLM** | Mistral Small 3.2 via API (ramp-up) → Qwen3-8B self-hosted (scale) | No Anthropic API anywhere. Mistral API allowed for non-sensitive enrichment. Transcript extraction self-hosted only (GDPR). See §13.6. |
+| **Extraction** | Instructor + Qwen3-8B or Mistral Small 3.2 (both self-hosted) | Self-hosted only for transcript data; no cloud API |
 | **Document parsing** | docling-serve (self-hosted) | HybridChunker for token-aware, structure-preserving chunking |
 | **Web crawling** | Crawl4AI | Open source, async, sitemap-aware |
 | **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse. **Today:** TEI already runs BGE-M3 (dense only) for research-api — switching to FlagEmbedding is a new service. |
