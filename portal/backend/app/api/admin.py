@@ -1,0 +1,360 @@
+"""
+Admin user management endpoints.
+All endpoints require authentication and resolve the caller's org from their OIDC token.
+"""
+from datetime import datetime
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.database import get_db
+from app.models.portal import PortalOrg, PortalUser
+from app.services.zitadel import zitadel
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+bearer = HTTPBearer()
+
+
+async def _get_caller_org(
+    credentials: HTTPAuthorizationCredentials,
+    db: AsyncSession,
+) -> tuple[str, PortalOrg, PortalUser]:
+    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
+    try:
+        info = await zitadel.get_userinfo(credentials.credentials)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+
+    zitadel_user_id = info.get("sub")
+    if not zitadel_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden in token")
+
+    result = await db.execute(
+        select(PortalOrg, PortalUser)
+        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
+        .where(PortalUser.zitadel_user_id == zitadel_user_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisatie niet gevonden")
+
+    org, caller_user = row
+    return zitadel_user_id, org, caller_user
+
+
+def _require_admin(caller_user: PortalUser) -> None:
+    """Raise 403 if the caller is not an admin."""
+    if caller_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang: admin rechten vereist")
+
+
+class UserOut(BaseModel):
+    zitadel_user_id: str
+    email: str
+    first_name: str
+    last_name: str
+    role: Literal["admin", "member"]
+    preferred_language: Literal["nl", "en"]
+    created_at: datetime
+    invite_pending: bool
+
+
+class UsersResponse(BaseModel):
+    users: list[UserOut]
+
+
+class InviteRequest(BaseModel):
+    email: EmailStr
+    first_name: str
+    last_name: str
+    role: Literal["admin", "member"] = "member"
+    preferred_language: Literal["nl", "en"] = "nl"
+
+
+class InviteResponse(BaseModel):
+    user_id: str
+    message: str
+
+
+class UserUpdateRequest(BaseModel):
+    first_name: str
+    last_name: str
+    preferred_language: Literal["nl", "en"]
+
+
+class RoleUpdateRequest(BaseModel):
+    role: Literal["admin", "member"]
+
+
+class OrgSettingsOut(BaseModel):
+    name: str
+    default_language: Literal["nl", "en"]
+    mfa_policy: Literal["optional", "recommended", "required"] = "optional"
+
+
+class OrgSettingsUpdate(BaseModel):
+    default_language: Literal["nl", "en"] | None = None
+    mfa_policy: Literal["optional", "recommended", "required"] | None = None
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+@router.get("/users", response_model=UsersResponse)
+async def list_users(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> UsersResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Get portal membership records (mapping + created_at + role)
+    result = await db.execute(
+        select(PortalUser)
+        .where(PortalUser.org_id == org.id)
+        .order_by(PortalUser.created_at)
+    )
+    portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
+
+    if not portal_users:
+        return UsersResponse(users=[])
+
+    # Fetch live identity details from Zitadel (all users live in portal org)
+    zitadel_users = await zitadel.list_org_users(settings.zitadel_portal_org_id)
+
+    users_out: list[UserOut] = []
+    for z in zitadel_users:
+        uid = z.get("id", "")
+        if uid not in portal_users:
+            continue  # not in our portal (e.g. service accounts)
+        profile = z.get("human", {}).get("profile", {})
+        email_obj = z.get("human", {}).get("email", {})
+        portal_user = portal_users[uid]
+        users_out.append(UserOut(
+            zitadel_user_id=uid,
+            email=email_obj.get("email", ""),
+            first_name=profile.get("firstName", ""),
+            last_name=profile.get("lastName", ""),
+            role=portal_user.role,
+            preferred_language=portal_user.preferred_language,
+            created_at=portal_user.created_at,
+            invite_pending=z.get("state") == "USER_STATE_INITIAL",
+        ))
+
+    return UsersResponse(users=users_out)
+
+
+@router.post("/users/invite", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
+async def invite_user(
+    body: InviteRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> InviteResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    try:
+        user_data = await zitadel.invite_user(
+            org_id=settings.zitadel_portal_org_id,
+            email=body.email,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            preferred_language=body.preferred_language,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon gebruiker niet uitnodigen: {exc}",
+        ) from exc
+
+    zitadel_user_id: str = user_data["userId"]
+
+    try:
+        await zitadel.grant_user_role(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+            role="org:owner",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon projectrol niet toewijzen: {exc}",
+        ) from exc
+
+    user_row = PortalUser(
+        zitadel_user_id=zitadel_user_id,
+        org_id=org.id,
+        role=body.role,
+        preferred_language=body.preferred_language,
+    )
+    db.add(user_row)
+    await db.commit()
+
+    return InviteResponse(
+        user_id=zitadel_user_id,
+        message=f"Uitnodiging verstuurd naar {body.email}.",
+    )
+
+
+@router.patch("/users/{zitadel_user_id}", response_model=MessageResponse)
+async def update_user(
+    zitadel_user_id: str,
+    body: UserUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    try:
+        await zitadel.update_user_profile(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            preferred_language=body.preferred_language,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon gebruiker niet bijwerken: {exc}",
+        ) from exc
+
+    user.preferred_language = body.preferred_language
+    await db.commit()
+
+    return MessageResponse(message="Gebruiker bijgewerkt.")
+
+
+@router.patch("/users/{zitadel_user_id}/role", response_model=MessageResponse)
+async def update_user_role(
+    zitadel_user_id: str,
+    body: RoleUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    user.role = body.role
+    await db.commit()
+
+    return MessageResponse(message="Rol bijgewerkt.")
+
+
+@router.get("/settings", response_model=OrgSettingsOut)
+async def get_org_settings(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> OrgSettingsOut:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
+
+
+@router.patch("/settings", response_model=OrgSettingsOut)
+async def update_org_settings(
+    body: OrgSettingsUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> OrgSettingsOut:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    if body.default_language is not None:
+        org.default_language = body.default_language
+    if body.mfa_policy is not None:
+        org.mfa_policy = body.mfa_policy
+    await db.commit()
+    return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
+
+
+@router.post("/users/{zitadel_user_id}/resend-invite", response_model=MessageResponse)
+async def resend_invite(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    try:
+        await zitadel.resend_init_mail(
+            org_id=settings.zitadel_portal_org_id,
+            user_id=zitadel_user_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon uitnodiging niet opnieuw sturen: {exc}",
+        ) from exc
+
+    return MessageResponse(message="Uitnodiging opnieuw verstuurd.")
+
+
+@router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
+async def remove_user(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify user belongs to this org before deleting
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    try:
+        await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Kon gebruiker niet verwijderen: {exc}",
+        ) from exc
+
+    await db.delete(user)
+    await db.commit()
+
+    return MessageResponse(message="Gebruiker verwijderd.")

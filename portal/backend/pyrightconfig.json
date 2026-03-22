@@ -1,0 +1,10 @@
+{
+  "include": ["app"],
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.12",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "reportUnusedImport": true,
+  "reportUnusedVariable": true,
+  "reportUntypedFunctionDecorator": false
+}

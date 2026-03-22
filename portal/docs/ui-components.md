@@ -1,0 +1,233 @@
+# Portal UI Components
+
+> Component reference for `frontend/src/components/ui/`.
+> These are owned, copy-paste components - not a black-box library.
+> Modify the source directly when you need to change default styling.
+
+---
+
+## Input
+
+`components/ui/input.tsx`
+
+Standard text input. Defaults to `w-full`. Pass `className` to override width.
+
+```tsx
+import { Input } from '@/components/ui/input'
+
+<Input
+  id="email"
+  type="email"
+  required
+  value={email}
+  onChange={(e) => setEmail(e.target.value)}
+  placeholder="jan@example.com"
+/>
+```
+
+Always pair with a `<Label>` and matching `id`/`htmlFor`.
+
+---
+
+## Label
+
+`components/ui/label.tsx`
+
+Form field label. Uses `var(--color-purple-deep)`, `text-sm font-medium`.
+
+```tsx
+import { Label } from '@/components/ui/label'
+
+<Label htmlFor="email">E-mailadres</Label>
+```
+
+---
+
+## Select
+
+`components/ui/select.tsx`
+
+Native `<select>`. Defaults to `w-full`. Pass `className="max-w-xs"` for standalone selects (settings, account pages).
+
+```tsx
+import { Select } from '@/components/ui/select'
+
+// In a form grid - full width
+<Select id="role" value={role} onChange={(e) => setRole(e.target.value)}>
+  <option value="member">Lid</option>
+  <option value="admin">Beheerder</option>
+</Select>
+
+// Standalone (settings/account) - constrain width
+<Select id="language" value={lang} onChange={...} className="max-w-xs">
+  <option value="nl">Nederlands</option>
+  <option value="en">English</option>
+</Select>
+
+// Compact table row variant
+<Select value={user.role} onChange={...} className="w-auto px-2 py-1 text-xs">
+```
+
+---
+
+## Standard patterns
+
+### Field (label + input/select)
+
+```tsx
+<div className="space-y-1.5">
+  <Label htmlFor="field-id">Label text</Label>
+  <Input id="field-id" type="text" value={value} onChange={...} />
+</div>
+```
+
+### Two-column field grid
+
+```tsx
+<div className="grid grid-cols-2 gap-4">
+  <div className="space-y-1.5">
+    <Label htmlFor="first-name">Voornaam</Label>
+    <Input id="first-name" ... />
+  </div>
+  <div className="space-y-1.5">
+    <Label htmlFor="last-name">Achternaam</Label>
+    <Input id="last-name" ... />
+  </div>
+</div>
+```
+
+### Card section with header
+
+```tsx
+<Card>
+  <CardHeader>
+    <CardTitle>Taal</CardTitle>
+    <CardDescription>Standaardtaal voor nieuwe gebruikers.</CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    {/* fields, save button */}
+  </CardContent>
+</Card>
+```
+
+### Data table card
+
+```tsx
+<Card>
+  <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-[var(--color-border)]">
+          <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+            Naam
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr
+            key={row.id}
+            className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+          >
+            <td className="px-6 py-3 text-[var(--color-purple-deep)]">{row.name}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </CardContent>
+</Card>
+```
+
+---
+
+## Color tokens
+
+Use CSS variables for all semantic colors. Never use raw Tailwind color classes for these purposes.
+
+| Token | Use for |
+|---|---|
+| `var(--color-purple-deep)` | Headings, primary text, active icons |
+| `var(--color-muted-foreground)` | Secondary text, placeholder, disabled |
+| `var(--color-destructive)` | Error text, delete confirm buttons |
+| `var(--color-success)` | Save confirm buttons, positive feedback |
+| `var(--color-border)` | Borders, dividers, row hover backgrounds |
+| `var(--color-accent)` | Focus rings, links |
+
+```tsx
+// Error message
+<p className="text-sm text-[var(--color-destructive)]">Verwijderen mislukt</p>
+
+// Delete confirm button
+<button className="bg-[var(--color-destructive)] text-white hover:opacity-90">
+  <Check />
+</button>
+
+// Save confirm button
+<button className="bg-[var(--color-success)] text-white hover:opacity-90">
+  <Check />
+</button>
+```
+
+---
+
+## Rules
+
+- Never write inline Tailwind field classes on `<input>` or `<select>` elements in pages - always use `<Input>` / `<Select>` from `components/ui/`
+- Add/edit forms belong in a separate route page (e.g. `/admin/users/invite`), not in modals or inline cards
+- `<Label>` always has `htmlFor` matching the field `id`
+- Never use `text-red-*`, `bg-red-*`, `text-green-*`, `bg-green-*` for semantic states — use `--color-destructive` / `--color-success`
+- See `klai-claude/docs/patterns/frontend.md` for the full portal-ui-components pattern
+
+---
+
+## Deletion confirmation patterns
+
+### Standard: inline row confirmation (Check / X)
+
+For single-item deletion where the action is reversible or low-impact (e.g. a transcription, a notebook):
+
+```tsx
+// Row switches to confirmation state on delete click
+isConfirmingDelete ? (
+  <>
+    <button onClick={() => deleteMutation.mutate(item.id)}
+      className="... bg-[var(--color-destructive)] text-white"><Check /></button>
+    <button onClick={() => setConfirmingDeleteId(null)}
+      className="... border border-[var(--color-border)]"><X /></button>
+  </>
+) : (
+  <button onClick={() => setConfirmingDeleteId(item.id)}><Trash2 /></button>
+)
+```
+
+### Exception: name-confirmation modal
+
+Use a **modal with name input** only when the deletion is **irreversible and high-impact** — i.e. it destroys a significant amount of data that cannot be recovered (e.g. deleting an entire knowledge base including all its pages).
+
+Rules for name-confirmation modals:
+- Explain what will be deleted and that it cannot be undone
+- Show the name in **bold** in the explanation text
+- Require the user to type the exact name before the confirm button becomes active
+- Confirm button uses `var(--color-destructive)` background only when `canDelete === true`
+- Cancel is a ghost button, confirm is on the right
+
+```tsx
+function DeleteModal({ kb, onCancel, onConfirm, isDeleting }) {
+  const [confirmName, setConfirmName] = useState('')
+  const canDelete = confirmName === kb.name
+  // ...
+  <Button
+    onClick={onConfirm}
+    disabled={!canDelete || isDeleting}
+    style={{
+      backgroundColor: canDelete ? 'var(--color-destructive)' : undefined,
+      color: canDelete ? 'white' : undefined,
+    }}
+  >
+    {isDeleting ? <Loader2 /> : 'Verwijderen'}
+  </Button>
+}
+```
+
+**Current uses of the name-confirmation modal:**
+- `routes/app/docs/index.tsx` — delete knowledge base (deletes all pages, irreversible)
