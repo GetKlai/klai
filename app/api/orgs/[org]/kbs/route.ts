@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuthOrService } from "@/lib/auth";
+import { requireAuth, requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import { slugify } from "@/lib/markdown";
