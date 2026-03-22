@@ -58,7 +58,7 @@ class ZitadelPayload(BaseModel):
         return bool(self.templateData and self.templateData.buttonText) and bool(self.button_url())
 
     def subject(self) -> str:
-        return (self.templateData and self.templateData.subject) or "Message from Klai"
+        return (self.templateData and self.templateData.subject) or "Notification"
 
     def pre_header(self) -> str:
         return (self.templateData and self.templateData.preHeader) or ""
