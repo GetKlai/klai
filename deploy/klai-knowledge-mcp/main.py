@@ -1,31 +1,127 @@
 """
 klai-knowledge-mcp
-MCP server that lets LibreChat agents save content to a user's personal
-knowledge base in Klai Docs (Gitea-backed markdown).
+MCP server that lets LibreChat agents save content to:
+  - personal knowledge base  (via knowledge-ingest API)
+  - organisation knowledge base  (via knowledge-ingest API)
+  - documentation KB in Klai Docs  (via Gitea-backed klai-docs API)
 
 Transport: streamable-http (LibreChat v0.8.4+)
 Auth:      service token forwarded to klai-docs as X-Internal-Secret
-Identity:  X-User-ID + X-Org-Slug request headers injected by LibreChat config;
-           accessed per-call via FastMCP Context parameter.
+Identity:  X-User-ID, X-Org-ID, X-Org-Slug request headers injected by
+           LibreChat config; accessed per-call via FastMCP Context parameter.
 """
 
+from __future__ import annotations
+
+import logging
 import os
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import date
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
-# ── Config ────────────────────────────────────────────────────────────────────
-KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]    # http://docs-app:3000
+logger = logging.getLogger(__name__)
+
+# -- Config -------------------------------------------------------------------
+KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
+KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
 PUBLIC_KB_BASE_URL = os.getenv("PUBLIC_KB_BASE_URL", "")  # https://kb.${DOMAIN}
-PERSONAL_KB = os.getenv("PERSONAL_KB_NAME", "personal")
 DEFAULT_ORG_SLUG = os.getenv("DEFAULT_ORG_SLUG", "")
 
+VALID_ASSERTION_MODES: frozenset[str] = frozenset({"fact", "claim", "note"})
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Error messages (bilingual NL/EN)
+_ERR_SAVE = (
+    "Er is een fout opgetreden bij het opslaan. Probeer het opnieuw.\n"
+    "(An error occurred while saving. Please try again.)"
+)
+
+
+# -- Identity -----------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class Identity:
+    """User/org identity extracted from request headers."""
+
+    user_id: str
+    org_id: str
+    org_slug: str
+
+
+# @MX:NOTE _get_identity — headers injected by LibreChat config; X-User-ID = LibreChat MongoDB user ID = same as data["user"] in LiteLLM hook
+def _get_identity(ctx: Context) -> Identity:
+    """Extract identity headers from the FastMCP request context.
+
+    Raises ValueError when required headers are absent.
+    """
+    headers = ctx.request_context.request.headers
+    user_id = headers.get("x-user-id", "")
+    org_id = headers.get("x-org-id", "")
+    org_slug = headers.get("x-org-slug") or DEFAULT_ORG_SLUG
+    if not headers.get("x-org-slug"):
+        logger.warning(
+            "X-Org-Slug header missing; falling back to DEFAULT_ORG_SLUG=%r. "
+            "Check LibreChat header forwarding config.",
+            DEFAULT_ORG_SLUG,
+        )
+
+    if not user_id:
+        raise ValueError(
+            "X-User-ID header is missing. "
+            "Ensure LibreChat forwards identity headers to this MCP server."
+        )
+    if not org_id:
+        raise ValueError(
+            "X-Org-ID header is missing. "
+            "Ensure LibreChat forwards identity headers to this MCP server."
+        )
+    return Identity(user_id=user_id, org_id=org_id, org_slug=org_slug)
+
+
+# -- Helpers ------------------------------------------------------------------
+async def _save_to_ingest(
+    org_id: str,
+    kb_slug: str,
+    title: str,
+    content: str,
+    assertion_mode: str,
+    tags: list[str],
+    source_note: str | None,
+    user_id: str | None = None,
+) -> bool:
+    """POST a document to the knowledge-ingest API.
+
+    Returns True on success (2xx), False on any HTTP or network error.
+    """
+    payload: dict = {
+        "org_id": org_id,
+        "kb_slug": kb_slug,
+        "path": title,
+        "content": content.strip(),
+        "metadata": {
+            "tags": tags[:5],
+            "assertion_mode": assertion_mode,
+            **({"source_note": source_note} if source_note else {}),
+        },
+    }
+    if user_id is not None:
+        payload["user_id"] = user_id
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{KNOWLEDGE_INGEST_URL}/ingest/v1/document",
+                json=payload,
+            )
+    except httpx.RequestError:
+        return False
+
+    return resp.status_code in (200, 201, 202)
+
 
 def _slugify(text: str) -> str:
     text = text.lower().strip()
@@ -36,93 +132,215 @@ def _slugify(text: str) -> str:
     return text[:60] or "note"
 
 
-def _infer_provenance(assertion_mode: str) -> str:
-    """Map assertion_mode → provenance_type (§3.2)."""
-    return "observed" if assertion_mode == "quoted" else "synthesized"
-
-
-# ── MCP server ────────────────────────────────────────────────────────────────
-
+# -- MCP server ---------------------------------------------------------------
 mcp = FastMCP(
     "klai-knowledge",
+    transport_security=TransportSecuritySettings(
+        # Docker-internal service: no external access, DNS rebinding protection not needed.
+        # LibreChat sends Host: klai-knowledge-mcp:8080 which is the Docker service name.
+        enable_dns_rebinding_protection=False,
+    ),
     instructions=(
-        "You have access to the user's personal Klai Knowledge Base. "
-        "Call save_to_personal_kb whenever the user wants to save, note, "
-        "or remember something from the conversation."
+        "Je hebt toegang tot de kennisbank van de gebruiker en de organisatie.\n\n"
+        "PERSOONLIJKE KENNISBANK (save_personal_knowledge):\n"
+        "Trigger: 'sla dit op', 'onthoud dit', 'save this', 'note this',\n"
+        "'bewaar dit voor mij', 'remember this for me'\n\n"
+        "ORGANISATIE KENNISBANK (save_org_knowledge):\n"
+        "Trigger: 'sla dit op voor het team', 'deel dit met de organisatie',\n"
+        "'save this for the team', 'share with the org',\n"
+        "'voeg toe aan de teamkennis', 'organisatiekennis'\n\n"
+        "DOCUMENTATIE (save_to_docs):\n"
+        "Trigger: 'voeg toe aan de docs', 'bewaar in documentatie',\n"
+        "'add to docs', 'save to documentation'\n\n"
+        "ONDUIDELIJK? Vraag: 'Wil je dit opslaan voor jezelf, "
+        "of voor de hele organisatie?'\n\n"
+        "You have access to the user's personal and organisation knowledge base.\n"
+        "When scope is unclear, ask: 'Do you want to save this for yourself, "
+        "or for the whole organisation?'"
     ),
 )
 
 
+# -- Tool: save_personal_knowledge --------------------------------------------
 @mcp.tool(
-    description="""Save content to the user's personal knowledge base.
+    description="""Save content to the user's PERSONAL knowledge base.
 
 WHEN TO CALL: user says "sla dit op", "onthoud dit", "save this", "note this",
-or expresses intent to keep something for later reference.
+"bewaar dit voor mij", "remember this for me", or expresses intent to keep
+something for their own reference.
 
 PARAMETERS:
-  title         — short, descriptive title (max 80 chars); you generate this
-  content       — the text to save; may be a summary, quote, or elaboration
-  assertion_mode — pick the best fit:
-    factual     : verified claim ("the return period is 30 days")
-    procedural  : step-by-step instruction or process
-    belief      : likely true but not confirmed ("we think this affects macOS 14")
-    hypothesis  : explicitly speculative, needs validation
-    quoted      : verbatim or close paraphrase of a named external source
-  tags          : 1–5 tags; choose from the seed list or use free-form:
-    voip, macos, windows, networking, auth, billing, onboarding, procedure,
-    product, integration, workaround, decision, insight, research, meeting,
-    customer, support, configuration, security, dns
-  source_note   : (optional) if the user mentioned a source (article, URL,
-                  book, person), put that reference here; leave empty otherwise
+  title          - short, descriptive title (max 80 chars); you generate this
+  content        - the text to save; may be a summary, quote, or elaboration
+  assertion_mode - pick the best fit: "fact", "claim", or "note"
+  tags           - 1-5 tags; free-form or from seed list
+  source_note    - (optional) source reference if mentioned by user
 """
 )
-async def save_to_personal_kb(
+async def save_personal_knowledge(
     title: str,
     content: str,
     assertion_mode: str,
     tags: list[str],
     ctx: Context,
-    source_note: str = "",
+    source_note: str | None = None,
 ) -> str:
-    # Headers are injected by LibreChat via mcpServers.headers config
-    headers = ctx.request_context.request.headers
-    user_id = headers.get("x-user-id", "")
-    org_slug = headers.get("x-org-slug", DEFAULT_ORG_SLUG)
+    try:
+        identity = _get_identity(ctx)
+    except ValueError as exc:
+        return f"Error: {exc}"
 
-    if not user_id:
-        return "Error: X-User-ID header missing — cannot identify user."
+    if assertion_mode not in VALID_ASSERTION_MODES:
+        assertion_mode = "note"
+
+    ok = await _save_to_ingest(
+        org_id=identity.org_id,
+        kb_slug="personal",
+        title=title,
+        content=content,
+        assertion_mode=assertion_mode,
+        tags=tags,
+        source_note=source_note,
+        user_id=identity.user_id,
+    )
+    if not ok:
+        return _ERR_SAVE
+
+    return f"\u2713 Opgeslagen in jouw persoonlijke kennisbank: {title}"
+
+
+# -- Tool: save_org_knowledge -------------------------------------------------
+@mcp.tool(
+    description="""Save content to the ORGANISATION knowledge base.
+
+WHEN TO CALL: user says "sla dit op voor het team", "deel dit met de organisatie",
+"save this for the team", "share with the org", "voeg toe aan de teamkennis",
+or expresses intent to share knowledge with the whole organisation.
+
+PARAMETERS:
+  title          - short, descriptive title (max 80 chars); you generate this
+  content        - the text to save; may be a summary, quote, or elaboration
+  assertion_mode - pick the best fit: "fact", "claim", or "note"
+  tags           - 1-5 tags; free-form or from seed list
+  source_note    - (optional) source reference if mentioned by user
+"""
+)
+async def save_org_knowledge(
+    title: str,
+    content: str,
+    assertion_mode: str,
+    tags: list[str],
+    ctx: Context,
+    source_note: str | None = None,
+) -> str:
+    try:
+        identity = _get_identity(ctx)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if assertion_mode not in VALID_ASSERTION_MODES:
+        assertion_mode = "note"
+
+    ok = await _save_to_ingest(
+        org_id=identity.org_id,
+        kb_slug="org",
+        title=title,
+        content=content,
+        assertion_mode=assertion_mode,
+        tags=tags,
+        source_note=source_note,
+    )
+    if not ok:
+        return _ERR_SAVE
+
+    return f"\u2713 Opgeslagen in de organisatie-kennisbank: {title}"
+
+
+# -- Tool: save_to_docs -------------------------------------------------------
+@mcp.tool(
+    description="""Save content to a Klai Docs documentation knowledge base.
+
+WHEN TO CALL: user says "voeg toe aan de docs", "bewaar in documentatie",
+"add to docs", "save to documentation", or wants to write/update a page
+in the Gitea-backed documentation system.
+
+PARAMETERS:
+  title     - page title
+  content   - page content (markdown)
+  kb_name   - (optional) docs KB name; if omitted and org has multiple,
+              the tool will return the list so the user can choose
+  page_path - (optional) explicit path; auto-generated from title if omitted
+"""
+)
+async def save_to_docs(
+    title: str,
+    content: str,
+    ctx: Context,
+    kb_name: str | None = None,
+    page_path: str | None = None,
+) -> str:
+    try:
+        identity = _get_identity(ctx)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    org_slug = identity.org_slug
     if not org_slug:
         return "Error: X-Org-Slug header missing and DEFAULT_ORG_SLUG not set."
 
-    valid_modes = {"factual", "procedural", "belief", "hypothesis", "quoted"}
-    if assertion_mode not in valid_modes:
-        assertion_mode = "factual"
+    # Resolve KB name if not provided
+    if kb_name is None:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs",
+                    headers={
+                        "X-Internal-Secret": DOCS_INTERNAL_SECRET,
+                        "X-User-ID": identity.user_id,
+                    },
+                )
+        except httpx.RequestError:
+            return _ERR_SAVE
 
-    artifact_id = str(uuid.uuid4())
-    slug = f"{_slugify(title)}-{artifact_id[:6]}"
-    page_path = f"users/{user_id}/{slug}"  # klai-docs appends .md
+        if resp.status_code != 200:
+            return _ERR_SAVE
+
+        kbs = resp.json()
+        if not kbs:
+            return "Error: geen documentatie-kennisbanken gevonden voor deze organisatie."
+
+        if len(kbs) == 1:
+            kb_name = kbs[0].get("name") or kbs[0].get("slug")
+        else:
+            names = ", ".join(kb.get("name") or kb.get("slug", "?") for kb in kbs)
+            return (
+                f"Meerdere kennisbanken beschikbaar: {names}. "
+                "Geef kb_name op bij de volgende aanroep."
+            )
+
+    # Build page path if not provided
+    if page_path is None:
+        artifact_id = str(uuid.uuid4())
+        slug = f"{_slugify(title)}-{artifact_id[:6]}"
+        page_path = slug
 
     today = date.today().isoformat()
 
-    # klai-docs PUT accepts `frontmatter` dict; extra fields are spread into
-    # the page frontmatter by route.ts (see klai-knowledge-architecture.md §5.4)
     request_body = {
         "title": title,
         "content": content.strip(),
-        "icon": "📝",
+        "icon": "\U0001f4dd",
         "edit_access": "owner",
         "frontmatter": {
-            "provenance_type": _infer_provenance(assertion_mode),
-            "assertion_mode": assertion_mode,
+            "provenance_type": "synthesized",
+            "assertion_mode": "note",
             "synthesis_depth": 1,
             "belief_time_start": today,
             "belief_time_end": None,
             "superseded_by": None,
             "confidence": "medium",
             "derived_from": [],
-            **({"source_note": source_note} if source_note else {}),
-            **({"tags": tags[:5]} if tags else {}),
-            "created_by": user_id,
+            "created_by": identity.user_id,
             "system_time": today,
         },
     }
@@ -130,11 +348,11 @@ async def save_to_personal_kb(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.put(
-                f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs/{PERSONAL_KB}/pages/{page_path}",
+                f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs/{kb_name}/pages/{page_path}",
                 json=request_body,
                 headers={
                     "X-Internal-Secret": DOCS_INTERNAL_SECRET,
-                    "X-User-ID": user_id,
+                    "X-User-ID": identity.user_id,
                     "Content-Type": "application/json",
                 },
             )
@@ -142,29 +360,20 @@ async def save_to_personal_kb(
         return f"Error: could not reach klai-docs API ({exc})."
 
     if resp.status_code not in (200, 201):
-        return (
-            f"Error: klai-docs returned HTTP {resp.status_code}. "
-            f"Details: {resp.text[:300]}"
-        )
+        return f"Error: klai-docs returned HTTP {resp.status_code}. Details: {resp.text[:300]}"
 
     location = (
-        f"{PUBLIC_KB_BASE_URL}/{org_slug}/{PERSONAL_KB}/{page_path}"
+        f"{PUBLIC_KB_BASE_URL}/{org_slug}/{kb_name}/{page_path}"
         if PUBLIC_KB_BASE_URL
         else f"path: {page_path}"
     )
-    return (
-        f"Saved as **{title}**.\n"
-        f"ID: `{artifact_id}`\n"
-        f"Type: {assertion_mode}\n"
-        f"Location: {location}"
-    )
+    return f"\u2713 Opgeslagen in documentatie: **{title}**\nLocatie: {location}"
 
 
-# ── ASGI app ──────────────────────────────────────────────────────────────────
-# streamable_http_app() returns a Starlette app with the MCP endpoint at /mcp
+# -- ASGI app -----------------------------------------------------------------
 app = mcp.streamable_http_app()
-
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8080, log_level="info")

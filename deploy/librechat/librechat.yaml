@@ -1,0 +1,70 @@
+version: 1.3.5
+
+cache: true
+
+# ── Web search ────────────────────────────────────────────────────────────────
+# Search:   SearXNG (self-hosted, klai-net) — Startpage + DuckDuckGo engines
+# Scraper:  firecrawl-api (self-hosted, klai-net) — full-page content extraction
+# Reranker: infinity-reranker (self-hosted, klai-net) — bge-reranker-v2-m3 (CPU)
+#           Exposed as Jina-compatible /v1/rerank; no auth needed (network-isolated)
+webSearch:
+  searxngInstanceUrl: "http://searxng:8888"
+  scraperProvider: "firecrawl"
+  firecrawlApiUrl: "http://firecrawl-api:3002"
+  firecrawlApiKey: "${FIRECRAWL_INTERNAL_KEY}"
+  rerankerType: "jina"
+  jinaApiKey: "internal"
+  jinaApiUrl: "http://infinity-reranker:7997/v1/rerank"
+
+# ── Klai Knowledge MCP ────────────────────────────────────────────────────────
+# Exposes save_to_personal_kb to LibreChat agents.
+# X-Org-Slug is per-tenant: set KLAI_ORG_SLUG in the tenant's .env and replace
+# the placeholder below. One librechat.yaml per tenant is the current pattern.
+mcpServers:
+  klai-knowledge:
+    type: streamable-http
+    url: http://klai-knowledge-mcp:8080/mcp
+    headers:
+      X-User-ID: "{{LIBRECHAT_USER_ID}}"
+      X-Org-Slug: "${KLAI_ORG_SLUG}"
+
+mcpSettings:
+  allowedDomains:
+    - http://klai-knowledge-mcp:8080
+
+# Disable built-in endpoints; all AI goes through LiteLLM
+endpoints:
+  openAI:
+    disabled: true
+  assistants:
+    disabled: true
+  google:
+    disabled: true
+  anthropic:
+    disabled: true
+  custom:
+    - name: "Klai AI"
+      apiKey: "${LITELLM_API_KEY}"
+      baseURL: "http://litellm:4000/v1"
+      models:
+        default:
+          - klai-primary
+        fetch: false
+      titleConvo: true
+      titleModel: "klai-primary"
+      summarize: false
+      summaryModel: "klai-primary"
+      forcePrompt: false
+      modelDisplayLabel: "Klai AI"
+
+modelSpecs:
+  prioritize: true
+  list:
+    - name: "klai-primary"
+      mcpServers:
+        - "klai-knowledge"
+      label: "Klai AI"
+      default: true
+      preset:
+        endpoint: "Klai AI"
+        model: "klai-primary"
