@@ -42,4 +42,10 @@ See [CLAUDE.md](CLAUDE.md) for the codebase guide used by AI-assisted developmen
 
 ## License
 
-[MIT](LICENSE)
+Klai's own code is [MIT](LICENSE).
+
+Third-party dependencies have their own licenses — notably the BlockNote editor
+(`@blocknote/*`) which is [MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/).
+MPL-2.0 is file-level copyleft: it only affects modifications to BlockNote's own
+source files, not the larger application. See [NOTICES.md](NOTICES.md) for the full
+third-party license inventory.
