@@ -46,6 +46,9 @@ import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$
 import { Route as AppFocusNotebookIdAddSourceRouteImport } from './routes/app/focus/$notebookId_.add-source'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
+import { Route as AppMeetingsIndexRouteImport } from './routes/app/meetings/index'
+import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
+import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
 
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
@@ -233,6 +236,21 @@ const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
   path: '/users/$userId/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AppMeetingsIndexRoute = AppMeetingsIndexRouteImport.update({
+  id: '/meetings/',
+  path: '/meetings/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppMeetingsStartRoute = AppMeetingsStartRouteImport.update({
+  id: '/meetings/start',
+  path: '/meetings/start',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppMeetingsMeetingIdRoute = AppMeetingsMeetingIdRouteImport.update({
+  id: '/meetings/$meetingId',
+  path: '/meetings/$meetingId',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -272,6 +290,9 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/meetings/': typeof AppMeetingsIndexRoute
+  '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -309,6 +330,9 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/meetings': typeof AppMeetingsIndexRoute
+  '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -349,6 +373,9 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/meetings/': typeof AppMeetingsIndexRoute
+  '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -390,6 +417,9 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/meetings/'
+    | '/app/meetings/start'
+    | '/app/meetings/$meetingId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -427,6 +457,9 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/meetings'
+    | '/app/meetings/start'
+    | '/app/meetings/$meetingId'
   id:
     | '__root__'
     | '/'
@@ -466,6 +499,9 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug_/edit'
     | '/app/focus/$notebookId_/add-source'
     | '/app/focus/$notebookId_/edit'
+    | '/app/meetings/'
+    | '/app/meetings/start'
+    | '/app/meetings/$meetingId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -746,6 +782,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/app/meetings/': {
+      id: '/app/meetings/'
+      path: '/meetings'
+      fullPath: '/app/meetings/'
+      preLoaderRoute: typeof AppMeetingsIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/meetings/start': {
+      id: '/app/meetings/start'
+      path: '/meetings/start'
+      fullPath: '/app/meetings/start'
+      preLoaderRoute: typeof AppMeetingsStartRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/meetings/$meetingId': {
+      id: '/app/meetings/$meetingId'
+      path: '/meetings/$meetingId'
+      fullPath: '/app/meetings/$meetingId'
+      preLoaderRoute: typeof AppMeetingsMeetingIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
@@ -801,6 +858,9 @@ interface AppRouteRouteChildren {
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
   AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
+  AppMeetingsIndexRoute: typeof AppMeetingsIndexRoute
+  AppMeetingsStartRoute: typeof AppMeetingsStartRoute
+  AppMeetingsMeetingIdRoute: typeof AppMeetingsMeetingIdRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -819,6 +879,9 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,
   AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
+  AppMeetingsIndexRoute: AppMeetingsIndexRoute,
+  AppMeetingsStartRoute: AppMeetingsStartRoute,
+  AppMeetingsMeetingIdRoute: AppMeetingsMeetingIdRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

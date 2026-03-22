@@ -16,7 +16,7 @@ dependencies = [
     "pytest>=9.0.2",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
