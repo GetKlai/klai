@@ -1,12 +1,12 @@
 model_list:
   # Primary: Mistral API
-  - model_name: klai-llm
+  - model_name: klai-primary
     litellm_params:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
 
-  # Fallback: Ollama on core-01 (CPU, for emergencies)
-  - model_name: klai-fallback
+  # Fallback: Ollama on core-01 (CPU, only when Mistral is down)
+  - model_name: klai-ollama-fallback
     litellm_params:
       model: ollama/phi3:mini
       api_base: http://ollama:11434
@@ -14,8 +14,8 @@ model_list:
 router_settings:
   routing_strategy: simple-shuffle
   fallbacks:
-    - klai-llm:
-        - klai-fallback
+    - klai-primary:
+        - klai-ollama-fallback
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params
