@@ -18,6 +18,7 @@ class VexaMeeting(Base):
     zitadel_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     org_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("portal_orgs.id"), nullable=True)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)  # google_meet, zoom, teams
+    native_meeting_id: Mapped[str] = mapped_column(String(128), nullable=False)
     meeting_url: Mapped[str] = mapped_column(Text, nullable=False)
     meeting_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bot_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -22,6 +22,7 @@ def upgrade() -> None:
         sa.Column('zitadel_user_id', sa.String(64), nullable=False),
         sa.Column('org_id', sa.Integer(), sa.ForeignKey('portal_orgs.id'), nullable=True),
         sa.Column('platform', sa.String(32), nullable=False),
+        sa.Column('native_meeting_id', sa.String(128), nullable=False),
         sa.Column('meeting_url', sa.Text(), nullable=False),
         sa.Column('meeting_title', sa.String(255), nullable=True),
         sa.Column('bot_id', sa.String(128), nullable=True),
