@@ -11,8 +11,10 @@ from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.internal import router as internal_router
+from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
+from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Zitadel PAT validated successfully")
 
     yield
+    await vexa.close()
     await zitadel.close()
 
 
@@ -77,6 +80,7 @@ app.include_router(admin_router)
 app.include_router(billing_router)
 app.include_router(webhooks_router)
 app.include_router(internal_router)
+app.include_router(meetings_router)
 
 
 @app.get("/health")
