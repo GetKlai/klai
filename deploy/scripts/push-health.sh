@@ -47,6 +47,12 @@ push_exec() {
 }
 
 # ── Services with Docker healthchecks ────────────────────────────────────────
+# ── Product monitors (status.getklai.com Products section) ──────────────
+# Chat: LibreChat health endpoint
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://librechat-klai:3080/health')\"" \
+    "${KUMA_TOKEN_CHAT}" "Chat"
+
 push_healthcheck klai-core-mongodb-1  "${KUMA_TOKEN_MONGODB}"  "Conversations database"
 push_healthcheck klai-core-postgres-1 "${KUMA_TOKEN_POSTGRES}" "Account database"
 push_healthcheck klai-core-redis-1    "${KUMA_TOKEN_REDIS}"    "AI Request Cache"
