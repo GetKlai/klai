@@ -73,6 +73,7 @@ async def no_cache_authenticated(request: Request, call_next: object) -> Respons
         response.headers["Cache-Control"] = "no-store"
     return response
 
+
 app.include_router(signup.router)
 app.include_router(me.router)
 app.include_router(auth_router)

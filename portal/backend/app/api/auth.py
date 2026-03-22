@@ -29,6 +29,7 @@ This is fully stateless on the server side: no in-memory cache, survives restart
 scales horizontally.  Zitadel is the sole authority on session validity -- if the session
 has expired there, ``finalize_auth_request`` will fail and the user sees the login form.
 """
+
 import json
 import logging
 import secrets
@@ -52,6 +53,7 @@ bearer = HTTPBearer()
 # ---------------------------------------------------------------------------
 # Generic TTL cache
 # ---------------------------------------------------------------------------
+
 
 class TTLCache:
     """Simple in-memory cache with per-entry TTL. Single-instance only."""
@@ -110,13 +112,14 @@ def _decrypt_sso(cookie_value: str) -> dict | None:
 # After password check, store the session here while waiting for the TOTP code.
 # ---------------------------------------------------------------------------
 _TOTP_PENDING_TTL = 300  # 5 minutes
-_TOTP_MAX_FAILURES = 5   # invalidate token after this many wrong codes
+_TOTP_MAX_FAILURES = 5  # invalidate token after this many wrong codes
 _pending_totp = TTLCache(_TOTP_PENDING_TTL)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _validate_callback_url(url: str) -> str:
     """Ensure callback_url points to a trusted domain, not an attacker-controlled one."""
@@ -189,6 +192,7 @@ async def _finalize_and_set_cookie(
 # Request / Response models
 # ---------------------------------------------------------------------------
 
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -250,6 +254,7 @@ class EmailOTPConfirmRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
 async def password_reset(body: PasswordResetRequest) -> None:
@@ -317,11 +322,13 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
 
     # 3. If the user has TOTP, require a code before finalizing
     if has_totp:
-        temp_token = _pending_totp.put({
-            "session_id": session["sessionId"],
-            "session_token": session["sessionToken"],
-            "failures": 0,
-        })
+        temp_token = _pending_totp.put(
+            {
+                "session_id": session["sessionId"],
+                "session_token": session["sessionToken"],
+                "failures": 0,
+            }
+        )
         return LoginResponse(status="totp_required", temp_token=temp_token)
 
     # 4. No TOTP — finalize and set cookie

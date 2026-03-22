@@ -2,6 +2,7 @@
 Zitadel management API client.
 All calls use the portal-api service account PAT — never exposed to the browser.
 """
+
 import httpx
 
 from app.core.config import settings
@@ -170,9 +171,7 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def finalize_auth_request(
-        self, auth_request_id: str, session_id: str, session_token: str
-    ) -> str:
+    async def finalize_auth_request(self, auth_request_id: str, session_id: str, session_token: str) -> str:
         """Connect an authenticated session to an OIDC auth request.
 
         Returns the ``callbackUrl`` the browser should be redirected to.
@@ -351,9 +350,7 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
-    async def update_session_with_totp(
-        self, session_id: str, session_token: str, code: str
-    ) -> dict:
+    async def update_session_with_totp(self, session_id: str, session_token: str, code: str) -> dict:
         """Add a TOTP check to an existing session. Returns updated session dict."""
         resp = await self._http.patch(
             f"/v2/sessions/{session_id}",
@@ -381,9 +378,7 @@ class ZitadelClient:
 
     # ── Provisioning ──────────────────────────────────────────────────────────
 
-    async def create_librechat_oidc_app(
-        self, slug: str, redirect_uri: str
-    ) -> dict:
+    async def create_librechat_oidc_app(self, slug: str, redirect_uri: str) -> dict:
         """Create a per-tenant LibreChat OIDC app in the Klai Platform project."""
         resp = await self._http.post(
             f"/management/v1/projects/{settings.zitadel_project_id}/apps/oidc",

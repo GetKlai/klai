@@ -58,9 +58,7 @@ class MoneybirdService:
         return resp.json()
 
     async def get_mandate_url(self, contact_id: str) -> str:
-        resp = await self._http.post(
-            f"/contacts/{contact_id}/moneybird_payments_mandate/url.json"
-        )
+        resp = await self._http.post(f"/contacts/{contact_id}/moneybird_payments_mandate/url.json")
         await self._raise_for_status(resp)
         return resp.json()["url"]
 
@@ -92,9 +90,7 @@ class MoneybirdService:
         await self._raise_for_status(resp)
 
     async def get_invoice_portal_url(self, contact_id: str) -> str:
-        resp = await self._http.get(
-            f"/customer_contact_portal/{contact_id}/invoices.json"
-        )
+        resp = await self._http.get(f"/customer_contact_portal/{contact_id}/invoices.json")
         await self._raise_for_status(resp)
         return resp.json()["url"]
 

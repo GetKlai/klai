@@ -1,6 +1,7 @@
 """
 VexaMeeting model -- stores meeting bot sessions and transcripts.
 """
+
 import uuid
 from datetime import datetime
 

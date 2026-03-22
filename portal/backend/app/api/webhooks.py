@@ -33,9 +33,7 @@ async def moneybird_webhook(
     if entity_type == "Contact" and event == "contact_mandate_request_succeeded":
         contact_id = str(payload.get("entity", {}).get("id", ""))
         if contact_id:
-            result = await db.execute(
-                select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id)
-            )
+            result = await db.execute(select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id))
             org = result.scalar_one_or_none()
             if org:
                 try:
@@ -62,9 +60,7 @@ async def moneybird_webhook(
     elif event == "subscription_cancelled":
         contact_id = str(payload.get("entity", {}).get("contact_id", ""))
         if contact_id:
-            result = await db.execute(
-                select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id)
-            )
+            result = await db.execute(select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id))
             org = result.scalar_one_or_none()
             if org:
                 org.billing_status = "cancelled"
@@ -76,9 +72,7 @@ async def moneybird_webhook(
     elif event == "payment_transaction_rejected":
         contact_id = str(payload.get("entity", {}).get("contact_id", ""))
         if contact_id:
-            result = await db.execute(
-                select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id)
-            )
+            result = await db.execute(select(PortalOrg).where(PortalOrg.moneybird_contact_id == contact_id))
             org = result.scalar_one_or_none()
             if org:
                 org.billing_status = "payment_failed"

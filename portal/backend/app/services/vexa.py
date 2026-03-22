@@ -2,6 +2,7 @@
 Vexa bot-manager API client.
 Portal-api calls this to start/stop meeting bots.
 """
+
 import hashlib
 import re
 from typing import NamedTuple

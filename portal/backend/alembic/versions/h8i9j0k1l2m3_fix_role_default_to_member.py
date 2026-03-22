@@ -8,6 +8,7 @@ The previous migration set server_default='admin', meaning any INSERT without
 an explicit role would silently create an admin. The safe default is 'member';
 the signup endpoint now sets role='admin' explicitly for org creators.
 """
+
 from alembic import op
 
 
