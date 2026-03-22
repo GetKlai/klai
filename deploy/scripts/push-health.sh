@@ -114,8 +114,8 @@ push_exec klai-core-portal-api-1 \
 
 # firecrawl-api: web scraper for research-api (internal only)
 push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://firecrawl-api:3002/health')\"" \
-    "${KUMA_TOKEN_FIRECRAWL:-}" "Web scraper"
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://firecrawl-api:3002/')\"" \
+    "${KUMA_TOKEN_FIRECRAWL:-}" "Firecrawl"
 
 # tei: text embeddings inference (BAAI/bge-m3, dense)
 push_exec klai-core-portal-api-1 \
