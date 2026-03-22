@@ -168,6 +168,19 @@
         reverse_proxy scribe-api:8020
     }
 
+    # Vexa meeting bot manager
+    handle /bots/* {
+        rate_limit {
+            zone bots_per_ip {
+                key {remote_host}
+                events 10
+                window 1m
+            }
+        }
+        uri strip_prefix /bots
+        reverse_proxy vexa-bot-manager:8000
+    }
+
     # Klai Docs — KB reader + editor + API under /docs/*
     handle /docs/* {
         rate_limit {

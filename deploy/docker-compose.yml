@@ -32,6 +32,9 @@ networks:
     driver: bridge
     name: klai-net-meilisearch
     internal: true   # only Meilisearch <-> LibreChat containers
+  vexa-bots:
+    driver: bridge
+    # NOT internal — bot containers need internet egress to join meeting platforms
 
 volumes:
   caddy-data:
@@ -642,6 +645,31 @@ services:
     depends_on:
       - whisper-server
       - postgres
+
+  # ─── Vexa meeting bot manager ───────────────────────────────────────────
+  vexa-bot-manager:
+    image: vexaai/vexa-lite:latest
+    restart: unless-stopped
+    environment:
+      API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
+      WEBHOOK_URL: https://${DOMAIN}/api/bots/internal/webhook
+      WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    networks:
+      - klai-net
+      - socket-proxy
+      - vexa-bots
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
