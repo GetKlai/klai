@@ -45,8 +45,15 @@ export async function POST(
     await gitea.createOrg(`org-${orgSlug}`, orgSlug);
   }
 
-  const giteaRepo = `org-${orgSlug}/${slug}`;
-  await gitea.createRepo(`org-${orgSlug}`, slug, name);
+  const giteaOrg = `org-${orgSlug}`;
+  const giteaRepo = `${giteaOrg}/${slug}`;
+  await gitea.createRepo(giteaOrg, slug, name);
+
+  const webhookUrl =
+    process.env.KNOWLEDGE_INGEST_WEBHOOK_URL ??
+    "http://knowledge-ingest:8000/ingest/v1/webhook/gitea";
+  await gitea.createRepoWebhook(giteaOrg, slug, webhookUrl);
+
   await gitea.putFile(
     giteaRepo,
     "_meta.yaml",

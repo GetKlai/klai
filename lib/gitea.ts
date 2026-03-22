@@ -68,6 +68,31 @@ export async function deleteRepo(orgName: string, repoSlug: string) {
   return giteaFetch(`/repos/${orgName}/${repoSlug}`, { method: "DELETE" });
 }
 
+export async function createRepoWebhook(
+  orgName: string,
+  repoName: string,
+  webhookUrl: string
+): Promise<void> {
+  try {
+    await giteaFetch(`/repos/${orgName}/${repoName}/hooks`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: "gitea",
+        config: {
+          url: webhookUrl,
+          content_type: "json",
+        },
+        events: ["push"],
+        active: true,
+      }),
+    });
+  } catch (e) {
+    console.warn(
+      `[gitea] Failed to create webhook for ${orgName}/${repoName}: ${e instanceof Error ? e.message : e}`
+    );
+  }
+}
+
 // ─── File operations ──────────────────────────────────────────────────────────
 
 export async function getFile(
