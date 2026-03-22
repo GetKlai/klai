@@ -33,7 +33,7 @@ export async function PUT(
   const metaFilePath = folderPath ? `${folderPath}/_meta.yaml` : "_meta.yaml";
 
   const existing = await gitea.getFile(kb.gitea_repo, metaFilePath);
-  let meta = existing
+  const meta = existing
     ? parseMeta(Buffer.from(existing.content ?? "", "base64").toString("utf-8"))
     : {};
 
