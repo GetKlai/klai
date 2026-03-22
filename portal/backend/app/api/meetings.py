@@ -4,7 +4,7 @@ Route prefix: /api/bots
 """
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -160,7 +160,7 @@ async def start_meeting(
         bot_resp = await vexa.start_bot(ref.platform, ref.native_meeting_id)
         meeting.bot_id = str(bot_resp.get("bot_id", ""))
         meeting.status = "joining"
-        meeting.started_at = datetime.now(timezone.utc)
+        meeting.started_at = datetime.now(UTC)
     except httpx.HTTPStatusError as exc:
         meeting.status = "failed"
         meeting.error_message = f"Bot start failed: {exc.response.status_code}"
@@ -207,7 +207,7 @@ async def stop_meeting(
             logger.warning("Vexa stop_bot failed (continuing): %s", exc)
 
     meeting.status = "processing"
-    meeting.ended_at = datetime.now(timezone.utc)
+    meeting.ended_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(meeting)
     return MeetingResponse.model_validate(meeting)
@@ -306,7 +306,7 @@ async def vexa_webhook(
     meeting = await db.scalar(
         select(VexaMeeting).where(
             VexaMeeting.platform == payload.platform,
-            VexaMeeting.status.in_(ACTIVE_STATUSES + ("processing",)),
+            VexaMeeting.status.in_((*ACTIVE_STATUSES, "processing")),
         ).order_by(VexaMeeting.created_at.desc())
     )
     if meeting is None:
@@ -314,7 +314,7 @@ async def vexa_webhook(
         return {"status": "ignored"}
 
     meeting.status = "processing"
-    meeting.ended_at = datetime.now(timezone.utc) if not meeting.ended_at else meeting.ended_at
+    meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
     await db.commit()
 
     # Download audio from Vexa and transcribe
