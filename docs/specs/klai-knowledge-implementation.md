@@ -117,13 +117,11 @@ Deferred. Prerequisites:
 
 ## Phase 5 — Enrichment adapters (parallel, requires: Phase 2)
 
-These can be built now that `knowledge-ingest` exists:
-
-| Adapter | Input | Blocker | Notes |
+| Adapter | Input | Status | Notes |
 |---|---|---|---|
-| Helpdesk transcript | JSON transcripts from scribe-api | PII detection (Presidio) not built | GDPR-sensitive — no cloud API |
-| Crawl4AI | URLs | None | Async web crawler; sitemap-aware |
-| Focus "Save to Knowledge" | Focus session synthesis | Focus rewrite not started | §2.6 of architecture doc |
+| Web crawl | URLs | ✅ Done — `POST /ingest/v1/crawl` in knowledge-ingest | html2text; verify=False (SSL chain issue on core-01) |
+| Helpdesk transcript | JSON transcripts from scribe-api | ⛔ Blocked | PII detection (Presidio) not built; GDPR-sensitive |
+| Focus "Save to Knowledge" | Focus session synthesis | 🔜 Deferred | Focus rewrite not started |
 
 ---
 
@@ -132,10 +130,10 @@ These can be built now that `knowledge-ingest` exists:
 | # | Item | Priority | Notes |
 |---|---|---|---|
 | O1 | ~~Existing tenant (`getklai`) LiteLLM key migration~~ | ~~HIGH~~ | ✅ Done — scoped key deployed, retrieval verified for getklai |
+| O4 | ~~Gitea webhook for `personal` KB repos~~ | ~~MEDIUM~~ | ✅ Done — auto-created on KB creation in klai-docs; existing tenants need manual setup |
+| O5 | ~~Web crawl enrichment adapter~~ | ~~MEDIUM~~ | ✅ Done — `POST /ingest/v1/crawl` deployed |
 | O2 | Sparse embeddings (BGE-M3 SPLADE) | LOW | Dense sufficient; revisit at >1K docs |
 | O3 | `klai-docs` PUT handler Zod validation for frontmatter | LOW | Currently loose cast |
-| O4 | Gitea webhook for `personal` KB repos | MEDIUM | Will auto-provision for new tenants; existing tenants need manual setup |
-| O5 | Crawl4AI enrichment adapter | MEDIUM | No blockers — can start |
 | O6 | Helpdesk transcript adapter | LOW | Blocked on PII detection |
 
 ---
