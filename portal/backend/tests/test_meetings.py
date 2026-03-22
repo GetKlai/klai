@@ -5,7 +5,6 @@ Pure tests -- no DB, no HTTP.
 from app.api.meetings import SpeakerEvent, _correlate_speakers
 from app.services.vexa import parse_meeting_url
 
-
 # -- parse_meeting_url --------------------------------------------------------
 
 
