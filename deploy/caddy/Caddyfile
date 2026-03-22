@@ -1,0 +1,210 @@
+# Caddy with Hetzner DNS plugin for wildcard TLS
+# Build first: see caddy/build.sh
+
+{
+    email {$ADMIN_EMAIL}
+    admin off
+}
+
+# All subdomains under one wildcard cert
+*.{$DOMAIN} {
+    tls {
+        dns hetzner {$HETZNER_AUTH_API_TOKEN}
+        propagation_delay 120s
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=self, camera=()"
+        -Server
+    }
+
+    # X-Frame-Options for all routes except auth (Zitadel must be frameable for OIDC in iframe)
+    @not-auth {
+        not host auth.{$DOMAIN}
+    }
+    header @not-auth X-Frame-Options "SAMEORIGIN"
+
+    # Auth (Zitadel)
+    @auth host auth.{$DOMAIN}
+    handle @auth {
+        # Allow framing from our own domains for OIDC flow inside portal iframe.
+        header Content-Security-Policy "frame-ancestors 'self' *.{$DOMAIN}"
+        # Zitadel handles its own rate limiting internally
+        reverse_proxy h2c://zitadel:8080
+    }
+
+    # Tenant: klai (chat.${DOMAIN})
+    @chat host chat.{$DOMAIN}
+    handle @chat {
+        rate_limit {
+            zone chat_per_ip {
+                key {remote_host}
+                events 120
+                window 1m
+            }
+        }
+        reverse_proxy librechat-klai:3080
+    }
+
+    # LiteLLM model proxy — /health only (for uptime monitoring)
+    @llm host llm.{$DOMAIN}
+    handle @llm {
+        handle /health/liveliness {
+            reverse_proxy litellm:4000
+        }
+        respond 403
+    }
+
+    # Grafana (monitoring dashboards) — basic auth gate before proxying
+    # /api/health matcher for Uptime Kuma health check (no auth needed)
+    @grafana-health {
+        host grafana.{$DOMAIN}
+        path /api/health
+    }
+    handle @grafana-health {
+        rate_limit {
+            zone grafana_health {
+                key {remote_host}
+                events 30
+                window 1m
+            }
+        }
+        reverse_proxy grafana:3000
+    }
+
+    @grafana host grafana.{$DOMAIN}
+    handle @grafana {
+        rate_limit {
+            zone grafana_per_ip {
+                key {remote_host}
+                events 60
+                window 1m
+            }
+        }
+        basic_auth {
+            {$GRAFANA_CADDY_USER} {$GRAFANA_CADDY_HASH}
+        }
+        reverse_proxy grafana:3000
+    }
+
+    # GlitchTip (frontend error tracking)
+    @glitchtip host errors.{$DOMAIN}
+    handle @glitchtip {
+        rate_limit {
+            zone glitchtip_per_ip {
+                key {remote_host}
+                events 120
+                window 1m
+            }
+        }
+        reverse_proxy glitchtip-web:8000
+    }
+
+    # Portal API — stricter limit on sensitive provisioning endpoints
+    @portal-api-sensitive {
+        path /api/signup /api/billing/*
+    }
+    handle @portal-api-sensitive {
+        rate_limit {
+            zone portal_sensitive_per_ip {
+                key {remote_host}
+                events 10
+                window 1m
+            }
+        }
+        reverse_proxy portal-api:8010
+    }
+
+    handle /api/* {
+        rate_limit {
+            zone portal_api_per_ip {
+                key {remote_host}
+                events 60
+                window 1m
+            }
+        }
+        reverse_proxy portal-api:8010
+    }
+
+    # Research module (document Q&A)
+    handle /research/* {
+        request_body {
+            max_size 52428800
+        }
+        rate_limit {
+            zone research_per_ip {
+                key {remote_host}
+                events 30
+                window 1m
+            }
+        }
+        uri strip_prefix /research
+        reverse_proxy research-api:8030
+    }
+
+    # Scribe transcription service
+    handle /scribe/* {
+        request_body {
+            max_size 104857600
+        }
+        rate_limit {
+            zone scribe_per_ip {
+                key {remote_host}
+                events 20
+                window 1m
+            }
+        }
+        uri strip_prefix /scribe
+        reverse_proxy scribe-api:8020
+    }
+
+    # Klai Docs — KB reader + editor + API under /docs/*
+    handle /docs/* {
+        rate_limit {
+            zone docs_per_ip {
+                key {remote_host}
+                events 60
+                window 1m
+            }
+        }
+        reverse_proxy docs-app:3010
+    }
+
+    # Portal SPA — static files (fallback for all *.${DOMAIN})
+    handle {
+        root * /srv/portal
+
+        # Vite hashed assets — immutable long-term cache
+        @spa-assets path /assets/*
+        header @spa-assets Cache-Control "public, max-age=31536000, immutable"
+
+        # index.html and all SPA routes — always revalidate
+        @spa-html not path /assets/*
+        header @spa-html Cache-Control "no-cache"
+
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+# Dynamically provisioned tenant LibreChat instances.
+# Written to /etc/caddy/tenants/ by portal-api at provisioning time.
+# Files survive redeploys via the caddy-tenants Docker volume.
+#
+# Klai Docs org subdomains are also written here by docs-app on org creation.
+# Format: docs-{orgSlug}.caddyfile — routes {org}.${DOMAIN} to docs-app:3010.
+# After writing, reload Caddy: docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+import /etc/caddy/tenants/*.caddyfile
+
+# Custom domains for Klai Docs (e.g. docs.example.com) — V2
+# Requires on_demand_tls in the global block and a caddy build with that module.

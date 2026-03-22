@@ -1,0 +1,738 @@
+name: klai-core
+
+networks:
+  klai-net:
+    driver: bridge
+    name: klai-net
+  socket-proxy:
+    driver: bridge
+    name: klai-socket-proxy
+    internal: true   # only portal-api <-> docker-socket-proxy
+  inference:
+    driver: bridge
+    name: klai-inference
+    internal: true   # no outbound internet — only LiteLLM <-> Ollama
+  monitoring:
+    driver: bridge
+    name: klai-monitoring
+    internal: true   # VictoriaMetrics/VictoriaLogs/cAdvisor only via Alloy/Grafana
+  net-mongodb:
+    driver: bridge
+    name: klai-net-mongodb
+    internal: true   # only MongoDB <-> LibreChat containers
+  net-postgres:
+    driver: bridge
+    name: klai-net-postgres
+    internal: true   # only PostgreSQL <-> Zitadel, LiteLLM, GlitchTip
+  net-redis:
+    driver: bridge
+    name: klai-net-redis
+    internal: true   # only Redis <-> LiteLLM, GlitchTip, LibreChat
+  net-meilisearch:
+    driver: bridge
+    name: klai-net-meilisearch
+    internal: true   # only Meilisearch <-> LibreChat containers
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-tenants:
+  mongodb-data:
+  postgres-data:
+  redis-data:
+  meilisearch-data:
+  librechat-klai-images:
+  glitchtip-data:
+  victoriametrics-data:
+  victorialogs-data:
+  grafana-data:
+  tei-models:
+  whisper-models:
+  gitea-data:
+  infinity-models:
+  qdrant-data:
+
+services:
+
+  # ─── Caddy (reverse proxy + wildcard TLS) ────────────────────────────────
+  caddy:
+    image: caddy-hetzner:latest       # build via caddy/build.sh
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy-tenants:/etc/caddy/tenants
+      - caddy-data:/data
+      - caddy-config:/config
+      - /opt/klai/portal-dist:/srv/portal:ro
+      - /opt/klai/caddy-logs:/var/log/caddy
+    environment:
+      HETZNER_AUTH_API_TOKEN: ${HETZNER_AUTH_API_TOKEN}
+      DOMAIN: ${DOMAIN}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      GRAFANA_CADDY_USER: ${GRAFANA_CADDY_USER}
+      GRAFANA_CADDY_HASH: ${GRAFANA_CADDY_HASH}
+    networks:
+      - klai-net
+
+  # ─── MongoDB ──────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:latest
+    restart: unless-stopped
+    volumes:
+      - mongodb-data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: klai
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    networks:
+      - net-mongodb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── PostgreSQL ───────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      POSTGRES_USER: klai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: klai
+    networks:
+      - net-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U klai"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── Redis ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: redis-server --save 60 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    networks:
+      - net-redis
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── Meilisearch ──────────────────────────────────────────────────────────
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    restart: unless-stopped
+    volumes:
+      - meilisearch-data:/meili_data
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    networks:
+      - net-meilisearch
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── Zitadel ──────────────────────────────────────────────────────────────
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    command: start-from-init --masterkey ${ZITADEL_MASTERKEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ZITADEL_DATABASE_POSTGRES_HOST: postgres
+      ZITADEL_DATABASE_POSTGRES_PORT: "5432"
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: ${ZITADEL_DB_PASSWORD}
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: klai
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: ${POSTGRES_PASSWORD}
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_EXTERNALDOMAIN: auth.${DOMAIN}
+      ZITADEL_EXTERNALPORT: "443"
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_DEFAULTINSTANCE_ORG_NAME: ${ZITADEL_ORG_NAME}
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_USERNAME: ${ZITADEL_ADMIN_USERNAME}
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_FIRSTNAME: ${ZITADEL_ADMIN_FIRSTNAME}
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_LASTNAME: ${ZITADEL_ADMIN_LASTNAME}
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_EMAIL_ADDRESS: ${ZITADEL_ADMIN_EMAIL}
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_EMAIL_VERIFIED: "true"
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD}
+      ZITADEL_DEFAULTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
+    networks:
+      - klai-net
+      - net-postgres
+
+  # ─── LiteLLM ──────────────────────────────────────────────────────────────
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
+    environment:
+      PYTHONPATH: /app
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@postgres:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY}
+      DISABLE_ADMIN_UI: "True"
+      KNOWLEDGE_RETRIEVE_URL: http://knowledge-ingest:8000/knowledge/v1/retrieve
+      KNOWLEDGE_RETRIEVE_TIMEOUT: "2.0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - klai-net
+      - inference
+      - net-postgres
+      - net-redis
+
+  # ─── LibreChat (tenant: klai) ────────────────────────────────────────────
+  librechat-klai:
+    image: ghcr.io/danny-avila/librechat:latest
+    restart: unless-stopped
+    volumes:
+      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - librechat-klai-images:/app/client/public/images
+    environment:
+      MONGO_URI: mongodb://librechat-klai:${LIBRECHAT_KLAI_MONGO_PASSWORD}@mongodb:27017/librechat-klai?authSource=librechat-klai
+      DOMAIN_CLIENT: https://chat.${DOMAIN}
+      DOMAIN_SERVER: https://chat.${DOMAIN}
+      JWT_SECRET: ${LIBRECHAT_KLAI_JWT_SECRET}
+      JWT_REFRESH_SECRET: ${LIBRECHAT_KLAI_JWT_REFRESH_SECRET}
+      MEILI_HOST: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_LIBRECHAT_KEY}
+      REDIS_URI: ${REDIS_URI}
+      OPENID_ISSUER: https://auth.${DOMAIN}
+      OPENID_CLIENT_ID: ${LIBRECHAT_KLAI_OIDC_CLIENT_ID}
+      OPENID_CLIENT_SECRET: ${LIBRECHAT_KLAI_OIDC_CLIENT_SECRET}
+      OPENID_SESSION_SECRET: ${LIBRECHAT_KLAI_OIDC_SESSION_SECRET}
+      OPENID_CALLBACK_URL: /oauth/openid/callback
+      OPENID_SCOPE: "openid profile email"
+      OPENID_USE_END_SESSION_ENDPOINT: "true"
+      LITELLM_API_KEY: ${LITELLM_LIBRECHAT_KEY}
+      ALLOW_EMAIL_LOGIN: "false"
+      ALLOW_REGISTRATION: "false"
+      ALLOW_SOCIAL_LOGIN: "true"
+      ALLOW_SOCIAL_REGISTRATION: "true"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - klai-net
+      - net-mongodb
+      - net-meilisearch
+      - net-redis
+
+  # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - /opt/klai/ollama/models:/root/.ollama
+    networks:
+      - inference    # only reachable via LiteLLM, not from LibreChat/Caddy
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 12G
+
+  # ─── Docker socket proxy (limits portal-api to required Docker API calls only)
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      POST: 1
+      DELETE: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
+
+  # ─── klai-mailer (Zitadel HTTP notification provider) ────────────────────
+  klai-mailer:
+    build: ./klai-mailer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8000"
+    env_file: ./klai-mailer/.env
+    networks:
+      - klai-net
+
+  # ─── Portal API (FastAPI tenant provisioning) ─────────────────────────────
+  portal-api:
+    image: ghcr.io/getklai/portal-api:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - caddy-tenants:/caddy/tenants
+      - ./librechat:/librechat
+    environment:
+      DOMAIN: ${DOMAIN}
+      ZITADEL_PAT: ${PORTAL_API_ZITADEL_PAT}
+      DATABASE_URL: postgresql+asyncpg://portal_api:${PORTAL_API_DB_PASSWORD}@postgres:5432/klai
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
+    networks:
+      - klai-net
+      - net-postgres
+      - socket-proxy
+
+  # ─── GlitchTip (frontend error tracking) ────────────────────────────────
+  glitchtip-web:
+    image: glitchtip/glitchtip:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD}@postgres:5432/glitchtip
+      # GLITCHTIP_REDIS_URL: Redis password URL-encoded (special chars in password break redis:// parsing)
+      REDIS_URL: ${GLITCHTIP_REDIS_URL}
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      PORT: "8000"
+      GLITCHTIP_DOMAIN: https://errors.${DOMAIN}
+      DEFAULT_FROM_EMAIL: errors@${DOMAIN}
+      EMAIL_URL: "consolemail://"
+      ENABLE_USER_REGISTRATION: "False"
+      CELERY_WORKER_AUTOSCALE: "1,3"
+      CELERY_WORKER_MAX_TASKS_PER_CHILD: "10000"
+    volumes:
+      - glitchtip-data:/code/uploads
+    networks:
+      - klai-net
+      - net-postgres
+      - net-redis
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys,urllib.error\ntry:\n urllib.request.urlopen('http://127.0.0.1:8000/api/0/projects/')\nexcept urllib.error.HTTPError:\n pass\nexcept Exception:\n sys.exit(1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  glitchtip-worker:
+    image: glitchtip/glitchtip:latest
+    restart: unless-stopped
+    command: ./bin/run-celery-with-beat.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD}@postgres:5432/glitchtip
+      REDIS_URL: ${GLITCHTIP_REDIS_URL}
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      GLITCHTIP_DOMAIN: https://errors.${DOMAIN}
+      EMAIL_URL: "consolemail://"
+      ENABLE_USER_REGISTRATION: "False"
+      CELERY_WORKER_AUTOSCALE: "1,3"
+      CELERY_WORKER_MAX_TASKS_PER_CHILD: "10000"
+    volumes:
+      - glitchtip-data:/code/uploads
+    networks:
+      - net-postgres
+      - net-redis
+
+  glitchtip-migrate:
+    image: glitchtip/glitchtip:latest
+    command: "./manage.py migrate"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD}@postgres:5432/glitchtip
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+    networks:
+      - net-postgres
+
+  # ─── Monitoring stack ─────────────────────────────────────────────────────
+  # Note: runs on core-01 until monitor-01 is provisioned.
+  # To migrate: update Alloy endpoint URLs to point to monitor-01.
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    restart: unless-stopped
+    volumes:
+      - victoriametrics-data:/storage
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=30d
+      - -httpListenAddr=:8428
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:latest
+    restart: unless-stopped
+    volumes:
+      - victorialogs-data:/vlogs-data
+    command:
+      - -storageDataPath=/vlogs-data
+      - -retentionPeriod=30d
+      - -httpListenAddr=:9428
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    privileged: false
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/kmsg
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    command:
+      - -port=8080
+      - -docker_only=true
+    networks:
+      - monitoring
+
+  alloy:
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - /etc/alloy/config.alloy
+    user: root   # required for Docker socket + node exporter (prometheus.exporter.unix)
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - victoriametrics
+      - victorialogs
+    networks:
+      - klai-net
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: victoriametrics-logs-datasource
+    depends_on:
+      - victoriametrics
+      - victorialogs
+    networks:
+      - klai-net
+      - monitoring
+
+  # ─── Research: document Q&A service ─────────────────────────────────────
+
+  docling-serve:
+    image: ghcr.io/docling-project/docling-serve:latest
+    restart: unless-stopped
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    restart: unless-stopped
+    command: --model-id BAAI/bge-m3 --port 8080
+    volumes:
+      - tei-models:/data
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET}"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+
+  research-api:
+    image: ghcr.io/getklai/research-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
+      ZITADEL_ISSUER: https://auth.${DOMAIN}
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
+      VECTOR_BACKEND: pgvector
+      DOCLING_URL: http://docling-serve:5001
+      TEI_URL: http://tei:8080
+      LITELLM_URL: http://litellm:4000
+      SEARXNG_URL: http://searxng:8888
+    volumes:
+      - /opt/klai/research-uploads:/opt/klai/research-uploads
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      - docling-serve
+      - tei
+      - searxng
+      - postgres
+
+  # ─── Klai Docs ────────────────────────────────────────────────────────────
+
+  gitea:
+    image: gitea/gitea:latest
+    restart: unless-stopped
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: postgres:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: gitea
+      GITEA__database__PASSWD: ${GITEA_DB_PASSWORD}
+      GITEA__server__DOMAIN: gitea.${DOMAIN}
+      GITEA__server__ROOT_URL: http://gitea:3000/
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DISABLE_SSH: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "false"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__security__SECRET_KEY: ${GITEA_SECRET_KEY}
+      GITEA__security__INTERNAL_TOKEN: ${GITEA_INTERNAL_TOKEN}
+      GITEA__log__LEVEL: Warn
+    volumes:
+      - gitea-data:/data
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # NOT exposed via Caddy — internal Docker network only
+
+  docs-app:
+    image: ghcr.io/getklai/klai-docs:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DATABASE: klai
+      POSTGRES_USER: klai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN}
+      AUTH_SECRET: ${DOCS_AUTH_SECRET}
+      AUTH_TRUST_HOST: "true"
+      AUTH_ZITADEL_ISSUER: https://auth.${DOMAIN}
+      AUTH_ZITADEL_CLIENT_ID: ${DOCS_ZITADEL_CLIENT_ID}
+      AUTH_ZITADEL_CLIENT_SECRET: ${DOCS_ZITADEL_CLIENT_SECRET}
+      NEXT_PUBLIC_BASE_DOMAIN: ${DOMAIN}
+      CADDY_TENANTS_DIR: /caddy/tenants
+      DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
+    volumes:
+      - caddy-tenants:/caddy/tenants
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      - gitea
+      - postgres
+
+  # ─── Klai Knowledge MCP ───────────────────────────────────────────────────
+  klai-knowledge-mcp:
+    build: ./klai-knowledge-mcp
+    restart: unless-stopped
+    environment:
+      KLAI_DOCS_API_BASE: http://docs-app:3000
+      DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
+      PUBLIC_KB_BASE_URL: https://kb.${DOMAIN}
+      PERSONAL_KB_NAME: personal
+      # DEFAULT_ORG_SLUG can be set per-tenant if running a dedicated instance;
+      # leave unset when X-Org-Slug is always sent by LibreChat.
+    networks:
+      - klai-net
+    depends_on:
+      - docs-app
+    # NOT exposed via Caddy — internal Docker network only
+
+  # ─── Scribe: transcription service ───────────────────────────────────────
+  whisper-server:
+    image: ghcr.io/getklai/whisper-server:latest
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_DOWNLOAD_ROOT: /models
+    volumes:
+      - whisper-models:/models
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+
+  scribe-api:
+    image: ghcr.io/getklai/scribe-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
+      WHISPER_SERVER_URL: http://whisper-server:8000
+      ZITADEL_ISSUER: https://auth.${DOMAIN}
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      - whisper-server
+      - postgres
+
+  # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  # ─── Knowledge Ingest (RAG ingestion + retrieval for LiteLLM hook) ──────────
+  knowledge-ingest:
+    build: ./knowledge-ingest
+    restart: unless-stopped
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      TEI_URL: http://tei:8080
+      GITEA_URL: http://gitea:3000
+      GITEA_TOKEN: ${GITEA_ADMIN_TOKEN}
+      DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      - qdrant
+      - tei
+      - postgres
+
+  # ─── Web search stack (LibreChat web mode) ───────────────────────────────────
+
+  # Infinity: self-hosted Jina-compatible reranker using bge-reranker-v2-m3 (CPU).
+  # Shared with the Knowledge retrieval pipeline once that is deployed (§7.1).
+  # Endpoint: http://infinity-reranker:7997/v1/rerank
+  # Request format: {"query": "...", "documents": [...], "model": "BAAI/bge-reranker-v2-m3"}
+  infinity-reranker:
+    image: michaelf34/infinity:latest
+    restart: unless-stopped
+    command: >
+      v2
+      --model-id BAAI/bge-reranker-v2-m3
+      --device cpu
+      --engine torch
+      --url-prefix /v1
+      --port 7997
+    volumes:
+      - infinity-models:/app/.cache
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 3G
+
+  # Firecrawl: self-hosted web scraper for LibreChat full-page content extraction.
+  # Uses existing Redis for rate-limit tracking. No RabbitMQ or worker needed:
+  # LibreChat calls /v1/scrape which is synchronous (no async job queue required).
+  # If JS-rendered pages are needed in future, add playwright-service and set
+  # PLAYWRIGHT_MICROSERVICE_URL=http://playwright:3000.
+  firecrawl-api:
+    image: ghcr.io/mendableai/firecrawl:latest
+    restart: unless-stopped
+    environment:
+      PORT: "3002"
+      HOST: "0.0.0.0"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      REDIS_RATE_LIMIT_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      USE_DB_AUTHENTICATION: "false"
+      FIRECRAWL_API_KEY: "${FIRECRAWL_INTERNAL_KEY}"
+      NUM_WORKERS_PER_QUEUE: "2"
+      LOGGING_LEVEL: "INFO"
+    networks:
+      - klai-net
+      - net-redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    # NOT exposed via Caddy — internal Docker network only
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G

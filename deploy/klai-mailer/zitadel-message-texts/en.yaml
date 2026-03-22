@@ -1,0 +1,49 @@
+# Zitadel Message Texts — English (en)
+#
+# Configure via: Zitadel console > Instance > Message Texts > Language: en
+# Available variables per type: https://zitadel.com/docs/guides/manage/customize/texts
+
+InitCode:
+  subject: "Activate your Klai account"
+  preHeader: "Just one click and your Klai environment is live"
+  title: "Activate account"
+  greeting: "Hi {{.FirstName}},"
+  text: "We've created a Klai account for you. Activate it using the button below and choose your password. After that, log in at my.${DOMAIN}."
+  buttonText: "Activate account"
+  footerText: "If you weren't expecting this email, feel free to ignore it."
+
+VerifyEmail:
+  subject: "Confirm your email address at Klai"
+  preHeader: "Just checking we have the right email address."
+  title: "Confirm email"
+  greeting: "Hi {{.FirstName}},"
+  text: "Confirm your email address using the button below to fully activate your Klai account."
+  buttonText: "Confirm email address"
+  footerText: "If you didn't request this, you can safely ignore this email."
+
+PasswordReset:
+  subject: "Set a new password"
+  preHeader: "Here's the link you need"
+  title: "Set a new password"
+  greeting: "Hi {{.FirstName}},"
+  text: "You requested a new password for your Klai account ({{.LastEmail}}). Click the button to set it. The link is valid for 24 hours."
+  buttonText: "Set new password"
+  footerText: "Didn't ask for this? Someone probably mistyped their email address. Your password hasn't changed, feel free to ignore this email."
+
+PasswordChange:
+  subject: "Your password has been changed"
+  preHeader: "Security update for your Klai account"
+  title: "Password changed"
+  greeting: "Hi {{.FirstName}},"
+  text: "The password for your Klai account ({{.VerifiedEmail}}) was just changed.\n\nWas that you? Good, nothing to worry about.\n\nNot you? Get in touch right away at mail@${DOMAIN}."
+  buttonText: ""
+  footerText: "If you didn't make this change yourself, email us right away at mail@${DOMAIN}."
+
+InviteUser:
+  subject: "You've been invited to Klai"
+  preHeader: "Your access is ready"
+  title: "Invitation"
+  greeting: "Hi {{.FirstName}},"
+  text: "One of your colleagues is inviting you to use Klai. Klai is the privacy-friendly AI solution for businesses. Sensitive information stays protected, and your data remains yours."
+  buttonText: "Set up my account"
+  footerText: "If you weren't expecting this email, feel free to ignore it."

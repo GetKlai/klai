@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  # Metrics — VictoriaMetrics (Prometheus-compatible)
+  - name: VictoriaMetrics
+    type: prometheus
+    uid: victoriametrics
+    url: http://victoriametrics:8428
+    access: proxy
+    isDefault: true
+    jsonData:
+      timeInterval: "30s"
+
+  # Logs — VictoriaLogs (via official Grafana plugin)
+  - name: VictoriaLogs
+    type: victoriametrics-logs-datasource
+    uid: victorialogs
+    url: http://victorialogs:9428
+    access: proxy
