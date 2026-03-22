@@ -2,6 +2,7 @@
 Meeting bot API -- start/stop Vexa bots and serve transcripts.
 Route prefix: /api/bots
 """
+
 import io
 import logging
 from datetime import UTC, datetime
@@ -108,9 +109,7 @@ async def list_meetings(
         .offset(offset)
     )
     items = list(result.scalars().all())
-    count = await db.scalar(
-        select(func.count(VexaMeeting.id)).where(VexaMeeting.zitadel_user_id == user_id)
-    )
+    count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.zitadel_user_id == user_id))
     return MeetingListResponse(
         items=[MeetingResponse.model_validate(i) for i in items],
         total=count or 0,
@@ -134,9 +133,7 @@ async def start_meeting(
         )
 
     # Enforce system-wide concurrent limit
-    active_count = await db.scalar(
-        select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(ACTIVE_STATUSES))
-    )
+    active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(ACTIVE_STATUSES)))
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -306,11 +303,13 @@ async def vexa_webhook(
 
     # Find the meeting by platform + native_meeting_id + status
     meeting = await db.scalar(
-        select(VexaMeeting).where(
+        select(VexaMeeting)
+        .where(
             VexaMeeting.platform == payload.platform,
             VexaMeeting.native_meeting_id == payload.native_meeting_id,
             VexaMeeting.status.in_((*ACTIVE_STATUSES, "processing")),
-        ).order_by(VexaMeeting.created_at.desc())
+        )
+        .order_by(VexaMeeting.created_at.desc())
     )
     if meeting is None:
         logger.warning("Vexa webhook: no matching meeting for %s/%s", payload.platform, payload.native_meeting_id)

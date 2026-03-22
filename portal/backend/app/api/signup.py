@@ -9,6 +9,7 @@ Creates:
 
 Returns 201 on success. The user still needs to verify their email before logging in.
 """
+
 import re
 import unicodedata
 

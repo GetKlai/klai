@@ -2,6 +2,7 @@
 Admin user management endpoints.
 All endpoints require authentication and resolve the caller's org from their OIDC token.
 """
+
 from datetime import datetime
 from typing import Literal
 
@@ -115,11 +116,7 @@ async def list_users(
     _require_admin(caller_user)
 
     # Get portal membership records (mapping + created_at + role)
-    result = await db.execute(
-        select(PortalUser)
-        .where(PortalUser.org_id == org.id)
-        .order_by(PortalUser.created_at)
-    )
+    result = await db.execute(select(PortalUser).where(PortalUser.org_id == org.id).order_by(PortalUser.created_at))
     portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
 
     if not portal_users:
@@ -136,16 +133,18 @@ async def list_users(
         profile = z.get("human", {}).get("profile", {})
         email_obj = z.get("human", {}).get("email", {})
         portal_user = portal_users[uid]
-        users_out.append(UserOut(
-            zitadel_user_id=uid,
-            email=email_obj.get("email", ""),
-            first_name=profile.get("firstName", ""),
-            last_name=profile.get("lastName", ""),
-            role=portal_user.role,
-            preferred_language=portal_user.preferred_language,
-            created_at=portal_user.created_at,
-            invite_pending=z.get("state") == "USER_STATE_INITIAL",
-        ))
+        users_out.append(
+            UserOut(
+                zitadel_user_id=uid,
+                email=email_obj.get("email", ""),
+                first_name=profile.get("firstName", ""),
+                last_name=profile.get("lastName", ""),
+                role=portal_user.role,
+                preferred_language=portal_user.preferred_language,
+                created_at=portal_user.created_at,
+                invite_pending=z.get("state") == "USER_STATE_INITIAL",
+            )
+        )
 
     return UsersResponse(users=users_out)
 

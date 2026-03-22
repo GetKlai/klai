@@ -2,6 +2,7 @@
 Tenant provisioning service.
 Called after signup DB commit to set up a new customer's LibreChat instance.
 """
+
 import asyncio
 import logging
 import secrets
@@ -27,6 +28,7 @@ def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
     """Generate a unique slug from org name."""
     import re
     import unicodedata
+
     n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     n = re.sub(r"[^a-zA-Z0-9\s-]", "", n)
     n = re.sub(r"\s+", "-", n).strip("-").lower()
@@ -39,9 +41,7 @@ def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
     return slug
 
 
-def _generate_librechat_env(
-    slug: str, client_id: str, client_secret: str, litellm_api_key: str | None = None
-) -> str:
+def _generate_librechat_env(slug: str, client_id: str, client_secret: str, litellm_api_key: str | None = None) -> str:
     """Generate the per-tenant LibreChat .env file content."""
     domain = settings.domain
     jwt_secret = secrets.token_hex(32)
@@ -225,9 +225,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                 timeout=10.0,
             ) as llm_client:
                 # Step 2a: Create a LiteLLM team
-                team_resp = await llm_client.post(
-                    "/team/new", json={"team_alias": slug}
-                )
+                team_resp = await llm_client.post("/team/new", json={"team_alias": slug})
                 team_resp.raise_for_status()
                 team_id = team_resp.json()["team_id"]
                 logger.info("Created LiteLLM team for %s: %s", slug, team_id)
@@ -258,9 +256,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             logger.warning("Could not add portal redirect URI for %s: %s", slug, exc)
 
         # Step 4: Write LibreChat .env file
-        env_content = _generate_librechat_env(
-            slug, client_id, client_secret, litellm_api_key=litellm_team_key
-        )
+        env_content = _generate_librechat_env(slug, client_id, client_secret, litellm_api_key=litellm_team_key)
         container_data_base = Path(settings.librechat_container_data_path)
         tenant_dir = container_data_base / slug
         tenant_dir.mkdir(parents=True, exist_ok=True)
@@ -293,9 +289,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
 
         # Step 6: Start Docker container
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None, _start_librechat_container, slug, env_file_host_path
-        )
+        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path)
         logger.info("Started container librechat-%s", slug)
 
         # Step 7: Write per-tenant Caddyfile and reload Caddy

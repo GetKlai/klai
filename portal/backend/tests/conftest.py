@@ -5,6 +5,7 @@ Sets required pydantic-settings env vars so tests can import app modules
 without a real .env file. Only sets vars that have no defaults and are
 required by Settings at module-load time.
 """
+
 import os
 
 # These are required fields in Settings (no defaults)

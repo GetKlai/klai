@@ -7,6 +7,7 @@ Protected by a shared Bearer secret (INTERNAL_SECRET env var).
 Used by klai-mailer to look up a user's preferred language so it can append
 ?lang= to email action URLs (verify, password-reset, etc.).
 """
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -52,8 +53,6 @@ async def get_user_language(
     if not user_id:
         return UserLanguageResponse(preferred_language="nl")
 
-    result = await db.execute(
-        select(PortalUser.preferred_language).where(PortalUser.zitadel_user_id == user_id)
-    )
+    result = await db.execute(select(PortalUser.preferred_language).where(PortalUser.zitadel_user_id == user_id))
     lang = result.scalar_one_or_none()
     return UserLanguageResponse(preferred_language=lang or "nl")
