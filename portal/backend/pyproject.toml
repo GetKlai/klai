@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.14",
     "python-multipart>=0.0.12",
     "docker>=7.0",
+    "cryptography>=42",
     "pytest>=9.0.2",
 ]
 
