@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     # Dev mode — enables Swagger UI and /openapi.json; NEVER enable in production
     debug: bool = False
 
+    # Vexa meeting bot manager
+    vexa_bot_manager_url: str = "http://vexa-bot-manager:8000"
+    vexa_api_key: str = ""
+    vexa_webhook_secret: str = ""
+
+    # Whisper server (internal -- for direct post-meeting transcription)
+    whisper_server_url: str = "http://whisper-server:8000"
+
     # CORS — static origins + wildcard regex for tenant subdomains
     cors_origins: str = "http://localhost:5174"
     cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
