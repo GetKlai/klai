@@ -147,6 +147,7 @@ async def start_meeting(
     meeting = VexaMeeting(
         zitadel_user_id=user_id,
         platform=ref.platform,
+        native_meeting_id=ref.native_meeting_id,
         meeting_url=body.meeting_url,
         meeting_title=body.meeting_title,
         consent_given=True,
@@ -266,29 +267,30 @@ def _correlate_speakers(
 
     # Build a timeline of (timestamp, name) pairs
     timeline = [(e.timestamp, e.participant_name or "") for e in speaker_events]
-    unknown_map: dict[str, str] = {}
+    unknown_map: dict[int, str] = {}  # keyed by event index, not name
     unknown_count = 0
 
-    def resolve_speaker(name: str) -> str:
+    def resolve_speaker(name: str, event_idx: int) -> str:
         nonlocal unknown_count
         if name:
             return name
-        if name not in unknown_map:
+        if event_idx not in unknown_map:
             unknown_count += 1
-            unknown_map[name] = f"Deelnemer {unknown_count}"
-        return unknown_map[name]
+            unknown_map[event_idx] = f"Deelnemer {unknown_count}"
+        return unknown_map[event_idx]
 
     attributed = []
     for seg in segments:
         seg_start = seg.get("start", 0)
         # Find the nearest speaker event at or before this segment's start
         speaker = ""
-        for ts, name in reversed(timeline):
+        for idx, (ts, name) in reversed(list(enumerate(timeline))):
             if ts <= seg_start:
-                speaker = resolve_speaker(name)
+                speaker = resolve_speaker(name, idx)
                 break
         if not speaker:
-            speaker = resolve_speaker("")
+            # No prior event found — use first event as fallback
+            speaker = resolve_speaker(timeline[0][1], 0) if timeline else "Deelnemer 1"
 
         attributed.append({**seg, "speaker": speaker})
     return attributed
@@ -302,10 +304,11 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
-    # Find the meeting by platform + status (most recent active/processing)
+    # Find the meeting by platform + native_meeting_id + status
     meeting = await db.scalar(
         select(VexaMeeting).where(
             VexaMeeting.platform == payload.platform,
+            VexaMeeting.native_meeting_id == payload.native_meeting_id,
             VexaMeeting.status.in_((*ACTIVE_STATUSES, "processing")),
         ).order_by(VexaMeeting.created_at.desc())
     )
