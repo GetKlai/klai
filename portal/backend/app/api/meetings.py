@@ -381,15 +381,6 @@ async def vexa_webhook(
             logger.info("Vexa webhook: synced status %s→%s for meeting %s", payload.status, portal_status, meeting.id)
         return {"status": "synced"}
 
-    # Prevent double-transcription: if the bot_poller already set status to
-    # "processing" and started transcription, skip — don't run it again.
-    if meeting.status == "processing":
-        logger.info("Vexa webhook: meeting %s already processing, skipping duplicate trigger", meeting.id)
-        if payload.vexa_meeting_id and not meeting.vexa_meeting_id:
-            meeting.vexa_meeting_id = payload.vexa_meeting_id
-            await db.commit()
-        return {"status": "already_processing"}
-
     meeting.status = "processing"
     meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
     if payload.vexa_meeting_id:
