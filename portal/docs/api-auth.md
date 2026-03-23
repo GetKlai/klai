@@ -77,9 +77,8 @@ The browser's `klai_sso` cookie (set after login) is read automatically.
 | 401 | — | No cookie, or session expired |
 
 **Notes:**
-- The session is cached in-memory for 1 hour
+- The SSO cookie is fully stateless — no server-side cache. Zitadel is the authority on session validity.
 - This endpoint is called on every LibreChat page load to ensure the iframe stays authenticated
-- See pitfall: `platform-sso-cache-single-instance` (single-instance only)
 
 ---
 
@@ -196,9 +195,9 @@ The `klai_sso` cookie is set after successful login and removed on logout.
 | HttpOnly | Yes |
 | Secure | Yes (HTTPS only) |
 | SameSite | Lax |
-| Max-Age | 3600 seconds (1 hour) |
+| Max-Age | 86400 seconds (24 hours) |
 
-The cookie value is an opaque token. The actual Zitadel session is stored in the in-memory `_sso_cache` on the portal-api instance.
+The cookie value is a Fernet-encrypted token containing `{session_id, session_token}`. There is no server-side session store — the design is fully stateless. Zitadel is the sole authority on whether the session is still valid.
 
 ## CORS
 

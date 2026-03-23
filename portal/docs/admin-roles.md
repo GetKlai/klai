@@ -50,7 +50,7 @@ The first admin user is created during the signup flow when a new organisation i
 ## Invitation flow
 
 When an admin invites a user:
-1. A Zitadel user is created with an invitation code
+1. A Zitadel user is created with an invitation code (`sendCodes: true` via Management API)
 2. A portal user record is created with the specified role
-3. Zitadel sends an invitation email (via klai-mailer, `InviteUser` notification type)
+3. Zitadel sends an invitation email via klai-mailer (`InviteUser` notification type)
 4. The invited user sets their password via the link in the email

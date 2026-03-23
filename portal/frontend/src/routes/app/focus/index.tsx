@@ -120,7 +120,7 @@ function FocusPage() {
             {!isLoading && countLabel}
           </p>
         </div>
-        <Button onClick={() => navigate({ to: '/app/focus/new' })}>
+        <Button data-help-id="focus-add" onClick={() => navigate({ to: '/app/focus/new' })}>
           <Plus className="mr-2 h-4 w-4" />
           {m.app_focus_new_notebook()}
         </Button>
@@ -130,7 +130,7 @@ function FocusPage() {
         <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
       )}
 
-      <Card>
+      <Card data-help-id="focus-list">
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {isLoading ? (
             <div className="flex justify-center py-8">

@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { LayoutDashboard, Users, Settings, CreditCard } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { STORAGE_KEYS } from '@/lib/storage'
@@ -59,6 +60,7 @@ function AdminLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <HelpButton />
     </div>
   )
 }

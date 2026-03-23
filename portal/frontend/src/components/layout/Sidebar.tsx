@@ -13,6 +13,7 @@ export interface NavItem {
   label: string
   icon: LucideIcon
   end?: boolean
+  children?: NavItem[]
 }
 
 interface SidebarProps {
@@ -103,6 +104,29 @@ export function Sidebar({ navItems }: SidebarProps) {
                   <item.icon size={16} strokeWidth={1.75} />
                   {!collapsed && item.label}
                 </Link>
+              )}
+              {item.children && item.children.length > 0 && item.to && location.pathname.startsWith(item.to) && !collapsed && (
+                <ul className="mt-1 ml-4 space-y-0.5">
+                  {item.children.map((child) => (
+                    <li key={child.href ?? child.to}>
+                      <Link
+                        to={child.to ?? '/'}
+                        activeOptions={child.end ? { exact: true } : undefined}
+                        className={cn(
+                          'flex items-center rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                          'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                          'gap-2'
+                        )}
+                        activeProps={{
+                          className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
+                        }}
+                      >
+                        <child.icon size={12} strokeWidth={1.75} />
+                        {child.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
               )}
             </li>
           ))}

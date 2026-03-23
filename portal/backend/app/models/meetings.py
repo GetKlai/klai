@@ -23,7 +23,6 @@ class VexaMeeting(Base):
     meeting_url: Mapped[str] = mapped_column(Text, nullable=False)
     meeting_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bot_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    vexa_meeting_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
     consent_given: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     transcript_text: Mapped[str | None] = mapped_column(Text, nullable=True)

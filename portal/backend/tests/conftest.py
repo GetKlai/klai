@@ -1,17 +1,13 @@
 """
-Test environment setup.
+Shared test configuration.
 
-Sets required pydantic-settings env vars so tests can import app modules
-without a real .env file. Only sets vars that have no defaults and are
-required by Settings at module-load time.
+Sets required env vars before any app module is imported.
 """
 
 import os
 
-# These are required fields in Settings (no defaults)
-os.environ.setdefault("ZITADEL_PAT", "test_pat")
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
-os.environ.setdefault(
-    "SSO_COOKIE_KEY",
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",  # 44-char base64 placeholder
-)
+# Set required env vars for pydantic-settings validation.
+# The Settings class reads these at module import time.
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+os.environ.setdefault("ZITADEL_PAT", "test-pat")
+os.environ.setdefault("SSO_COOKIE_KEY", "dGVzdC1rZXktMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=")

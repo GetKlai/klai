@@ -264,7 +264,7 @@ function UsersPage() {
             )}
           </p>
         </div>
-        <Button onClick={() => navigate({ to: '/admin/users/invite' })}>
+        <Button data-help-id="admin-users-invite" onClick={() => navigate({ to: '/admin/users/invite' })}>
           {m.admin_users_invite_button()}
         </Button>
       </div>
@@ -273,7 +273,7 @@ function UsersPage() {
         <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
       )}
 
-      <Card>
+      <Card data-help-id="admin-users-table">
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {isLoading ? (
             <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">

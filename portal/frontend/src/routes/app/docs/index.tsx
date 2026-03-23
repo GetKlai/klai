@@ -176,7 +176,7 @@ function DocsPage() {
             {!isLoading && countLabel}
           </p>
         </div>
-        <Button onClick={() => navigate({ to: '/app/docs/new' })}>
+        <Button data-help-id="docs-create" onClick={() => navigate({ to: '/app/docs/new' })}>
           <Plus className="mr-2 h-4 w-4" />
           {m.docs_kbs_new()}
         </Button>
@@ -192,7 +192,7 @@ function DocsPage() {
         </p>
       )}
 
-      <Card>
+      <Card data-help-id="docs-list">
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {isLoading ? (
             <div className="flex justify-center py-8">

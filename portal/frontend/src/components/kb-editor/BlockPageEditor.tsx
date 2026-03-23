@@ -3,7 +3,7 @@ import { useCreateBlockNote, SuggestionMenuController, getDefaultReactSlashMenuI
 import { BlockNoteView } from '@blocknote/mantine'
 import { BlockNoteSchema, defaultInlineContentSpecs } from '@blocknote/core'
 import '@blocknote/mantine/style.css'
-import { WikiLink } from '@/routes/app/docs/WikiLink'
+import { WikiLink } from '@/components/kb-editor/WikiLink'
 import { editorLogger } from '@/lib/logger'
 
 export type BlockPageEditorHandle = {

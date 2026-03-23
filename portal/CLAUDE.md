@@ -1,24 +1,26 @@
-# portal: Project Instructions
+# klai-portal: Project Instructions
 
-Project-specific instructions for the portal (FastAPI backend + React/Vite frontend).
+Project-specific instructions for the klai-portal monorepo (FastAPI backend + React/Vite frontend).
 
 ## Before writing any frontend code
 
-Read these two documents first. They contain the component rules, form page patterns, and button alignment standards for the portal:
+Read these two documents first. They contain the component rules, form page patterns, and button alignment standards for klai-portal:
 
-@../claude-docs/patterns/frontend.md
+@../klai-claude/docs/patterns/frontend.md
 @docs/ui-components.md
 
 The reference implementation is `frontend/src/routes/admin/users/invite.tsx`.
 
 ## Deploy workflow
 
-After every commit to portal:
+After every commit to klai-portal:
 
 1. `git push`
 2. `gh run watch --exit-status` — wait for the GitHub Action to complete
 
 The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before `gh run watch --exit-status` succeeds.
+
+Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
 
 ## Stack
 

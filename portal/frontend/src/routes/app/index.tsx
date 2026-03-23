@@ -24,30 +24,34 @@ function AppHome() {
       description: m.app_tool_chat_description(),
       icon: MessageSquare,
       href: '/app/chat',
+      helpId: 'home-tool-chat',
     },
     {
       title: m.app_tool_transcribe_title(),
       description: m.app_tool_transcribe_description(),
       icon: Mic,
       href: '/app/transcribe',
+      helpId: 'home-tool-transcribe',
     },
     {
       title: m.app_tool_focus_title(),
       description: m.app_tool_focus_description(),
       icon: BookOpen,
       href: '/app/focus',
+      helpId: 'home-tool-focus',
     },
     {
       title: m.app_tool_docs_title(),
       description: m.app_tool_docs_description(),
       icon: BookMarked,
       href: '/app/docs',
+      helpId: 'home-tool-docs',
     },
   ]
 
   return (
     <div className="p-8 space-y-8 max-w-3xl">
-      <div className="space-y-1">
+      <div className="space-y-1" data-help-id="home-greeting">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {getGreeting(userName)}
         </h1>
@@ -63,6 +67,7 @@ function AppHome() {
             <a
               key={tool.title}
               href={tool.href}
+              data-help-id={tool.helpId}
               className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
             >
               <tool.icon
