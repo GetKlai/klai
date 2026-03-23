@@ -131,35 +131,37 @@ function MeetingDetailPage() {
 
   return (
     <div className="p-8 space-y-6 max-w-3xl">
-      <button
-        onClick={() => navigate({ to: '/app/transcribe' })}
-        className="flex items-center gap-1 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        {m.app_meetings_back()}
-      </button>
-
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-center justify-between">
         <div className="space-y-2">
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
             {meeting.meeting_title ?? meeting.meeting_url}
           </h1>
           <StatusBadge status={meeting.status} />
         </div>
-        {canStop && (
+        <div className="flex items-center gap-2">
+          {canStop && (
+            <Button
+              variant="destructive"
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending}
+            >
+              {stopMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Square className="mr-2 h-4 w-4" />
+              )}
+              {m.app_meetings_stop_button()}
+            </Button>
+          )}
           <Button
-            variant="destructive"
-            onClick={() => stopMutation.mutate()}
-            disabled={stopMutation.isPending}
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate({ to: '/app/transcribe' })}
           >
-            {stopMutation.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Square className="mr-2 h-4 w-4" />
-            )}
-            {m.app_meetings_stop_button()}
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.app_meetings_back()}
           </Button>
-        )}
+        </div>
       </div>
 
       {meeting.status === 'failed' && meeting.error_message && (
