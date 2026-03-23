@@ -293,7 +293,9 @@ def _correlate_speakers(
     return attributed
 
 
-async def _run_transcription(meeting: VexaMeeting, db: AsyncSession, speaker_events: list[SpeakerEvent] | None = None) -> None:
+async def _run_transcription(
+    meeting: VexaMeeting, db: AsyncSession, speaker_events: list[SpeakerEvent] | None = None
+) -> None:
     """Download audio from Vexa and transcribe. Updates meeting in place; caller must commit."""
     speaker_events = speaker_events or []
     try:
