@@ -16,7 +16,7 @@ search:
 
 server:
   secret_key: "${SEARXNG_SECRET}"
-  bind_address: "0.0.0.0:8888"
+  bind_address: "0.0.0.0:8080"
   image_proxy: false
   http_protocol_version: "1.0"
 

@@ -248,7 +248,7 @@ services:
       ALLOW_REGISTRATION: "false"
       ALLOW_SOCIAL_LOGIN: "true"
       ALLOW_SOCIAL_REGISTRATION: "true"
-      SEARXNG_INSTANCE_URL: "http://searxng:8888"
+      SEARXNG_INSTANCE_URL: "http://searxng:8080"
       FIRECRAWL_API_URL: "http://firecrawl-api:3002"
       FIRECRAWL_API_KEY: ${FIRECRAWL_INTERNAL_KEY}
       JINA_API_URL: "http://infinity-reranker:7997/v1/rerank"
@@ -537,7 +537,7 @@ services:
       DOCLING_URL: http://docling-serve:5001
       TEI_URL: http://tei:8080
       LITELLM_URL: http://litellm:4000
-      SEARXNG_URL: http://searxng:8888
+      SEARXNG_URL: http://searxng:8080
     volumes:
       - /opt/klai/research-uploads:/opt/klai/research-uploads
     networks:
