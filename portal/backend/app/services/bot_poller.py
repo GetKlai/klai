@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import httpx
 from sqlalchemy import select
 
-from app.api.meetings import ACTIVE_STATUSES, _run_transcription
+from app.api.meetings import ACTIVE_STATUSES, run_transcription
 from app.core.database import AsyncSessionLocal
 from app.models.meetings import VexaMeeting
 from app.services.vexa import parse_meeting_url, vexa
@@ -74,7 +74,7 @@ async def poll_loop() -> None:
                     await db.commit()
                     await db.refresh(m)
 
-                    await _run_transcription(m, db)
+                    await run_transcription(m, db)
                     await db.commit()
 
         except asyncio.CancelledError:
