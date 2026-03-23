@@ -100,6 +100,13 @@ REDIS_URI=redis://:{settings.redis_password}@redis:6379
 # AI routing via LiteLLM
 LITELLM_API_KEY={effective_litellm_key}
 
+# Web search (shared services on klai-net)
+SEARXNG_INSTANCE_URL=http://searxng:8888
+FIRECRAWL_API_KEY={settings.firecrawl_internal_key}
+FIRECRAWL_API_URL=http://firecrawl-api:3002
+JINA_API_KEY=klai-internal
+JINA_API_URL=http://infinity-reranker:7997/v1/rerank
+
 # Klai Knowledge MCP identity (used by librechat.yaml ${{...}} expansion)
 KLAI_ZITADEL_ORG_ID={zitadel_org_id}
 KLAI_ORG_SLUG={slug}
