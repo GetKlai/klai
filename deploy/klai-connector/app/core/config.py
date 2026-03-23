@@ -1,5 +1,8 @@
 """Pydantic Settings configuration for klai-connector."""
 
+import base64
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -28,3 +31,17 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @field_validator("github_app_private_key", mode="before")
+    @classmethod
+    def decode_private_key(cls, v: str) -> str:
+        """Accept PEM as-is or base64-encoded (for env var storage)."""
+        if v.startswith("-----"):
+            return v
+        try:
+            decoded = base64.b64decode(v).decode("utf-8")
+            if decoded.startswith("-----"):
+                return decoded
+        except Exception:
+            pass
+        return v

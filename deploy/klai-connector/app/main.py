@@ -9,8 +9,8 @@ from fastapi import FastAPI
 from app.adapters.github import GitHubAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
+import app.core.database as _db
 from app.core.database import dispose_engine, init_engine
-from app.core.database import session_maker as get_session_maker
 from app.core.logging import get_logger, setup_logging
 from app.core.security import AESGCMCipher
 from app.middleware.auth import AuthMiddleware
@@ -53,11 +53,10 @@ def create_app() -> FastAPI:
         app.state.ingest_client = ingest_client
 
         # Sync engine
-        sm = get_session_maker
-        if sm is None:
+        if _db.session_maker is None:
             raise RuntimeError("Database session maker not initialised")
         sync_engine = SyncEngine(
-            session_maker=sm,
+            session_maker=_db.session_maker,
             adapter=adapter,
             ingest_client=ingest_client,
         )
@@ -66,7 +65,7 @@ def create_app() -> FastAPI:
         # Scheduler
         scheduler = ConnectorScheduler()
         app.state.scheduler = scheduler
-        await scheduler.start(sm, sync_engine.run_sync)
+        await scheduler.start(_db.session_maker, sync_engine.run_sync)
 
         logger.info("klai-connector started successfully")
         yield
