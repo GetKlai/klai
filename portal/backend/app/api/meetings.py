@@ -156,7 +156,8 @@ async def start_meeting(
     # Dispatch bot
     try:
         bot_resp = await vexa.start_bot(ref.platform, ref.native_meeting_id)
-        meeting.bot_id = str(bot_resp.get("bot_id", ""))
+        meeting.bot_id = str(bot_resp.get("bot_container_id", ""))
+        meeting.vexa_meeting_id = bot_resp.get("id")
         meeting.status = "joining"
         meeting.started_at = datetime.now(UTC)
     except httpx.HTTPStatusError as exc:
@@ -299,16 +300,15 @@ async def _run_transcription(
     """Download audio from Vexa and transcribe. Updates meeting in place; caller must commit."""
     speaker_events = speaker_events or []
     try:
-        ref = parse_meeting_url(meeting.meeting_url)
-        if ref is None:
-            raise ValueError("Cannot parse meeting URL for audio download")
+        if meeting.vexa_meeting_id is None:
+            raise ValueError("vexa_meeting_id is not set — cannot look up recording")
 
-        audio_bytes = await vexa.get_recording(ref.platform, ref.native_meeting_id)
+        audio_bytes, recording_id = await vexa.get_recording(meeting.vexa_meeting_id)
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
                 f"{settings.whisper_server_url}/",
-                files={"audio_file": ("recording.webm", io.BytesIO(audio_bytes), "audio/webm")},
+                files={"audio_file": ("recording.wav", io.BytesIO(audio_bytes), "audio/wav")},
             )
             resp.raise_for_status()
             whisper_result = resp.json()
@@ -324,6 +324,12 @@ async def _run_transcription(
         meeting.language = language
         meeting.duration_seconds = int(duration) if duration else None
         meeting.status = "done"
+
+        # Delete the recording from Vexa storage now that transcription succeeded.
+        try:
+            await vexa.delete_recording(recording_id)
+        except Exception as del_exc:
+            logger.warning("Failed to delete Vexa recording %s: %s", recording_id, del_exc)
 
     except Exception as exc:
         logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
@@ -344,19 +350,18 @@ async def get_meeting_audio(
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
 
-    ref = parse_meeting_url(meeting.meeting_url)
-    if ref is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot parse meeting URL")
+    if meeting.vexa_meeting_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not available")
 
     try:
-        audio_bytes = await vexa.get_recording(ref.platform, ref.native_meeting_id)
-    except httpx.HTTPStatusError as exc:
+        audio_bytes, _ = await vexa.get_recording(meeting.vexa_meeting_id)
+    except (httpx.HTTPStatusError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not available") from exc
 
-    filename = f"{meeting.meeting_title or meeting.native_meeting_id}.webm"
+    filename = f"{meeting.meeting_title or meeting.native_meeting_id}.wav"
     return Response(
         content=audio_bytes,
-        media_type="audio/webm",
+        media_type="audio/wav",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
