@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
@@ -47,39 +48,19 @@ function formatTimestamp(seconds: number): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; classes: string }> = {
-    pending: {
-      label: m.app_meetings_status_pending(),
-      classes: 'bg-blue-100 text-blue-800',
-    },
-    joining: {
-      label: m.app_meetings_status_joining(),
-      classes: 'bg-blue-100 text-blue-800 animate-pulse',
-    },
-    recording: {
-      label: m.app_meetings_status_recording(),
-      classes: 'bg-red-100 text-red-800 animate-pulse',
-    },
-    processing: {
-      label: m.app_meetings_status_processing(),
-      classes: 'bg-amber-100 text-amber-800 animate-pulse',
-    },
-    done: {
-      label: m.app_meetings_status_done(),
-      classes: 'bg-green-100 text-green-800',
-    },
-    failed: {
-      label: m.app_meetings_status_failed(),
-      classes: 'bg-red-100 text-red-800',
-    },
+  const config: Record<string, { label: string; variant: 'default' | 'secondary' | 'warning' | 'destructive' | 'success' | 'outline'; pulse?: boolean }> = {
+    pending:    { label: m.app_meetings_status_pending(),    variant: 'secondary' },
+    joining:    { label: m.app_meetings_status_joining(),    variant: 'default',     pulse: true },
+    recording:  { label: m.app_meetings_status_recording(),  variant: 'destructive', pulse: true },
+    processing: { label: m.app_meetings_status_processing(), variant: 'warning',     pulse: true },
+    done:       { label: m.app_meetings_status_done(),       variant: 'success' },
+    failed:     { label: m.app_meetings_status_failed(),     variant: 'destructive' },
   }
-  const c = config[status] ?? { label: status, classes: 'bg-gray-100 text-gray-800' }
+  const c = config[status] ?? { label: status, variant: 'outline' as const }
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${c.classes}`}
-    >
+    <Badge variant={c.variant} className={c.pulse ? 'animate-pulse' : undefined}>
       {c.label}
-    </span>
+    </Badge>
   )
 }
 
