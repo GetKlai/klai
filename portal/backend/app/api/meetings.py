@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -293,6 +293,72 @@ def _correlate_speakers(
     return attributed
 
 
+async def _run_transcription(meeting: VexaMeeting, db: AsyncSession, speaker_events: list[SpeakerEvent] | None = None) -> None:
+    """Download audio from Vexa and transcribe. Updates meeting in place; caller must commit."""
+    speaker_events = speaker_events or []
+    try:
+        ref = parse_meeting_url(meeting.meeting_url)
+        if ref is None:
+            raise ValueError("Cannot parse meeting URL for audio download")
+
+        audio_bytes = await vexa.get_recording(ref.platform, ref.native_meeting_id)
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                f"{settings.whisper_server_url}/",
+                files={"audio_file": ("recording.webm", io.BytesIO(audio_bytes), "audio/webm")},
+            )
+            resp.raise_for_status()
+            whisper_result = resp.json()
+
+        raw_segments = whisper_result.get("segments", [])
+        duration = whisper_result.get("duration", 0)
+        language = whisper_result.get("language", "")
+
+        attributed_segments = _correlate_speakers(raw_segments, speaker_events, duration)
+
+        meeting.transcript_text = whisper_result.get("text", "")
+        meeting.transcript_segments = attributed_segments
+        meeting.language = language
+        meeting.duration_seconds = int(duration) if duration else None
+        meeting.status = "done"
+
+    except Exception as exc:
+        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
+        meeting.status = "failed"
+        meeting.error_message = str(exc)
+
+
+@router.get("/meetings/{meeting_id}/audio")
+async def get_meeting_audio(
+    meeting_id: UUID,
+    user_id: str = Depends(_get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Download the raw audio recording for debugging. Only available after transcription."""
+    meeting = await db.scalar(
+        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
+    )
+    if meeting is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+
+    ref = parse_meeting_url(meeting.meeting_url)
+    if ref is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot parse meeting URL")
+
+    try:
+        audio_bytes = await vexa.get_recording(ref.platform, ref.native_meeting_id)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not available") from exc
+
+    filename = f"{meeting.meeting_title or meeting.native_meeting_id}.webm"
+    return Response(
+        content=audio_bytes,
+        media_type="audio/webm",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/internal/webhook", status_code=status.HTTP_200_OK)
 async def vexa_webhook(
     payload: VexaWebhookPayload,
@@ -301,7 +367,6 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
-    # Find the meeting by platform + native_meeting_id + status
     meeting = await db.scalar(
         select(VexaMeeting)
         .where(
@@ -319,39 +384,6 @@ async def vexa_webhook(
     meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
     await db.commit()
 
-    # Download audio from Vexa and transcribe
-    try:
-        ref = parse_meeting_url(meeting.meeting_url)
-        if ref is None:
-            raise ValueError("Cannot parse meeting URL for audio download")
-
-        audio_bytes = await vexa.get_recording(ref.platform, ref.native_meeting_id)
-
-        # POST audio directly to whisper-server (no auth required -- internal network)
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"{settings.whisper_server_url}/",
-                files={"audio_file": ("recording.webm", io.BytesIO(audio_bytes), "audio/webm")},
-            )
-            resp.raise_for_status()
-            whisper_result = resp.json()
-
-        raw_segments = whisper_result.get("segments", [])
-        duration = whisper_result.get("duration", 0)
-        language = whisper_result.get("language", "")
-
-        attributed_segments = _correlate_speakers(raw_segments, payload.speaker_events, duration)
-
-        meeting.transcript_text = whisper_result.get("text", "")
-        meeting.transcript_segments = attributed_segments
-        meeting.language = language
-        meeting.duration_seconds = int(duration) if duration else None
-        meeting.status = "done"
-
-    except Exception as exc:
-        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
-        meeting.status = "failed"
-        meeting.error_message = str(exc)
-
+    await _run_transcription(meeting, db, payload.speaker_events)
     await db.commit()
     return {"status": "ok"}
