@@ -55,7 +55,12 @@ class VexaClient:
         """Start a bot for the given meeting. Returns the bot response dict."""
         resp = await self._http.post(
             "/bots",
-            json={"platform": platform, "native_meeting_id": native_meeting_id, "recording_enabled": True},
+            json={
+                "platform": platform,
+                "native_meeting_id": native_meeting_id,
+                "recording_enabled": True,
+                "bot_name": "Klai",
+            },
         )
         resp.raise_for_status()
         return resp.json()
