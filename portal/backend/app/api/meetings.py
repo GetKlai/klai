@@ -280,79 +280,54 @@ class VexaWebhookPayload(BaseModel):
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
-# Human names assigned to unknown meeting participants (alternating female/male).
-# Selected by (event_index % len) so the same index always maps to the same name.
-_UNKNOWN_SPEAKER_NAMES = [
-    "Emma",
-    "Liam",
-    "Sophie",
-    "Noah",
-    "Julia",
-    "Finn",
-    "Lisa",
-    "Daan",
-    "Sara",
-    "Luuk",
-    "Anna",
-    "Max",
-    "Eva",
-    "Tim",
-    "Nora",
-    "Lars",
-    "Amy",
-    "Sem",
-    "Roos",
-    "Bram",
-]
+async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
+    """Download audio from Vexa and transcribe. Updates meeting in place; caller must commit."""
+    try:
+        if meeting.vexa_meeting_id is None:
+            raise ValueError("vexa_meeting_id is not set — cannot look up recording")
 
-
-def _unknown_speaker_name(event_idx: int) -> str:
-    """Return a human name for an unknown speaker, unique by index."""
-    base = _UNKNOWN_SPEAKER_NAMES[event_idx % len(_UNKNOWN_SPEAKER_NAMES)]
-    # 3-char hex suffix keeps the name unique when the list cycles (>20 speakers)
-    suffix = f"-{event_idx:03x}" if event_idx >= len(_UNKNOWN_SPEAKER_NAMES) else ""
-    return f"{base}{suffix}"
-
-
-def _correlate_speakers(
-    segments: list[dict],
-    speaker_events: list[SpeakerEvent],
-    duration_seconds: float,
-) -> list[dict]:
-    """Correlate Whisper segments with Vexa speaker events.
-
-    Each segment gets a speaker name based on who was speaking nearest to the
-    segment's start timestamp. Unknown speakers get a human name.
-    """
-    if not speaker_events:
-        return segments
-
-    # Build a timeline of (timestamp, name) pairs
-    timeline = [(e.timestamp, e.participant_name or "") for e in speaker_events]
-    unknown_map: dict[int, str] = {}  # keyed by event index
-
-    def resolve_speaker(name: str, event_idx: int) -> str:
-        if name:
-            return name
-        if event_idx not in unknown_map:
-            unknown_map[event_idx] = _unknown_speaker_name(len(unknown_map))
-        return unknown_map[event_idx]
-
-    attributed = []
-    for seg in segments:
-        seg_start = seg.get("start", 0)
-        # Find the nearest speaker event at or before this segment's start
-        speaker = ""
-        for idx, (ts, name) in reversed(list(enumerate(timeline))):
-            if ts <= seg_start:
-                speaker = resolve_speaker(name, idx)
+        # Vexa finalizes the recording asynchronously after the meeting ends.
+        # Poll until the recording is ready (max 5 attempts x 5s = 25s).
+        audio_bytes: bytes | None = None
+        audio_fmt: str = "wav"
+        for attempt in range(5):
+            try:
+                audio_bytes, audio_fmt = await vexa.get_recording(meeting.vexa_meeting_id)
                 break
-        if not speaker:
-            # No prior event found — use first event as fallback
-            speaker = resolve_speaker(timeline[0][1], 0) if timeline else _unknown_speaker_name(0)
+            except ValueError:
+                if attempt < 4:
+                    logger.info(
+                        "Recording not ready for vexa meeting %s (attempt %d/5), retrying in 5s…",
+                        meeting.vexa_meeting_id,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(5)
+                else:
+                    raise
+        assert audio_bytes is not None
+        filename = f"recording.{audio_fmt}"
+        mime = "audio/wav" if audio_fmt == "wav" else f"audio/{audio_fmt}"
 
-        attributed.append({**seg, "speaker": speaker})
-    return attributed
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                f"{settings.whisper_server_url}/v1/audio/transcriptions",
+                files={"file": (filename, io.BytesIO(audio_bytes), mime)},
+            )
+            resp.raise_for_status()
+            whisper_result = resp.json()
+
+        meeting.transcript_text = whisper_result.get("text", "")
+        meeting.transcript_segments = None
+        meeting.language = whisper_result.get("language", "")
+        duration = whisper_result.get("duration", 0)
+        meeting.duration_seconds = int(duration) if duration else None
+        meeting.status = "done"
+        meeting.error_message = None
+
+    except Exception as exc:
+        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
+        meeting.status = "failed"
+        meeting.error_message = str(exc)
 
 
 @router.post("/internal/webhook", status_code=status.HTTP_200_OK)
@@ -401,58 +376,10 @@ async def vexa_webhook(
 
     meeting.status = "processing"
     meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
+    if payload.vexa_meeting_id:
+        meeting.vexa_meeting_id = payload.vexa_meeting_id
     await db.commit()
 
-    # Download audio from Vexa and transcribe
-    try:
-        if not payload.vexa_meeting_id:
-            raise ValueError("No vexa_meeting_id in webhook payload — cannot fetch recording")
-
-        # Vexa finalizes the recording asynchronously after sending the webhook.
-        # Poll until the recording is ready (max 5 attempts x 5s = 25s).
-        audio_bytes: bytes | None = None
-        audio_fmt: str = "wav"
-        for attempt in range(5):
-            try:
-                audio_bytes, audio_fmt = await vexa.get_recording(payload.vexa_meeting_id)
-                break
-            except ValueError:
-                if attempt < 4:
-                    logger.info(
-                        "Recording not ready for vexa meeting %s (attempt %d/5), retrying in 5s…",
-                        payload.vexa_meeting_id,
-                        attempt + 1,
-                    )
-                    await asyncio.sleep(5)
-                else:
-                    raise
-        assert audio_bytes is not None
-        filename = f"recording.{audio_fmt}"
-        mime = "audio/wav" if audio_fmt == "wav" else f"audio/{audio_fmt}"
-
-        # POST audio directly to whisper-server (no auth required -- internal network)
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"{settings.whisper_server_url}/v1/audio/transcriptions",
-                files={"file": (filename, io.BytesIO(audio_bytes), mime)},
-            )
-            resp.raise_for_status()
-            whisper_result = resp.json()
-
-        duration = whisper_result.get("duration", 0)
-        language = whisper_result.get("language", "")
-
-        meeting.transcript_text = whisper_result.get("text", "")
-        meeting.transcript_segments = None  # whisper-server returns no segments
-        meeting.language = language
-        meeting.duration_seconds = int(duration) if duration else None
-        meeting.status = "done"
-        meeting.error_message = None
-
-    except Exception as exc:
-        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
-        meeting.status = "failed"
-        meeting.error_message = str(exc)
-
+    await run_transcription(meeting, db)
     await db.commit()
     return {"status": "ok"}
