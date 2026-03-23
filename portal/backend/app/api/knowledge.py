@@ -92,8 +92,8 @@ async def get_knowledge_stats(
             try:
                 user_data = await zitadel.get_user_by_id(user_id)
                 org_id = user_data.get("user", {}).get("details", {}).get("resourceOwner")
-            except Exception:
-                pass
+            except Exception as mgmt_exc:
+                logger.warning("Could not fetch user org via Management API: %s", mgmt_exc)
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
