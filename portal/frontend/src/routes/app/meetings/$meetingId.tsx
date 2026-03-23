@@ -197,7 +197,7 @@ function MeetingDetailPage() {
       {ACTIVE_STATUSES.includes(meeting.status) && (
         <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
           <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Automatisch vernieuwen...</span>
+          <span>{m.app_transcribe_auto_refresh()}</span>
         </div>
       )}
 
