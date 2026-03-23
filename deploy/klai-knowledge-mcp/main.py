@@ -344,12 +344,14 @@ async def save_to_docs(
             return "Error: geen documentatie-kennisbanken gevonden voor deze organisatie."
 
         if len(kbs) == 1:
-            kb_name = kbs[0].get("name") or kbs[0].get("slug")
+            kb_name = kbs[0].get("slug") or kbs[0].get("name")
         else:
-            names = ", ".join(kb.get("name") or kb.get("slug", "?") for kb in kbs)
+            options = ", ".join(
+                f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs
+            )
             return (
-                f"Meerdere kennisbanken beschikbaar: {names}. "
-                "Geef kb_name op bij de volgende aanroep."
+                f"Meerdere kennisbanken beschikbaar: {options}. "
+                "Geef de slug op als kb_name bij de volgende aanroep."
             )
 
     # Build page path if not provided — land in inbox/ for manual organisation later
