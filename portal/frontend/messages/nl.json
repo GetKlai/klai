@@ -681,7 +681,7 @@
   "app_meetings_download": "Downloaden",
   "app_meetings_copy_done": "Gekopieerd!",
   "app_meetings_error_label": "Fout",
-  "app_meetings_active_info": "We zijn onderweg naar je vergadering. Zie je een melding? Laat de bot even toe. Zodra de meeting klaar is wachten we 60 seconden — voor het geval iemand terugkomt. Daarna ronden we automatisch af en vind je de transcriptie in het overzicht. Je kunt dit venster gewoon sluiten.",
+  "app_meetings_active_info": "We zijn onderweg naar je vergadering. Zie je een melding? Laat de bot even toe. Zodra de meeting klaar is wachten we 60 seconden, voor het geval iemand terugkomt. Daarna ronden we automatisch af en vind je de transcriptie in het overzicht. Je kunt dit venster gewoon sluiten.",
   "app_transcribe_new_audio": "Audio toevoegen",
   "app_transcribe_new_meeting": "Vergadering opnemen",
   "app_transcribe_source_audio": "Audio-opname",
