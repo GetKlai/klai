@@ -13,10 +13,10 @@ interface:
 webSearch:
   searchProvider: "searxng"
   searxngInstanceUrl: "${SEARXNG_INSTANCE_URL}"
-  scraper: "firecrawl"
+  scraperProvider: "firecrawl"
   firecrawlApiUrl: "${FIRECRAWL_API_URL}"
   firecrawlApiKey: "${FIRECRAWL_API_KEY}"
-  reranker: "jina"
+  rerankerType: "jina"
   jinaApiKey: "${JINA_API_KEY}"
   jinaApiUrl: "${JINA_API_URL}"
 
