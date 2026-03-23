@@ -33,9 +33,11 @@ class KnowledgeStats(BaseModel):
 async def _qdrant_count(filters: dict) -> int:
     """Count points in the klai_knowledge collection matching the given payload filter."""
     try:
+        headers = {"api-key": settings.qdrant_api_key} if settings.qdrant_api_key else {}
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 f"{settings.qdrant_url}/collections/{QDRANT_COLLECTION}/points/count",
+                headers=headers,
                 json={"filter": filters, "exact": True},
             )
         if resp.status_code == 404:
