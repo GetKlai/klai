@@ -17,7 +17,6 @@ import hmac
 import logging
 import os
 import re
-import uuid
 from dataclasses import dataclass
 from datetime import date
 
@@ -353,11 +352,9 @@ async def save_to_docs(
                 "Geef kb_name op bij de volgende aanroep."
             )
 
-    # Build page path if not provided
+    # Build page path if not provided — land in inbox/ for manual organisation later
     if page_path is None:
-        artifact_id = str(uuid.uuid4())
-        slug = f"{_slugify(title)}-{artifact_id[:6]}"
-        page_path = slug
+        page_path = f"inbox/{_slugify(title)}"
 
     today = date.today().isoformat()
 
