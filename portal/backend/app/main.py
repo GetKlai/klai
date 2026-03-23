@@ -15,8 +15,7 @@ from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.internal import router as internal_router
-from app.api.meetings import ACTIVE_STATUSES, _run_transcription
-from app.api.meetings import router as meetings_router
+from app.api.meetings import ACTIVE_STATUSES, _run_transcription, router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
