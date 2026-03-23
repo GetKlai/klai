@@ -275,7 +275,7 @@ async function buildNavTreeFromMeta(
     })
   );
 
-  return resolved.filter((n): n is NavNode => n !== null);
+  return resolved.filter((n) => n !== null) as NavNode[];
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
