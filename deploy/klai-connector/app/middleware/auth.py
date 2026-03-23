@@ -2,11 +2,7 @@
 
 import hashlib
 import time
-import uuid
 from typing import Any
-
-# Namespace UUID for deterministic org_id conversion from Zitadel numeric IDs
-_ORG_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 import httpx
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -82,13 +78,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
             _cache_put(token_hash, claims)
 
-        # Extract org_id from Zitadel's resourceowner claim and convert to UUID
+        # Use raw Zitadel resourceowner ID — must match what knowledge-ingest uses
         zitadel_org_id = claims.get("urn:zitadel:iam:user:resourceowner:id")
         if zitadel_org_id is None:
             logger.warning("Token introspection succeeded but resourceowner:id claim is missing")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-        request.state.org_id = str(uuid.uuid5(_ORG_NS, str(zitadel_org_id)))
+        request.state.org_id = str(zitadel_org_id)
         return await call_next(request)
 
     async def _introspect(self, token: str) -> dict[str, Any] | None:
