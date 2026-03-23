@@ -1,18 +1,20 @@
 """
-Web-search-aware model routing for LiteLLM proxy.
+Context-aware model routing for LiteLLM proxy.
 
 Intercepts klai-primary requests via pre_call_hook and routes based on
-whether the messages contain LibreChat web search content:
+conversation context:
 
-  Web search detected  →  klai-fast     (open-mistral-nemo, fast/cheap for large context)
-  Normal conversation  →  klai-primary  (mistral-small, stronger for tool use / agents)
+  Tool call history detected  →  klai-large   (mistral-large-123B, agentic/MCP flows)
+  Web search content detected →  klai-fast    (open-mistral-nemo-12B, speed for synthesis)
+  Default                     →  klai-primary  (mistral-small-22B, normal chat)
 
-Web search detection heuristics (any one triggers fast routing):
-  1. A message contains >= MIN_SEARCH_URLS URLs (https://) — scraped content chunks
-  2. Total token count exceeds SEARCH_TOKEN_THRESHOLD (very long = search context)
+Detection:
+  - Tool calls: any message with role="tool" → agentic flow, needs strong reasoning
+  - Web search: any message with >= MIN_SEARCH_URLS URLs → scraped content injection
+  - Hard ceiling: token count > SEARCH_TOKEN_THRESHOLD → fast (safety net)
 
-Normal agentic / MCP conversations stay on mistral-small regardless of length,
-because nemo (12B) is too weak for multi-step tool orchestration.
+Note: LibreChat web search injects scraped content as message *content* (not as
+tool call results), so the two signals are distinct with no overlap.
 """
 
 import re
@@ -22,10 +24,18 @@ import litellm
 # URL count in a single message that indicates scraped web content
 MIN_SEARCH_URLS = 3
 
-# Hard ceiling: if somehow we get here without URLs, very long is still search
+# Hard token ceiling fallback (safety net, not primary signal)
 SEARCH_TOKEN_THRESHOLD = 3000
 
 _URL_RE = re.compile(r"https?://\S+")
+
+
+def _has_tool_calls(messages: list) -> bool:
+    """Return True if messages contain tool call results (agentic/MCP flow)."""
+    for msg in messages:
+        if msg.get("role") == "tool":
+            return True
+    return False
 
 
 def _looks_like_search(messages: list) -> bool:
@@ -33,14 +43,12 @@ def _looks_like_search(messages: list) -> bool:
     for msg in messages:
         content = msg.get("content") or ""
         if isinstance(content, list):
-            # Multipart content (text + images etc.)
             content = " ".join(
                 part.get("text", "") for part in content if isinstance(part, dict)
             )
         if not isinstance(content, str):
             continue
-        url_count = len(_URL_RE.findall(content))
-        if url_count >= MIN_SEARCH_URLS:
+        if len(_URL_RE.findall(content)) >= MIN_SEARCH_URLS:
             return True
     return False
 
@@ -55,10 +63,17 @@ class TokenRouter(CustomLogger):
             return data
 
         try:
+            # Agentic/MCP flow: tool call history → mistral-large
+            if _has_tool_calls(messages):
+                data["model"] = "klai-large"
+                return data
+
+            # Web search: scraped content → nemo (fast/cheap)
             if _looks_like_search(messages):
                 data["model"] = "klai-fast"
                 return data
 
+            # Safety net: very long context without tool calls → nemo
             token_count = litellm.token_counter(
                 model="mistral/mistral-small-latest",
                 messages=messages,
