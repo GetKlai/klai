@@ -1,0 +1,28 @@
+#!/bin/bash
+# Blokkeert commit messages die externe GitHub issue cross-referenties bevatten.
+# Patroon: owner/repo#number waarbij owner NIET GetKlai is.
+# GitHub koppelt dit automatisch aan het externe issue — dat mag NOOIT zonder expliciete toestemming.
+
+MSG=$(cat "$1")
+
+# Zoek naar externe cross-referenties (bijv. Vexa-ai/vexa#190, some-org/some-repo#42)
+if echo "$MSG" | grep -qiE '[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[0-9]+'; then
+    # Controleer of het een GetKlai referentie is (die zijn toegestaan)
+    if echo "$MSG" | grep -qiE '[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[0-9]+' && \
+       ! echo "$MSG" | grep -qiE 'GetKlai/[a-zA-Z0-9_.-]+#[0-9]+'; then
+        echo ""
+        echo "❌ GEBLOKKEERD: Commit bevat een externe GitHub cross-referentie."
+        echo ""
+        echo "   GitHub koppelt 'owner/repo#nummer' automatisch aan dat externe issue."
+        echo "   Dit is NIET toegestaan zonder expliciete toestemming van Mark."
+        echo ""
+        echo "   Gevonden in je commit message:"
+        echo "$MSG" | grep -oiE '[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[0-9]+' | sed 's/^/   - /'
+        echo ""
+        echo "   Verwijder de referentie of vraag toestemming."
+        echo ""
+        exit 1
+    fi
+fi
+
+exit 0
