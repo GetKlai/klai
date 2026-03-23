@@ -34,7 +34,7 @@ class ConnectorResponse(BaseModel):
     """
 
     id: uuid.UUID
-    org_id: uuid.UUID
+    org_id: str
     name: str
     connector_type: str
     config: dict[str, Any]
