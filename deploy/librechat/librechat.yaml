@@ -68,24 +68,11 @@ endpoints:
 modelSpecs:
   prioritize: true
   list:
-    - name: "klai-fast"
-      mcpServers:
-        - "klai-knowledge"
-      label: "Klai AI Snel"
-      default: true
-      preset:
-        endpoint: "Klai AI"
-        model: "klai-fast"
-        systemPrompt: >
-          You are a helpful AI assistant.
-          When answering questions that required a web search, be concise:
-          summarize the key findings in clear, direct language and cite only
-          the most relevant sources. Do not repeat information across sources
-          unless they add distinct value.
     - name: "klai-primary"
       mcpServers:
         - "klai-knowledge"
-      label: "Klai AI Slim"
+      label: "Klai AI"
+      default: true
       preset:
         endpoint: "Klai AI"
         model: "klai-primary"
