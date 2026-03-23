@@ -50,9 +50,7 @@ async def poll_loop() -> None:
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(VexaMeeting).where(VexaMeeting.status.in_(ACTIVE_STATUSES))
-                )
+                result = await db.execute(select(VexaMeeting).where(VexaMeeting.status.in_(ACTIVE_STATUSES)))
                 active = list(result.scalars().all())
 
             for meeting in active:
