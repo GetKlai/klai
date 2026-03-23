@@ -31,7 +31,6 @@ KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
 KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
 KNOWLEDGE_INGEST_SECRET = os.getenv("KNOWLEDGE_INGEST_SECRET", "")
-PUBLIC_KB_BASE_URL = os.getenv("PUBLIC_KB_BASE_URL", "")  # https://kb.${DOMAIN}
 _INTERNAL_SECRET_HEADER = "X-Internal-Secret"
 DEFAULT_ORG_SLUG = os.getenv("DEFAULT_ORG_SLUG", "")
 
@@ -405,12 +404,7 @@ async def save_to_docs(
     if resp.status_code not in (200, 201):
         return f"Error: klai-docs returned HTTP {resp.status_code}. Details: {resp.text[:300]}"
 
-    location = (
-        f"{PUBLIC_KB_BASE_URL}/{org_slug}/{kb_name}/{page_path}"
-        if PUBLIC_KB_BASE_URL
-        else f"path: {page_path}"
-    )
-    return f"\u2713 Opgeslagen in documentatie: **{title}**\nLocatie: {location}"
+    return f"\u2713 Opgeslagen in kennisbank **{kb_name}**: {title} (pad: {page_path})"
 
 
 # -- ASGI app -----------------------------------------------------------------
