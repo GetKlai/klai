@@ -79,7 +79,10 @@ class VexaClient:
         resp.raise_for_status()
         meetings = resp.json().get("meetings", [])
         # Return the most recent matching meeting (highest id)
-        matches = [m for m in meetings if m.get("platform") == platform and m.get("native_meeting_id") == native_meeting_id]
+        matches = [
+            m for m in meetings
+            if m.get("platform") == platform and m.get("native_meeting_id") == native_meeting_id
+        ]
         return max(matches, key=lambda m: m["id"]) if matches else None
 
     async def get_bot_status(self, platform: str, native_meeting_id: str) -> dict:
