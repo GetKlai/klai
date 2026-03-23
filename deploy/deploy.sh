@@ -76,17 +76,17 @@ case "${1:-all}" in
     main)
         deploy_main_env
         ;;
-    zitadel|litellm|caddy|klai-mailer)
+    zitadel|litellm|caddy|klai-mailer|klai-connector)
         deploy_service_env "$1"
         ;;
     all)
         deploy_main_env
-        for svc in zitadel litellm caddy klai-mailer; do
+        for svc in zitadel litellm caddy klai-mailer klai-connector; do
             deploy_service_env "$svc"
         done
         ;;
     *)
-        echo "Usage: $0 [main|zitadel|litellm|caddy|klai-mailer|all]"
+        echo "Usage: $0 [main|zitadel|litellm|caddy|klai-mailer|klai-connector|all]"
         exit 1
         ;;
 esac

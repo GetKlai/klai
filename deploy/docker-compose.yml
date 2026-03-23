@@ -713,14 +713,10 @@ services:
   klai-connector:
     build: ./klai-connector
     restart: unless-stopped
+    env_file: ./klai-connector/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
-      ZITADEL_CLIENT_ID: ${CONNECTOR_ZITADEL_CLIENT_ID}
-      ZITADEL_CLIENT_SECRET: ${CONNECTOR_ZITADEL_CLIENT_SECRET}
-      GITHUB_APP_ID: ${GITHUB_APP_ID}
-      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
-      ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8100
       LOG_LEVEL: INFO
     networks:
