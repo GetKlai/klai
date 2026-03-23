@@ -36,6 +36,7 @@ mcpServers:
       X-User-ID: "{{LIBRECHAT_USER_ID}}"
       X-Org-ID: "${KLAI_ORG_ID}"
       X-Org-Slug: "${KLAI_ORG_SLUG}"
+      X-Internal-Secret: "${KNOWLEDGE_INGEST_SECRET}"
 
 mcpSettings:
   allowedDomains:
