@@ -9,13 +9,13 @@ cache: true
 #           Exposed as Jina-compatible /v1/rerank; no auth needed (network-isolated)
 webSearch:
   searchProvider: "searxng"
-  searxngInstanceUrl: "http://searxng:8888"
+  searxngInstanceUrl: "${SEARXNG_INSTANCE_URL}"
   scraper: "firecrawl"
-  firecrawlApiUrl: "http://firecrawl-api:3002"
-  firecrawlApiKey: "${FIRECRAWL_INTERNAL_KEY}"
+  firecrawlApiUrl: "${FIRECRAWL_API_URL}"
+  firecrawlApiKey: "${FIRECRAWL_API_KEY}"
   reranker: "jina"
-  jinaApiKey: "klai-internal"
-  jinaApiUrl: "http://infinity-reranker:7997/v1/rerank"
+  jinaApiKey: "${JINA_API_KEY}"
+  jinaApiUrl: "${JINA_API_URL}"
 
 # ── Klai Knowledge MCP ────────────────────────────────────────────────────────
 # Exposes save_to_personal_kb to LibreChat agents.

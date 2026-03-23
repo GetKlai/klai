@@ -246,7 +246,11 @@ services:
       ALLOW_REGISTRATION: "false"
       ALLOW_SOCIAL_LOGIN: "true"
       ALLOW_SOCIAL_REGISTRATION: "true"
-      FIRECRAWL_INTERNAL_KEY: ${FIRECRAWL_INTERNAL_KEY}
+      SEARXNG_INSTANCE_URL: "http://searxng:8888"
+      FIRECRAWL_API_URL: "http://firecrawl-api:3002"
+      FIRECRAWL_API_KEY: ${FIRECRAWL_INTERNAL_KEY}
+      JINA_API_URL: "http://infinity-reranker:7997/v1/rerank"
+      JINA_API_KEY: "klai-internal"
     depends_on:
       mongodb:
         condition: service_healthy
