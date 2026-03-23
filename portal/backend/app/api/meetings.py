@@ -280,6 +280,40 @@ class VexaWebhookPayload(BaseModel):
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
+# Human names assigned to unknown meeting participants (alternating female/male).
+# Selected by (event_index % len) so the same index always maps to the same name.
+_UNKNOWN_SPEAKER_NAMES = [
+    "Emma",
+    "Liam",
+    "Sophie",
+    "Noah",
+    "Julia",
+    "Finn",
+    "Lisa",
+    "Daan",
+    "Sara",
+    "Luuk",
+    "Anna",
+    "Max",
+    "Eva",
+    "Tim",
+    "Nora",
+    "Lars",
+    "Amy",
+    "Sem",
+    "Roos",
+    "Bram",
+]
+
+
+def _unknown_speaker_name(event_idx: int) -> str:
+    """Return a human name for an unknown speaker, unique by index."""
+    base = _UNKNOWN_SPEAKER_NAMES[event_idx % len(_UNKNOWN_SPEAKER_NAMES)]
+    # 3-char hex suffix keeps the name unique when the list cycles (>20 speakers)
+    suffix = f"-{event_idx:03x}" if event_idx >= len(_UNKNOWN_SPEAKER_NAMES) else ""
+    return f"{base}{suffix}"
+
+
 def _correlate_speakers(
     segments: list[dict],
     speaker_events: list[SpeakerEvent],
@@ -288,23 +322,20 @@ def _correlate_speakers(
     """Correlate Whisper segments with Vexa speaker events.
 
     Each segment gets a speaker name based on who was speaking nearest to the
-    segment's start timestamp. Unknown speakers get 'Deelnemer N' labels.
+    segment's start timestamp. Unknown speakers get a human name.
     """
     if not speaker_events:
         return segments
 
     # Build a timeline of (timestamp, name) pairs
     timeline = [(e.timestamp, e.participant_name or "") for e in speaker_events]
-    unknown_map: dict[int, str] = {}  # keyed by event index, not name
-    unknown_count = 0
+    unknown_map: dict[int, str] = {}  # keyed by event index
 
     def resolve_speaker(name: str, event_idx: int) -> str:
-        nonlocal unknown_count
         if name:
             return name
         if event_idx not in unknown_map:
-            unknown_count += 1
-            unknown_map[event_idx] = f"Deelnemer {unknown_count}"
+            unknown_map[event_idx] = _unknown_speaker_name(len(unknown_map))
         return unknown_map[event_idx]
 
     attributed = []
@@ -318,7 +349,7 @@ def _correlate_speakers(
                 break
         if not speaker:
             # No prior event found — use first event as fallback
-            speaker = resolve_speaker(timeline[0][1], 0) if timeline else "Deelnemer 1"
+            speaker = resolve_speaker(timeline[0][1], 0) if timeline else _unknown_speaker_name(0)
 
         attributed.append({**seg, "speaker": speaker})
     return attributed
