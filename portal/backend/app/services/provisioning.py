@@ -101,7 +101,7 @@ REDIS_URI=redis://:{settings.redis_password}@redis:6379
 LITELLM_API_KEY={effective_litellm_key}
 
 # Web search (shared services on klai-net)
-SEARXNG_INSTANCE_URL=http://searxng:8888
+SEARXNG_INSTANCE_URL=http://searxng:8080
 FIRECRAWL_API_KEY={settings.firecrawl_internal_key}
 FIRECRAWL_API_URL=http://firecrawl-api:3002
 JINA_API_KEY=klai-internal
