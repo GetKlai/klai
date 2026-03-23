@@ -749,7 +749,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
-      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8100
+      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       LOG_LEVEL: INFO
     networks:
       - klai-net

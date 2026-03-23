@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, ForeignKey, Integer, String, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.connector import Base
@@ -38,8 +38,8 @@ class SyncRun(Base):
         index=True,
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     documents_total: Mapped[int] = mapped_column(Integer, default=0)
     documents_ok: Mapped[int] = mapped_column(Integer, default=0)
     documents_failed: Mapped[int] = mapped_column(Integer, default=0)

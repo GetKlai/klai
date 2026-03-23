@@ -1,4 +1,4 @@
-"""Unstructured.io document parser wrapper with temp file cleanup."""
+"""Document parser: plain text for text formats, Unstructured for binary formats."""
 
 import tempfile
 from pathlib import Path
@@ -9,24 +9,35 @@ logger = get_logger(__name__)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
+# Text-based formats that can be decoded directly without Unstructured
+_PLAIN_TEXT_SUFFIXES = {".md", ".txt", ".rst", ".csv"}
+
 
 def parse_document(content: bytes, filename: str) -> str:
-    """Parse a document using Unstructured.io and return extracted text.
+    """Parse a document and return extracted text.
 
-    The content is written to a temporary file which is cleaned up after parsing.
+    Text-based formats (.md, .txt, .rst, .csv) are decoded directly.
+    Binary formats (.pdf, .docx, .html) use Unstructured.io.
 
     Args:
         content: Raw file bytes.
         filename: Original filename (used for format detection).
 
     Returns:
-        Extracted text content as a single string with double-newline separators.
+        Extracted text content as a string.
 
     Raises:
         ValueError: If the file exceeds the 50 MB size limit.
     """
     if len(content) > MAX_FILE_SIZE:
         raise ValueError(f"File too large: {len(content)} bytes (max {MAX_FILE_SIZE} bytes)")
+
+    suffix = Path(filename).suffix.lower()
+
+    if suffix in _PLAIN_TEXT_SUFFIXES:
+        text = content.decode("utf-8", errors="replace")
+        logger.info("Parsed text document %s: %d characters", filename, len(text))
+        return text
 
     from unstructured.partition.auto import partition
 

@@ -66,6 +66,9 @@ class GitHubAdapter(BaseAdapter):
         GitHub installation tokens are valid for 1 hour. The cache returns
         the existing token until 60 s before expiry, then fetches a new one.
 
+        Uses raw httpx with Bearer authorization because gidgethub sends
+        ``Authorization: token`` which GitHub App endpoints reject.
+
         Args:
             installation_id: GitHub App installation ID.
         """
@@ -76,28 +79,32 @@ class GitHubAdapter(BaseAdapter):
                 return token
 
         app_jwt = self._make_app_jwt()
-        gh = GitHubAPI(self._http_client, "klai-connector", oauth_token=app_jwt)
-        response = await gh.post(
-            "/app/installations/{installation_id}/access_tokens",
-            url_vars={"installation_id": str(installation_id)},
-            data={},
+        response = await self._http_client.post(
+            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+            headers={
+                "Authorization": f"Bearer {app_jwt}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={},
         )
-        token = response["token"]  # type: ignore[index]
+        response.raise_for_status()
+        data = response.json()
+        token = data["token"]
 
         # Parse expiry from response ("expires_at": "2026-03-22T11:00:00Z")
-        # Store as monotonic timestamp for expiry checking
         expires_at = time.monotonic() + 3600  # fallback: 1 hour
-        if "expires_at" in response:
+        if "expires_at" in data:
             try:
                 from datetime import UTC, datetime
-                dt = datetime.fromisoformat(str(response["expires_at"]).replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(str(data["expires_at"]).replace("Z", "+00:00"))
                 wall_remaining = (dt - datetime.now(UTC)).total_seconds()
                 expires_at = time.monotonic() + wall_remaining
             except (ValueError, TypeError):
                 pass
 
         self._token_cache[installation_id] = (token, expires_at)
-        return token  # type: ignore[return-value]
+        return token
 
     # -- BaseAdapter interface ------------------------------------------------
 
@@ -120,13 +127,7 @@ class GitHubAdapter(BaseAdapter):
         gh = GitHubAPI(self._http_client, "klai-connector", oauth_token=token)
         await self._check_rate_limit(gh)
         tree = await gh.getitem(
-            "/repos/{owner}/{repo}/git/trees/{branch}",
-            url_vars={
-                "owner": repo_owner,
-                "repo": repo_name,
-                "branch": branch,
-            },
-            url_vars_extra={"recursive": "1"},  # type: ignore[arg-type]
+            f"/repos/{repo_owner}/{repo_name}/git/trees/{branch}?recursive=1",
         )
 
         refs: list[DocumentRef] = []
