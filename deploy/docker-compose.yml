@@ -61,7 +61,7 @@ services:
 
   # ─── Caddy (reverse proxy + wildcard TLS) ────────────────────────────────
   caddy:
-    image: caddy-hetzner:latest       # build via caddy/build.sh
+    image: ghcr.io/getklai/caddy-hetzner:latest
     restart: unless-stopped
     ports:
       - "80:80"
@@ -294,7 +294,7 @@ services:
 
   # ─── klai-mailer (Zitadel HTTP notification provider) ────────────────────
   klai-mailer:
-    build: ./klai-mailer
+    image: ghcr.io/getklai/klai-mailer:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8001:8000"
@@ -611,7 +611,7 @@ services:
 
   # ─── Klai Knowledge MCP ───────────────────────────────────────────────────
   klai-knowledge-mcp:
-    build: ./klai-knowledge-mcp
+    image: ghcr.io/getklai/klai-knowledge-mcp:latest
     restart: unless-stopped
     environment:
       KLAI_DOCS_API_BASE: http://docs-app:3000
@@ -723,7 +723,7 @@ services:
 
   # ─── Knowledge Ingest (RAG ingestion + retrieval for LiteLLM hook) ──────────
   knowledge-ingest:
-    build: ./knowledge-ingest
+    image: ghcr.io/getklai/knowledge-ingest:latest
     restart: unless-stopped
     environment:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
@@ -745,7 +745,7 @@ services:
 
   # ─── Klai Connector (external source sync to knowledge layer) ───────────────
   klai-connector:
-    build: ./klai-connector
+    image: ghcr.io/getklai/klai-connector:latest
     restart: unless-stopped
     env_file: ./klai-connector/.env
     environment:
