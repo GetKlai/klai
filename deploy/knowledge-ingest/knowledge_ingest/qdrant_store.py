@@ -107,17 +107,28 @@ async def delete_document(org_id: str, kb_slug: str, path: str) -> None:
     )
 
 
+_ALLOWED_METADATA_FIELDS = frozenset({"title", "kb_slug", "chunk_index", "created_at"})
+
+
 async def search(
     org_id: str,
     query_vector: list[float],
     top_k: int = 5,
     kb_slugs: list[str] | None = None,
+    user_id: str | None = None,
 ) -> list[dict]:
+    """Search for chunks matching the query vector.
+
+    user_id filter is applied only when kb_slugs contains "personal" — it has
+    no effect for org-scope or other KB slugs.
+    """
     client = get_client()
 
     must = [FieldCondition(key="org_id", match=MatchValue(value=org_id))]
     if kb_slugs:
         must.append(FieldCondition(key="kb_slug", match=MatchAny(any=kb_slugs)))
+    if user_id and kb_slugs and "personal" in kb_slugs:
+        must.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
 
     results = await client.search(
         COLLECTION,
@@ -134,7 +145,7 @@ async def search(
             "metadata": {
                 k: v
                 for k, v in r.payload.items()
-                if k not in ("text", "org_id", "chunk_index")
+                if k in _ALLOWED_METADATA_FIELDS
             },
         }
         for r in results

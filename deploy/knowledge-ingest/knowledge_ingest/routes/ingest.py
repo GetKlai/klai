@@ -3,6 +3,9 @@ Ingest routes:
   POST /ingest/v1/document     — direct document ingest
   POST /ingest/v1/webhook/gitea — Gitea push webhook
 """
+import hashlib
+import hmac
+import json
 import logging
 import re
 import unicodedata
@@ -77,8 +80,23 @@ async def gitea_webhook(request: Request) -> dict:
     Repo naming convention: org-{org_slug}/{kb_slug}
     Ingest uses org_id from Gitea org config (fetched via Gitea API).
     """
+    # Must read raw bytes before json.loads; body stream is consumed after first read
+    raw_body = await request.body()
+
+    if settings.gitea_webhook_secret:
+        signature = request.headers.get("x-gitea-signature", "")
+        if not signature:
+            raise HTTPException(status_code=401, detail="Missing X-Gitea-Signature header")
+        expected = hmac.new(
+            settings.gitea_webhook_secret.encode(),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
     try:
-        body = await request.json()
+        body = json.loads(raw_body)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 

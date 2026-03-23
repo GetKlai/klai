@@ -25,6 +25,7 @@ KNOWLEDGE_RETRIEVE_URL = os.getenv(
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "2.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
 RETRIEVE_MIN_SCORE = float(os.getenv("KNOWLEDGE_RETRIEVE_MIN_SCORE", "0.4"))
+KNOWLEDGE_INGEST_SECRET = os.getenv("KNOWLEDGE_INGEST_SECRET", "")
 
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
@@ -74,6 +75,9 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         try:
+            headers: dict[str, str] = {}
+            if KNOWLEDGE_INGEST_SECRET:
+                headers["X-Internal-Secret"] = KNOWLEDGE_INGEST_SECRET
             async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
                 resp = await client.post(
                     KNOWLEDGE_RETRIEVE_URL,
@@ -81,7 +85,9 @@ class KlaiKnowledgeHook(CustomLogger):
                         "query": query,
                         "org_id": org_id,
                         "top_k": RETRIEVE_TOP_K,
+                        "kb_slugs": ["org"],
                     },
+                    headers=headers,
                 )
                 resp.raise_for_status()
                 result = resp.json()

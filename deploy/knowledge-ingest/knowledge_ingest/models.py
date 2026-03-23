@@ -1,19 +1,20 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class IngestRequest(BaseModel):
     org_id: str          # Zitadel org ID (used as Qdrant tenant scope)
     kb_slug: str         # e.g. "personal"
     path: str            # e.g. "my-note.md" (relative within KB)
-    content: str         # Full markdown content (with optional frontmatter)
+    content: str = Field(max_length=500_000)  # Full markdown content (with optional frontmatter)
     user_id: str | None = None  # Set for user-scoped personal KB
 
 
 class RetrieveRequest(BaseModel):
     org_id: str
-    query: str
-    top_k: int = 5
+    query: str = Field(max_length=2_000)
+    top_k: int = Field(default=5, ge=1, le=50)
     kb_slugs: list[str] | None = None  # None = all org KBs
+    user_id: str | None = None  # For personal-scope filtering
 
 
 class ChunkResult(BaseModel):
