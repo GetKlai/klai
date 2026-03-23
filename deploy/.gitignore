@@ -4,3 +4,5 @@
 .env.*
 !.env.example
 config.env
+klai-connector/**/__pycache__
+klai-connector/**/*.pyc
