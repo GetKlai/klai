@@ -55,6 +55,7 @@ volumes:
   gitea-data:
   infinity-models:
   qdrant-data:
+  vexa-recordings-data:
 
 services:
 
@@ -664,6 +665,10 @@ services:
       WEBHOOK_URL: https://${DOMAIN}/api/bots/internal/webhook
       WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_DIR: /var/lib/vexa/recordings
+    volumes:
+      - vexa-recordings-data:/var/lib/vexa/recordings
     deploy:
       resources:
         limits:

@@ -68,11 +68,43 @@ class VexaClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def get_recording(self, platform: str, native_meeting_id: str) -> bytes:
-        """Download the raw audio recording from Vexa."""
-        resp = await self._http.get(f"/recordings/{platform}/{native_meeting_id}/raw")
+    async def get_recording(self, vexa_meeting_id: int) -> tuple[bytes, int]:
+        """Download the raw audio recording from Vexa.
+
+        Returns (audio_bytes, recording_id) so the caller can delete the recording
+        from Vexa storage after a successful transcription.
+        """
+        # List recordings for this meeting — picks the most recent completed one.
+        resp = await self._http.get("/recordings", params={"meeting_id": vexa_meeting_id})
         resp.raise_for_status()
-        return resp.content
+        recordings = resp.json().get("recordings", [])
+
+        recording = None
+        media_file = None
+        for rec in recordings:
+            files = rec.get("media_files") or []
+            if files:
+                recording = rec
+                media_file = files[0]
+                break
+
+        if recording is None or media_file is None:
+            raise ValueError(f"No media files found for vexa meeting {vexa_meeting_id}")
+
+        recording_id = recording["id"]
+        media_file_id = media_file["id"]
+
+        raw_resp = await self._http.get(
+            f"/recordings/{recording_id}/media/{media_file_id}/raw",
+            timeout=120.0,
+        )
+        raw_resp.raise_for_status()
+        return raw_resp.content, recording_id
+
+    async def delete_recording(self, recording_id: int) -> None:
+        """Delete a recording and its media files from Vexa storage."""
+        resp = await self._http.delete(f"/recordings/{recording_id}")
+        resp.raise_for_status()
 
 
 vexa = VexaClient()
