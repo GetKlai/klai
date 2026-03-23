@@ -293,8 +293,9 @@ in the Gitea-backed documentation system.
 PARAMETERS:
   title     - page title
   content   - page content (markdown)
-  kb_name   - (optional) docs KB name; if omitted and org has multiple,
-              the tool will return the list so the user can choose
+  kb_name   - (optional) KB slug as returned by this tool; NEVER guess this
+              value — omit it and the tool will auto-select or return the list
+              of valid slugs to choose from
   page_path - (optional) explicit path; auto-generated from title if omitted
 """
 )
@@ -322,8 +323,8 @@ async def save_to_docs(
     if not org_slug:
         return "Error: X-Org-Slug header missing and DEFAULT_ORG_SLUG not set."
 
-    # Resolve KB name if not provided
-    if kb_name is None:
+    # Resolve KB name — always fetch list to validate, auto-select if only one
+    if True:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -343,15 +344,23 @@ async def save_to_docs(
         if not kbs:
             return "Error: geen documentatie-kennisbanken gevonden voor deze organisatie."
 
-        if len(kbs) == 1:
-            kb_name = kbs[0].get("slug") or kbs[0].get("name")
-        else:
-            options = ", ".join(
-                f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs
-            )
+        valid_slugs = [kb.get("slug") for kb in kbs if kb.get("slug")]
+
+        if kb_name is None:
+            if len(kbs) == 1:
+                kb_name = valid_slugs[0]
+            else:
+                options = ", ".join(
+                    f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs
+                )
+                return (
+                    f"Meerdere kennisbanken beschikbaar: {options}. "
+                    "Geef de slug op als kb_name bij de volgende aanroep."
+                )
+        elif kb_name not in valid_slugs:
+            options = ", ".join(valid_slugs)
             return (
-                f"Meerdere kennisbanken beschikbaar: {options}. "
-                "Geef de slug op als kb_name bij de volgende aanroep."
+                f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}."
             )
 
     # Build page path if not provided — land in inbox/ for manual organisation later
