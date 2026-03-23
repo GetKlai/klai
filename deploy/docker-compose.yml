@@ -278,6 +278,7 @@ services:
       - ./librechat/getklai/images:/app/client/public/images
       # Persistent patches - survive image updates until fixed upstream
       - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
+      - ./librechat/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
       - ./librechat/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
     depends_on:
       mongodb:
