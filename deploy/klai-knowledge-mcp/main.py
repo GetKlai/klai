@@ -13,6 +13,7 @@ Identity:  X-User-ID, X-Org-ID, X-Org-Slug request headers injected by
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import re
@@ -30,8 +31,13 @@ logger = logging.getLogger(__name__)
 KLAI_DOCS_API_BASE = os.environ["KLAI_DOCS_API_BASE"]  # http://docs-app:3000
 DOCS_INTERNAL_SECRET = os.environ["DOCS_INTERNAL_SECRET"]
 KNOWLEDGE_INGEST_URL = os.environ["KNOWLEDGE_INGEST_URL"]  # http://knowledge-ingest:8000
+KNOWLEDGE_INGEST_SECRET = os.getenv("KNOWLEDGE_INGEST_SECRET", "")
 PUBLIC_KB_BASE_URL = os.getenv("PUBLIC_KB_BASE_URL", "")  # https://kb.${DOMAIN}
+_INTERNAL_SECRET_HEADER = "X-Internal-Secret"
 DEFAULT_ORG_SLUG = os.getenv("DEFAULT_ORG_SLUG", "")
+
+# Path validation patterns
+_KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 VALID_ASSERTION_MODES: frozenset[str] = frozenset({"fact", "claim", "note"})
 
@@ -82,6 +88,20 @@ def _get_identity(ctx: Context) -> Identity:
     return Identity(user_id=user_id, org_id=org_id, org_slug=org_slug)
 
 
+def _validate_incoming_secret(ctx: Context) -> None:
+    """Validate X-Internal-Secret on incoming MCP requests.
+
+    Raises ValueError when the secret is configured but missing or incorrect.
+    No-ops when KNOWLEDGE_INGEST_SECRET is not set (gradual rollout).
+    """
+    if not KNOWLEDGE_INGEST_SECRET:
+        return
+    headers = ctx.request_context.request.headers
+    provided = headers.get(_INTERNAL_SECRET_HEADER.lower(), "")
+    if not provided or not hmac.compare_digest(provided, KNOWLEDGE_INGEST_SECRET):
+        raise ValueError("Invalid or missing X-Internal-Secret header.")
+
+
 # -- Helpers ------------------------------------------------------------------
 async def _save_to_ingest(
     org_id: str,
@@ -111,11 +131,16 @@ async def _save_to_ingest(
     if user_id is not None:
         payload["user_id"] = user_id
 
+    headers: dict[str, str] = {}
+    if KNOWLEDGE_INGEST_SECRET:
+        headers[_INTERNAL_SECRET_HEADER] = KNOWLEDGE_INGEST_SECRET
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{KNOWLEDGE_INGEST_URL}/ingest/v1/document",
                 json=payload,
+                headers=headers,
             )
     except httpx.RequestError:
         return False
@@ -186,6 +211,7 @@ async def save_personal_knowledge(
     source_note: str | None = None,
 ) -> str:
     try:
+        _validate_incoming_secret(ctx)
         identity = _get_identity(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
@@ -234,6 +260,7 @@ async def save_org_knowledge(
     source_note: str | None = None,
 ) -> str:
     try:
+        _validate_incoming_secret(ctx)
         identity = _get_identity(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
@@ -280,9 +307,17 @@ async def save_to_docs(
     page_path: str | None = None,
 ) -> str:
     try:
+        _validate_incoming_secret(ctx)
         identity = _get_identity(ctx)
     except ValueError as exc:
         return f"Error: {exc}"
+
+    # V009: reject path traversal in caller-supplied KB coordinates
+    if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
+        return "Error: kb_name contains invalid characters. Only alphanumeric, hyphens, and underscores are allowed."
+    if page_path is not None:
+        if ".." in page_path or "\\" in page_path or page_path.startswith("/"):
+            return "Error: page_path contains invalid path components."
 
     org_slug = identity.org_slug
     if not org_slug:
@@ -295,7 +330,7 @@ async def save_to_docs(
                 resp = await client.get(
                     f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs",
                     headers={
-                        "X-Internal-Secret": DOCS_INTERNAL_SECRET,
+                        _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
                         "X-User-ID": identity.user_id,
                     },
                 )
@@ -351,7 +386,7 @@ async def save_to_docs(
                 f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs/{kb_name}/pages/{page_path}",
                 json=request_body,
                 headers={
-                    "X-Internal-Secret": DOCS_INTERNAL_SECRET,
+                    _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
                     "X-User-ID": identity.user_id,
                     "Content-Type": "application/json",
                 },

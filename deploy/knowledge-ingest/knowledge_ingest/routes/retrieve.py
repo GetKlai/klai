@@ -21,6 +21,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         query_vector=query_vector,
         top_k=req.top_k,
         kb_slugs=req.kb_slugs,
+        user_id=req.user_id,
     )
     chunks = [
         ChunkResult(

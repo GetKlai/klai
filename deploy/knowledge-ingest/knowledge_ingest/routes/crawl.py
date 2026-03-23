@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
+from knowledge_ingest.utils.url_validator import validate_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -19,9 +20,13 @@ router = APIRouter()
 @router.post("/ingest/v1/crawl", response_model=CrawlResponse)
 async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     """Fetch a URL, convert HTML to markdown, and ingest via the standard pipeline."""
+    try:
+        await validate_url(request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     # Fetch URL
-    # verify=False: crawler fetches public content only, no credentials sent
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False, verify=True) as client:
         try:
             resp = await client.get(request.url, headers={"User-Agent": "KlaiBot/1.0"})
             resp.raise_for_status()
