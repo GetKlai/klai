@@ -10,7 +10,7 @@ export async function GET(
   { params }: { params: Promise<{ org: string }> }
 ) {
   const { org: orgSlug } = await params;
-  const payload = await requireAuth(request);
+  const payload = await requireAuthOrService(request);
   if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const org = await db.getOrgBySlug(orgSlug);

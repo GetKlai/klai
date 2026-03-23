@@ -642,7 +642,7 @@ services:
     image: ghcr.io/getklai/klai-knowledge-mcp:latest
     restart: unless-stopped
     environment:
-      KLAI_DOCS_API_BASE: http://docs-app:3000
+      KLAI_DOCS_API_BASE: http://docs-app:3010/docs
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
