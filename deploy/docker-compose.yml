@@ -667,8 +667,24 @@ services:
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       STORAGE_BACKEND: local
       LOCAL_STORAGE_DIR: /var/lib/vexa/recordings
+      # Use external PostgreSQL so recordings survive container restarts
+      DATABASE_URL: postgresql://vexa:${VEXA_DB_PASSWORD}@postgres:5432/vexa
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: vexa
+      DB_USER: vexa
+      DB_PASSWORD: ${VEXA_DB_PASSWORD}
+      # We transcribe in portal-api, not in vexa-bot-manager
+      SKIP_TRANSCRIPTION_CHECK: "true"
+      TRANSCRIBER_URL: http://whisper-server:8000
+      TRANSCRIBER_API_KEY: internal
+      ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
     volumes:
       - vexa-recordings-data:/var/lib/vexa/recordings
+      - /opt/klai/vexa-patches/process.py:/app/bot-manager/app/orchestrators/process.py:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -678,12 +694,13 @@ services:
       - klai-net
       - socket-proxy
       - vexa-bots
+      - net-postgres
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8056/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
