@@ -22,6 +22,20 @@ interface TranscriptSegment {
   speaker: string
 }
 
+interface SummaryStructured {
+  speakers: string[]
+  topics: string[]
+  decisions: string[]
+  action_items: { owner: string | null; task: string }[]
+  open_questions: string[]
+  next_steps: string[]
+}
+
+interface SummaryJson {
+  markdown: string
+  structured: SummaryStructured
+}
+
 interface MeetingDetail {
   id: string
   platform: string
@@ -36,6 +50,7 @@ interface MeetingDetail {
   started_at: string | null
   ended_at: string | null
   created_at: string
+  summary_json: SummaryJson | null
 }
 
 function formatTimestamp(seconds: number): string {
@@ -64,6 +79,14 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+function SummaryMarkdown({ markdown }: { markdown: string }) {
+  return (
+    <pre className="text-sm text-[var(--color-foreground)] whitespace-pre-wrap font-sans">
+      {markdown}
+    </pre>
+  )
+}
+
 function MeetingDetailPage() {
   const { meetingId } = Route.useParams()
   const auth = useAuth()
@@ -71,6 +94,7 @@ function MeetingDetailPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const { data: meeting, isLoading } = useQuery<MeetingDetail>({
     queryKey: ['meeting', meetingId, token],
@@ -96,6 +120,28 @@ function MeetingDetailPage() {
     },
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId, token] }),
+  })
+
+  const summarizeMutation = useMutation({
+    mutationFn: async (force: boolean) => {
+      const url = `${BOTS_BASE}/meetings/${meetingId}/summarize${force ? '?force=true' : ''}`
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(err.detail ?? 'Summarization failed')
+      }
+      return res.json()
+    },
+    onSuccess: () => {
+      setSummaryError(null)
+      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId, token] })
+    },
+    onError: (err: Error) => {
+      setSummaryError(err.message)
+    },
   })
 
   async function copyTranscript() {
@@ -230,6 +276,54 @@ function MeetingDetailPage() {
                 {meeting.transcript_text}
               </p>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {hasTranscript && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => summarizeMutation.mutate(!!meeting.summary_json)}
+            disabled={summarizeMutation.isPending}
+          >
+            {summarizeMutation.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {m.app_meetings_summary_loading()}
+              </>
+            ) : meeting.summary_json ? (
+              m.app_meetings_resummarize_button()
+            ) : (
+              m.app_meetings_summarize_button()
+            )}
+          </Button>
+        </div>
+      )}
+
+      {summaryError && (
+        <Card className="border-[var(--color-destructive)]">
+          <CardContent className="pt-4">
+            <p className="text-sm font-medium text-[var(--color-destructive)]">
+              {m.app_meetings_summary_error()}
+            </p>
+            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{summaryError}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {meeting.summary_json && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-medium">
+              {m.app_meetings_summary_title()}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="prose prose-sm max-w-none text-[var(--color-foreground)]">
+              <SummaryMarkdown markdown={meeting.summary_json.markdown} />
+            </div>
           </CardContent>
         </Card>
       )}

@@ -127,5 +127,20 @@ class VexaClient:
 
         raise ValueError(f"No completed audio recording found for vexa meeting {vexa_meeting_id}")
 
+    async def get_transcript_segments(self, platform: str, native_meeting_id: str) -> list[dict]:
+        """Fetch transcript segments with speaker labels from the Vexa API-gateway (port 8123).
+
+        Returns list of segment dicts: {start, end, text, speaker, language, absolute_start_time}
+        Raises httpx.HTTPStatusError on HTTP error, httpx.RequestError on network error.
+        """
+        async with httpx.AsyncClient(
+            base_url=settings.vexa_api_gateway_url,
+            headers={"X-API-Key": settings.vexa_api_key},
+            timeout=30.0,
+        ) as client:
+            resp = await client.get(f"/transcripts/{platform}/{native_meeting_id}")
+            resp.raise_for_status()
+            return resp.json().get("segments", [])
+
 
 vexa = VexaClient()
