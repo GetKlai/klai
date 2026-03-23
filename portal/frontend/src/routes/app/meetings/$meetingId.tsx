@@ -135,6 +135,21 @@ function MeetingDetailPage() {
     URL.revokeObjectURL(url)
   }
 
+  async function downloadAudio() {
+    if (!meeting || !token) return
+    const res = await fetch(`${BOTS_BASE}/meetings/${meetingId}/audio`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${meeting.meeting_title ?? 'opname'}.webm`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
@@ -224,6 +239,10 @@ function MeetingDetailPage() {
               <Button variant="outline" size="sm" onClick={downloadTranscript}>
                 <Download className="mr-1.5 h-3.5 w-3.5" />
                 {m.app_meetings_download()}
+              </Button>
+              <Button variant="outline" size="sm" onClick={downloadAudio} title="Download ruwe audio (debug)">
+                <Download className="mr-1.5 h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
+                Audio
               </Button>
             </div>
           </CardHeader>
