@@ -158,7 +158,8 @@ async def start_meeting(
     # Dispatch bot
     try:
         bot_resp = await vexa.start_bot(ref.platform, ref.native_meeting_id)
-        meeting.bot_id = str(bot_resp.get("bot_id", ""))
+        meeting.bot_id = str(bot_resp.get("bot_container_id") or bot_resp.get("id") or "")
+        meeting.vexa_meeting_id = bot_resp.get("id")
         meeting.status = "joining"
         meeting.started_at = datetime.now(UTC)
     except httpx.HTTPStatusError as exc:

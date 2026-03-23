@@ -21,27 +21,29 @@ from app.services.vexa import parse_meeting_url, vexa
 
 logger = logging.getLogger(__name__)
 
-# Bot-manager statuses that mean the bot is still active in the call
-_BOT_ACTIVE = {"joining", "in_call_recording", "recording", "waiting", "starting", "pending"}
+# Vexa meeting statuses that mean the bot is still active / in progress
+_BOT_ACTIVE = {"requested", "joining", "awaiting_admission", "active", "stopping"}
 POLL_INTERVAL = 30  # seconds
 
 
-async def _bot_ended(meeting: VexaMeeting) -> bool:
-    """Return True if the Vexa bot has left this meeting."""
+async def _bot_ended(meeting: VexaMeeting) -> tuple[bool, int | None]:
+    """Return (ended, vexa_meeting_id) — ended=True if the Vexa bot has left this meeting."""
     ref = parse_meeting_url(meeting.meeting_url)
     if ref is None:
-        return False
+        return False, None
     try:
         resp = await vexa.get_bot_status(ref.platform, ref.native_meeting_id)
         bot_status = resp.get("status", "")
-        return bool(bot_status) and bot_status not in _BOT_ACTIVE
+        vexa_id = resp.get("id")
+        ended = bool(bot_status) and bot_status not in _BOT_ACTIVE
+        return ended, vexa_id if ended else None
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            return True  # bot session is gone — meeting ended
+            return True, None  # bot session is gone — meeting ended
         logger.warning("Bot status check failed for meeting %s: %s", meeting.id, exc)
     except Exception as exc:
         logger.warning("Bot status check error for meeting %s: %s", meeting.id, exc)
-    return False
+    return False, None
 
 
 async def poll_loop() -> None:
@@ -54,7 +56,8 @@ async def poll_loop() -> None:
                 active = list(result.scalars().all())
 
             for meeting in active:
-                if not await _bot_ended(meeting):
+                ended, vexa_meeting_id = await _bot_ended(meeting)
+                if not ended:
                     continue
 
                 logger.info("Bot poll: meeting %s ended — triggering transcription", meeting.id)
@@ -71,6 +74,8 @@ async def poll_loop() -> None:
 
                     m.status = "processing"
                     m.ended_at = m.ended_at or datetime.now(UTC)
+                    if vexa_meeting_id and not m.vexa_meeting_id:
+                        m.vexa_meeting_id = vexa_meeting_id
                     await db.commit()
                     await db.refresh(m)
 

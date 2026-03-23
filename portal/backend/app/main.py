@@ -15,6 +15,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
+from app.services.bot_poller import poll_loop
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    import asyncio
+
     # Validate the Zitadel PAT before accepting traffic.
     # A wrong PAT makes ALL auth endpoints fail with 401, so crash early.
     import httpx
@@ -42,7 +45,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise SystemExit(1)
     logger.info("Zitadel PAT validated successfully")
 
+    poller_task = asyncio.create_task(poll_loop())
+    logger.info("Bot poller started")
+
     yield
+
+    poller_task.cancel()
     await vexa.close()
     await zitadel.close()
 

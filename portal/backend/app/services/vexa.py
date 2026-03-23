@@ -70,11 +70,28 @@ class VexaClient:
         resp = await self._http.delete(f"/bots/{platform}/{native_meeting_id}")
         resp.raise_for_status()
 
-    async def get_bot_status(self, platform: str, native_meeting_id: str) -> dict:
-        """Get the current status of a bot."""
-        resp = await self._http.get(f"/bots/{platform}/{native_meeting_id}")
+    async def get_meeting_by_native_id(self, platform: str, native_meeting_id: str) -> dict | None:
+        """Find a Vexa meeting by platform + native_meeting_id.
+
+        Queries GET /meetings and returns the most recent matching entry, or None.
+        """
+        resp = await self._http.get("/meetings")
         resp.raise_for_status()
-        return resp.json()
+        meetings = resp.json().get("meetings", [])
+        # Return the most recent matching meeting (highest id)
+        matches = [m for m in meetings if m.get("platform") == platform and m.get("native_meeting_id") == native_meeting_id]
+        return max(matches, key=lambda m: m["id"]) if matches else None
+
+    async def get_bot_status(self, platform: str, native_meeting_id: str) -> dict:
+        """Get the current status of a bot via the /meetings endpoint."""
+        meeting = await self.get_meeting_by_native_id(platform, native_meeting_id)
+        if meeting is None:
+            raise httpx.HTTPStatusError(
+                "Meeting not found",
+                request=httpx.Request("GET", "/meetings"),
+                response=httpx.Response(404),
+            )
+        return meeting
 
     async def get_recording(self, vexa_meeting_id: int) -> tuple[bytes, str]:
         """Download the raw audio recording from Vexa.
