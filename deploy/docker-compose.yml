@@ -705,13 +705,16 @@ services:
       DB_PASSWORD: ${VEXA_DB_PASSWORD}
       # We transcribe in portal-api, not in vexa-bot-manager
       SKIP_TRANSCRIPTION_CHECK: "true"
-      TRANSCRIBER_URL: http://whisper-server:8000
+      TRANSCRIBER_URL: http://whisper-server:8000/v1/audio/transcriptions
       TRANSCRIBER_API_KEY: internal
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
       ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
     volumes:
       - vexa-recordings-data:/var/lib/vexa/recordings
       - /opt/klai/vexa-patches/process.py:/app/bot-manager/app/orchestrators/process.py:ro
       - /opt/klai/vexa-patches/vexa-bot-dist:/app/vexa-bot/dist:ro
+      - /opt/klai/vexa-patches/schemas.py:/app/shared-models/shared_models/schemas.py:ro
     depends_on:
       postgres:
         condition: service_healthy
