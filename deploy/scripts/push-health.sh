@@ -141,7 +141,7 @@ push_exec klai-core-portal-api-1 \
 
 # SearXNG: privacy-preserving web search (Chat + Focus)
 push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://searxng:8888/')\"" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://searxng:8080/')\"" \
     "${KUMA_TOKEN_SEARXNG:-}" "Web Search"
 
 # Mailer: transactional email service
