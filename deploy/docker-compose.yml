@@ -264,6 +264,32 @@ services:
       - net-meilisearch
       - net-redis
 
+  # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
+  librechat-getklai:
+    image: ghcr.io/danny-avila/librechat:latest
+    container_name: librechat-getklai
+    restart: unless-stopped
+    env_file:
+      - ./librechat/getklai/.env
+    environment:
+      REDIS_URI: ${REDIS_URI}
+    volumes:
+      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat/getklai/images:/app/client/public/images
+      # Persistent patches - survive image updates until fixed upstream
+      - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
+      - ./librechat/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - klai-net
+      - net-mongodb
+      - net-meilisearch
+      - net-redis
+
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
