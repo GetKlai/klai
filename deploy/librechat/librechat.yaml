@@ -19,6 +19,10 @@ webSearch:
   rerankerType: "jina"
   jinaApiKey: "${JINA_API_KEY}"
   jinaApiUrl: "${JINA_API_URL}"
+  firecrawlOptions:
+    onlyMainContent: true
+    formats:
+      - markdown
 
 # ── Klai Knowledge MCP ────────────────────────────────────────────────────────
 # Exposes save_to_personal_kb to LibreChat agents.
@@ -72,3 +76,9 @@ modelSpecs:
       preset:
         endpoint: "Klai AI"
         model: "klai-primary"
+        systemPrompt: >
+          You are a helpful AI assistant.
+          When answering questions that required a web search, be concise:
+          summarize the key findings in clear, direct language and cite only
+          the most relevant sources. Do not repeat information across sources
+          unless they add distinct value.
