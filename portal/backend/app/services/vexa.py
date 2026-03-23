@@ -80,8 +80,7 @@ class VexaClient:
         meetings = resp.json().get("meetings", [])
         # Return the most recent matching meeting (highest id)
         matches = [
-            m for m in meetings
-            if m.get("platform") == platform and m.get("native_meeting_id") == native_meeting_id
+            m for m in meetings if m.get("platform") == platform and m.get("native_meeting_id") == native_meeting_id
         ]
         return max(matches, key=lambda m: m["id"]) if matches else None
 
