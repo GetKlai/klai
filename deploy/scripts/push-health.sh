@@ -46,82 +46,125 @@ push_exec() {
     fi
 }
 
-# ── Services with Docker healthchecks ────────────────────────────────────────
-# ── Product monitors (status.getklai.com Products section) ──────────────
+# ── Products ──────────────────────────────────────────────────────────────────
+
 # Chat: LibreChat health endpoint
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://librechat-klai:3080/health')\"" \
     "${KUMA_TOKEN_CHAT}" "Chat"
 
-push_healthcheck klai-core-mongodb-1  "${KUMA_TOKEN_MONGODB}"  "Conversations database"
-push_healthcheck klai-core-postgres-1 "${KUMA_TOKEN_POSTGRES}" "Account database"
-push_healthcheck klai-core-redis-1    "${KUMA_TOKEN_REDIS}"    "AI Request Cache"
-
-# ── Services on isolated networks (tested from a connected container) ─────────
-# Meilisearch: via librechat-klai (net-meilisearch)
-push_exec klai-core-librechat-klai-1 \
-    "wget -qO- http://meilisearch:7700/health 2>/dev/null | grep -q available" \
-    "${KUMA_TOKEN_MEILI}" "Search system"
-
-# Ollama: via litellm (klai-inference)
-push_exec klai-core-litellm-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://ollama:11434/')\"" \
-    "${KUMA_TOKEN_OLLAMA}" "Backup Language Model (LLM)"
-
-# ── Scribe + Research (via portal-api on klai-net) ───────────────────────────
-# scribe-api: receives audio, calls whisper-server internally
+# Scribe: scribe-api receives audio, calls whisper-server internally
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://scribe-api:8020/health')\"" \
     "${KUMA_TOKEN_SCRIBE}" "Scribe"
 
-# whisper-server: transcription engine behind scribe-api
-push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://whisper-server:8000/health')\"" \
-    "${KUMA_TOKEN_WHISPER}" "Transcription engine"
-
-# research-api: Focus notebooks + document Q&A
+# Focus: research-api (document Q&A + web research)
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://research-api:8030/health')\"" \
     "${KUMA_TOKEN_FOCUS}" "Focus"
 
-# ── Additional services on klai-net (via portal-api) ─────────────────────────
-# docs-app: Next.js app with no /api/health route — check TCP reachability instead
+# Docs: Next.js app — check TCP reachability (no /health route)
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import socket; s=socket.create_connection(('docs-app',3010),timeout=5); s.close()\"" \
     "${KUMA_TOKEN_DOCS}" "Docs"
 
-# gitea: Knowledge Base content store (internal only)
-push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://gitea:3000/api/healthz')\"" \
-    "${KUMA_TOKEN_GITEA}" "Knowledge Base storage"
-
-# Knowledge stack (tokens require manual Uptime Kuma setup + config.sops.env — see README.md)
-
-# qdrant: vector store for Knowledge module
-push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://qdrant:6333/healthz')\"" \
-    "${KUMA_TOKEN_QDRANT:-}" "Vector database"
-
-# knowledge-ingest: RAG ingestion pipeline + LiteLLM pre-call hook
+# Knowledge: knowledge-ingest product-level (RAG ingestion pipeline)
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://knowledge-ingest:8000/health')\"" \
-    "${KUMA_TOKEN_KNOWLEDGE:-}" "Knowledge ingestion"
+    "${KUMA_TOKEN_KNOWLEDGE:-}" "Knowledge"
 
-# infinity-reranker: cross-encoder reranking for RAG retrieval
+# ── Infrastructure ────────────────────────────────────────────────────────────
+
+# Portal API: tenant provisioning + auth gateway
 push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://infinity-reranker:7997/health')\"" \
-    "${KUMA_TOKEN_RERANKER:-}" "Reranker"
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health')\"" \
+    "${KUMA_TOKEN_PORTAL_API:-}" "Portal API"
 
-# firecrawl-api: web scraper for research-api (internal only)
+# MongoDB: conversation store (Chat)
+push_healthcheck klai-core-mongodb-1  "${KUMA_TOKEN_MONGODB}"  "Conversations Database"
+
+# PostgreSQL: accounts, meetings, knowledge (shared)
+push_healthcheck klai-core-postgres-1 "${KUMA_TOKEN_POSTGRES}" "Account Database"
+
+# Redis: LLM request cache + LibreChat session store
+push_healthcheck klai-core-redis-1    "${KUMA_TOKEN_REDIS}"    "AI Request Cache"
+
+# Meilisearch: LibreChat message search index
+push_exec klai-core-librechat-klai-1 \
+    "wget -qO- http://meilisearch:7700/health 2>/dev/null | grep -q available" \
+    "${KUMA_TOKEN_MEILI}" "Message Search"
+
+# Ollama: local fallback LLM (backup for LiteLLM)
+push_exec klai-core-litellm-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://ollama:11434/')\"" \
+    "${KUMA_TOKEN_OLLAMA}" "Backup Language Model"
+
+# Whisper: transcription engine (Scribe + Meetings via portal-api)
 push_exec klai-core-portal-api-1 \
-    "python3 -c \"import urllib.request; urllib.request.urlopen('http://firecrawl-api:3002/')\"" \
-    "${KUMA_TOKEN_FIRECRAWL:-}" "Firecrawl"
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://whisper-server:8000/health')\"" \
+    "${KUMA_TOKEN_WHISPER}" "Transcription Engine"
 
-# tei: text embeddings inference (BAAI/bge-m3, dense)
+# Docling: document-to-markdown conversion (Focus/research-api)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://docling-serve:5001/health')\"" \
+    "${KUMA_TOKEN_DOCLING:-}" "Document Processing"
+
+# Research API: service-level monitor (Focus product depends on this)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://research-api:8030/health')\"" \
+    "${KUMA_TOKEN_RESEARCH_API:-}" "Research API"
+
+# Gitea: docs content store (Docs product, Knowledge webhook source)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://gitea:3000/api/healthz')\"" \
+    "${KUMA_TOKEN_GITEA}" "Docs Storage"
+
+# Qdrant: vector store for Knowledge retrieval
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://qdrant:6333/healthz')\"" \
+    "${KUMA_TOKEN_QDRANT:-}" "Vector Database"
+
+# TEI: text embeddings (Knowledge ingestion + Focus retrieval)
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://tei:8080/health')\"" \
     "${KUMA_TOKEN_TEI:-}" "Embeddings"
 
-# ── Meeting bots ──────────────────────────────────────────────────────────────
-# vexa-bot-manager: meeting bot lifecycle manager (Docker-native healthcheck)
-push_healthcheck klai-core-vexa-bot-manager-1 "${KUMA_TOKEN_VEXA:-}" "Meeting bot manager"
+# Infinity Reranker: cross-encoder reranking for Chat RAG retrieval
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://infinity-reranker:7997/health')\"" \
+    "${KUMA_TOKEN_RERANKER:-}" "Reranker"
+
+# Firecrawl: web content fetcher (Chat web mode)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://firecrawl-api:3002/')\"" \
+    "${KUMA_TOKEN_FIRECRAWL:-}" "Web Content Fetcher"
+
+# SearXNG: privacy-preserving web search (Chat + Focus)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://searxng:8888/')\"" \
+    "${KUMA_TOKEN_SEARXNG:-}" "Web Search"
+
+# Mailer: transactional email service
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://klai-mailer:8000/health')\"" \
+    "${KUMA_TOKEN_MAILER:-}" "Email Service"
+
+# Vexa bot manager: meeting bot lifecycle (Docker-native healthcheck)
+push_healthcheck klai-core-vexa-bot-manager-1 "${KUMA_TOKEN_VEXA:-}" "Meeting Bot Manager"
+
+# ── Knowledge layer (service-level) ──────────────────────────────────────────
+
+# Knowledge Ingestion: RAG pipeline service (separate from Products "Knowledge")
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://knowledge-ingest:8000/health')\"" \
+    "${KUMA_TOKEN_KNOWLEDGE_INGEST:-}" "Knowledge Ingestion"
+
+# External Source Sync: klai-connector syncs GitHub → knowledge-ingest
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://klai-connector:8200/health')\"" \
+    "${KUMA_TOKEN_CONNECTOR:-}" "External Source Sync"
+
+# Knowledge MCP: bridge between Chat (LibreChat) and Knowledge layer
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import socket; s=socket.create_connection(('klai-knowledge-mcp',8080),timeout=5); s.close()\"" \
+    "${KUMA_TOKEN_KNOWLEDGE_MCP:-}" "Knowledge MCP"
