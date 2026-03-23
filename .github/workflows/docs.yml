@@ -29,12 +29,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: ./docs
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     needs: build-and-push
@@ -46,8 +53,7 @@ jobs:
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
-          key: ${{ secrets.CORE01_SSH_KEY }}
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
-            cd /opt/klai
-            docker compose pull docs-app
-            docker compose up -d --no-deps docs-app
+            docker pull ghcr.io/getklai/klai-docs:latest
+            cd /opt/klai && docker compose up -d --no-deps docs-app
