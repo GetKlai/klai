@@ -1,7 +1,7 @@
 # SPEC-MEETING-SUMMARY: Meeting Transcript Pipeline & AI Summarization
 
 **SPEC ID:** SPEC-MEETING-SUMMARY
-**Status:** Planned
+**Status:** Completed
 **Priority:** High
 **Created:** 2026-03-23
 
@@ -198,3 +198,36 @@ Add keys to `nl.json` and `en.json`:
 | `portal/frontend/src/routes/app/meetings/$meetingId.tsx` | Summary UI, button, loading state |
 | `portal/frontend/messages/nl.json` | New i18n keys |
 | `portal/frontend/messages/en.json` | New i18n keys |
+
+---
+
+## Implementation Notes
+
+**Implemented:** 2026-03-23 | **Branch:** `feature/SPEC-MEETING-SUMMARY` | **Commit:** `26cabb7`
+
+### Actual vs Planned
+
+All 10 planned files implemented as specified. Additional items:
+
+- `portal/backend/app/api/meetings.py` also received `_correlate_speakers()` — utility for future Whisper+speaker-event correlation (satisfies existing pre-written tests in `test_meetings.py`)
+- Migration filename: `o5p6q7r8s9t0_add_summary_json_to_vexa_meetings.py` (not `xxx_add_summary_json.py`)
+
+### Deployment Checklist
+
+1. **Run Alembic migration first** (backward compatible — nullable JSONB column):
+   ```bash
+   alembic upgrade head
+   ```
+2. **Set new environment variables** in `/opt/klai/.env`:
+   ```
+   VEXA_API_GATEWAY_URL=http://vexa-api-gateway:8123
+   LITELLM_BASE_URL=http://litellm:4000
+   SUMMARIZE_MODEL=gpt-4o-mini
+   ```
+3. Deploy backend, then frontend.
+
+### Test Results
+
+- 30/30 tests pass (`test_transcript_filter.py`: 14, `test_summarizer.py`: 6, `test_meetings.py`: 10)
+- Ruff: 0 errors
+- TypeScript build: clean (no errors)
