@@ -6,6 +6,7 @@ on:
     paths:
       - 'scribe/scribe-api/**'
       - '.github/workflows/scribe-api.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read

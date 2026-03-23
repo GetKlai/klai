@@ -6,6 +6,7 @@ on:
     paths:
       - 'focus/research-api/**'
       - '.github/workflows/research-api.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read

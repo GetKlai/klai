@@ -6,6 +6,7 @@ on:
     paths:
       - 'scribe/whisper-server/**'
       - '.github/workflows/whisper-server.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
