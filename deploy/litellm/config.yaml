@@ -1,11 +1,12 @@
 model_list:
-  # Primary: Mistral Small — best quality, for complex reasoning and analysis
+  # Primary: Mistral Small — for short prompts / simple questions (≤600 tokens)
   - model_name: klai-primary
     litellm_params:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
 
-  # Fast: Mistral Nemo (12B) — 2-3x faster, for web search and quick questions
+  # Fast: Mistral Nemo (12B) — for long prompts / web search (>600 tokens)
+  # Routed automatically by custom_router.py based on token count
   - model_name: klai-fast
     litellm_params:
       model: mistral/open-mistral-nemo
@@ -31,6 +32,7 @@ litellm_settings:
   num_retries: 2
   callbacks:
     - klai_knowledge.klai_knowledge_hook
+    - custom_router.token_router
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

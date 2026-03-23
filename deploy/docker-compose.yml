@@ -198,6 +198,7 @@ services:
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
+      - ./litellm/custom_router.py:/app/custom_router.py:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
