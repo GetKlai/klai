@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     meili_master_key: str = ""
     litellm_master_key: str = ""
     redis_password: str = ""
+    firecrawl_internal_key: str = ""  # FIRECRAWL_INTERNAL_KEY — shared web search API key
 
     # Provisioning paths (container-internal paths, mounted from host)
     caddy_tenants_path: str = "/caddy/tenants"  # per-tenant .caddyfile dir (caddy-tenants volume)
@@ -75,6 +76,7 @@ class Settings(BaseSettings):
 
     # Knowledge / Qdrant
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_api_key: str = ""
 
     # Vexa meeting bot manager
     vexa_bot_manager_url: str = "http://vexa-bot-manager:8056"

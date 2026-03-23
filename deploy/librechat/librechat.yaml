@@ -12,8 +12,13 @@ interface:
 #           Exposed as Jina-compatible /v1/rerank; no auth needed (network-isolated)
 webSearch:
   searchProvider: "searxng"
+  searxngInstanceUrl: "${SEARXNG_INSTANCE_URL}"
   scraperProvider: "firecrawl"
+  firecrawlApiKey: "${FIRECRAWL_API_KEY}"
+  firecrawlApiUrl: "${FIRECRAWL_API_URL}"
   rerankerType: "jina"
+  jinaApiKey: "${JINA_API_KEY}"
+  jinaApiUrl: "${JINA_API_URL}"
 
 # ── Klai Knowledge MCP ────────────────────────────────────────────────────────
 # Exposes save_to_personal_kb to LibreChat agents.
