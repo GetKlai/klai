@@ -17,7 +17,10 @@ const chunker = {
         const cleanedNewlines = fixedBackslashes.replace(/[\t ]*\n[\t \n]*/g, '\n');
         /** Cleaned up excessive spaces and tabs */
         const cleanedSpaces = cleanedNewlines.replace(/[ \t]+/g, ' ');
-        return cleanedSpaces.trim();
+        // Strip lone surrogates: text splitter can cut inside a UTF-16 surrogate pair
+        // (bold/italic Unicode like LinkedIn fancy text encodes as surrogate pairs)
+        const sanitized = cleanedSpaces.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+        return sanitized.trim();
     },
     splitText: async (text, options) => {
         const chunkSize = options?.chunkSize ?? 150;
@@ -28,7 +31,11 @@ const chunker = {
             chunkSize,
             chunkOverlap,
         });
-        return await splitter.splitText(text);
+        const chunks = await splitter.splitText(text);
+        // Strip lone surrogates that may result from splitting inside a surrogate pair
+        return chunks.map(chunk =>
+            chunk.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+        );
     },
     splitTexts: async (texts, options, logger) => {
         // Split multiple texts
