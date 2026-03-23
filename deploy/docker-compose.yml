@@ -688,7 +688,7 @@ services:
 
   # ─── Vexa meeting bot manager ───────────────────────────────────────────
   vexa-bot-manager:
-    image: vexaai/vexa-lite:latest
+    image: ghcr.io/getklai/vexa-lite:latest
     restart: unless-stopped
     environment:
       API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
@@ -709,10 +709,6 @@ services:
       TRANSCRIBER_URL: http://whisper-server:8000/v1/audio/transcriptions
       TRANSCRIBER_API_KEY: internal
       ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
-    volumes:
-      - /opt/klai/vexa-patches/process.py:/app/bot-manager/app/orchestrators/process.py:ro
-      - /opt/klai/vexa-patches/vexa-bot-dist:/app/vexa-bot/dist:ro
-      - /opt/klai/vexa-patches/schemas.py:/app/shared-models/shared_models/schemas.py:ro
     depends_on:
       postgres:
         condition: service_healthy
