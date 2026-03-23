@@ -6,6 +6,8 @@ split by personal and org scope.
 """
 
 import asyncio
+import base64
+import json
 import logging
 
 import httpx
@@ -28,6 +30,20 @@ QDRANT_COLLECTION = "klai_knowledge"
 class KnowledgeStats(BaseModel):
     personal_count: int
     org_count: int
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Decode JWT payload without signature verification.
+
+    Safe to use after the token has already been validated via get_userinfo.
+    """
+    try:
+        payload_b64 = token.split(".")[1]
+        # Add padding if needed
+        payload_b64 += "=" * (4 - len(payload_b64) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload_b64))
+    except Exception:
+        return {}
 
 
 async def _qdrant_count(filters: dict) -> int:
@@ -64,7 +80,12 @@ async def get_knowledge_stats(
             detail="Ongeldig of verlopen token",
         ) from exc
 
-    org_id = info.get("urn:zitadel:iam:user:resourceowner:id")
+    # resourceowner:id is not returned by /oidc/v1/userinfo — read from JWT payload
+    # (token already validated above via userinfo call)
+    jwt_claims = _decode_jwt_payload(credentials.credentials)
+    org_id = jwt_claims.get("urn:zitadel:iam:user:resourceowner:id") or info.get(
+        "urn:zitadel:iam:user:resourceowner:id"
+    )
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
