@@ -80,12 +80,20 @@ async def get_knowledge_stats(
             detail="Ongeldig of verlopen token",
         ) from exc
 
-    # resourceowner:id is not returned by /oidc/v1/userinfo — read from JWT payload
-    # (token already validated above via userinfo call)
+    # resourceowner:id is not in /oidc/v1/userinfo. Try JWT payload first,
+    # then fall back to Management API (uses PAT — no extra credentials needed).
     jwt_claims = _decode_jwt_payload(credentials.credentials)
     org_id = jwt_claims.get("urn:zitadel:iam:user:resourceowner:id") or info.get(
         "urn:zitadel:iam:user:resourceowner:id"
     )
+    if not org_id:
+        user_id = info.get("sub", "")
+        if user_id:
+            try:
+                user_data = await zitadel.get_user_by_id(user_id)
+                org_id = user_data.get("user", {}).get("details", {}).get("resourceOwner")
+            except Exception:
+                pass
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
