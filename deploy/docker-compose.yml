@@ -246,6 +246,7 @@ services:
       ALLOW_REGISTRATION: "false"
       ALLOW_SOCIAL_LOGIN: "true"
       ALLOW_SOCIAL_REGISTRATION: "true"
+      FIRECRAWL_INTERNAL_KEY: ${FIRECRAWL_INTERNAL_KEY}
     depends_on:
       mongodb:
         condition: service_healthy
