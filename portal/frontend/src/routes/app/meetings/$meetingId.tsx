@@ -132,36 +132,35 @@ function MeetingDetailPage() {
   return (
     <div className="p-8 space-y-6 max-w-3xl">
       <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-            {meeting.meeting_title ?? meeting.meeting_url}
-          </h1>
-          <StatusBadge status={meeting.status} />
-        </div>
-        <div className="flex items-center gap-2">
-          {canStop && (
-            <Button
-              variant="destructive"
-              onClick={() => stopMutation.mutate()}
-              disabled={stopMutation.isPending}
-            >
-              {stopMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Square className="mr-2 h-4 w-4" />
-              )}
-              {m.app_meetings_stop_button()}
-            </Button>
-          )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate({ to: '/app/transcribe' })}
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {m.app_meetings_back()}
+        </Button>
+        {canStop && (
           <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate({ to: '/app/transcribe' })}
+            variant="destructive"
+            onClick={() => stopMutation.mutate()}
+            disabled={stopMutation.isPending}
           >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            {m.app_meetings_back()}
+            {stopMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Square className="mr-2 h-4 w-4" />
+            )}
+            {m.app_meetings_stop_button()}
           </Button>
-        </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          {meeting.meeting_title ?? meeting.meeting_url}
+        </h1>
+        <StatusBadge status={meeting.status} />
       </div>
 
       {meeting.status === 'failed' && meeting.error_message && (
@@ -178,10 +177,9 @@ function MeetingDetailPage() {
       )}
 
       {ACTIVE_STATUSES.includes(meeting.status) && (
-        <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>{m.app_transcribe_auto_refresh()}</span>
-        </div>
+        <p className="text-sm text-[var(--color-muted-foreground)]">
+          {m.app_meetings_active_info()}
+        </p>
       )}
 
       {hasTranscript && (
