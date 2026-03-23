@@ -80,8 +80,9 @@ async def get_knowledge_stats(
             detail="Ongeldig of verlopen token",
         ) from exc
 
-    # resourceowner:id is not in /oidc/v1/userinfo. Try JWT payload first,
-    # then fall back to Management API (uses PAT — no extra credentials needed).
+    # Zitadel does not include resourceowner:id in JWT access tokens or userinfo.
+    # It IS available via introspection, but the portal app has no introspect credentials.
+    # Fallback: Management API get_user_by_id returns details.resourceOwner (PAT-authenticated).
     jwt_claims = _decode_jwt_payload(credentials.credentials)
     org_id = jwt_claims.get("urn:zitadel:iam:user:resourceowner:id") or info.get(
         "urn:zitadel:iam:user:resourceowner:id"
