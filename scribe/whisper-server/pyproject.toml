@@ -1,0 +1,12 @@
+[project]
+name = "whisper-server"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "faster-whisper>=1.1",
+    "python-multipart>=0.0.12",
+    "soundfile>=0.12",
+    "numpy>=1.26",
+]
