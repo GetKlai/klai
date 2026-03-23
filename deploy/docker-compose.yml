@@ -646,7 +646,6 @@ services:
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
-      PUBLIC_KB_BASE_URL: https://kb.${DOMAIN}
       PERSONAL_KB_NAME: personal
       # DEFAULT_ORG_SLUG can be set per-tenant if running a dedicated instance;
       # leave unset when X-Org-Slug is always sent by LibreChat.
