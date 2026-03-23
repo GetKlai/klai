@@ -709,6 +709,29 @@ services:
       - tei
       - postgres
 
+  # ─── Klai Connector (external source sync to knowledge layer) ───────────────
+  klai-connector:
+    build: ./klai-connector
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
+      ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
+      ZITADEL_CLIENT_ID: ${CONNECTOR_ZITADEL_CLIENT_ID}
+      ZITADEL_CLIENT_SECRET: ${CONNECTOR_ZITADEL_CLIENT_SECRET}
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY}
+      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8100
+      LOG_LEVEL: INFO
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+      knowledge-ingest:
+        condition: service_started
+
   # ─── Web search stack (LibreChat web mode) ───────────────────────────────────
 
   # Infinity: self-hosted Jina-compatible reranker using bge-reranker-v2-m3 (CPU).
