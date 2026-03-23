@@ -1,12 +1,12 @@
 ---
-paths: ["klai-website/src/**/*.astro", "klai-website/src/**/*.tsx", "klai-portal/frontend/src/**/*.tsx", "klai-portal/frontend/src/**/*.ts"]
+paths: ["portal/frontend/src/**/*.tsx", "portal/frontend/src/**/*.ts"]
 ---
 
 # Klai UI Styleguide
 
 > Authoritative visual and interaction reference for all Klai products (website, portal, future apps).
-> Full reference: `klai-claude/docs/styleguide.md`
-> Source of truth: `klai-website/src/styles/global.css` and `klai-portal/frontend/src/index.css`.
+> Full reference: `claude-docs/styleguide.md`
+> Source of truth: `portal/frontend/src/index.css`.
 
 ---
 
