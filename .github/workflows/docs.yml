@@ -7,6 +7,10 @@ on:
       - 'docs/**'
       - '.github/workflows/docs.yml'
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: getklai/klai-docs
@@ -14,9 +18,6 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
     steps:
       - uses: actions/checkout@v4
