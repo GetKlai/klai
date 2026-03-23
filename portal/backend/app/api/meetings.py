@@ -367,8 +367,9 @@ async def vexa_webhook(
         return {"status": "ignored"}
 
     # Non-completion status change: sync status and return
+    # Do NOT downgrade from "processing" — user may have already clicked Stop
     if payload.status is not None and payload.status != "completed":
-        if portal_status and meeting.status != portal_status:
+        if portal_status and meeting.status != portal_status and meeting.status != "processing":
             meeting.status = portal_status
             await db.commit()
             logger.info("Vexa webhook: synced status %s→%s for meeting %s", payload.status, portal_status, meeting.id)

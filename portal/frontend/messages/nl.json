@@ -155,6 +155,7 @@
   "app_transcribe_col_language": "Taal",
   "app_transcribe_col_duration": "Duur",
   "app_transcribe_col_date": "Aangemaakt",
+  "app_transcribe_col_source": "Bron",
   "app_transcribe_edit_label": "Naam bewerken",
   "app_transcribe_edit_save": "Opslaan",
   "app_transcribe_edit_cancel": "Annuleren",

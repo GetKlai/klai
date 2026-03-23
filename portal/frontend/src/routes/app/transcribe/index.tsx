@@ -53,6 +53,7 @@ interface MeetingListItem {
   created_at: string
   duration_seconds: number | null
   transcript_text: string | null
+  language: string | null
 }
 
 interface MeetingListResponse {
@@ -96,7 +97,7 @@ function meetingToUnified(item: MeetingListItem): UnifiedItem {
     source: 'meeting',
     title: item.meeting_title ?? item.meeting_url,
     text: item.transcript_text,
-    language: null,
+    language: item.language,
     duration_seconds: item.duration_seconds,
     created_at: item.created_at,
     status: item.status,
@@ -397,6 +398,9 @@ function TranscribePage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                         {m.app_transcribe_col_date()}
                       </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+                        {m.app_transcribe_col_source()}
+                      </th>
                       <th className="px-6 py-3 w-36" />
                     </tr>
                   </thead>
@@ -504,6 +508,13 @@ function TranscribePage() {
                           {/* Date */}
                           <td className="px-6 py-3 text-[var(--color-purple-deep)]">
                             {formatDate(item.created_at)}
+                          </td>
+
+                          {/* Source */}
+                          <td className="px-6 py-3 text-[var(--color-muted-foreground)] text-xs">
+                            {item.source === 'upload'
+                              ? m.app_transcribe_source_audio()
+                              : m.app_transcribe_source_meeting()}
                           </td>
 
                           {/* Actions */}
