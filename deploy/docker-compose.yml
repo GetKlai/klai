@@ -684,6 +684,7 @@ services:
     volumes:
       - vexa-recordings-data:/var/lib/vexa/recordings
       - /opt/klai/vexa-patches/process.py:/app/bot-manager/app/orchestrators/process.py:ro
+      - /opt/klai/vexa-patches/vexa-bot-dist:/app/vexa-bot/dist:ro
     depends_on:
       postgres:
         condition: service_healthy
