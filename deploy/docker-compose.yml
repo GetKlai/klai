@@ -317,6 +317,8 @@ services:
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
+      VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
+      VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
     networks:
       - klai-net
       - net-postgres
