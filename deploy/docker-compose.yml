@@ -707,11 +707,8 @@ services:
       SKIP_TRANSCRIPTION_CHECK: "true"
       TRANSCRIBER_URL: http://whisper-server:8000/v1/audio/transcriptions
       TRANSCRIBER_API_KEY: internal
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
       ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
     volumes:
-      - vexa-recordings-data:/var/lib/vexa/recordings
       - /opt/klai/vexa-patches/process.py:/app/bot-manager/app/orchestrators/process.py:ro
       - /opt/klai/vexa-patches/vexa-bot-dist:/app/vexa-bot/dist:ro
       - /opt/klai/vexa-patches/schemas.py:/app/shared-models/shared_models/schemas.py:ro
@@ -728,6 +725,7 @@ services:
       - socket-proxy
       - vexa-bots
       - net-postgres
+      - net-redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8056/"]
       interval: 30s
