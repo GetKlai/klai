@@ -54,7 +54,20 @@ docker compose up -d portal-api     # Recreates container, re-reads .env
 docker exec klai-core-portal-api-1 env | grep SOME_TOKEN
 ```
 
-**Rule:** After any change to `.env`, use `docker compose up -d [service]`, not `restart`.
+**Rule:** After any change to `.env` or any `env_file:` referenced in docker-compose.yml, use `docker compose up -d [service]`, not `restart`.
+
+**This applies to ALL env sources — including per-tenant env_file paths:**
+```bash
+# Added var to /opt/klai/librechat/getklai/.env
+echo 'KNOWLEDGE_INGEST_SECRET=abc123' >> /opt/klai/librechat/getklai/.env
+docker compose restart librechat-getklai   # WRONG — var still missing in container
+docker compose up -d librechat-getklai     # Correct — container recreated, var present
+```
+
+**Always verify after env changes:**
+```bash
+docker exec librechat-getklai printenv KNOWLEDGE_INGEST_SECRET
+```
 
 ---
 
