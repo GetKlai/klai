@@ -84,6 +84,7 @@ class MeetingResponse(BaseModel):
     language: str | None
     duration_seconds: int | None
     error_message: str | None
+    summary_json: dict | None
     started_at: datetime | None
     ended_at: datetime | None
     created_at: datetime
@@ -241,6 +242,51 @@ async def delete_meeting(
     await db.commit()
 
 
+@router.post("/meetings/{meeting_id}/summarize", response_model=dict)
+async def summarize_meeting_endpoint(
+    meeting_id: UUID,
+    force: bool = False,
+    user_id: str = Depends(_get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.summarizer import summarize_meeting
+
+    meeting = await db.scalar(
+        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
+    )
+    if meeting is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+
+    if not meeting.transcript_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No transcript available for summarization",
+        )
+
+    if meeting.summary_json and not force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Summary already exists. Use force=true to re-summarize.",
+        )
+
+    try:
+        summary = await summarize_meeting(
+            transcript_text=meeting.transcript_text,
+            segments=meeting.transcript_segments,
+            language=meeting.language or "en",
+        )
+    except Exception as exc:
+        logger.error("Summarization failed for meeting %s: %s", meeting_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Summarization failed: {exc}",
+        ) from exc
+
+    meeting.summary_json = summary
+    await db.commit()
+    return {"summary": summary}
+
+
 # -- Webhook from Vexa -------------------------------------------------------
 
 
@@ -285,12 +331,99 @@ class VexaWebhookPayload(BaseModel):
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
+def _correlate_speakers(
+    segments: list[dict],
+    speaker_events: list["SpeakerEvent"],
+    duration_seconds: float,
+) -> list[dict]:
+    """Assign speaker labels to Whisper segments using timed speaker events.
+
+    Each speaker event marks the start of a speaker's turn. A segment is
+    assigned to the speaker whose event most recently preceded the segment's
+    midpoint. Segments before the first event are returned unchanged.
+
+    Returns a new list; input is not mutated.
+    """
+    if not speaker_events:
+        return segments
+
+    # Sort events by timestamp
+    events = sorted(speaker_events, key=lambda e: e.timestamp)
+
+    # Assign sequential labels for unknown participants
+    unknown_labels: dict[int, str] = {}
+    unknown_counter = 0
+
+    def _speaker_label(event: "SpeakerEvent") -> str:
+        nonlocal unknown_counter
+        if event.participant_name:
+            return event.participant_name
+        idx = id(event)
+        if idx not in unknown_labels:
+            unknown_counter += 1
+            unknown_labels[idx] = f"Deelnemer {unknown_counter}"
+        return unknown_labels[idx]
+
+    result = []
+    for seg in segments:
+        midpoint = (seg.get("start", 0.0) + seg.get("end", 0.0)) / 2
+        # Find the last event that started before or at the midpoint
+        active_event = None
+        for ev in events:
+            if ev.timestamp <= midpoint:
+                active_event = ev
+            else:
+                break
+        if active_event is None:
+            result.append(dict(seg))
+        else:
+            result.append({**seg, "speaker": _speaker_label(active_event)})
+    return result
+
+
 async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
-    """Download audio from Vexa and transcribe. Updates meeting in place; caller must commit."""
+    """Fetch transcript segments from Vexa API-gateway; fall back to Whisper audio.
+
+    Primary path: fetch speaker-labeled segments from API-gateway (port 8123),
+    filter noise, store in transcript_segments, derive transcript_text.
+
+    Fallback: Whisper audio transcription (no speaker labels, transcript_segments = NULL).
+
+    Updates meeting in place; caller must commit.
+    """
+    from app.services.transcript_filter import filter_segments
+
     try:
         if meeting.vexa_meeting_id is None:
             raise ValueError("vexa_meeting_id is not set — cannot look up recording")
 
+        # -- Primary path: Vexa API-gateway segments --------------------------
+        segments_fetched: list[dict] = []
+        try:
+            raw_segments = await vexa.get_transcript_segments(
+                meeting.platform, meeting.native_meeting_id
+            )
+            if raw_segments:
+                segments_fetched = filter_segments(raw_segments)
+        except Exception as exc:
+            logger.warning("API-gateway segment fetch failed, falling back to Whisper: %s", exc)
+
+        if segments_fetched:
+            meeting.transcript_segments = segments_fetched
+            meeting.transcript_text = "\n".join(
+                f"{seg.get('speaker', 'Unknown')}: {seg.get('text', '')}"
+                for seg in segments_fetched
+            )
+            # Detect language from first non-empty segment
+            for seg in segments_fetched:
+                if seg.get("language"):
+                    meeting.language = seg["language"]
+                    break
+            meeting.status = "done"
+            meeting.error_message = None
+            return
+
+        # -- Fallback: Whisper audio transcription ----------------------------
         # Vexa finalizes the recording asynchronously after the meeting ends.
         # Poll until the recording is ready (max 5 attempts x 5s = 25s).
         audio_bytes: bytes | None = None
