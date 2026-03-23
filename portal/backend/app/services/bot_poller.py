@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Vexa meeting statuses that mean the bot is still active / in progress
 _BOT_ACTIVE = {"requested", "joining", "awaiting_admission", "active", "stopping"}
-POLL_INTERVAL = 30  # seconds
+POLL_INTERVAL = 10  # seconds — Vexa's own documented polling interval
 PROCESSING_TIMEOUT_MINUTES = 10  # retry transcription after this many minutes stuck in "processing"
 
 
