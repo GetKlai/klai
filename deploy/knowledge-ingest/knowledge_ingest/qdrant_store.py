@@ -59,6 +59,7 @@ async def upsert_chunks(
     chunks: list[str],
     vectors: list[list[float]],
     extra_payload: dict | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Upsert chunks for a document. Deletes old points for same path first."""
     client = get_client()
@@ -79,6 +80,8 @@ async def upsert_chunks(
         return
 
     base_payload = {"org_id": org_id, "kb_slug": kb_slug, "path": path}
+    if user_id:
+        base_payload["user_id"] = user_id
     if extra_payload:
         base_payload.update(extra_payload)
 

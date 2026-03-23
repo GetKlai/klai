@@ -61,6 +61,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         chunks=texts,
         vectors=vectors,
         extra_payload={"title": title},
+        user_id=req.user_id,
     )
     await pg_store.record_ingest(req.org_id, req.kb_slug, req.path, len(chunks))
 
