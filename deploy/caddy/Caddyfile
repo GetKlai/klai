@@ -110,6 +110,19 @@
         reverse_proxy glitchtip-web:8000
     }
 
+    # Connector API (GitHub + external source sync) — must be before portal /api/* catch-all
+    @connector host connector.{$DOMAIN}
+    handle @connector {
+        rate_limit {
+            zone connector_per_ip {
+                key {remote_host}
+                events 60
+                window 1m
+            }
+        }
+        reverse_proxy klai-connector:8200
+    }
+
     # Portal API — stricter limit on sensitive provisioning endpoints
     @portal-api-sensitive {
         path /api/signup /api/billing/*
@@ -191,19 +204,6 @@
             }
         }
         reverse_proxy docs-app:3010
-    }
-
-    # Connector API (GitHub + external source sync)
-    @connector host connector.{$DOMAIN}
-    handle @connector {
-        rate_limit {
-            zone connector_per_ip {
-                key {remote_host}
-                events 60
-                window 1m
-            }
-        }
-        reverse_proxy klai-connector:8200
     }
 
     # Portal SPA — static files (fallback for all *.${DOMAIN})

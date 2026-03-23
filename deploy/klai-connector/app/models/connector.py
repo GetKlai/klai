@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, Integer, LargeBinary, String, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -43,10 +43,10 @@ class Connector(Base):
     encryption_key_version: Mapped[int] = mapped_column(Integer, default=1)
     schedule: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_sync_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     last_sync_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
     sync_runs: Mapped[list["SyncRun"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "SyncRun",
