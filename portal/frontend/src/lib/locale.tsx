@@ -36,12 +36,12 @@ function getInitialLocale(): Locale {
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     const initial = getInitialLocale()
-    paraglideSetLocale(initial)
+    void paraglideSetLocale(initial)
     return initial
   })
 
   function switchLocale(l: Locale) {
-    paraglideSetLocale(l)
+    void paraglideSetLocale(l)
     setLocaleState(l)
     localStorage.setItem(STORAGE_KEYS.locale, l)
   }

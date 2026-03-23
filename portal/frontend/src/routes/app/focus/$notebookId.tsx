@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import * as m from '@/paraglide/messages'
+import { SaveToKnowledgeModal } from '@/components/knowledge/SaveToKnowledgeModal'
 
 export const Route = createFileRoute('/app/focus/$notebookId')({
   component: NotebookDetailPage,
@@ -207,6 +208,7 @@ function NotebookDetailPage() {
   // ── Chat ─────────────────────────────────────────────────────────────────────
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [showSaveModal, setShowSaveModal] = useState(false)
   const [chatInput, setChatInput] = useState('')
   const [chatMode, setChatMode] = useState<ChatMode>('narrow')
   const [streaming, setStreaming] = useState(false)
@@ -618,9 +620,29 @@ function NotebookDetailPage() {
                 )}
               </Button>
             </div>
+            {messages.some((msg) => msg.role === 'assistant') && (
+              <div className="mt-2 flex justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs h-7"
+                  onClick={() => setShowSaveModal(true)}
+                >
+                  {m.knowledge_save_button()}
+                </Button>
+              </div>
+            )}
           </div>
         </Card>
       </div>
+      {showSaveModal && (
+        <SaveToKnowledgeModal
+          initialContent={[...messages].reverse().find((msg) => msg.role === 'assistant')?.content ?? ''}
+          initialTitle={[...messages].reverse().find((msg) => msg.role === 'assistant')?.content?.split(/[.!?]/)[0]?.slice(0, 80) ?? ''}
+          onClose={() => setShowSaveModal(false)}
+          onSuccess={() => setShowSaveModal(false)}
+        />
+      )}
     </div>
   )
 }

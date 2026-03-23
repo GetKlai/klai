@@ -1,8 +1,9 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, Mic, BookOpen, BookMarked, Video } from 'lucide-react'
+import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { authLogger } from '@/lib/logger'
@@ -18,8 +19,8 @@ function AppLayout() {
   const appNav = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
     { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
-    { to: '/app/meetings', label: m.app_tool_meetings_title(), icon: Video },
     { to: '/app/focus', label: m.app_tool_focus_title(), icon: BookOpen },
+    { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
   ]
 
@@ -54,6 +55,7 @@ function AppLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <HelpButton />
     </div>
   )
 }

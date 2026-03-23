@@ -76,7 +76,7 @@ function AccountPage() {
       </div>
 
       {/* Profile info (display only) */}
-      <Card>
+      <Card data-help-id="account-profile">
         <CardContent className="pt-6">
           <dl className="space-y-3">
             {name && (
@@ -96,7 +96,7 @@ function AccountPage() {
       </Card>
 
       {/* Language preference */}
-      <Card>
+      <Card data-help-id="account-2fa">
         <CardHeader>
           <CardTitle>{m.account_language_title()}</CardTitle>
           <CardDescription>

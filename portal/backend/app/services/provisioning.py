@@ -41,7 +41,13 @@ def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
     return slug
 
 
-def _generate_librechat_env(slug: str, client_id: str, client_secret: str, litellm_api_key: str | None = None) -> str:
+def _generate_librechat_env(
+    slug: str,
+    client_id: str,
+    client_secret: str,
+    litellm_api_key: str | None = None,
+    zitadel_org_id: str = "",
+) -> str:
     """Generate the per-tenant LibreChat .env file content."""
     domain = settings.domain
     jwt_secret = secrets.token_hex(32)
@@ -93,6 +99,10 @@ REDIS_URI=redis://:{settings.redis_password}@redis:6379
 
 # AI routing via LiteLLM
 LITELLM_API_KEY={effective_litellm_key}
+
+# Klai Knowledge MCP identity (used by librechat.yaml ${{...}} expansion)
+KLAI_ZITADEL_ORG_ID={zitadel_org_id}
+KLAI_ORG_SLUG={slug}
 """
 
 
@@ -256,7 +266,13 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             logger.warning("Could not add portal redirect URI for %s: %s", slug, exc)
 
         # Step 4: Write LibreChat .env file
-        env_content = _generate_librechat_env(slug, client_id, client_secret, litellm_api_key=litellm_team_key)
+        env_content = _generate_librechat_env(
+            slug,
+            client_id,
+            client_secret,
+            litellm_api_key=litellm_team_key,
+            zitadel_org_id=org.zitadel_org_id,
+        )
         container_data_base = Path(settings.librechat_container_data_path)
         tenant_dir = container_data_base / slug
         tenant_dir.mkdir(parents=True, exist_ok=True)

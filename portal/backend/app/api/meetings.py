@@ -3,15 +3,17 @@ Meeting bot API -- start/stop Vexa bots and serve transcripts.
 Route prefix: /api/bots
 """
 
+import asyncio
 import io
 import logging
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,8 +158,7 @@ async def start_meeting(
     # Dispatch bot
     try:
         bot_resp = await vexa.start_bot(ref.platform, ref.native_meeting_id)
-        meeting.bot_id = str(bot_resp.get("bot_container_id", ""))
-        meeting.vexa_meeting_id = bot_resp.get("id")
+        meeting.bot_id = str(bot_resp.get("bot_id", ""))
         meeting.status = "joining"
         meeting.started_at = datetime.now(UTC)
     except httpx.HTTPStatusError as exc:
@@ -244,10 +245,39 @@ class SpeakerEvent(BaseModel):
 
 
 class VexaWebhookPayload(BaseModel):
-    platform: str
-    native_meeting_id: str
+    """Accepts multiple webhook formats from Vexa:
+
+    - send_webhook.py (completion): flat {id, platform, native_meeting_id, status, ...}
+    - send_status_webhook.py: {event_type, meeting: {id, platform, native_meeting_id, status}}
+    - send_event_webhook (recording.completed): {event_type, recording: {...}} — no meeting ref
+    """
+
+    platform: str | None = None
+    native_meeting_id: str | None = None
+    vexa_meeting_id: int | None = None  # vexa internal integer meeting ID
+    status: str | None = None
     ended_at: str | None = None
     speaker_events: list[SpeakerEvent] = []
+
+    model_config = {"extra": "ignore"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        # send_status_webhook.py: {event_type, meeting: {id, platform, native_meeting_id, status}}
+        if "meeting" in data and "platform" not in data:
+            meeting = data["meeting"] or {}
+            return {
+                "vexa_meeting_id": meeting.get("id"),
+                "platform": meeting.get("platform"),
+                "native_meeting_id": meeting.get("native_meeting_id"),
+                "status": meeting.get("status"),
+                "ended_at": meeting.get("end_time"),
+            }
+        # send_webhook.py: flat {id, platform, native_meeting_id, status, ...}
+        return {**data, "vexa_meeting_id": data.get("id")}
 
 
 def _correlate_speakers(
@@ -294,78 +324,6 @@ def _correlate_speakers(
     return attributed
 
 
-async def _run_transcription(
-    meeting: VexaMeeting, db: AsyncSession, speaker_events: list[SpeakerEvent] | None = None
-) -> None:
-    """Download audio from Vexa and transcribe. Updates meeting in place; caller must commit."""
-    speaker_events = speaker_events or []
-    try:
-        if meeting.vexa_meeting_id is None:
-            raise ValueError("vexa_meeting_id is not set — cannot look up recording")
-
-        audio_bytes, recording_id = await vexa.get_recording(meeting.vexa_meeting_id)
-
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"{settings.whisper_server_url}/",
-                files={"audio_file": ("recording.wav", io.BytesIO(audio_bytes), "audio/wav")},
-            )
-            resp.raise_for_status()
-            whisper_result = resp.json()
-
-        raw_segments = whisper_result.get("segments", [])
-        duration = whisper_result.get("duration", 0)
-        language = whisper_result.get("language", "")
-
-        attributed_segments = _correlate_speakers(raw_segments, speaker_events, duration)
-
-        meeting.transcript_text = whisper_result.get("text", "")
-        meeting.transcript_segments = attributed_segments
-        meeting.language = language
-        meeting.duration_seconds = int(duration) if duration else None
-        meeting.status = "done"
-
-        # Delete the recording from Vexa storage now that transcription succeeded.
-        try:
-            await vexa.delete_recording(recording_id)
-        except Exception as del_exc:
-            logger.warning("Failed to delete Vexa recording %s: %s", recording_id, del_exc)
-
-    except Exception as exc:
-        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
-        meeting.status = "failed"
-        meeting.error_message = str(exc)
-
-
-@router.get("/meetings/{meeting_id}/audio")
-async def get_meeting_audio(
-    meeting_id: UUID,
-    user_id: str = Depends(_get_user_id),
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    """Download the raw audio recording for debugging. Only available after transcription."""
-    meeting = await db.scalar(
-        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
-    )
-    if meeting is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
-
-    if meeting.vexa_meeting_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not available")
-
-    try:
-        audio_bytes, _ = await vexa.get_recording(meeting.vexa_meeting_id)
-    except (httpx.HTTPStatusError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not available") from exc
-
-    filename = f"{meeting.meeting_title or meeting.native_meeting_id}.wav"
-    return Response(
-        content=audio_bytes,
-        media_type="audio/wav",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
 @router.post("/internal/webhook", status_code=status.HTTP_200_OK)
 async def vexa_webhook(
     payload: VexaWebhookPayload,
@@ -374,6 +332,21 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
+    # Ignore events without a meeting reference (e.g. recording.completed without platform)
+    if not payload.platform or not payload.native_meeting_id:
+        logger.info("Vexa webhook: no platform/native_meeting_id, ignoring")
+        return {"status": "ignored"}
+
+    # Map vexa status → portal status
+    VEXA_STATUS_MAP = {
+        "joining": "joining",
+        "awaiting_admission": "joining",
+        "active": "recording",
+        "recording": "recording",
+    }
+    portal_status = VEXA_STATUS_MAP.get(payload.status or "")
+
+    # Find the meeting by platform + native_meeting_id
     meeting = await db.scalar(
         select(VexaMeeting)
         .where(
@@ -387,10 +360,68 @@ async def vexa_webhook(
         logger.warning("Vexa webhook: no matching meeting for %s/%s", payload.platform, payload.native_meeting_id)
         return {"status": "ignored"}
 
+    # Non-completion status change: sync status and return
+    if payload.status is not None and payload.status != "completed":
+        if portal_status and meeting.status != portal_status:
+            meeting.status = portal_status
+            await db.commit()
+            logger.info("Vexa webhook: synced status %s→%s for meeting %s", payload.status, portal_status, meeting.id)
+        return {"status": "synced"}
+
     meeting.status = "processing"
     meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
     await db.commit()
 
-    await _run_transcription(meeting, db, payload.speaker_events)
+    # Download audio from Vexa and transcribe
+    try:
+        if not payload.vexa_meeting_id:
+            raise ValueError("No vexa_meeting_id in webhook payload — cannot fetch recording")
+
+        # Vexa finalizes the recording asynchronously after sending the webhook.
+        # Poll until the recording is ready (max 5 attempts x 5s = 25s).
+        audio_bytes: bytes | None = None
+        audio_fmt: str = "wav"
+        for attempt in range(5):
+            try:
+                audio_bytes, audio_fmt = await vexa.get_recording(payload.vexa_meeting_id)
+                break
+            except ValueError:
+                if attempt < 4:
+                    logger.info(
+                        "Recording not ready for vexa meeting %s (attempt %d/5), retrying in 5s…",
+                        payload.vexa_meeting_id,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(5)
+                else:
+                    raise
+        assert audio_bytes is not None
+        filename = f"recording.{audio_fmt}"
+        mime = "audio/wav" if audio_fmt == "wav" else f"audio/{audio_fmt}"
+
+        # POST audio directly to whisper-server (no auth required -- internal network)
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                f"{settings.whisper_server_url}/v1/audio/transcriptions",
+                files={"file": (filename, io.BytesIO(audio_bytes), mime)},
+            )
+            resp.raise_for_status()
+            whisper_result = resp.json()
+
+        duration = whisper_result.get("duration", 0)
+        language = whisper_result.get("language", "")
+
+        meeting.transcript_text = whisper_result.get("text", "")
+        meeting.transcript_segments = None  # whisper-server returns no segments
+        meeting.language = language
+        meeting.duration_seconds = int(duration) if duration else None
+        meeting.status = "done"
+        meeting.error_message = None
+
+    except Exception as exc:
+        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
+        meeting.status = "failed"
+        meeting.error_message = str(exc)
+
     await db.commit()
     return {"status": "ok"}

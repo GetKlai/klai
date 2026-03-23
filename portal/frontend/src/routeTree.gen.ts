@@ -32,6 +32,7 @@ import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
@@ -165,6 +166,11 @@ const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
   path: '/transcribe/',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
+  id: '/knowledge/',
+  path: '/knowledge/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppFocusIndexRoute = AppFocusIndexRouteImport.update({
   id: '/focus/',
   path: '/focus/',
@@ -285,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
+  '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
@@ -325,6 +332,7 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
+  '/app/knowledge': typeof AppKnowledgeIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
@@ -368,6 +376,7 @@ export interface FileRoutesById {
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
+  '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
@@ -412,6 +421,7 @@ export interface FileRouteTypes {
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
+    | '/app/knowledge/'
     | '/app/transcribe/'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/edit'
@@ -452,6 +462,7 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/app/docs'
     | '/app/focus'
+    | '/app/knowledge'
     | '/app/transcribe'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/edit'
@@ -494,6 +505,7 @@ export interface FileRouteTypes {
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
+    | '/app/knowledge/'
     | '/app/transcribe/'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug_/edit'
@@ -684,6 +696,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTranscribeIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/knowledge/': {
+      id: '/app/knowledge/'
+      path: '/knowledge'
+      fullPath: '/app/knowledge/'
+      preLoaderRoute: typeof AppKnowledgeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/focus/': {
       id: '/app/focus/'
       path: '/focus'
@@ -854,6 +873,7 @@ interface AppRouteRouteChildren {
   AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppDocsIndexRoute: typeof AppDocsIndexRoute
   AppFocusIndexRoute: typeof AppFocusIndexRoute
+  AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
@@ -875,6 +895,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppDocsIndexRoute: AppDocsIndexRoute,
   AppFocusIndexRoute: AppFocusIndexRoute,
+  AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,

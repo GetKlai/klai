@@ -1,9 +1,7 @@
-import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -13,10 +11,10 @@ from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.internal import router as internal_router
+from app.api.knowledge import router as knowledge_router
 from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
-from app.services.bot_poller import POLL_INTERVAL, poll_loop
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
@@ -27,6 +25,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Validate the Zitadel PAT before accepting traffic.
     # A wrong PAT makes ALL auth endpoints fail with 401, so crash early.
+    import httpx
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(
             f"{settings.zitadel_base_url}/auth/v1/users/me",
@@ -42,13 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise SystemExit(1)
     logger.info("Zitadel PAT validated successfully")
 
-    poll_task = asyncio.create_task(poll_loop())
-    logger.info("Bot poll loop started (interval: %ds)", POLL_INTERVAL)
-
     yield
-
-    poll_task.cancel()
-    await asyncio.gather(poll_task, return_exceptions=True)
     await vexa.close()
     await zitadel.close()
 
@@ -86,9 +80,10 @@ app.include_router(me.router)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(billing_router)
+app.include_router(knowledge_router)
+app.include_router(meetings_router)
 app.include_router(webhooks_router)
 app.include_router(internal_router)
-app.include_router(meetings_router)
 
 
 @app.get("/health")

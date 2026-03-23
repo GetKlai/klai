@@ -17,11 +17,13 @@ export const Route = createFileRoute('/app/chat')({
 
 function ChatPage() {
   return (
-    <iframe
-      src={chatUrl}
-      className="h-full w-full border-none"
-      title="Chat"
-      allow="clipboard-write; microphone"
-    />
+    <div className="h-full w-full" data-help-id="chat-page">
+      <iframe
+        src={chatUrl}
+        className="h-full w-full border-none"
+        title="Chat"
+        allow="clipboard-write; microphone"
+      />
+    </div>
   )
 }
