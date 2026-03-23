@@ -29,6 +29,9 @@ router = APIRouter(prefix="/api/bots", tags=["meetings"])
 bearer = HTTPBearer()
 
 ACTIVE_STATUSES = ("pending", "joining", "recording")
+# Statuses that count against the concurrent bot limit (includes processing to
+# prevent starting a new bot while a previous recording is still transcribing)
+_BILLABLE_STATUSES = (*ACTIVE_STATUSES, "processing")
 MAX_CONCURRENT_BOTS = 2
 
 
@@ -134,8 +137,9 @@ async def start_meeting(
             detail="Geen geldig vergader-URL (Google Meet, Zoom of Teams)",
         )
 
-    # Enforce system-wide concurrent limit
-    active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(ACTIVE_STATUSES)))
+    # Enforce system-wide concurrent limit (include "processing" to prevent
+    # starting a new bot while a previous recording is still transcribing)
+    active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(_BILLABLE_STATUSES)))
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -350,6 +354,7 @@ async def vexa_webhook(
         "awaiting_admission": "joining",
         "active": "recording",
         "recording": "recording",
+        "failed": "failed",
     }
     portal_status = VEXA_STATUS_MAP.get(payload.status or "")
 
@@ -375,6 +380,15 @@ async def vexa_webhook(
             await db.commit()
             logger.info("Vexa webhook: synced status %s→%s for meeting %s", payload.status, portal_status, meeting.id)
         return {"status": "synced"}
+
+    # Prevent double-transcription: if the bot_poller already set status to
+    # "processing" and started transcription, skip — don't run it again.
+    if meeting.status == "processing":
+        logger.info("Vexa webhook: meeting %s already processing, skipping duplicate trigger", meeting.id)
+        if payload.vexa_meeting_id and not meeting.vexa_meeting_id:
+            meeting.vexa_meeting_id = payload.vexa_meeting_id
+            await db.commit()
+        return {"status": "already_processing"}
 
     meeting.status = "processing"
     meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
