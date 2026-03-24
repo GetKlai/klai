@@ -20,7 +20,8 @@ from app.api.dependencies import (
     bearer,
 )
 from app.core.database import get_db
-from app.models.groups import PortalGroup, PortalGroupMembership
+from app.core.plans import get_plan_products
+from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
 from app.models.portal import PortalUser
 from app.services.audit import log_event
 
@@ -76,6 +77,20 @@ class GroupAdminToggleRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class GroupProductAssignRequest(BaseModel):
+    product: str
+
+
+class GroupProductOut(BaseModel):
+    product: str
+    enabled_at: datetime
+    enabled_by: str
+
+
+class GroupProductsResponse(BaseModel):
+    products: list[GroupProductOut]
 
 
 # ---------------------------------------------------------------------------
@@ -405,3 +420,135 @@ async def toggle_group_admin(
 
     action = "toegekend" if body.is_group_admin else "ingetrokken"
     return MessageResponse(message=f"Groepsbeheerder rechten {action}")
+
+
+# ---------------------------------------------------------------------------
+# Group product entitlements
+# ---------------------------------------------------------------------------
+
+
+@router.get("/groups/{group_id}/products", response_model=GroupProductsResponse)
+async def list_group_products(
+    group_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> GroupProductsResponse:
+    """List products assigned to a group. Org admin only."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id)
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    result = await db.execute(
+        select(PortalGroupProduct)
+        .where(PortalGroupProduct.group_id == group_id)
+        .order_by(PortalGroupProduct.product)
+    )
+    products = result.scalars().all()
+    return GroupProductsResponse(
+        products=[
+            GroupProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by)
+            for p in products
+        ]
+    )
+
+
+@router.post("/groups/{group_id}/products", response_model=GroupProductOut, status_code=status.HTTP_201_CREATED)
+async def assign_group_product(
+    group_id: int,
+    body: GroupProductAssignRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> GroupProductOut:
+    """Assign a product to a group. Org admin only, plan ceiling enforced."""
+    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id)
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    # Plan ceiling check
+    if body.product not in get_plan_products(org.plan):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Product not included in org plan",
+        )
+
+    record = PortalGroupProduct(
+        group_id=group_id,
+        org_id=org.id,
+        product=body.product,
+        enabled_by=caller_user_id,
+    )
+    db.add(record)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Product already assigned to group",
+        ) from exc
+
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=caller_user_id,
+        action="group_product.assigned",
+        resource_type="group_product",
+        resource_id=f"{group_id}:{body.product}",
+        details={"product": body.product, "group_id": group_id},
+    )
+    await db.commit()
+    await db.refresh(record)
+    return GroupProductOut(product=record.product, enabled_at=record.enabled_at, enabled_by=record.enabled_by)
+
+
+@router.delete("/groups/{group_id}/products/{product}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_group_product(
+    group_id: int,
+    product: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Revoke a product from a group. Org admin only."""
+    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id)
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    result = await db.execute(
+        select(PortalGroupProduct).where(
+            PortalGroupProduct.group_id == group_id,
+            PortalGroupProduct.product == product,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product toewijzing niet gevonden")
+
+    await db.delete(row)
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=caller_user_id,
+        action="group_product.revoked",
+        resource_type="group_product",
+        resource_id=f"{group_id}:{product}",
+        details={"product": product, "group_id": group_id},
+    )
+    await db.commit()
