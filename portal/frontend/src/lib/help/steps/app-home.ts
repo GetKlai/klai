@@ -27,4 +27,9 @@ export const appHomeSteps: HelpStep[] = [
     title: () => m.help_home_docs_title(),
     description: () => m.help_home_docs_desc(),
   },
+  {
+    id: 'home-tool-knowledge',
+    title: () => m.help_home_knowledge_title(),
+    description: () => m.help_home_knowledge_desc(),
+  },
 ]
