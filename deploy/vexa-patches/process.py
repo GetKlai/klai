@@ -22,6 +22,7 @@ import signal
 import logging
 import asyncio
 import subprocess
+import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone
@@ -280,20 +281,43 @@ async def start_bot_container(
         return None, None
 
     try:
-        # Open log file for the bot process
+        # Open log file for the bot process (kept for file-based access)
         log_handle = open(log_file, "w")
 
-        # Spawn the bot process
+        # Spawn the bot process — stdout/stderr piped so we can forward to docker logs
         proc = subprocess.Popen(
             ["node", BOT_SCRIPT_PATH],
             env=env,
-            stdout=log_handle,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=BOT_WORKING_DIR,
             preexec_fn=os.setsid  # Create new process group for clean termination
         )
 
         process_id = str(proc.pid)
+
+        # Forward bot stdout to both the log file and the Python logger (docker logs)
+        bot_logger = logging.getLogger(f"bot.{process_name}")
+
+        def _forward_logs(pipe, file_handle, bot_log):
+            try:
+                for raw_line in pipe:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip()
+                    file_handle.write(line + "\n")
+                    file_handle.flush()
+                    bot_log.info(line)
+            except Exception:
+                pass
+            finally:
+                file_handle.close()
+
+        log_thread = threading.Thread(
+            target=_forward_logs,
+            args=(proc.stdout, log_handle, bot_logger),
+            daemon=True,
+            name=f"bot-log-{process_id}",
+        )
+        log_thread.start()
 
         # Register in our tracking dictionary
         async with _registry_lock:
