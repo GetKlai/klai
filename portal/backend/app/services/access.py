@@ -16,10 +16,12 @@ from app.models.meetings import VexaMeeting
 
 async def get_accessible_meetings(
     user_id: str,
-    org_id: int,
+    org_id: int | None,
     db: AsyncSession,
 ) -> list[VexaMeeting]:
     """Return meetings the user can access: owned + group-scoped (within the same org)."""
+    if org_id is None:
+        return []
     group_ids_subquery = (
         select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
     )
