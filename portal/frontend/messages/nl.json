@@ -699,5 +699,19 @@
   "app_transcribe_source_meeting": "Vergadering opname",
   "app_transcribe_meeting_open": "Vergadering openen",
   "app_transcribe_auto_refresh": "Automatisch vernieuwen...",
-  "app_transcribe_count_total": "{count} items"
+  "app_transcribe_count_total": "{count} items",
+  "app_transcribe_detail_back": "Terug naar overzicht",
+  "app_transcribe_detail_transcript_title": "Transcriptie",
+  "app_transcribe_detail_summary_title": "Samenvatting",
+  "app_transcribe_summary_type_label": "Type opname",
+  "app_transcribe_summary_type_meeting": "Vergadering",
+  "app_transcribe_summary_type_recording": "Algemene opname",
+  "app_transcribe_summarize_button": "Samenvatten",
+  "app_transcribe_resummarize_button": "Opnieuw samenvatten",
+  "app_transcribe_summary_loading": "Samenvatting genereren...",
+  "app_transcribe_summary_error": "Samenvatting mislukt",
+  "app_transcribe_summary_copy_text": "Kopieer als tekst",
+  "app_transcribe_summary_copy_markdown": "Kopieer als Markdown",
+  "app_transcribe_summary_copy_done": "Gekopieerd",
+  "app_transcribe_has_summary": "Heeft samenvatting"
 }

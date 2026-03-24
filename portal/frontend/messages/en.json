@@ -699,5 +699,19 @@
   "app_transcribe_source_meeting": "Meeting recording",
   "app_transcribe_meeting_open": "Open meeting",
   "app_transcribe_auto_refresh": "Auto-refreshing...",
-  "app_transcribe_count_total": "{count} items"
+  "app_transcribe_count_total": "{count} items",
+  "app_transcribe_detail_back": "Back to overview",
+  "app_transcribe_detail_transcript_title": "Transcript",
+  "app_transcribe_detail_summary_title": "Summary",
+  "app_transcribe_summary_type_label": "Recording type",
+  "app_transcribe_summary_type_meeting": "Meeting",
+  "app_transcribe_summary_type_recording": "General recording",
+  "app_transcribe_summarize_button": "Summarize",
+  "app_transcribe_resummarize_button": "Re-summarize",
+  "app_transcribe_summary_loading": "Generating summary...",
+  "app_transcribe_summary_error": "Summary failed",
+  "app_transcribe_summary_copy_text": "Copy as text",
+  "app_transcribe_summary_copy_markdown": "Copy as Markdown",
+  "app_transcribe_summary_copy_done": "Copied",
+  "app_transcribe_has_summary": "Has summary"
 }

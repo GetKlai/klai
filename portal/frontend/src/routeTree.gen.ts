@@ -39,6 +39,7 @@ import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
 import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
+import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
@@ -200,6 +201,12 @@ const AppMeetingsMeetingIdRoute = AppMeetingsMeetingIdRouteImport.update({
   path: '/meetings/$meetingId',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppTranscribeTranscriptionIdRoute =
+  AppTranscribeTranscriptionIdRouteImport.update({
+    id: '/transcribe/$transcriptionId',
+    path: '/transcribe/$transcriptionId',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppFocusNewRoute = AppFocusNewRouteImport.update({
   id: '/focus/new',
   path: '/focus/new',
@@ -283,6 +290,7 @@ export interface FileRoutesByFullPath {
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -323,6 +331,7 @@ export interface FileRoutesByTo {
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
@@ -366,6 +375,7 @@ export interface FileRoutesById {
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
+  '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -410,6 +420,7 @@ export interface FileRouteTypes {
     | '/app/focus/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
+    | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/users/'
     | '/app/docs/'
@@ -450,6 +461,7 @@ export interface FileRouteTypes {
     | '/app/focus/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
+    | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/users'
     | '/app/docs'
@@ -492,6 +504,7 @@ export interface FileRouteTypes {
     | '/app/focus/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
+    | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/users/'
     | '/app/docs/'
@@ -733,6 +746,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMeetingsMeetingIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/transcribe/$transcriptionId': {
+      id: '/app/transcribe/$transcriptionId'
+      path: '/transcribe/$transcriptionId'
+      fullPath: '/app/transcribe/$transcriptionId'
+      preLoaderRoute: typeof AppTranscribeTranscriptionIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/focus/new': {
       id: '/app/focus/new'
       path: '/focus/new'
@@ -853,6 +873,7 @@ interface AppRouteRouteChildren {
   AppFocusNewRoute: typeof AppFocusNewRoute
   AppMeetingsMeetingIdRoute: typeof AppMeetingsMeetingIdRoute
   AppMeetingsStartRoute: typeof AppMeetingsStartRoute
+  AppTranscribeTranscriptionIdRoute: typeof AppTranscribeTranscriptionIdRoute
   AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppDocsIndexRoute: typeof AppDocsIndexRoute
   AppFocusIndexRoute: typeof AppFocusIndexRoute
@@ -874,6 +895,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppFocusNewRoute: AppFocusNewRoute,
   AppMeetingsMeetingIdRoute: AppMeetingsMeetingIdRoute,
   AppMeetingsStartRoute: AppMeetingsStartRoute,
+  AppTranscribeTranscriptionIdRoute: AppTranscribeTranscriptionIdRoute,
   AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppDocsIndexRoute: AppDocsIndexRoute,
   AppFocusIndexRoute: AppFocusIndexRoute,

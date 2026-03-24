@@ -18,6 +18,7 @@ import {
   Download,
   Video,
   Square,
+  FileText,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
@@ -36,6 +37,7 @@ interface TranscriptionItem {
   language: string
   duration_seconds: number
   created_at: string
+  has_summary?: boolean
 }
 
 interface TranscriptionListResponse {
@@ -74,6 +76,7 @@ interface UnifiedItem {
   uploadName?: string | null
   meeting_url?: string
   platform?: string
+  has_summary?: boolean
 }
 
 function toUnified(item: TranscriptionItem): UnifiedItem {
@@ -87,6 +90,7 @@ function toUnified(item: TranscriptionItem): UnifiedItem {
     created_at: item.created_at,
     status: 'done',
     uploadName: item.name,
+    has_summary: item.has_summary,
   }
 }
 
@@ -152,6 +156,14 @@ function TranscribePage() {
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+
+  function handleNavigateToDetail(item: UnifiedItem) {
+    if (item.source === 'upload') {
+      void navigate({ to: '/app/transcribe/$transcriptionId', params: { transcriptionId: item.id } })
+    } else {
+      void navigate({ to: '/app/meetings/$meetingId', params: { meetingId: String(item.id) } })
+    }
+  }
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState<string>('')
@@ -452,17 +464,24 @@ function TranscribePage() {
                                 <div className="min-w-0">
                                   {item.title ? (
                                     <div>
-                                      {item.source === 'meeting' && item.status === 'done' ? (
-                                        <button
-                                          type="button"
-                                          className="block truncate font-medium text-left hover:underline cursor-pointer"
-                                          onClick={() => void navigate({ to: '/app/meetings/$meetingId', params: { meetingId: String(item.id) } })}
-                                        >
-                                          {item.title}
-                                        </button>
-                                      ) : (
-                                        <span className="block truncate font-medium">{item.title}</span>
-                                      )}
+                                      <div className="flex items-center gap-1.5">
+                                        {(item.source === 'meeting' && item.status === 'done') || item.source === 'upload' ? (
+                                          <button
+                                            type="button"
+                                            className="block truncate font-medium text-left hover:underline cursor-pointer"
+                                            onClick={() => handleNavigateToDetail(item)}
+                                          >
+                                            {item.title}
+                                          </button>
+                                        ) : (
+                                          <span className="block truncate font-medium">{item.title}</span>
+                                        )}
+                                        {item.source === 'upload' && item.has_summary && (
+                                          <Tooltip label={m.app_transcribe_has_summary()}>
+                                            <FileText className="h-3 w-3 shrink-0 text-[var(--color-purple-deep)]" />
+                                          </Tooltip>
+                                        )}
+                                      </div>
                                       {item.text && (
                                         <span className="block truncate text-xs text-[var(--color-muted-foreground)]">
                                           {item.text}

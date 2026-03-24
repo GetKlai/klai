@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import NUMERIC, TEXT, TIMESTAMP, VARCHAR, Column
+from sqlalchemy import JSON, NUMERIC, TEXT, TIMESTAMP, VARCHAR, Column
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -21,4 +21,5 @@ class Transcription(Base):
     inference_time_seconds = Column(NUMERIC(8, 2), nullable=False)
     provider = Column(VARCHAR(64), nullable=False)
     model = Column(VARCHAR(128), nullable=False)
+    summary_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow)
