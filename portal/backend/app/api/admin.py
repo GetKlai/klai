@@ -3,19 +3,24 @@ Admin user management endpoints.
 All endpoints require authentication and resolve the caller's org from their OIDC token.
 """
 
+import logging
 from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.plans import PLAN_PRODUCTS, get_plan_products
 from app.models.portal import PortalOrg, PortalUser
+from app.models.products import PortalUserProduct
 from app.services.zitadel import zitadel
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 bearer = HTTPBearer()
@@ -24,7 +29,7 @@ bearer = HTTPBearer()
 async def _get_caller_org(
     credentials: HTTPAuthorizationCredentials,
     db: AsyncSession,
-) -> tuple[str, PortalOrg, PortalUser]:
+) -> tuple[str, "PortalOrg", "PortalUser"]:
     """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
@@ -48,7 +53,7 @@ async def _get_caller_org(
     return zitadel_user_id, org, caller_user
 
 
-def _require_admin(caller_user: PortalUser) -> None:
+def _require_admin(caller_user: "PortalUser") -> None:
     """Raise 403 if the caller is not an admin."""
     if caller_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang: admin rechten vereist")
@@ -107,6 +112,37 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class ProductAssignRequest(BaseModel):
+    product: str
+
+
+class ProductOut(BaseModel):
+    product: str
+    enabled_at: datetime
+    enabled_by: str
+
+
+class ProductsResponse(BaseModel):
+    products: list[str]
+
+
+class UserProductsResponse(BaseModel):
+    products: list[ProductOut]
+
+
+class ProductSummaryItem(BaseModel):
+    product: str
+    user_count: int
+
+
+class ProductSummaryResponse(BaseModel):
+    items: list[ProductSummaryItem]
+
+
+class PlanChangeRequest(BaseModel):
+    plan: str
+
+
 @router.get("/users", response_model=UsersResponse)
 async def list_users(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -155,8 +191,17 @@ async def invite_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> InviteResponse:
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
+
+    # Seat enforcement: lock the org row to prevent concurrent invites
+    locked_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id).with_for_update())
+    org = locked_result.scalar_one()
+
+    # TODO: filter by status == 'active' once AUTH-001 adds status column
+    active_count = await db.scalar(select(func.count()).select_from(PortalUser).where(PortalUser.org_id == org.id))
+    if active_count is not None and active_count >= org.seats:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seat limit reached")
 
     try:
         user_data = await zitadel.invite_user(
@@ -193,6 +238,19 @@ async def invite_user(
         preferred_language=body.preferred_language,
     )
     db.add(user_row)
+
+    # Auto-assign products based on org plan
+    plan_products = get_plan_products(org.plan)
+    for product in plan_products:
+        db.add(
+            PortalUserProduct(
+                zitadel_user_id=zitadel_user_id,
+                org_id=org.id,
+                product=product,
+                enabled_by=admin_user_id,
+            )
+        )
+
     await db.commit()
 
     return InviteResponse(
@@ -357,3 +415,183 @@ async def remove_user(
     await db.commit()
 
     return MessageResponse(message="Gebruiker verwijderd.")
+
+
+# ---------------------------------------------------------------------------
+# Product entitlement endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/products", response_model=ProductsResponse)
+async def list_available_products(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> ProductsResponse:
+    """Return products available under the org's current plan."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    return ProductsResponse(products=get_plan_products(org.plan))
+
+
+@router.post("/users/{zitadel_user_id}/products", status_code=status.HTTP_201_CREATED)
+async def assign_product(
+    zitadel_user_id: str,
+    body: ProductAssignRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Assign a product to a user within plan ceiling."""
+    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Plan ceiling check
+    if body.product not in get_plan_products(org.plan):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Product '{body.product}' exceeds plan ceiling",
+        )
+
+    # Check user belongs to this org
+    user = await db.scalar(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    # Check for duplicate
+    existing = await db.scalar(
+        select(PortalUserProduct).where(
+            PortalUserProduct.zitadel_user_id == zitadel_user_id,
+            PortalUserProduct.product == body.product,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Product already assigned")
+
+    db.add(
+        PortalUserProduct(
+            zitadel_user_id=zitadel_user_id,
+            org_id=org.id,
+            product=body.product,
+            enabled_by=admin_user_id,
+        )
+    )
+    await db.commit()
+    return MessageResponse(message="Product assigned")
+
+
+@router.delete("/users/{zitadel_user_id}/products/{product}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_product(
+    zitadel_user_id: str,
+    product: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Revoke a product from a user."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUserProduct).where(
+            PortalUserProduct.zitadel_user_id == zitadel_user_id,
+            PortalUserProduct.product == product,
+            PortalUserProduct.org_id == org.id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product assignment not found")
+
+    await db.delete(row)
+    await db.commit()
+
+
+@router.get("/products/summary", response_model=ProductSummaryResponse)
+async def product_summary(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> ProductSummaryResponse:
+    """Return per-product user counts for the org."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    rows = await db.execute(
+        select(PortalUserProduct.product, func.count().label("user_count"))
+        .where(PortalUserProduct.org_id == org.id)
+        .group_by(PortalUserProduct.product)
+    )
+    return ProductSummaryResponse(items=[ProductSummaryItem(product=r.product, user_count=r.user_count) for r in rows])
+
+
+@router.get("/users/{zitadel_user_id}/products", response_model=UserProductsResponse)
+async def get_user_products(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> UserProductsResponse:
+    """Return products assigned to a specific user."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify user belongs to org
+    user = await db.scalar(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    result = await db.execute(
+        select(PortalUserProduct).where(
+            PortalUserProduct.zitadel_user_id == zitadel_user_id,
+            PortalUserProduct.org_id == org.id,
+        )
+    )
+    products = result.scalars().all()
+    return UserProductsResponse(
+        products=[ProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by) for p in products]
+    )
+
+
+@router.patch("/plan", response_model=MessageResponse)
+async def change_plan(
+    body: PlanChangeRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Upgrade or downgrade org plan. On downgrade, revokes over-ceiling products."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    old_plan = org.plan
+    new_plan = body.plan
+
+    if new_plan not in PLAN_PRODUCTS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown plan: {new_plan}")
+
+    org.plan = new_plan
+
+    # Downgrade: revoke products that exceed the new plan ceiling
+    new_products = set(get_plan_products(new_plan))
+
+    revoked_result = await db.execute(select(PortalUserProduct).where(PortalUserProduct.org_id == org.id))
+    all_assignments = revoked_result.scalars().all()
+    for row in all_assignments:
+        if row.product not in new_products:
+            log.info(
+                "Plan downgrade: revoking product %s from user %s (org %s, %s -> %s)",
+                row.product,
+                row.zitadel_user_id,
+                org.id,
+                old_plan,
+                new_plan,
+            )
+            await db.delete(row)
+
+    await db.commit()
+    return MessageResponse(message=f"Plan bijgewerkt naar {new_plan}.")
