@@ -11,8 +11,8 @@ SYSTEM_GROUPS = [
     {"name": "Admin", "system_key": "admin", "products": []},
     {"name": "Group Management", "system_key": "group_management", "products": []},
     {"name": "Chat + Focus", "system_key": "chat", "products": ["chat"]},
-    {"name": "+ Scribe", "system_key": "scribe", "products": ["scribe"]},
-    {"name": "+ Knowledge + Docs", "system_key": "knowledge", "products": ["knowledge"]},
+    {"name": "+ Scribe", "system_key": "scribe", "products": ["chat", "scribe"]},
+    {"name": "+ Knowledge + Docs", "system_key": "knowledge", "products": ["chat", "scribe", "knowledge"]},
 ]
 
 
