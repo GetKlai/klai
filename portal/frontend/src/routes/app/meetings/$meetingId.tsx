@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download } from 'lucide-react'
+import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/meetings/$meetingId')({
@@ -79,12 +80,15 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-function SummaryMarkdown({ markdown }: { markdown: string }) {
-  return (
-    <pre className="text-sm text-[var(--color-foreground)] whitespace-pre-wrap font-sans">
-      {markdown}
-    </pre>
-  )
+/** Strip markdown syntax to produce plain text for clipboard copy */
+function stripMarkdown(md: string): string {
+  return md
+    .replace(/^#{1,6}\s+/gm, '')          // headings
+    .replace(/\*\*(.+?)\*\*/g, '$1')      // bold
+    .replace(/\*(.+?)\*/g, '$1')          // italic
+    .replace(/`(.+?)`/g, '$1')            // inline code
+    .replace(/^\s*[-*]\s+/gm, '- ')       // normalize bullets
+    .trim()
 }
 
 function MeetingDetailPage() {
@@ -94,6 +98,7 @@ function MeetingDetailPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
+  const [summaryCopied, setSummaryCopied] = useState<'text' | 'markdown' | null>(null)
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const { data: meeting, isLoading } = useQuery<MeetingDetail>({
@@ -162,6 +167,20 @@ function MeetingDetailPage() {
     URL.revokeObjectURL(url)
   }
 
+  async function copySummaryText() {
+    if (!meeting?.summary_json?.markdown) return
+    await navigator.clipboard.writeText(stripMarkdown(meeting.summary_json.markdown))
+    setSummaryCopied('text')
+    setTimeout(() => setSummaryCopied(null), 2000)
+  }
+
+  async function copySummaryMarkdown() {
+    if (!meeting?.summary_json?.markdown) return
+    await navigator.clipboard.writeText(meeting.summary_json.markdown)
+    setSummaryCopied('markdown')
+    setTimeout(() => setSummaryCopied(null), 2000)
+  }
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
@@ -176,38 +195,40 @@ function MeetingDetailPage() {
   const hasTranscript = meeting.status === 'done' && meeting.transcript_text
 
   return (
-    <div className="p-8 space-y-6 max-w-3xl">
-      <div className="flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate({ to: '/app/transcribe' })}
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.app_meetings_back()}
-        </Button>
-        {canStop && (
-          <Button
-            variant="destructive"
-            onClick={() => stopMutation.mutate()}
-            disabled={stopMutation.isPending}
-          >
-            {stopMutation.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Square className="mr-2 h-4 w-4" />
-            )}
-            {m.app_meetings_stop_button()}
-          </Button>
-        )}
-      </div>
-
-      <div className="space-y-2">
+    <div className="p-8 max-w-3xl">
+      <div className="flex items-center justify-between mb-6">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {meeting.meeting_title ?? meeting.meeting_url}
         </h1>
-        <StatusBadge status={meeting.status} />
+        <div className="flex items-center gap-2">
+          {canStop && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending}
+            >
+              {stopMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Square className="mr-2 h-4 w-4" />
+              )}
+              {m.app_meetings_stop_button()}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate({ to: '/app/transcribe' })}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.app_meetings_back()}
+          </Button>
+        </div>
       </div>
+
+      <div className="space-y-6">
+      <StatusBadge status={meeting.status} />
 
       {meeting.status === 'failed' && meeting.error_message && (
         <Card className="border-[var(--color-destructive)]">
@@ -315,14 +336,42 @@ function MeetingDetailPage() {
 
       {meeting.summary_json && (
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="text-base font-medium">
               {m.app_meetings_summary_title()}
             </CardTitle>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={copySummaryText}>
+                {summaryCopied === 'text' ? (
+                  <>
+                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                    {m.app_meetings_summary_copy_done()}
+                  </>
+                ) : (
+                  <>
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    {m.app_meetings_summary_copy_text()}
+                  </>
+                )}
+              </Button>
+              <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
+                {summaryCopied === 'markdown' ? (
+                  <>
+                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                    {m.app_meetings_summary_copy_done()}
+                  </>
+                ) : (
+                  <>
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    {m.app_meetings_summary_copy_markdown()}
+                  </>
+                )}
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="prose prose-sm max-w-none text-[var(--color-foreground)]">
-              <SummaryMarkdown markdown={meeting.summary_json.markdown} />
+            <div className="prose prose-sm max-w-none text-[var(--color-foreground)] prose-headings:text-[var(--color-purple-deep)] prose-headings:font-serif prose-strong:text-[var(--color-foreground)] prose-li:marker:text-[var(--color-muted-foreground)]">
+              <Markdown>{meeting.summary_json.markdown}</Markdown>
             </div>
           </CardContent>
         </Card>
@@ -333,6 +382,7 @@ function MeetingDetailPage() {
           {m.app_meetings_transcript_empty()}
         </p>
       )}
+      </div>
     </div>
   )
 }
