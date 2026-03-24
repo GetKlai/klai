@@ -268,61 +268,57 @@ function UsersPage() {
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+            {user.invite_pending && (
+              <Tooltip label={m.admin_users_delete()}>
                 <button
-                  aria-label={m.admin_users_col_actions()}
-                  className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
+                  onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
+                  aria-label={m.admin_users_delete()}
+                  className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                 >
-                  <MoreHorizontal className="h-4 w-4" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {user.status === 'active' && !user.invite_pending && (
+              </Tooltip>
+            )}
+            {!user.invite_pending && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    aria-label={m.admin_users_col_actions()}
+                    className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {user.status === 'active' && (
+                    <DropdownMenuItem
+                      onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
+                      disabled={isSelf}
+                    >
+                      <Pause className="mr-2 h-4 w-4" />
+                      {m.admin_users_action_suspend()}
+                    </DropdownMenuItem>
+                  )}
+                  {user.status === 'suspended' && (
+                    <DropdownMenuItem
+                      onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
+                    >
+                      <Play className="mr-2 h-4 w-4" />
+                      {m.admin_users_action_reactivate()}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
+                    onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
                     disabled={isSelf}
+                    className="text-[var(--color-destructive)]"
                   >
-                    <Pause className="mr-2 h-4 w-4" />
-                    {m.admin_users_action_suspend()}
+                    <UserX className="mr-2 h-4 w-4" />
+                    {m.admin_users_action_offboard()}
                   </DropdownMenuItem>
-                )}
-                {user.status === 'suspended' && (
-                  <DropdownMenuItem
-                    onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
-                  >
-                    <Play className="mr-2 h-4 w-4" />
-                    {m.admin_users_action_reactivate()}
-                  </DropdownMenuItem>
-                )}
-                {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
-                      disabled={isSelf}
-                      className="text-[var(--color-destructive)]"
-                    >
-                      <UserX className="mr-2 h-4 w-4" />
-                      {m.admin_users_action_offboard()}
-                    </DropdownMenuItem>
-                  </>
-                )}
-                {user.invite_pending && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
-                      disabled={isSelf}
-                      className="text-[var(--color-destructive)]"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      {m.admin_users_action_delete()}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         )
       },
