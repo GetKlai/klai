@@ -9,10 +9,9 @@ import {
 } from '@tanstack/react-table'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Loader2, Eye } from 'lucide-react'
 import * as m from '@/paraglide/messages'
-import { getLocale } from '@/paraglide/runtime'
-import { datetime } from '@/paraglide/registry'
 import { API_BASE } from '@/lib/api'
 
 export const Route = createFileRoute('/admin/groups/')({
@@ -22,17 +21,7 @@ export const Route = createFileRoute('/admin/groups/')({
 interface Group {
   id: number
   name: string
-  description: string | null
-  created_at: string
-  created_by: string
-}
-
-function formatDate(isoString: string): string {
-  return datetime(getLocale(), isoString, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
+  products: string[]
 }
 
 const columnHelper = createColumnHelper<Group>()
@@ -59,23 +48,21 @@ function AdminGroups() {
   const columns = [
     columnHelper.accessor('name', {
       header: () => m.admin_groups_name(),
-      cell: (info) => info.getValue(),
-    }),
-    columnHelper.accessor('description', {
-      header: () => m.admin_groups_description(),
       cell: (info) => (
-        <span className="text-[var(--color-muted-foreground)]">
-          {info.getValue() || '-'}
-        </span>
+        <span className="font-medium text-[var(--color-purple-deep)]">{info.getValue()}</span>
       ),
     }),
-    columnHelper.accessor('created_at', {
-      header: () => m.admin_groups_created_at(),
-      cell: (info) => formatDate(info.getValue()),
-    }),
-    columnHelper.accessor('created_by', {
-      header: () => m.admin_groups_created_by(),
-      cell: (info) => info.getValue(),
+    columnHelper.accessor('products', {
+      header: () => 'Product',
+      cell: (info) => (
+        <div className="flex gap-1">
+          {info.getValue().map((p) => (
+            <Badge key={p} variant="secondary" className="text-xs capitalize">
+              {p}
+            </Badge>
+          ))}
+        </div>
+      ),
     }),
     columnHelper.display({
       id: 'actions',
@@ -101,15 +88,10 @@ function AdminGroups() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-            {m.admin_groups_title()}
-          </h1>
-        </div>
-        <Button onClick={() => navigate({ to: '/admin/groups/new' })}>
-          {m.admin_groups_create()}
-        </Button>
+      <div className="space-y-1">
+        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          {m.admin_groups_title()}
+        </h1>
       </div>
 
       {error && (
@@ -133,9 +115,6 @@ function AdminGroups() {
               <p className="text-sm text-[var(--color-muted-foreground)]">
                 {m.admin_groups_empty_description()}
               </p>
-              <Button onClick={() => navigate({ to: '/admin/groups/new' })} variant="outline">
-                {m.admin_groups_create()}
-              </Button>
             </div>
           ) : (
             <table className="w-full text-sm">
@@ -178,7 +157,6 @@ function AdminGroups() {
           )}
         </CardContent>
       </Card>
-
     </div>
   )
 }

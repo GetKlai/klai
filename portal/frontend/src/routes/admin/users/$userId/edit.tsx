@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
@@ -47,10 +48,16 @@ interface User {
   invite_pending: boolean
 }
 
-interface EffectiveProduct {
-  product: string
-  source: 'direct' | 'group'
-  source_name?: string
+interface UserGroup {
+  id: number
+  name: string
+  products: string[]
+}
+
+interface AllGroup {
+  id: number
+  name: string
+  products: string[]
 }
 
 function EditUserPage() {
@@ -65,6 +72,7 @@ function EditUserPage() {
     last_name: '',
     preferred_language: 'nl',
   })
+  const [selectedGroupId, setSelectedGroupId] = useState('')
 
   const { data } = useQuery({
     queryKey: ['admin-users', token],
@@ -108,19 +116,81 @@ function EditUserPage() {
     },
   })
 
-  // --- Effective products query ---
+  // --- User groups query ---
 
-  const { data: effectiveProductsData } = useQuery({
-    queryKey: ['admin-user-effective-products', userId, token],
+  const { data: userGroupsData } = useQuery({
+    queryKey: ['admin-user-groups', userId, token],
     queryFn: async () => {
       const res = await fetch(
-        `${API_BASE}/api/admin/users/${userId}/effective-products`,
+        `${API_BASE}/api/admin/users/${userId}/groups`,
         { headers: { Authorization: `Bearer ${token}` } },
       )
-      if (!res.ok) return { products: [] as EffectiveProduct[] }
-      return res.json() as Promise<{ products: EffectiveProduct[] }>
+      if (!res.ok) return { groups: [] as UserGroup[] }
+      return res.json() as Promise<{ groups: UserGroup[] }>
     },
     enabled: !!token,
+  })
+
+  const { data: allGroupsData } = useQuery({
+    queryKey: ['admin-groups'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/groups`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return { groups: [] as AllGroup[] }
+      return res.json() as Promise<{ groups: AllGroup[] }>
+    },
+    enabled: !!token,
+  })
+
+  const userGroups = userGroupsData?.groups ?? []
+  const userGroupIds = new Set(userGroups.map((g) => g.id))
+  const availableGroups = (allGroupsData?.groups ?? []).filter((g) => !userGroupIds.has(g.id))
+
+  // --- Group membership mutations ---
+
+  const addToGroupMutation = useMutation({
+    mutationFn: async (groupId: number) => {
+      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}/members`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ zitadel_user_id: userId }),
+      })
+      if (!res.ok) throw new Error(`Failed to add to group (${res.status})`)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-groups', userId] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-members'] })
+      setSelectedGroupId('')
+      toast.success(m.admin_users_groups_add_success())
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
+  })
+
+  const removeFromGroupMutation = useMutation({
+    mutationFn: async (groupId: number) => {
+      const res = await fetch(
+        `${API_BASE}/api/admin/groups/${groupId}/members/${userId}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
+      if (!res.ok) throw new Error(`Failed to remove from group (${res.status})`)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-groups', userId] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-members'] })
+      toast.success(m.admin_users_groups_remove_success())
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
   })
 
   // --- Lifecycle hooks ---
@@ -136,6 +206,12 @@ function EditUserPage() {
 
   function handleCancel() {
     void navigate({ to: '/admin/users' })
+  }
+
+  function handleAddToGroup() {
+    if (selectedGroupId) {
+      addToGroupMutation.mutate(Number(selectedGroupId))
+    }
   }
 
   return (
@@ -209,30 +285,72 @@ function EditUserPage() {
         </CardContent>
       </Card>
 
-      {/* Effective products section */}
+      {/* Groups section */}
       <Card className="mt-6">
         <CardContent className="pt-6">
-          <h2 className="font-semibold text-lg mb-4">
-            {m.admin_users_effective_products_title()}
-          </h2>
-          {(effectiveProductsData?.products ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {m.admin_users_effective_products_empty()}
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-lg">{m.admin_users_groups_title()}</h2>
+          </div>
+
+          {userGroups.length === 0 ? (
+            <p className="text-sm text-muted-foreground mb-4">
+              {m.admin_users_groups_empty()}
             </p>
           ) : (
-            <div className="space-y-3">
-              {(effectiveProductsData?.products ?? []).map((ep) => (
-                <div key={ep.product} className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {ep.product}
-                  </span>
-                  <Badge variant="secondary" className="text-xs">
-                    {ep.source === 'direct'
-                      ? m.admin_users_effective_products_source_direct()
-                      : m.admin_users_effective_products_source_group({ group: ep.source_name ?? '' })}
-                  </Badge>
+            <div className="space-y-2 mb-4">
+              {userGroups.map((group) => (
+                <div key={group.id} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                      {group.name}
+                    </span>
+                    {group.products.map((p) => (
+                      <Badge key={p} variant="secondary" className="text-xs capitalize">
+                        {p}
+                      </Badge>
+                    ))}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={removeFromGroupMutation.isPending && removeFromGroupMutation.variables === group.id}
+                    onClick={() => removeFromGroupMutation.mutate(group.id)}
+                  >
+                    {removeFromGroupMutation.isPending && removeFromGroupMutation.variables === group.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
+                    )}
+                  </Button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {availableGroups.length > 0 && (
+            <div className="flex gap-2">
+              <Select
+                value={selectedGroupId}
+                onChange={(e) => setSelectedGroupId(e.target.value)}
+                className="flex-1"
+              >
+                <option value="">— {m.admin_users_groups_add()} —</option>
+                {availableGroups.map((g) => (
+                  <option key={g.id} value={String(g.id)}>
+                    {g.name}
+                    {g.products.length > 0 ? ` (${g.products.join(', ')})` : ''}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                size="sm"
+                disabled={!selectedGroupId || addToGroupMutation.isPending}
+                onClick={handleAddToGroup}
+              >
+                {addToGroupMutation.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : m.admin_users_groups_add()}
+              </Button>
             </div>
           )}
         </CardContent>
@@ -242,7 +360,6 @@ function EditUserPage() {
       {user && (
         <Card className="mt-6">
           <CardContent className="pt-6 flex flex-wrap gap-3">
-            {/* Suspend: show if active and not invite_pending */}
             {user.status === 'active' && !user.invite_pending && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -260,9 +377,7 @@ function EditUserPage() {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => suspendMutation.mutate(userId)}
-                    >
+                    <AlertDialogAction onClick={() => suspendMutation.mutate(userId)}>
                       {m.admin_users_action_suspend()}
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -270,7 +385,6 @@ function EditUserPage() {
               </AlertDialog>
             )}
 
-            {/* Reactivate: show if suspended */}
             {user.status === 'suspended' && (
               <Button
                 variant="outline"
@@ -282,7 +396,6 @@ function EditUserPage() {
               </Button>
             )}
 
-            {/* Offboard: show if active or suspended, and not invite_pending */}
             {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>

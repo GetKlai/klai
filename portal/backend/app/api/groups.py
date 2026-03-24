@@ -57,12 +57,23 @@ class GroupOut(BaseModel):
     id: int
     name: str
     description: str | None
+    products: list[str]
     created_at: datetime
     created_by: str
 
 
 class GroupsResponse(BaseModel):
     groups: list[GroupOut]
+
+
+class UserGroupOut(BaseModel):
+    id: int
+    name: str
+    products: list[str]
+
+
+class UserGroupsResponse(BaseModel):
+    groups: list[UserGroupOut]
 
 
 class MemberAddRequest(BaseModel):
@@ -117,12 +128,24 @@ async def list_groups(
 
     result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id).order_by(PortalGroup.name))
     groups = result.scalars().all()
+
+    products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
+    if groups:
+        prods_result = await db.execute(
+            select(PortalGroupProduct.group_id, PortalGroupProduct.product)
+            .where(PortalGroupProduct.group_id.in_([g.id for g in groups]))
+            .order_by(PortalGroupProduct.product)
+        )
+        for row in prods_result:
+            products_by_group[row.group_id].append(row.product)
+
     return GroupsResponse(
         groups=[
             GroupOut(
                 id=g.id,
                 name=g.name,
                 description=g.description,
+                products=products_by_group[g.id],
                 created_at=g.created_at,
                 created_by=g.created_by,
             )
@@ -164,6 +187,7 @@ async def create_group(
         id=group.id,
         name=group.name,
         description=group.description,
+        products=[],
         created_at=group.created_at,
         created_by=group.created_by,
     )
@@ -211,6 +235,7 @@ async def update_group(
         id=group.id,
         name=group.name,
         description=group.description,
+        products=[],
         created_at=group.created_at,
         created_by=group.created_by,
     )
@@ -539,3 +564,53 @@ async def revoke_group_product(
         details={"product": product, "group_id": group_id},
     )
     await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# User group membership view
+# ---------------------------------------------------------------------------
+
+
+@router.get("/users/{user_id}/groups", response_model=UserGroupsResponse)
+async def get_user_groups(
+    user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> UserGroupsResponse:
+    """List groups a user belongs to, with product info. Org admin only."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    user_result = await db.execute(
+        select(PortalUser).where(PortalUser.zitadel_user_id == user_id, PortalUser.org_id == org.id)
+    )
+    if not user_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    memberships_result = await db.execute(
+        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id)
+    )
+    group_ids = list(memberships_result.scalars().all())
+
+    if not group_ids:
+        return UserGroupsResponse(groups=[])
+
+    groups_result = await db.execute(
+        select(PortalGroup)
+        .where(PortalGroup.id.in_(group_ids), PortalGroup.org_id == org.id)
+        .order_by(PortalGroup.name)
+    )
+    groups = groups_result.scalars().all()
+
+    products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
+    prods_result = await db.execute(
+        select(PortalGroupProduct.group_id, PortalGroupProduct.product)
+        .where(PortalGroupProduct.group_id.in_([g.id for g in groups]))
+        .order_by(PortalGroupProduct.product)
+    )
+    for row in prods_result:
+        products_by_group[row.group_id].append(row.product)
+
+    return UserGroupsResponse(
+        groups=[UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id]) for g in groups]
+    )
