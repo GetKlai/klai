@@ -348,7 +348,7 @@ services:
       VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
       VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
-      IMAP_HOST: getklai.com
+      IMAP_HOST: mail.getklai.com
       IMAP_PORT: "993"
       IMAP_USERNAME: meet@getklai.com
       IMAP_POLL_INTERVAL_SECONDS: "60"
