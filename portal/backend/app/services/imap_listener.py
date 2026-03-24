@@ -76,7 +76,7 @@ async def _poll_once() -> None:
 
 async def _process_email(imap: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
     """Extract .ics content from a single email and process it."""
-    _status, msg_data = await asyncio.to_thread(imap.fetch, msg_id, "(RFC822)")
+    _status, msg_data = await asyncio.to_thread(imap.fetch, msg_id.decode(), "(RFC822)")
     if not msg_data or not msg_data[0]:
         return
 
@@ -118,17 +118,17 @@ def _extract_ics_parts(msg: Message) -> list[bytes]:
 
             if content_type == "text/calendar":
                 payload = part.get_payload(decode=True)
-                if payload:
+                if isinstance(payload, bytes):
                     parts.append(payload)
             elif filename.lower().endswith(".ics"):
                 payload = part.get_payload(decode=True)
-                if payload:
+                if isinstance(payload, bytes):
                     parts.append(payload)
     else:
         content_type = msg.get_content_type()
         if content_type == "text/calendar":
             payload = msg.get_payload(decode=True)
-            if payload:
+            if isinstance(payload, bytes):
                 parts.append(payload)
 
     return parts
