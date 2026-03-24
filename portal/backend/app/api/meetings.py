@@ -400,9 +400,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
         # -- Primary path: Vexa API-gateway segments --------------------------
         segments_fetched: list[dict] = []
         try:
-            raw_segments = await vexa.get_transcript_segments(
-                meeting.platform, meeting.native_meeting_id
-            )
+            raw_segments = await vexa.get_transcript_segments(meeting.platform, meeting.native_meeting_id)
             if raw_segments:
                 segments_fetched = filter_segments(raw_segments)
         except Exception as exc:
@@ -411,8 +409,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
         if segments_fetched:
             meeting.transcript_segments = segments_fetched
             meeting.transcript_text = "\n".join(
-                f"{seg.get('speaker', 'Unknown')}: {seg.get('text', '')}"
-                for seg in segments_fetched
+                f"{seg.get('speaker', 'Unknown')}: {seg.get('text', '')}" for seg in segments_fetched
             )
             # Detect language from first non-empty segment
             for seg in segments_fetched:

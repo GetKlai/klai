@@ -60,10 +60,15 @@ async def test_synthesize_summary() -> None:
 
 @pytest.mark.asyncio
 async def test_summarize_meeting_full_pipeline() -> None:
-    with patch("app.services.summarizer._call_llm", new=AsyncMock(side_effect=[
-        json.dumps(SAMPLE_FACTS),
-        "## Samenvatting\n\nProductieve vergadering.",
-    ])):
+    with patch(
+        "app.services.summarizer._call_llm",
+        new=AsyncMock(
+            side_effect=[
+                json.dumps(SAMPLE_FACTS),
+                "## Samenvatting\n\nProductieve vergadering.",
+            ]
+        ),
+    ):
         result = await summarize_meeting("transcript", None, "nl")
 
     assert "markdown" in result

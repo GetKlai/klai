@@ -72,10 +72,7 @@ async def _call_llm(system: str, user: str, temperature: float = 0.1) -> str:
 def _build_transcript_text(transcript_text: str, segments: list[dict] | None) -> str:
     """Build transcript string for the extraction prompt."""
     if segments:
-        return "\n".join(
-            f"{seg.get('speaker', 'Unknown')}: {seg.get('text', '')}"
-            for seg in segments
-        )
+        return "\n".join(f"{seg.get('speaker', 'Unknown')}: {seg.get('text', '')}" for seg in segments)
     return transcript_text
 
 
@@ -108,8 +105,7 @@ async def synthesize_summary(facts: dict, language: str) -> str:
     """Run synthesis prompt; return Markdown summary string."""
     lang_name = _LANGUAGE_NAMES.get(language or "en", "English")
     user_prompt = (
-        f"Write the summary in {lang_name}.\n\n"
-        f"Extracted facts:\n{json.dumps(facts, ensure_ascii=False, indent=2)}"
+        f"Write the summary in {lang_name}.\n\nExtracted facts:\n{json.dumps(facts, ensure_ascii=False, indent=2)}"
     )
     return await _call_llm(_SYNTHESIS_SYSTEM, user_prompt, temperature=0.3)
 
