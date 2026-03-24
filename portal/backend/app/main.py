@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from app.api import me, signup
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
+from app.api.groups import router as groups_router
 from app.api.billing import router as billing_router
 from app.api.internal import router as internal_router
 from app.api.knowledge import router as knowledge_router
@@ -90,6 +91,7 @@ app.include_router(signup.router)
 app.include_router(me.router)
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(groups_router)
 app.include_router(billing_router)
 app.include_router(knowledge_router)
 app.include_router(meetings_router)

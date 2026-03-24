@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -40,6 +40,9 @@ class PortalOrg(Base):
 
 class PortalUser(Base):
     __tablename__ = "portal_users"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended', 'offboarded')", name="ck_portal_users_status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     zitadel_user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -49,6 +52,9 @@ class PortalUser(Base):
     )
     preferred_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
