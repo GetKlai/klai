@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.plans import get_plan_products
+from app.models.groups import PortalGroup, PortalGroupProduct
 from app.models.portal import PortalOrg
 from app.services.secrets import portal_secrets
 from app.services.zitadel import zitadel
@@ -472,6 +474,26 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         org.provisioning_status = "ready"
         await db.commit()
         logger.info("Tenant %s provisioning complete", slug)
+
+        # Step 10: Create default groups for each product in the plan
+        try:
+            plan_products = get_plan_products(org.plan)
+            product_group_names = {"chat": "Chat users", "scribe": "Scribe users", "knowledge": "Knowledge users"}
+            groups: list[tuple[PortalGroup, str]] = []
+            for product in plan_products:
+                group_name = product_group_names.get(product)
+                if not group_name:
+                    continue
+                group = PortalGroup(org_id=org.id, name=group_name, created_by="system")
+                db.add(group)
+                groups.append((group, product))
+            await db.flush()  # one round-trip to get all group IDs
+            for group, product in groups:
+                db.add(PortalGroupProduct(group_id=group.id, org_id=org.id, product=product, enabled_by="system"))
+            await db.commit()
+            logger.info("Created default groups for %s (plan: %s)", slug, org.plan)
+        except Exception as exc:
+            logger.warning("Could not create default groups for %s: %s", slug, exc)
 
     except Exception as exc:
         logger.error("Provisioning failed for org_id=%d: %s", org_id, exc, exc_info=True)

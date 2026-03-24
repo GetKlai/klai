@@ -744,6 +744,10 @@
   "admin_users_products_enabled_by": "Ingeschakeld door",
   "admin_users_products_assign_success": "Product toegewezen",
   "admin_users_products_revoke_success": "Product ingetrokken",
+  "admin_users_effective_products_title": "Producttoegang",
+  "admin_users_effective_products_empty": "Geen producten toegewezen",
+  "admin_users_effective_products_source_direct": "Direct",
+  "admin_users_effective_products_source_group": "via {group}",
 
   "admin_groups_title": "Groepen",
   "admin_groups_empty": "Nog geen groepen aangemaakt",
@@ -776,6 +780,11 @@
   "admin_groups_members_success_removed": "Lid verwijderd",
   "admin_groups_members_error_already_member": "Gebruiker is al lid van deze groep",
   "admin_groups_members_admin_toggled": "Groepsbeheerder status bijgewerkt",
+
+  "admin_groups_products_title": "Producten",
+  "admin_groups_products_empty": "Geen producten toegewezen",
+  "admin_groups_products_assign_success": "Product toegewezen aan groep",
+  "admin_groups_products_revoke_success": "Product verwijderd van groep",
 
   "admin_nav_groups": "Groepen",
   "admin_home_groups_title": "Groepen",

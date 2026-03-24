@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import PLAN_PRODUCTS, get_plan_products
 from app.models.audit import PortalAuditLog
-from app.models.groups import PortalGroupMembership, PortalGroupProduct
+from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.audit import log_event
@@ -132,6 +132,16 @@ class ProductsResponse(BaseModel):
 
 class UserProductsResponse(BaseModel):
     products: list[ProductOut]
+
+
+class EffectiveProductOut(BaseModel):
+    product: str
+    source: Literal["direct", "group"]
+    source_name: str | None = None
+
+
+class EffectiveProductsResponse(BaseModel):
+    products: list[EffectiveProductOut]
 
 
 class ProductSummaryItem(BaseModel):
@@ -599,6 +609,58 @@ async def get_user_products(
     return UserProductsResponse(
         products=[ProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by) for p in products]
     )
+
+
+@router.get("/users/{zitadel_user_id}/effective-products", response_model=EffectiveProductsResponse)
+async def get_user_effective_products(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> EffectiveProductsResponse:
+    """Return effective products for a user with source attribution (direct or group name)."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify user belongs to org
+    user = await db.scalar(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    products: list[EffectiveProductOut] = []
+    seen: set[str] = set()
+
+    # Direct assignments
+    direct_result = await db.execute(
+        select(PortalUserProduct).where(PortalUserProduct.zitadel_user_id == zitadel_user_id)
+    )
+    for row in direct_result.scalars().all():
+        if row.product not in seen:
+            products.append(EffectiveProductOut(product=row.product, source="direct"))
+            seen.add(row.product)
+
+    # Group-inherited assignments
+    group_result = await db.execute(
+        select(PortalGroupProduct, PortalGroup.name.label("group_name"))
+        .join(PortalGroupMembership, PortalGroupProduct.group_id == PortalGroupMembership.group_id)
+        .join(PortalGroup, PortalGroupProduct.group_id == PortalGroup.id)
+        .where(PortalGroupMembership.zitadel_user_id == zitadel_user_id)
+    )
+    for row in group_result.all():
+        group_product, group_name = row[0], row[1]
+        if group_product.product not in seen:
+            products.append(EffectiveProductOut(
+                product=group_product.product,
+                source="group",
+                source_name=group_name,
+            ))
+            seen.add(group_product.product)
+
+    return EffectiveProductsResponse(products=products)
 
 
 @router.patch("/plan", response_model=MessageResponse)
