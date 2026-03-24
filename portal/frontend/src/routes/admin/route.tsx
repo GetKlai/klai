@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Cable } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Cable, Database, BookOpen } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -17,11 +17,14 @@ function AdminLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
   const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const isGroupAdmin = sessionStorage.getItem(STORAGE_KEYS.isGroupAdmin) === 'true'
 
   const adminNav = [
     { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },
     { to: '/admin/users', label: m.admin_nav_users(), icon: Users },
     { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban },
+    { to: '/admin/knowledge-bases', label: m.admin_nav_knowledge_bases(), icon: Database },
+    { to: '/admin/docs-libraries', label: m.admin_nav_docs_libraries(), icon: BookOpen },
     { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
     { to: '/admin/connectors', label: m.admin_nav_connectors(), icon: Cable },
@@ -33,7 +36,7 @@ function AdminLayout() {
       void navigate({ to: '/' })
       return
     }
-    if (!isAdmin) {
+    if (!isAdmin && !isGroupAdmin) {
       void navigate({ to: '/app' })
       return
     }
@@ -46,9 +49,9 @@ function AdminLayout() {
         if (me?.requires_2fa_setup) window.location.replace('/setup/2fa')
       })
       .catch((err) => authLogger.warn('2FA re-check failed in admin route guard', err))
-  }, [auth.isLoading, auth.isAuthenticated, isAdmin, auth.user, navigate])
+  }, [auth.isLoading, auth.isAuthenticated, isAdmin, isGroupAdmin, auth.user, navigate])
 
-  if (auth.isLoading || !auth.isAuthenticated || !isAdmin) {
+  if (auth.isLoading || !auth.isAuthenticated || (!isAdmin && !isGroupAdmin)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
