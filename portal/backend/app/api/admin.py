@@ -786,9 +786,7 @@ async def get_audit_log(
 
     total = await db.scalar(count_query) or 0
     offset = (page - 1) * size
-    result = await db.execute(
-        query.order_by(PortalAuditLog.created_at.desc()).offset(offset).limit(size)
-    )
+    result = await db.execute(query.order_by(PortalAuditLog.created_at.desc()).offset(offset).limit(size))
     items = result.scalars().all()
 
     return AuditLogResponse(
