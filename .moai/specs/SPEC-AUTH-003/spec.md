@@ -1,7 +1,7 @@
 ---
 id: SPEC-AUTH-003
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-03-24"
 updated: "2026-03-24"
 author: MoAI
@@ -249,3 +249,33 @@ async def log_event(
 - **AUTH-002:** `PLAN_PRODUCTS` mapping determines which products gate knowledge base access.
 - **Shared:** `_get_caller_org()` in `app/api/dependencies.py` is used across all three SPECs.
 - **Shared:** `portal_audit_log` is the centralized audit table for AUTH-001, AUTH-002, and AUTH-003 operations.
+
+## Implementation Notes
+
+*Appended by MoAI sync -- 2026-03-24*
+
+### Actual Implementation Summary
+
+All 18 acceptance criteria (TS-001 through TS-018) were implemented as specified. The implementation follows the SPEC architecture design directions exactly.
+
+**Files created:**
+- `app/models/audit.py` -- `PortalAuditLog` model with `portal_audit_log` table
+- `app/services/access.py` -- Scoped query helpers; `get_accessible_meetings` marked `@MX:ANCHOR fan_in=3+` as the authoritative meeting query entry point
+- `app/services/audit.py` -- Non-fatal immutable audit log writer; `log_event` marked `@MX:ANCHOR fan_in=10+`
+- `portal/backend/alembic/versions/u1v2w3x4y5z6_add_meeting_group_id.py` -- Adds nullable `group_id` FK to `vexa_meetings`
+- `portal/backend/alembic/versions/v2w3x4y5z6a7_add_audit_log.py` -- Creates `portal_audit_log` table
+- `portal/backend/tests/test_access.py` -- 12 unit tests for scoped query helpers
+- `portal/backend/tests/test_audit.py` -- 5 unit tests for audit log service
+
+**Files modified:**
+- `app/models/meetings.py` -- Added `group_id` FK column
+- `app/api/meetings.py` -- Group-scoped meeting access via `get_accessible_meetings()`; write guard via `can_write_meeting()`
+- `app/api/admin.py` -- Audit log instrumentation + `GET /api/admin/audit-log` endpoint
+- `app/api/groups.py` -- Audit log instrumentation for member add/remove
+- `app/api/knowledge.py` -- Group-scoped KB slug counting via `get_accessible_kb_slugs()`
+
+**Scope alignment:**
+- All planned features implemented; no scope changes
+- Audit log immutability enforced at application level (no UPDATE/DELETE paths)
+- `ON DELETE SET NULL` for `vexa_meetings.group_id` (group deletion makes meeting personal, as specified)
+- `log_event()` uses `flush()` not `commit()` to avoid transaction side effects
