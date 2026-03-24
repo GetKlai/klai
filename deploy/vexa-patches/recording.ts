@@ -799,6 +799,9 @@ export async function startGoogleRecording(page: Page, botConfig: BotConfig): Pr
                 }
 
                 if (currentParticipantCount <= 1) {
+                  if (aloneTime === 0) {
+                    (window as any).logBot(`[AloneTimer] Started counting - participant count dropped to ${currentParticipantCount}`);
+                  }
                   aloneTime++;
 
                   // Determine timeout based on whether speakers have been identified
