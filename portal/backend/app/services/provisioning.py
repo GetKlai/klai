@@ -62,7 +62,7 @@ async def _rollback(state: _ProvisionState) -> None:
                 try:
                     c = client.containers.get(name)
                     c.remove(force=True)
-                except docker.errors.NotFound:
+                except docker.errors.NotFound:  # type: ignore[attr-defined]
                     pass
 
             await loop.run_in_executor(None, _remove_container, f"librechat-{state.slug}")
