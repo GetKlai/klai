@@ -276,7 +276,7 @@ async def revoke_docs_library_group_access(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    _, _org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
     result = await db.execute(
         select(PortalGroupDocsAccess).where(
