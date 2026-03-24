@@ -22,6 +22,7 @@ from app.api.dependencies import (
 )
 from app.core.database import get_db
 from app.core.plans import get_plan_products
+from app.core.system_groups import SYSTEM_GROUPS
 from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupProduct
 from app.models.portal import PortalUser
 from app.services.audit import log_event
@@ -129,8 +130,14 @@ async def list_groups(
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id).order_by(PortalGroup.name))
-    groups = result.scalars().all()
+    result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id))
+    groups = list(result.scalars().all())
+
+    # System groups in defined order first, then custom groups alphabetically
+    _sys_order = {sg["system_key"]: i for i, sg in enumerate(SYSTEM_GROUPS)}
+    groups.sort(
+        key=lambda g: (0 if g.is_system else 1, _sys_order.get(g.system_key, 99) if g.is_system else g.name.lower())
+    )
 
     products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
     if groups:
