@@ -2,7 +2,7 @@
 GET /api/knowledge/stats
 
 Returns the number of indexed chunks (Qdrant vectors) for the current org,
-split by personal and org scope.
+split by personal, org, and group scope.
 """
 
 import asyncio
@@ -14,8 +14,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.services.access import get_accessible_kb_slugs
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,7 @@ QDRANT_COLLECTION = "klai_knowledge"
 class KnowledgeStats(BaseModel):
     personal_count: int
     org_count: int
+    group_count: int
 
 
 def _decode_jwt_payload(token: str) -> dict:
@@ -46,6 +50,7 @@ def _decode_jwt_payload(token: str) -> dict:
         return {}
 
 
+# @MX:NOTE fan_in=2 -- called for personal, org, and group slug counts
 async def _qdrant_count(filters: dict) -> int:
     """Count points in the klai_knowledge collection matching the given payload filter."""
     try:
@@ -71,6 +76,7 @@ async def _qdrant_count(filters: dict) -> int:
 @router.get("/stats", response_model=KnowledgeStats)
 async def get_knowledge_stats(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
 ) -> KnowledgeStats:
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
@@ -103,7 +109,10 @@ async def get_knowledge_stats(
 
     user_id = info.get("sub", "")
 
-    # Count org and personal chunks concurrently — independent Qdrant queries.
+    # Resolve accessible kb_slugs (personal + org + group:{id} for each membership)
+    accessible_slugs = await get_accessible_kb_slugs(user_id, db) if user_id else ["org"]
+    group_slugs = [s for s in accessible_slugs if s.startswith("group:")]
+
     org_filter = {
         "must": [
             {"key": "org_id", "match": {"value": org_id}},
@@ -122,13 +131,27 @@ async def get_knowledge_stats(
         else None
     )
 
-    if personal_filter is not None:
-        org_count, personal_count = await asyncio.gather(
-            _qdrant_count(org_filter),
-            _qdrant_count(personal_filter),
-        )
-    else:
-        org_count = await _qdrant_count(org_filter)
-        personal_count = 0
+    # Build group filters for all group-scoped KB slugs the user has access to
+    group_filters = [
+        {
+            "must": [
+                {"key": "org_id", "match": {"value": org_id}},
+                {"key": "kb_slug", "match": {"value": slug}},
+            ],
+        }
+        for slug in group_slugs
+    ]
 
-    return KnowledgeStats(personal_count=personal_count, org_count=org_count)
+    tasks = [_qdrant_count(org_filter)]
+    if personal_filter is not None:
+        tasks.append(_qdrant_count(personal_filter))
+    for gf in group_filters:
+        tasks.append(_qdrant_count(gf))
+
+    results = await asyncio.gather(*tasks)
+
+    org_count = results[0]
+    personal_count = results[1] if personal_filter is not None else 0
+    group_count = sum(results[2:] if personal_filter is not None else results[1:])
+
+    return KnowledgeStats(personal_count=personal_count, org_count=org_count, group_count=group_count)

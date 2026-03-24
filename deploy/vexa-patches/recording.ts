@@ -756,10 +756,6 @@ export async function startGoogleRecording(page: Page, botConfig: BotConfig): Pr
               let speakersIdentified = false;
               let hasEverHadMultipleParticipants = false;
               let monitoringStopped = false;
-              // Number of consecutive polls that must return ≤1 participant before alone timer starts.
-              // Protects against false positives when the DOM panel briefly collapses (e.g. screen share, tile view change).
-              const ALONE_DEBOUNCE_POLLS = 3;
-              let consecutiveEmptyPolls = 0;
 
               const stopWithFlush = async (
                 reason: string,
@@ -801,43 +797,34 @@ export async function startGoogleRecording(page: Page, botConfig: BotConfig): Pr
                 }
 
                 if (currentParticipantCount <= 1) {
-                  consecutiveEmptyPolls++;
+                  aloneTime++;
 
-                  // Only start the alone timer after ALONE_DEBOUNCE_POLLS consecutive empty polls.
-                  // A single empty poll is often a DOM panel collapse, not everyone leaving.
-                  if (consecutiveEmptyPolls < ALONE_DEBOUNCE_POLLS) {
-                    (window as any).logBot(`Participant count ≤1 (poll ${consecutiveEmptyPolls}/${ALONE_DEBOUNCE_POLLS}), waiting for confirmation before starting alone timer.`);
-                  } else {
-                    aloneTime++;
+                  // Determine timeout based on whether speakers have been identified
+                  const currentTimeout = speakersIdentified ? everyoneLeftTimeoutSeconds : startupAloneTimeoutSeconds;
+                  const timeoutDescription = speakersIdentified ? "post-speaker" : "startup";
 
-                    // Determine timeout based on whether speakers have been identified
-                    const currentTimeout = speakersIdentified ? everyoneLeftTimeoutSeconds : startupAloneTimeoutSeconds;
-                    const timeoutDescription = speakersIdentified ? "post-speaker" : "startup";
-
-                    if (aloneTime >= currentTimeout) {
-                      if (speakersIdentified) {
-                        (window as any).logBot(`Google Meet meeting ended or bot has been alone for ${everyoneLeftTimeoutSeconds} seconds after speakers were identified. Stopping recorder...`);
-                        void stopWithFlush("left_alone_timeout", () =>
-                          reject(new Error("GOOGLE_MEET_BOT_LEFT_ALONE_TIMEOUT"))
-                        );
-                      } else {
-                        (window as any).logBot(`Google Meet bot has been alone for ${startupAloneTimeoutSeconds/60} minutes during startup with no other participants. Stopping recorder...`);
-                        void stopWithFlush("startup_alone_timeout", () =>
-                          reject(new Error("GOOGLE_MEET_BOT_STARTUP_ALONE_TIMEOUT"))
-                        );
-                      }
-                    } else if (aloneTime > 0 && aloneTime % 10 === 0) { // Log every 10 seconds to avoid spam
-                      if (speakersIdentified) {
-                        (window as any).logBot(`Bot has been alone for ${aloneTime} seconds (${timeoutDescription} mode). Will leave in ${currentTimeout - aloneTime} more seconds.`);
-                      } else {
-                        const remainingMinutes = Math.floor((currentTimeout - aloneTime) / 60);
-                        const remainingSeconds = (currentTimeout - aloneTime) % 60;
-                        (window as any).logBot(`Bot has been alone for ${aloneTime} seconds during startup. Will leave in ${remainingMinutes}m ${remainingSeconds}s.`);
-                      }
+                  if (aloneTime >= currentTimeout) {
+                    if (speakersIdentified) {
+                      (window as any).logBot(`Google Meet meeting ended or bot has been alone for ${everyoneLeftTimeoutSeconds} seconds after speakers were identified. Stopping recorder...`);
+                      void stopWithFlush("left_alone_timeout", () =>
+                        reject(new Error("GOOGLE_MEET_BOT_LEFT_ALONE_TIMEOUT"))
+                      );
+                    } else {
+                      (window as any).logBot(`Google Meet bot has been alone for ${startupAloneTimeoutSeconds/60} minutes during startup with no other participants. Stopping recorder...`);
+                      void stopWithFlush("startup_alone_timeout", () =>
+                        reject(new Error("GOOGLE_MEET_BOT_STARTUP_ALONE_TIMEOUT"))
+                      );
+                    }
+                  } else if (aloneTime > 0 && aloneTime % 10 === 0) { // Log every 10 seconds to avoid spam
+                    if (speakersIdentified) {
+                      (window as any).logBot(`Bot has been alone for ${aloneTime} seconds (${timeoutDescription} mode). Will leave in ${currentTimeout - aloneTime} more seconds.`);
+                    } else {
+                      const remainingMinutes = Math.floor((currentTimeout - aloneTime) / 60);
+                      const remainingSeconds = (currentTimeout - aloneTime) % 60;
+                      (window as any).logBot(`Bot has been alone for ${aloneTime} seconds during startup. Will leave in ${remainingMinutes}m ${remainingSeconds}s.`);
                     }
                   }
                 } else {
-                  consecutiveEmptyPolls = 0;
                   aloneTime = 0; // Reset if others are present
                   if (hasEverHadMultipleParticipants && !speakersIdentified) {
                     speakersIdentified = true;

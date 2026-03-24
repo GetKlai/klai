@@ -5,7 +5,7 @@ VexaMeeting model -- stores meeting bot sessions and transcripts.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,10 +14,14 @@ from app.models.base import Base
 
 class VexaMeeting(Base):
     __tablename__ = "vexa_meetings"
+    __table_args__ = (Index("ix_vexa_meetings_group_id", "group_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     zitadel_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     org_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("portal_orgs.id"), nullable=True)
+    group_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("portal_groups.id", ondelete="SET NULL"), nullable=True
+    )
     platform: Mapped[str] = mapped_column(String(32), nullable=False)  # google_meet, zoom, teams
     native_meeting_id: Mapped[str] = mapped_column(String(128), nullable=False)
     meeting_url: Mapped[str] = mapped_column(Text, nullable=False)
