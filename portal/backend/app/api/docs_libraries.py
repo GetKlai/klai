@@ -76,9 +76,7 @@ async def list_docs_libraries(
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
     result = await db.execute(
-        select(PortalDocsLibrary)
-        .where(PortalDocsLibrary.org_id == org.id)
-        .order_by(PortalDocsLibrary.name)
+        select(PortalDocsLibrary).where(PortalDocsLibrary.org_id == org.id).order_by(PortalDocsLibrary.name)
     )
     libs = result.scalars().all()
     return DocsListResponse(
