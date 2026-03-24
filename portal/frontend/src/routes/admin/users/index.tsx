@@ -13,11 +13,29 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Trash2, Send, Loader2, Pencil, Check, X } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Trash2, Send, Loader2, Pencil, Check, X, MoreHorizontal, Pause, Play, UserX } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
 import { API_BASE } from '@/lib/api'
+import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 
 export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
@@ -25,12 +43,15 @@ export const Route = createFileRoute('/admin/users/')({
 
 type Role = 'admin' | 'member'
 
+type UserStatus = 'active' | 'suspended' | 'offboarded'
+
 interface User {
   zitadel_user_id: string
   email: string
   first_name: string
   last_name: string
   role: Role
+  status: UserStatus
   preferred_language: 'nl' | 'en'
   created_at: string
   invite_pending: boolean
@@ -52,6 +73,17 @@ function RoleBadge({ role, pending }: { role: Role; pending?: boolean }) {
       : <Badge variant="secondary">{m.admin_users_role_member()}</Badge>
 }
 
+function StatusBadge({ status }: { status: UserStatus }) {
+  switch (status) {
+    case 'suspended':
+      return <Badge variant="warning">{m.admin_users_status_suspended()}</Badge>
+    case 'offboarded':
+      return <Badge variant="destructive">{m.admin_users_status_offboarded()}</Badge>
+    default:
+      return <Badge variant="success">{m.admin_users_status_active()}</Badge>
+  }
+}
+
 const columnHelper = createColumnHelper<User>()
 
 function UsersPage() {
@@ -62,6 +94,11 @@ function UsersPage() {
   const navigate = useNavigate()
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [confirmingOffboardId, setConfirmingOffboardId] = useState<string | null>(null)
+
+  const suspendMutation = useSuspendUser()
+  const reactivateMutation = useReactivateUser()
+  const offboardMutation = useOffboardUser()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-users', token],
@@ -143,6 +180,10 @@ function UsersPage() {
       cell: (info) => (
         <RoleBadge role={info.getValue()} pending={info.row.original.invite_pending} />
       ),
+    }),
+    columnHelper.accessor('status', {
+      header: () => m.admin_users_col_status(),
+      cell: (info) => <StatusBadge status={info.getValue()} />,
     }),
     columnHelper.accessor('created_at', {
       header: () => m.admin_users_col_invited(),
@@ -227,16 +268,61 @@ function UsersPage() {
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <Tooltip label={m.admin_users_delete()}>
-              <button
-                disabled={isSelf}
-                onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
-                aria-label={m.admin_users_delete()}
-                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70 disabled:opacity-40"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-label={m.admin_users_col_actions()}
+                  className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {user.status === 'active' && !user.invite_pending && (
+                  <DropdownMenuItem
+                    onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
+                    disabled={isSelf}
+                  >
+                    <Pause className="mr-2 h-4 w-4" />
+                    {m.admin_users_action_suspend()}
+                  </DropdownMenuItem>
+                )}
+                {user.status === 'suspended' && (
+                  <DropdownMenuItem
+                    onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    {m.admin_users_action_reactivate()}
+                  </DropdownMenuItem>
+                )}
+                {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
+                      disabled={isSelf}
+                      className="text-[var(--color-destructive)]"
+                    >
+                      <UserX className="mr-2 h-4 w-4" />
+                      {m.admin_users_action_offboard()}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {user.invite_pending && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
+                      disabled={isSelf}
+                      className="text-[var(--color-destructive)]"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {m.admin_users_action_delete()}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )
       },
@@ -324,6 +410,34 @@ function UsersPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={confirmingOffboardId !== null}
+        onOpenChange={(open) => { if (!open) setConfirmingOffboardId(null) }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.admin_users_confirm_offboard_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.admin_users_confirm_offboard_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              onClick={() => {
+                if (confirmingOffboardId) {
+                  offboardMutation.mutate(confirmingOffboardId)
+                }
+                setConfirmingOffboardId(null)
+              }}
+            >
+              {m.admin_users_action_offboard()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

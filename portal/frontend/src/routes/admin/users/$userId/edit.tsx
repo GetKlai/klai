@@ -2,20 +2,35 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
+import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 
 export const Route = createFileRoute('/admin/users/$userId/edit')({
   component: EditUserPage,
 })
 
 type Language = 'nl' | 'en'
+type UserStatus = 'active' | 'suspended' | 'offboarded'
 
 interface EditForm {
   first_name: string
@@ -29,6 +44,14 @@ interface User {
   first_name: string
   last_name: string
   preferred_language: Language
+  status: UserStatus
+  invite_pending: boolean
+}
+
+interface UserProduct {
+  product: string
+  enabled_at?: string
+  enabled_by?: string
 }
 
 function EditUserPage() {
@@ -85,6 +108,94 @@ function EditUserPage() {
       void navigate({ to: '/admin/users' })
     },
   })
+
+  // --- Product queries and mutations ---
+
+  const { data: availableProducts } = useQuery({
+    queryKey: ['admin-products', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/products`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return { products: [] as string[] }
+      return res.json() as Promise<{ products: string[] }>
+    },
+    enabled: !!token,
+  })
+
+  const { data: userProducts } = useQuery({
+    queryKey: ['admin-user-products', userId, token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/products`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return { products: [] as UserProduct[] }
+      return res.json() as Promise<{ products: UserProduct[] }>
+    },
+    enabled: !!token,
+  })
+
+  const assignProduct = useMutation({
+    mutationFn: async (product: string) => {
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/products`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ product }),
+      })
+      if (!res.ok) throw new Error(m.admin_users_error_generic())
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-products', userId] })
+      toast.success(m.admin_users_products_assign_success())
+    },
+    onError: (error: Error) => {
+      toast.error(error.message)
+    },
+  })
+
+  const revokeProduct = useMutation({
+    mutationFn: async (product: string) => {
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/products/${encodeURIComponent(product)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(m.admin_users_error_generic())
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-products', userId] })
+      toast.success(m.admin_users_products_revoke_success())
+    },
+    onError: (error: Error) => {
+      toast.error(error.message)
+    },
+  })
+
+  const assignedSet = new Set(
+    (userProducts?.products ?? []).map((p) => (typeof p === 'string' ? p : p.product))
+  )
+
+  function getProductMeta(productName: string): UserProduct | undefined {
+    return (userProducts?.products ?? []).find(
+      (p) => (typeof p === 'string' ? p : p.product) === productName
+    ) as UserProduct | undefined
+  }
+
+  function handleToggleProduct(product: string, checked: boolean) {
+    if (checked) {
+      assignProduct.mutate(product)
+    } else {
+      revokeProduct.mutate(product)
+    }
+  }
+
+  // --- Lifecycle hooks ---
+
+  const suspendMutation = useSuspendUser()
+  const reactivateMutation = useReactivateUser()
+  const offboardMutation = useOffboardUser()
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -165,6 +276,138 @@ function EditUserPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Products section */}
+      {(availableProducts?.products ?? []).length > 0 && (
+        <Card className="mt-6">
+          <CardContent className="pt-6">
+            <h2 className="font-semibold text-lg mb-4">{m.admin_users_products_title()}</h2>
+            <div className="space-y-4">
+              {availableProducts!.products.map((product) => {
+                const isAssigned = assignedSet.has(product)
+                const meta = getProductMeta(product)
+                const isToggling =
+                  (assignProduct.isPending && assignProduct.variables === product) ||
+                  (revokeProduct.isPending && revokeProduct.variables === product)
+
+                return (
+                  <div key={product} className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <Label htmlFor={`product-${product}`} className="text-sm font-medium">
+                        {product}
+                      </Label>
+                      {isAssigned && meta && typeof meta !== 'string' && meta.enabled_at && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {m.admin_users_products_enabled_at()}: {new Date(meta.enabled_at).toLocaleDateString()}
+                          {meta.enabled_by && (
+                            <> &middot; {m.admin_users_products_enabled_by()}: {meta.enabled_by}</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <Switch
+                      id={`product-${product}`}
+                      checked={isAssigned}
+                      disabled={isToggling}
+                      onCheckedChange={(checked) => handleToggleProduct(product, checked)}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {(availableProducts?.products ?? []).length === 0 && availableProducts && (
+        <Card className="mt-6">
+          <CardContent className="pt-6">
+            <h2 className="font-semibold text-lg mb-2">{m.admin_users_products_title()}</h2>
+            <p className="text-sm text-muted-foreground">{m.admin_users_products_empty()}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Lifecycle action buttons */}
+      {user && (
+        <Card className="mt-6">
+          <CardContent className="pt-6 flex flex-wrap gap-3">
+            {/* Suspend: show if active and not invite_pending */}
+            {user.status === 'active' && !user.invite_pending && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={suspendMutation.isPending}>
+                    {suspendMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {m.admin_users_action_suspend()}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{m.admin_users_confirm_suspend_title()}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {m.admin_users_confirm_suspend_description()}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => suspendMutation.mutate(userId)}
+                    >
+                      {m.admin_users_action_suspend()}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+
+            {/* Reactivate: show if suspended */}
+            {user.status === 'suspended' && (
+              <Button
+                variant="outline"
+                disabled={reactivateMutation.isPending}
+                onClick={() => reactivateMutation.mutate(userId)}
+              >
+                {reactivateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {m.admin_users_action_reactivate()}
+              </Button>
+            )}
+
+            {/* Offboard: show if active or suspended, and not invite_pending */}
+            {(user.status === 'active' || user.status === 'suspended') && !user.invite_pending && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" disabled={offboardMutation.isPending}>
+                    {offboardMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {m.admin_users_action_offboard()}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{m.admin_users_confirm_offboard_title()}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {m.admin_users_confirm_offboard_description()}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => {
+                        offboardMutation.mutate(userId, {
+                          onSuccess: () => {
+                            void navigate({ to: '/admin/users' })
+                          },
+                        })
+                      }}
+                    >
+                      {m.admin_users_action_offboard()}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

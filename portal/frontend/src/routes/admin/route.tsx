@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { LayoutDashboard, Users, Settings, CreditCard } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -21,6 +21,7 @@ function AdminLayout() {
   const adminNav = [
     { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },
     { to: '/admin/users', label: m.admin_nav_users(), icon: Users },
+    { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban },
     { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
   ]
