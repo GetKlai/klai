@@ -370,7 +370,7 @@ function MeetingDetailPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="prose prose-sm max-w-none text-[var(--color-foreground)] prose-headings:text-[var(--color-purple-deep)] prose-headings:font-serif prose-strong:text-[var(--color-foreground)] prose-li:marker:text-[var(--color-muted-foreground)]">
+            <div className="text-sm text-[var(--color-foreground)] space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
               <Markdown>{meeting.summary_json.markdown}</Markdown>
             </div>
           </CardContent>
