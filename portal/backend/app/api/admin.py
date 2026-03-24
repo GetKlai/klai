@@ -653,11 +653,13 @@ async def get_user_effective_products(
     for row in group_result.all():
         group_product, group_name = row[0], row[1]
         if group_product.product not in seen:
-            products.append(EffectiveProductOut(
-                product=group_product.product,
-                source="group",
-                source_name=group_name,
-            ))
+            products.append(
+                EffectiveProductOut(
+                    product=group_product.product,
+                    source="group",
+                    source_name=group_name,
+                )
+            )
             seen.add(group_product.product)
 
     return EffectiveProductsResponse(products=products)

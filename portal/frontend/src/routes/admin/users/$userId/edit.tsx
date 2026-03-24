@@ -47,12 +47,6 @@ interface User {
   invite_pending: boolean
 }
 
-interface UserProduct {
-  product: string
-  enabled_at?: string
-  enabled_by?: string
-}
-
 interface EffectiveProduct {
   product: string
   source: 'direct' | 'group'
