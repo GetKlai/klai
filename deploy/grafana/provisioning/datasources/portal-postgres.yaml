@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  # Portal PostgreSQL — read-only access for business and product metrics
+  - name: PortalPostgres
+    type: postgres
+    uid: portal-postgres
+    url: klai-core-postgres-1:5432
+    access: proxy
+    database: portal
+    user: grafana_reader
+    secureJsonData:
+      password: ${GRAFANA_POSTGRES_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false

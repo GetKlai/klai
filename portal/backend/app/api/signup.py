@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
+from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
 from app.services.zitadel import zitadel
 
@@ -173,6 +174,7 @@ async def signup(
         ) from exc
 
     background_tasks.add_task(provision_tenant, org_row.id)
+    emit_event("signup", org_id=org_row.id, user_id=zitadel_user_id, properties={"plan": org_row.plan})
 
     return SignupResponse(
         org_id=zitadel_org_id,

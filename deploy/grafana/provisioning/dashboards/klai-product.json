@@ -1,0 +1,166 @@
+{
+  "annotations": { "list": [] },
+  "description": "Klai product metrics: active users, feature adoption, Scribe, Focus, Knowledge",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Daily Active Users (DAU)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(DISTINCT user_id) AS dau FROM product_events WHERE created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Weekly Active Users (WAU)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('week', created_at) AS time, COUNT(DISTINCT user_id) AS wau FROM product_events WHERE created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Scribe: Meetings Per Week",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('week', ended_at) AS time, COUNT(*) AS meetings FROM vexa_meetings WHERE status = 'done' AND ended_at >= $__timeFrom() AND ended_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Scribe: Total Minutes Recorded",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 8 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "m", "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COALESCE(SUM(duration_seconds) / 60, 0) AS value FROM vexa_meetings WHERE status = 'done'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Scribe: Platform Split",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT platform AS metric, COUNT(*) AS value FROM vexa_meetings WHERE status = 'done' GROUP BY platform ORDER BY platform",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Knowledge: Queries Per Week",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('week', created_at) AS time, COUNT(*) AS queries FROM product_events WHERE event_type = 'knowledge.queried' AND created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Knowledge: Query Success Rate",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 16 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE (properties->>'had_results')::boolean = true) / NULLIF(COUNT(*), 0), 1) AS value FROM product_events WHERE event_type = 'knowledge.queried'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Focus: Notebooks Created Per Week",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('week', created_at) AS time, COUNT(*) AS notebooks FROM product_events WHERE event_type = 'notebook.created' AND created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Focus: Active Notebook Users (7d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 24 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(DISTINCT user_id) AS value FROM product_events WHERE event_type = 'notebook.opened' AND created_at >= NOW() - INTERVAL '7 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["klai", "product"],
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Klai Product",
+  "uid": "klai-product",
+  "version": 1
+}

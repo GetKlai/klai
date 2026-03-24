@@ -40,9 +40,12 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.services.events import emit_event
 from app.services.zitadel import zitadel
 
 log = logging.getLogger(__name__)
@@ -294,14 +297,15 @@ async def password_set(body: PasswordSetRequest) -> None:
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(body: LoginRequest, response: Response) -> LoginResponse:
+async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     # 1. Check if user has TOTP registered
     has_totp = False
+    zitadel_user_id: str | None = None
     try:
         user_info = await zitadel.find_user_by_email(body.email)
         if user_info:
-            user_id, org_id = user_info
-            has_totp = await zitadel.has_totp(user_id, org_id)
+            zitadel_user_id, org_id = user_info
+            has_totp = await zitadel.has_totp(zitadel_user_id, org_id)
     except httpx.HTTPStatusError as exc:
         log.warning("TOTP check failed %s — continuing without 2FA check", exc.response.status_code)
 
@@ -319,6 +323,8 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Inloggen mislukt, probeer het later opnieuw",
         ) from exc
+
+    emit_event("login", user_id=zitadel_user_id, properties={"method": "password"})
 
     # 3. If the user has TOTP, require a code before finalizing
     if has_totp:
