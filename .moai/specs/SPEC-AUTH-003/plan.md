@@ -1,7 +1,7 @@
 # SPEC-AUTH-003: Data Rights & Resource Scoping -- Implementation Plan
 
 **SPEC ID:** SPEC-AUTH-003
-**Status:** Draft
+**Status:** Completed
 **Priority:** High
 **Dependencies:** SPEC-AUTH-001 (groups/memberships), SPEC-AUTH-002 (product entitlements)
 **Dependents:** None (terminal SPEC in the auth chain)
