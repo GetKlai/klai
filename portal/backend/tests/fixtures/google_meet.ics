@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:abc123@google.com
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Sprint Planning
+ORGANIZER;CN=Alice:mailto:alice@example.com
+DESCRIPTION:Weekly sprint planning meeting
+CONFERENCE:https://meet.google.com/abc-defg-hij
+END:VEVENT
+END:VCALENDAR
