@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import PLAN_PRODUCTS, get_plan_products
 from app.models.audit import PortalAuditLog
-from app.models.groups import PortalGroupMembership
+from app.models.groups import PortalGroupMembership, PortalGroupProduct
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.audit import log_event
@@ -630,6 +630,23 @@ async def change_plan(
                 "Plan downgrade: revoking product %s from user %s (org %s, %s -> %s)",
                 row.product,
                 row.zitadel_user_id,
+                org.id,
+                old_plan,
+                new_plan,
+            )
+            await db.delete(row)
+
+    # Downgrade: also revoke group products that exceed the new plan ceiling
+    group_revoked_result = await db.execute(
+        select(PortalGroupProduct).where(PortalGroupProduct.org_id == org.id)
+    )
+    all_group_assignments = group_revoked_result.scalars().all()
+    for row in all_group_assignments:
+        if row.product not in new_products:
+            log.info(
+                "Plan downgrade: revoking group product %s from group %s (org %s, %s -> %s)",
+                row.product,
+                row.group_id,
                 org.id,
                 old_plan,
                 new_plan,

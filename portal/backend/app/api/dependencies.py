@@ -9,7 +9,7 @@ from app.api.auth import get_current_user_id
 from app.core.database import get_db
 from app.models.groups import PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
-from app.models.products import PortalUserProduct
+from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
 bearer = HTTPBearer()
@@ -22,13 +22,8 @@ def require_product(product: str) -> Depends:  # type: ignore[type-arg]
         user_id: str = Depends(get_current_user_id),
         db: AsyncSession = Depends(get_db),
     ) -> None:
-        result = await db.execute(
-            select(PortalUserProduct).where(
-                PortalUserProduct.zitadel_user_id == user_id,
-                PortalUserProduct.product == product,
-            )
-        )
-        if not result.scalar_one_or_none():
+        products = await get_effective_products(user_id, db)
+        if product not in products:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Product '{product}' not available",
