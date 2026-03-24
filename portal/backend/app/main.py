@@ -10,9 +10,11 @@ from app.api import me, signup
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
+from app.api.docs_libraries import router as docs_libraries_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
 from app.api.knowledge import router as knowledge_router
+from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
@@ -108,6 +110,8 @@ app.include_router(knowledge_router)
 app.include_router(meetings_router)
 app.include_router(webhooks_router)
 app.include_router(internal_router)
+app.include_router(knowledge_bases_router)
+app.include_router(docs_libraries_router)
 
 
 @app.get("/health")

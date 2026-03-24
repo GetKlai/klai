@@ -50,6 +50,8 @@ function CallbackPage() {
           // Resolve role first so MFA redirect can use it
           const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
           sessionStorage.setItem(STORAGE_KEYS.isAdmin, String(isAdmin))
+          const isGroupAdmin = me.portal_role === 'group-admin'
+          sessionStorage.setItem(STORAGE_KEYS.isGroupAdmin, String(isGroupAdmin))
 
           // MFA not yet enrolled — send to setup
           if (!me.mfa_enrolled) {
@@ -74,6 +76,8 @@ function CallbackPage() {
               authLogger.warn('Billing status check failed during post-login routing', err)
             }
             window.location.replace('/admin')
+          } else if (isGroupAdmin) {
+            window.location.replace('/admin')
           } else {
             window.location.replace('/app')
           }
@@ -86,6 +90,7 @@ function CallbackPage() {
       // /api/me failed (e.g. backend not running) — go to /app
       authLogger.warn('Post-login routing fell through to default /app')
       sessionStorage.setItem(STORAGE_KEYS.isAdmin, 'false')
+      sessionStorage.setItem(STORAGE_KEYS.isGroupAdmin, 'false')
       window.location.replace('/app')
     }
 

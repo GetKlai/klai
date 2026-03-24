@@ -47,7 +47,7 @@ class PortalUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     zitadel_user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"))
-    role: Mapped[Literal["admin", "member"]] = mapped_column(
+    role: Mapped[Literal["admin", "group-admin", "member"]] = mapped_column(
         String(20), nullable=False, default="member", server_default="member"
     )
     preferred_language: Mapped[Literal["nl", "en"]] = mapped_column(

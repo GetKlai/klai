@@ -68,12 +68,30 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
     - "personal" (always, for personal knowledge)
     - "org" (always, for org-wide knowledge)
     - "group:{group_id}" for each group the user belongs to
+    - Named KB slugs via group-KB access grants
     """
     result = await db.execute(
         select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id)
     )
     group_ids = [row[0] for row in result.all()]
-    return ["personal", "org"] + [f"group:{gid}" for gid in group_ids]
+
+    base_slugs = ["personal", "org"] + [f"group:{gid}" for gid in group_ids]
+
+    if not group_ids:
+        return base_slugs
+
+    # Named KB slugs via group-KB access
+    from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
+
+    kb_result = await db.execute(
+        select(PortalKnowledgeBase.slug)
+        .join(PortalGroupKBAccess, PortalKnowledgeBase.id == PortalGroupKBAccess.kb_id)
+        .where(PortalGroupKBAccess.group_id.in_(group_ids))
+        .distinct()
+    )
+    named_kb_slugs = [row[0] for row in kb_result.all()]
+
+    return base_slugs + named_kb_slugs
 
 
 async def is_member_of_group(user_id: str, group_id: int, db: AsyncSession) -> bool:

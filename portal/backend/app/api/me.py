@@ -44,6 +44,7 @@ class MeResponse(BaseModel):
     mfa_enrolled: bool = False
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
+    portal_role: str = "member"
 
 
 def _extract_roles(info: dict) -> list[str]:
@@ -78,6 +79,7 @@ async def me(
     provisioning_status: str = "pending"
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
+    portal_role: str = "member"
     if zitadel_user_id:
         result = await db.execute(
             select(PortalOrg, PortalUser)
@@ -90,6 +92,7 @@ async def me(
             provisioning_status = org.provisioning_status
             mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
+            portal_role = portal_user.role
             if org.slug:
                 workspace_url = f"https://{org.slug}.{settings.domain}"
 
@@ -112,6 +115,7 @@ async def me(
         mfa_enrolled=mfa_enrolled,
         mfa_policy=mfa_policy,
         preferred_language=preferred_language,
+        portal_role=portal_role,
     )
 
 

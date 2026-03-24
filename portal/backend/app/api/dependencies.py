@@ -67,13 +67,23 @@ def _require_admin(caller_user: PortalUser) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang: admin rechten vereist")
 
 
+def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
+    """Raise 403 unless caller is org admin or has group-admin role."""
+    if caller_user.role in ("admin", "group-admin"):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Geen toegang: admin of groepsbeheerder rechten vereist",
+    )
+
+
 async def _require_admin_or_group_admin(
     group_id: int,
     caller_user: PortalUser,
     db: AsyncSession,
 ) -> None:
     """Raise 403 unless caller is org admin or group admin for the given group."""
-    if caller_user.role == "admin":
+    if caller_user.role in ("admin", "group-admin"):
         return
 
     result = await db.execute(
@@ -95,8 +105,8 @@ async def _require_admin_or_group_manager(
     org_id: int,
     db: AsyncSession,
 ) -> None:
-    """Raise 403 unless caller is org admin or member of the Group Management system group."""
-    if caller_user.role == "admin":
+    """Raise 403 unless caller is org admin, group-admin, or member of the Group Management system group."""
+    if caller_user.role in ("admin", "group-admin"):
         return
 
     # Check if caller is in the Group Management system group for their org
