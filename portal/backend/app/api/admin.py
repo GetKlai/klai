@@ -10,12 +10,13 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import PLAN_PRODUCTS, get_plan_products
+from app.models.groups import PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.zitadel import zitadel
@@ -595,3 +596,102 @@ async def change_plan(
 
     await db.commit()
     return MessageResponse(message=f"Plan bijgewerkt naar {new_plan}.")
+
+
+@router.post("/users/{zitadel_user_id}/suspend", response_model=MessageResponse)
+async def suspend_user(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Suspend an active user. Preserves group memberships and products."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+    if user.status in ("suspended", "offboarded"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Gebruiker heeft status '{user.status}' en kan niet worden geschorst",
+        )
+
+    user.status = "suspended"
+    await db.commit()
+    return MessageResponse(message=f"Gebruiker {zitadel_user_id} geschorst.")
+
+
+@router.post("/users/{zitadel_user_id}/reactivate", response_model=MessageResponse)
+async def reactivate_user(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Reactivate a suspended user."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+    if user.status != "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Gebruiker heeft status '{user.status}' en kan niet worden gereactiveerd",
+        )
+
+    user.status = "active"
+    await db.commit()
+    return MessageResponse(message=f"Gebruiker {zitadel_user_id} gereactiveerd.")
+
+
+@router.post("/users/{zitadel_user_id}/offboard", response_model=MessageResponse)
+async def offboard_user(
+    zitadel_user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Offboard a user: remove memberships + products, deactivate in Zitadel, set status."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == zitadel_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+    if user.status == "offboarded":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Gebruiker is al offboarded")
+
+    # Cascade: remove group memberships and product assignments
+    await db.execute(
+        delete(PortalGroupMembership).where(PortalGroupMembership.zitadel_user_id == zitadel_user_id)
+    )
+    await db.execute(
+        delete(PortalUserProduct).where(
+            PortalUserProduct.zitadel_user_id == zitadel_user_id,
+            PortalUserProduct.org_id == org.id,
+        )
+    )
+
+    user.status = "offboarded"
+    await zitadel.deactivate_user(settings.zitadel_portal_org_id, zitadel_user_id)
+    await db.commit()
+    return MessageResponse(message=f"Gebruiker {zitadel_user_id} offboarded.")
