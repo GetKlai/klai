@@ -7,7 +7,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import {
   AlertDialog,
@@ -51,15 +50,11 @@ interface User {
 interface UserGroup {
   id: number
   name: string
-  products: string[]
-  is_system: boolean
 }
 
 interface AllGroup {
   id: number
   name: string
-  products: string[]
-  is_system: boolean
 }
 
 function EditUserPage() {
@@ -302,16 +297,9 @@ function EditUserPage() {
             <div className="space-y-2 mb-4">
               {userGroups.map((group) => (
                 <div key={group.id} className="flex items-center justify-between py-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">
-                      {group.name}
-                    </span>
-                    {group.products.map((p) => (
-                      <Badge key={p} variant="secondary" className="text-xs capitalize">
-                        {p}
-                      </Badge>
-                    ))}
-                  </div>
+                  <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                    {group.name}
+                  </span>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -340,7 +328,6 @@ function EditUserPage() {
                 {availableGroups.map((g) => (
                   <option key={g.id} value={String(g.id)}>
                     {g.name}
-                    {g.products.length > 0 ? ` (${g.products.join(', ')})` : ''}
                   </option>
                 ))}
               </Select>
@@ -358,8 +345,8 @@ function EditUserPage() {
         </CardContent>
       </Card>
 
-      {/* Lifecycle action buttons */}
-      {user && (
+      {/* Lifecycle action buttons — only show when at least one button will render */}
+      {user && (user.status === 'suspended' || (user.status === 'active' && !user.invite_pending)) && (
         <Card className="mt-6">
           <CardContent className="pt-6 flex flex-wrap gap-3">
             {user.status === 'active' && !user.invite_pending && (

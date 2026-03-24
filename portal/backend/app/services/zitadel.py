@@ -243,6 +243,9 @@ class ZitadelClient:
                 "gender": profile.get("gender", "GENDER_UNSPECIFIED"),
             },
         )
+        # Zitadel returns 400 with code 9 when nothing changed — treat as success
+        if put_resp.status_code == 400 and put_resp.json().get("code") == 9:
+            return
         put_resp.raise_for_status()
 
     async def update_user_language(self, org_id: str, user_id: str, language: str) -> None:
