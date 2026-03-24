@@ -744,6 +744,10 @@
   "admin_users_products_enabled_by": "Enabled by",
   "admin_users_products_assign_success": "Product assigned",
   "admin_users_products_revoke_success": "Product revoked",
+  "admin_users_effective_products_title": "Product access",
+  "admin_users_effective_products_empty": "No products assigned",
+  "admin_users_effective_products_source_direct": "Direct",
+  "admin_users_effective_products_source_group": "via {group}",
 
   "admin_groups_title": "Groups",
   "admin_groups_empty": "No groups created yet",
@@ -776,6 +780,11 @@
   "admin_groups_members_success_removed": "Member removed",
   "admin_groups_members_error_already_member": "User is already a member of this group",
   "admin_groups_members_admin_toggled": "Group admin status updated",
+
+  "admin_groups_products_title": "Products",
+  "admin_groups_products_empty": "No products assigned",
+  "admin_groups_products_assign_success": "Product assigned to group",
+  "admin_groups_products_revoke_success": "Product removed from group",
 
   "admin_nav_groups": "Groups",
   "admin_home_groups_title": "Groups",

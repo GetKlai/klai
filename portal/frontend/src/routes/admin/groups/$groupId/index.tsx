@@ -52,6 +52,12 @@ interface OrgUser {
   last_name: string
 }
 
+interface GroupProduct {
+  product: string
+  enabled_at: string
+  enabled_by: string
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -129,11 +135,39 @@ function AdminGroupDetail() {
     enabled: !!token,
   })
 
+  const { data: availableProducts } = useQuery({
+    queryKey: ['admin-products', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/products`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return { products: [] as string[] }
+      return res.json() as Promise<{ products: string[] }>
+    },
+    enabled: !!token,
+  })
+
+  const { data: groupProductsData, isLoading: groupProductsLoading } = useQuery({
+    queryKey: ['admin-group-products', groupId, token],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/api/admin/groups/${groupId}/products`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!res.ok) return { products: [] as GroupProduct[] }
+      return res.json() as Promise<{ products: GroupProduct[] }>
+    },
+    enabled: !!token,
+  })
+
   const members = membersData?.members ?? []
   const orgUsers = usersData?.users ?? []
 
   // Build lookup map for user display
   const usersMap = new Map(orgUsers.map((u) => [u.zitadel_user_id, u]))
+
+  const planProducts = availableProducts?.products ?? []
+  const assignedProducts = new Set((groupProductsData?.products ?? []).map((p) => p.product))
 
   // ---------------------------------------------------------------------------
   // Mutations
@@ -206,6 +240,50 @@ function AdminGroupDetail() {
         queryKey: ['admin-group-members', groupId],
       })
       toast.success(m.admin_groups_members_admin_toggled())
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
+  })
+
+  const assignGroupProductMutation = useMutation({
+    mutationFn: async (product: string) => {
+      const res = await fetch(
+        `${API_BASE}/api/admin/groups/${groupId}/products`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ product }),
+        },
+      )
+      if (!res.ok) throw new Error(`Failed to assign product (${res.status})`)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-products', groupId] })
+      toast.success(m.admin_groups_products_assign_success())
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
+  })
+
+  const revokeGroupProductMutation = useMutation({
+    mutationFn: async (product: string) => {
+      const res = await fetch(
+        `${API_BASE}/api/admin/groups/${groupId}/products/${encodeURIComponent(product)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
+      if (!res.ok) throw new Error(`Failed to revoke product (${res.status})`)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-products', groupId] })
+      toast.success(m.admin_groups_products_revoke_success())
     },
     onError: (err: Error) => {
       toast.error(err.message)
@@ -492,6 +570,54 @@ function AdminGroupDetail() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Products section */}
+      <Card>
+        <CardContent className="pt-6">
+          <h2 className="font-semibold text-lg mb-4">
+            {m.admin_groups_products_title()}
+          </h2>
+
+          {groupProductsLoading ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
+              Loading...
+            </p>
+          ) : planProducts.length === 0 ? (
+            <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">
+              {m.admin_groups_products_empty()}
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {planProducts.map((product) => {
+                const isAssigned = assignedProducts.has(product)
+                const isToggling =
+                  (assignGroupProductMutation.isPending && assignGroupProductMutation.variables === product) ||
+                  (revokeGroupProductMutation.isPending && revokeGroupProductMutation.variables === product)
+
+                return (
+                  <div key={product} className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                      {product}
+                    </span>
+                    <Switch
+                      checked={isAssigned}
+                      disabled={isToggling}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          assignGroupProductMutation.mutate(product)
+                        } else {
+                          revokeGroupProductMutation.mutate(product)
+                        }
+                      }}
+                    />
+                  </div>
+                )
+              })}
             </div>
           )}
         </CardContent>

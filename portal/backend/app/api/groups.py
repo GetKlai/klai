@@ -30,6 +30,14 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["groups"])
 
 
+async def _get_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> PortalGroup:
+    result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org_id))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+    return group
+
+
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
@@ -436,11 +444,7 @@ async def list_group_products(
     """List products assigned to a group. Org admin only."""
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-
-    # Verify group belongs to caller's org
-    group_result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id))
-    if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+    await _get_group_or_404(group_id, org.id, db)
 
     result = await db.execute(
         select(PortalGroupProduct).where(PortalGroupProduct.group_id == group_id).order_by(PortalGroupProduct.product)
@@ -463,11 +467,7 @@ async def assign_group_product(
     """Assign a product to a group. Org admin only, plan ceiling enforced."""
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-
-    # Verify group belongs to caller's org
-    group_result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id))
-    if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+    await _get_group_or_404(group_id, org.id, db)
 
     # Plan ceiling check
     if body.product not in get_plan_products(org.plan):
@@ -516,11 +516,7 @@ async def revoke_group_product(
     """Revoke a product from a group. Org admin only."""
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
-
-    # Verify group belongs to caller's org
-    group_result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id))
-    if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+    await _get_group_or_404(group_id, org.id, db)
 
     result = await db.execute(
         select(PortalGroupProduct).where(

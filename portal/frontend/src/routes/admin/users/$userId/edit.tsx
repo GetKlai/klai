@@ -3,13 +3,12 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Loader2 } from 'lucide-react'
-import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,6 +51,12 @@ interface UserProduct {
   product: string
   enabled_at?: string
   enabled_by?: string
+}
+
+interface EffectiveProduct {
+  product: string
+  source: 'direct' | 'group'
+  source_name?: string
 }
 
 function EditUserPage() {
@@ -109,87 +114,20 @@ function EditUserPage() {
     },
   })
 
-  // --- Product queries and mutations ---
+  // --- Effective products query ---
 
-  const { data: availableProducts } = useQuery({
-    queryKey: ['admin-products', token],
+  const { data: effectiveProductsData } = useQuery({
+    queryKey: ['admin-user-effective-products', userId, token],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/products`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return { products: [] as string[] }
-      return res.json() as Promise<{ products: string[] }>
+      const res = await fetch(
+        `${API_BASE}/api/admin/users/${userId}/effective-products`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!res.ok) return { products: [] as EffectiveProduct[] }
+      return res.json() as Promise<{ products: EffectiveProduct[] }>
     },
     enabled: !!token,
   })
-
-  const { data: userProducts } = useQuery({
-    queryKey: ['admin-user-products', userId, token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/products`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return { products: [] as UserProduct[] }
-      return res.json() as Promise<{ products: UserProduct[] }>
-    },
-    enabled: !!token,
-  })
-
-  const assignProduct = useMutation({
-    mutationFn: async (product: string) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/products`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ product }),
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_generic())
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-user-products', userId] })
-      toast.success(m.admin_users_products_assign_success())
-    },
-    onError: (error: Error) => {
-      toast.error(error.message)
-    },
-  })
-
-  const revokeProduct = useMutation({
-    mutationFn: async (product: string) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/products/${encodeURIComponent(product)}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_generic())
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-user-products', userId] })
-      toast.success(m.admin_users_products_revoke_success())
-    },
-    onError: (error: Error) => {
-      toast.error(error.message)
-    },
-  })
-
-  const assignedSet = new Set(
-    (userProducts?.products ?? []).map((p) => (typeof p === 'string' ? p : p.product))
-  )
-
-  function getProductMeta(productName: string): UserProduct | undefined {
-    return (userProducts?.products ?? []).find(
-      (p): p is UserProduct => typeof p !== 'string' && p.product === productName
-    )
-  }
-
-  function handleToggleProduct(product: string, checked: boolean) {
-    if (checked) {
-      assignProduct.mutate(product)
-    } else {
-      revokeProduct.mutate(product)
-    }
-  }
 
   // --- Lifecycle hooks ---
 
@@ -277,56 +215,34 @@ function EditUserPage() {
         </CardContent>
       </Card>
 
-      {/* Products section */}
-      {(availableProducts?.products ?? []).length > 0 && (
-        <Card className="mt-6">
-          <CardContent className="pt-6">
-            <h2 className="font-semibold text-lg mb-4">{m.admin_users_products_title()}</h2>
-            <div className="space-y-4">
-              {availableProducts!.products.map((product) => {
-                const isAssigned = assignedSet.has(product)
-                const meta = getProductMeta(product)
-                const isToggling =
-                  (assignProduct.isPending && assignProduct.variables === product) ||
-                  (revokeProduct.isPending && revokeProduct.variables === product)
-
-                return (
-                  <div key={product} className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <Label htmlFor={`product-${product}`} className="text-sm font-medium">
-                        {product}
-                      </Label>
-                      {isAssigned && meta && typeof meta !== 'string' && meta.enabled_at && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {m.admin_users_products_enabled_at()}: {new Date(meta.enabled_at).toLocaleDateString()}
-                          {meta.enabled_by && (
-                            <> &middot; {m.admin_users_products_enabled_by()}: {meta.enabled_by}</>
-                          )}
-                        </p>
-                      )}
-                    </div>
-                    <Switch
-                      id={`product-${product}`}
-                      checked={isAssigned}
-                      disabled={isToggling}
-                      onCheckedChange={(checked) => handleToggleProduct(product, checked)}
-                    />
-                  </div>
-                )
-              })}
+      {/* Effective products section */}
+      <Card className="mt-6">
+        <CardContent className="pt-6">
+          <h2 className="font-semibold text-lg mb-4">
+            {m.admin_users_effective_products_title()}
+          </h2>
+          {(effectiveProductsData?.products ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {m.admin_users_effective_products_empty()}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {(effectiveProductsData?.products ?? []).map((ep) => (
+                <div key={ep.product} className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                    {ep.product}
+                  </span>
+                  <Badge variant="secondary" className="text-xs">
+                    {ep.source === 'direct'
+                      ? m.admin_users_effective_products_source_direct()
+                      : m.admin_users_effective_products_source_group({ group: ep.source_name ?? '' })}
+                  </Badge>
+                </div>
+              ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {(availableProducts?.products ?? []).length === 0 && availableProducts && (
-        <Card className="mt-6">
-          <CardContent className="pt-6">
-            <h2 className="font-semibold text-lg mb-2">{m.admin_users_products_title()}</h2>
-            <p className="text-sm text-muted-foreground">{m.admin_users_products_empty()}</p>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       {/* Lifecycle action buttons */}
       {user && (
