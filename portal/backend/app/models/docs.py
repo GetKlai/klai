@@ -33,11 +33,7 @@ class PortalGroupDocsAccess(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int] = mapped_column(
-        ForeignKey("portal_groups.id", ondelete="CASCADE"), nullable=False
-    )
-    library_id: Mapped[int] = mapped_column(
-        ForeignKey("portal_docs_libraries.id", ondelete="CASCADE"), nullable=False
-    )
+    group_id: Mapped[int] = mapped_column(ForeignKey("portal_groups.id", ondelete="CASCADE"), nullable=False)
+    library_id: Mapped[int] = mapped_column(ForeignKey("portal_docs_libraries.id", ondelete="CASCADE"), nullable=False)
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     granted_by: Mapped[str] = mapped_column(String(64), nullable=False)

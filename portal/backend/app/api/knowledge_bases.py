@@ -76,9 +76,7 @@ async def list_knowledge_bases(
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
     result = await db.execute(
-        select(PortalKnowledgeBase)
-        .where(PortalKnowledgeBase.org_id == org.id)
-        .order_by(PortalKnowledgeBase.name)
+        select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id).order_by(PortalKnowledgeBase.name)
     )
     kbs = result.scalars().all()
     return KBsResponse(
