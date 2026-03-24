@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalUser
+from app.models.products import PortalUserProduct
 from app.services.zitadel import zitadel
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -56,3 +57,26 @@ async def get_user_language(
     result = await db.execute(select(PortalUser.preferred_language).where(PortalUser.zitadel_user_id == user_id))
     lang = result.scalar_one_or_none()
     return UserLanguageResponse(preferred_language=lang or "nl")
+
+
+class UserProductsResponse(BaseModel):
+    products: list[str]
+
+
+@router.get("/users/{zitadel_user_id}/products", response_model=UserProductsResponse)
+async def get_user_products(
+    zitadel_user_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> UserProductsResponse:
+    """Return enabled products for a user. Called by Zitadel Action for JWT enrichment.
+
+    Returns empty list if user not found (fail-closed behavior for JWT).
+    """
+    _require_internal_token(request)
+
+    result = await db.execute(
+        select(PortalUserProduct.product).where(PortalUserProduct.zitadel_user_id == zitadel_user_id)
+    )
+    products = list(result.scalars().all())
+    return UserProductsResponse(products=products)
