@@ -46,6 +46,7 @@ import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$note
 import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
 import { Route as AppDocsKbSlugRouteImport } from './routes/app/docs/$kbSlug'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
+import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
@@ -239,6 +240,11 @@ const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   path: '/users/invite',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
+  id: '/groups/new',
+  path: '/groups/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
   id: '/password/forgot',
   path: '/password/forgot',
@@ -295,6 +301,7 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
   '/app/docs/new': typeof AppDocsNewRoute
@@ -338,6 +345,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
   '/app/docs/new': typeof AppDocsNewRoute
@@ -384,6 +392,7 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
   '/app/docs/new': typeof AppDocsNewRoute
@@ -431,6 +440,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/app/'
     | '/$locale/password/forgot'
+    | '/admin/groups/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
     | '/app/docs/new'
@@ -474,6 +484,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/$locale/password/forgot'
+    | '/admin/groups/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
     | '/app/docs/new'
@@ -519,6 +530,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/app/'
     | '/$locale/password/forgot'
+    | '/admin/groups/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
     | '/app/docs/new'
@@ -819,6 +831,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersInviteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/groups/new': {
+      id: '/admin/groups/new'
+      path: '/groups/new'
+      fullPath: '/admin/groups/new'
+      preLoaderRoute: typeof AdminGroupsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/$locale/password/forgot': {
       id: '/$locale/password/forgot'
       path: '/password/forgot'
@@ -882,6 +901,7 @@ interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  AdminGroupsNewRoute: typeof AdminGroupsNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
@@ -893,6 +913,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
+  AdminGroupsNewRoute: AdminGroupsNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
