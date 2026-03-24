@@ -37,8 +37,8 @@ jobs:
           tags: |
             ghcr.io/getklai/knowledge-ingest:latest
             ghcr.io/getklai/knowledge-ingest:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # GHA layer cache disabled: it failed to invalidate on source code changes.
+          # Builds are fast enough (~1 min) without caching.
 
       - name: Deploy to core-01
         uses: appleboy/ssh-action@v1
