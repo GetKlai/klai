@@ -637,9 +637,7 @@ async def change_plan(
             await db.delete(row)
 
     # Downgrade: also revoke group products that exceed the new plan ceiling
-    group_revoked_result = await db.execute(
-        select(PortalGroupProduct).where(PortalGroupProduct.org_id == org.id)
-    )
+    group_revoked_result = await db.execute(select(PortalGroupProduct).where(PortalGroupProduct.org_id == org.id))
     all_group_assignments = group_revoked_result.scalars().all()
     for row in all_group_assignments:
         if row.product not in new_products:
