@@ -101,9 +101,9 @@ async def _require_admin_or_group_manager(
 
     # Check if caller is in the Group Management system group for their org
     from app.models.groups import PortalGroup
+
     gm_result = await db.execute(
-        select(PortalGroup.id)
-        .where(
+        select(PortalGroup.id).where(
             PortalGroup.org_id == org_id,
             PortalGroup.system_key == "group_management",
         )
