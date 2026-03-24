@@ -19,8 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.groups import PortalGroup
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalUser
+from app.services.access import can_write_meeting, get_accessible_meetings, is_member_of_group
+from app.services.audit import log_event
 from app.services.events import emit_event
 from app.services.vexa import parse_meeting_url, vexa
 from app.services.zitadel import zitadel
@@ -31,19 +34,15 @@ router = APIRouter(prefix="/api/bots", tags=["meetings"])
 bearer = HTTPBearer()
 
 ACTIVE_STATUSES = ("pending", "joining", "recording")
-# Statuses that count against the concurrent bot limit (includes processing to
-# prevent starting a new bot while a previous recording is still transcribing)
 _BILLABLE_STATUSES = (*ACTIVE_STATUSES, "processing")
 MAX_CONCURRENT_BOTS = 2
 
 
-async def _get_user_id(
+async def _get_user_and_org(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
-) -> str:
-    """Validate the OIDC access token via Zitadel and return the user sub.
-
-    Follows the same auth pattern as app/api/me.py.
-    """
+    db: AsyncSession = Depends(get_db),
+) -> tuple[str, int | None]:
+    """Validate the OIDC access token and return (user_id, org_id)."""
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
@@ -54,7 +53,10 @@ async def _get_user_id(
     user_id = info.get("sub", "")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden")
-    return user_id
+
+    portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
+    org_id = portal_user.org_id if portal_user else None
+    return user_id, org_id
 
 
 def _require_webhook_secret(request: Request) -> None:
@@ -72,6 +74,7 @@ class StartMeetingRequest(BaseModel):
     meeting_url: str
     meeting_title: str | None = None
     consent_given: bool = False
+    group_id: int | None = None
 
 
 class MeetingResponse(BaseModel):
@@ -90,6 +93,8 @@ class MeetingResponse(BaseModel):
     started_at: datetime | None
     ended_at: datetime | None
     created_at: datetime
+    group_id: int | None
+    visibility: str
 
     model_config = {"from_attributes": True}
 
@@ -99,37 +104,71 @@ class MeetingListResponse(BaseModel):
     total: int
 
 
+# -- Helpers -----------------------------------------------------------------
+
+
+async def _build_meeting_response(meeting: VexaMeeting, db: AsyncSession) -> MeetingResponse:
+    """Build MeetingResponse enriched with human-readable visibility label."""
+    visibility = "personal"
+    if meeting.group_id is not None:
+        group = await db.scalar(select(PortalGroup).where(PortalGroup.id == meeting.group_id))
+        visibility = group.name if group else f"group:{meeting.group_id}"
+
+    data = {
+        "id": meeting.id,
+        "platform": meeting.platform,
+        "meeting_url": meeting.meeting_url,
+        "meeting_title": meeting.meeting_title,
+        "status": meeting.status,
+        "consent_given": meeting.consent_given,
+        "transcript_text": meeting.transcript_text,
+        "transcript_segments": meeting.transcript_segments,
+        "language": meeting.language,
+        "duration_seconds": meeting.duration_seconds,
+        "error_message": meeting.error_message,
+        "summary_json": meeting.summary_json,
+        "started_at": meeting.started_at,
+        "ended_at": meeting.ended_at,
+        "created_at": meeting.created_at,
+        "group_id": meeting.group_id,
+        "visibility": visibility,
+    }
+    return MeetingResponse(**data)
+
+
 # -- Endpoints ---------------------------------------------------------------
 
 
 @router.get("/meetings", response_model=MeetingListResponse)
 async def list_meetings(
-    user_id: str = Depends(_get_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
     limit: int = 50,
     offset: int = 0,
 ) -> MeetingListResponse:
-    result = await db.execute(
-        select(VexaMeeting)
-        .where(VexaMeeting.zitadel_user_id == user_id)
-        .order_by(VexaMeeting.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    items = list(result.scalars().all())
-    count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.zitadel_user_id == user_id))
-    return MeetingListResponse(
-        items=[MeetingResponse.model_validate(i) for i in items],
-        total=count or 0,
-    )
+    # @MX:ANCHOR -- scoped via get_accessible_meetings; do not add direct queries here
+    user_id, org_id = await _get_user_and_org(credentials, db)
+    if org_id is None:
+        return MeetingListResponse(items=[], total=0)
+
+    meetings = await get_accessible_meetings(user_id, org_id, db)
+    # Apply pagination in Python (list is already fetched; acceptable for typical sizes)
+    total = len(meetings)
+    meetings.sort(key=lambda m: m.created_at, reverse=True)
+    page = meetings[offset : offset + limit]
+
+    items = [await _build_meeting_response(m, db) for m in page]
+    return MeetingListResponse(items=items, total=total)
 
 
 @router.post("/meetings", status_code=status.HTTP_202_ACCEPTED, response_model=MeetingResponse)
 async def start_meeting(
     body: StartMeetingRequest,
-    user_id: str = Depends(_get_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
+    user_id, org_id = await _get_user_and_org(credentials, db)
+
     if not body.consent_given:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Consent required")
 
@@ -140,8 +179,14 @@ async def start_meeting(
             detail="Geen geldig vergader-URL (Google Meet, Zoom of Teams)",
         )
 
-    # Enforce system-wide concurrent limit (include "processing" to prevent
-    # starting a new bot while a previous recording is still transcribing)
+    # R5: Validate group membership before setting group_id
+    if body.group_id is not None:
+        if not await is_member_of_group(user_id, body.group_id, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Geen lid van de opgegeven groep",
+            )
+
     active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(_BILLABLE_STATUSES)))
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
         raise HTTPException(
@@ -149,14 +194,10 @@ async def start_meeting(
             detail="Maximaal 2 actieve vergaderingen tegelijk. Stop een bestaande bot om door te gaan.",
         )
 
-    # Resolve org_id before creating the meeting record
-    portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
-    org_id = portal_user.org_id if portal_user else None
-
-    # Create meeting record
     meeting = VexaMeeting(
         zitadel_user_id=user_id,
         org_id=org_id,
+        group_id=body.group_id,
         platform=ref.platform,
         native_meeting_id=ref.native_meeting_id,
         meeting_url=body.meeting_url,
@@ -167,7 +208,17 @@ async def start_meeting(
     db.add(meeting)
     await db.flush()
 
-    # Dispatch bot
+    if org_id is not None:
+        await log_event(
+            db,
+            org_id=org_id,
+            actor=user_id,
+            action="meeting.created",
+            resource_type="meeting",
+            resource_id=str(meeting.id),
+            details={"group_id": body.group_id} if body.group_id else None,
+        )
+
     try:
         bot_resp = await vexa.start_bot(ref.platform, ref.native_meeting_id)
         meeting.bot_id = str(bot_resp.get("bot_container_id") or bot_resp.get("id") or "")
@@ -182,34 +233,42 @@ async def start_meeting(
     await db.commit()
     await db.refresh(meeting)
     emit_event("meeting.started", org_id=org_id, user_id=user_id, properties={"platform": ref.platform})
-    return MeetingResponse.model_validate(meeting)
+    return await _build_meeting_response(meeting, db)
 
 
 @router.get("/meetings/{meeting_id}", response_model=MeetingResponse)
 async def get_meeting(
     meeting_id: UUID,
-    user_id: str = Depends(_get_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
-    meeting = await db.scalar(
-        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
-    )
-    if meeting is None:
+    user_id, org_id = await _get_user_and_org(credentials, db)
+
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id))
+    if meeting is None or meeting.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
-    return MeetingResponse.model_validate(meeting)
+
+    # Check read access: owner, group member, or same org
+    accessible = await get_accessible_meetings(user_id, org_id, db)
+    if not any(m.id == meeting_id for m in accessible):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang tot deze vergadering")
+
+    return await _build_meeting_response(meeting, db)
 
 
 @router.post("/meetings/{meeting_id}/stop", response_model=MeetingResponse)
 async def stop_meeting(
     meeting_id: UUID,
-    user_id: str = Depends(_get_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
-    meeting = await db.scalar(
-        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
-    )
+    user_id, org_id = await _get_user_and_org(credentials, db)
+
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org_id))
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+    if not await can_write_meeting(user_id, meeting, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen schrijftoegang tot deze vergadering")
     if meeting.status not in ACTIVE_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Meeting is not active")
 
@@ -224,20 +283,22 @@ async def stop_meeting(
     meeting.ended_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(meeting)
-    return MeetingResponse.model_validate(meeting)
+    return await _build_meeting_response(meeting, db)
 
 
 @router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_meeting(
     meeting_id: UUID,
-    user_id: str = Depends(_get_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    meeting = await db.scalar(
-        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
-    )
+    user_id, org_id = await _get_user_and_org(credentials, db)
+
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org_id))
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+    if not await can_write_meeting(user_id, meeting, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen schrijftoegang tot deze vergadering")
 
     ref = parse_meeting_url(meeting.meeting_url)
     if ref and meeting.status in ACTIVE_STATUSES:
@@ -254,16 +315,21 @@ async def delete_meeting(
 async def summarize_meeting_endpoint(
     meeting_id: UUID,
     force: bool = False,
-    user_id: str = Depends(_get_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     from app.services.summarizer import summarize_meeting
 
-    meeting = await db.scalar(
-        select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.zitadel_user_id == user_id)
-    )
+    user_id, org_id = await _get_user_and_org(credentials, db)
+
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org_id))
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+
+    # Read access sufficient for summarize
+    accessible = await get_accessible_meetings(user_id, org_id, db)
+    if not any(m.id == meeting_id for m in accessible):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang tot deze vergadering")
 
     if not meeting.transcript_text:
         raise HTTPException(
@@ -305,7 +371,7 @@ async def summarize_meeting_endpoint(
 
 
 class SpeakerEvent(BaseModel):
-    timestamp: float  # seconds from meeting start
+    timestamp: float
     participant_name: str | None = None
 
 
@@ -314,12 +380,12 @@ class VexaWebhookPayload(BaseModel):
 
     - send_webhook.py (completion): flat {id, platform, native_meeting_id, status, ...}
     - send_status_webhook.py: {event_type, meeting: {id, platform, native_meeting_id, status}}
-    - send_event_webhook (recording.completed): {event_type, recording: {...}} — no meeting ref
+    - send_event_webhook (recording.completed): {event_type, recording: {...}} -- no meeting ref
     """
 
     platform: str | None = None
     native_meeting_id: str | None = None
-    vexa_meeting_id: int | None = None  # vexa internal integer meeting ID
+    vexa_meeting_id: int | None = None
     status: str | None = None
     ended_at: str | None = None
     speaker_events: list[SpeakerEvent] = []
@@ -331,7 +397,6 @@ class VexaWebhookPayload(BaseModel):
     def _normalize(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        # send_status_webhook.py: {event_type, meeting: {id, platform, native_meeting_id, status}}
         if "meeting" in data and "platform" not in data:
             meeting = data["meeting"] or {}
             return {
@@ -341,7 +406,6 @@ class VexaWebhookPayload(BaseModel):
                 "status": meeting.get("status"),
                 "ended_at": meeting.get("end_time"),
             }
-        # send_webhook.py: flat {id, platform, native_meeting_id, status, ...}
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
@@ -350,21 +414,11 @@ def _correlate_speakers(
     speaker_events: list["SpeakerEvent"],
     duration_seconds: float,
 ) -> list[dict]:
-    """Assign speaker labels to Whisper segments using timed speaker events.
-
-    Each speaker event marks the start of a speaker's turn. A segment is
-    assigned to the speaker whose event most recently preceded the segment's
-    midpoint. Segments before the first event are returned unchanged.
-
-    Returns a new list; input is not mutated.
-    """
+    """Assign speaker labels to Whisper segments using timed speaker events."""
     if not speaker_events:
         return segments
 
-    # Sort events by timestamp
     events = sorted(speaker_events, key=lambda e: e.timestamp)
-
-    # Assign sequential labels for unknown participants
     unknown_labels: dict[int, str] = {}
     unknown_counter = 0
 
@@ -381,7 +435,6 @@ def _correlate_speakers(
     result = []
     for seg in segments:
         midpoint = (seg.get("start", 0.0) + seg.get("end", 0.0)) / 2
-        # Find the last event that started before or at the midpoint
         active_event = None
         for ev in events:
             if ev.timestamp <= midpoint:
@@ -396,22 +449,13 @@ def _correlate_speakers(
 
 
 async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
-    """Fetch transcript segments from Vexa API-gateway; fall back to Whisper audio.
-
-    Primary path: fetch speaker-labeled segments from API-gateway (port 8123),
-    filter noise, store in transcript_segments, derive transcript_text.
-
-    Fallback: Whisper audio transcription (no speaker labels, transcript_segments = NULL).
-
-    Updates meeting in place; caller must commit.
-    """
+    """Fetch transcript segments from Vexa API-gateway; fall back to Whisper audio."""
     from app.services.transcript_filter import filter_segments
 
     try:
         if meeting.vexa_meeting_id is None:
-            raise ValueError("vexa_meeting_id is not set — cannot look up recording")
+            raise ValueError("vexa_meeting_id is not set -- cannot look up recording")
 
-        # -- Primary path: Vexa API-gateway segments --------------------------
         segments_fetched: list[dict] = []
         try:
             raw_segments = await vexa.get_transcript_segments(meeting.platform, meeting.native_meeting_id)
@@ -425,7 +469,6 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
             meeting.transcript_text = "\n".join(
                 f"{seg.get('speaker', 'Unknown')}: {seg.get('text', '')}" for seg in segments_fetched
             )
-            # Detect language from first non-empty segment
             for seg in segments_fetched:
                 if seg.get("language"):
                     meeting.language = seg["language"]
@@ -434,9 +477,6 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
             meeting.error_message = None
             return
 
-        # -- Fallback: Whisper audio transcription ----------------------------
-        # Vexa finalizes the recording asynchronously after the meeting ends.
-        # Poll until the recording is ready (max 5 attempts x 5s = 25s).
         audio_bytes: bytes | None = None
         audio_fmt: str = "wav"
         for attempt in range(5):
@@ -446,7 +486,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
             except ValueError:
                 if attempt < 4:
                     logger.info(
-                        "Recording not ready for vexa meeting %s (attempt %d/5), retrying in 5s…",
+                        "Recording not ready for vexa meeting %s (attempt %d/5), retrying in 5s...",
                         meeting.vexa_meeting_id,
                         attempt + 1,
                     )
@@ -487,12 +527,10 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
-    # Ignore events without a meeting reference (e.g. recording.completed without platform)
     if not payload.platform or not payload.native_meeting_id:
         logger.info("Vexa webhook: no platform/native_meeting_id, ignoring")
         return {"status": "ignored"}
 
-    # Map vexa status → portal status
     VEXA_STATUS_MAP = {
         "joining": "joining",
         "awaiting_admission": "joining",
@@ -502,7 +540,6 @@ async def vexa_webhook(
     }
     portal_status = VEXA_STATUS_MAP.get(payload.status or "")
 
-    # Find the meeting by platform + native_meeting_id
     meeting = await db.scalar(
         select(VexaMeeting)
         .where(
@@ -516,13 +553,11 @@ async def vexa_webhook(
         logger.warning("Vexa webhook: no matching meeting for %s/%s", payload.platform, payload.native_meeting_id)
         return {"status": "ignored"}
 
-    # Non-completion status change: sync status and return
-    # Do NOT downgrade from "processing" — user may have already clicked Stop
     if payload.status is not None and payload.status != "completed":
         if portal_status and meeting.status != portal_status and meeting.status != "processing":
             meeting.status = portal_status
             await db.commit()
-            logger.info("Vexa webhook: synced status %s→%s for meeting %s", payload.status, portal_status, meeting.id)
+            logger.info("Vexa webhook: synced status %s->%s for meeting %s", payload.status, portal_status, meeting.id)
         return {"status": "synced"}
 
     meeting.status = "processing"

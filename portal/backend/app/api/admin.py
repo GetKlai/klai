@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import PLAN_PRODUCTS, get_plan_products
+from app.models.audit import PortalAuditLog
 from app.models.groups import PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
+from app.services.audit import log_event
 from app.services.zitadel import zitadel
 
 log = logging.getLogger(__name__)
@@ -142,6 +144,25 @@ class ProductSummaryResponse(BaseModel):
 
 class PlanChangeRequest(BaseModel):
     plan: str
+
+
+class AuditLogEntry(BaseModel):
+    id: int
+    actor_user_id: str
+    action: str
+    resource_type: str
+    resource_id: str
+    details: dict | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AuditLogResponse(BaseModel):
+    items: list[AuditLogEntry]
+    total: int
+    page: int
+    size: int
 
 
 @router.get("/users", response_model=UsersResponse)
@@ -480,6 +501,16 @@ async def assign_product(
             enabled_by=admin_user_id,
         )
     )
+    await db.flush()
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=admin_user_id,
+        action="product.assigned",
+        resource_type="product",
+        resource_id=f"{zitadel_user_id}:{body.product}",
+        details={"product": body.product, "user_id": zitadel_user_id},
+    )
     await db.commit()
     return MessageResponse(message="Product assigned")
 
@@ -492,7 +523,7 @@ async def revoke_product(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Revoke a product from a user."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    admin_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
     result = await db.execute(
@@ -507,6 +538,15 @@ async def revoke_product(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product assignment not found")
 
     await db.delete(row)
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=admin_user_id,
+        action="product.revoked",
+        resource_type="product",
+        resource_id=f"{zitadel_user_id}:{product}",
+        details={"product": product, "user_id": zitadel_user_id},
+    )
     await db.commit()
 
 
@@ -605,7 +645,7 @@ async def suspend_user(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Suspend an active user. Preserves group memberships and products."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
     result = await db.execute(
@@ -624,6 +664,14 @@ async def suspend_user(
         )
 
     user.status = "suspended"
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=caller_id,
+        action="user.suspended",
+        resource_type="user",
+        resource_id=zitadel_user_id,
+    )
     await db.commit()
     return MessageResponse(message=f"Gebruiker {zitadel_user_id} geschorst.")
 
@@ -665,7 +713,7 @@ async def offboard_user(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Offboard a user: remove memberships + products, deactivate in Zitadel, set status."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
     result = await db.execute(
@@ -690,6 +738,62 @@ async def offboard_user(
     )
 
     user.status = "offboarded"
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=caller_id,
+        action="user.offboarded",
+        resource_type="user",
+        resource_id=zitadel_user_id,
+    )
     await zitadel.deactivate_user(settings.zitadel_portal_org_id, zitadel_user_id)
     await db.commit()
     return MessageResponse(message=f"Gebruiker {zitadel_user_id} offboarded.")
+
+
+# ---------------------------------------------------------------------------
+# Audit log viewer
+# ---------------------------------------------------------------------------
+
+
+@router.get("/audit-log", response_model=AuditLogResponse)
+async def get_audit_log(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+    page: int = 1,
+    size: int = 20,
+    action: str | None = None,
+    resource_type: str | None = None,
+) -> AuditLogResponse:
+    """Paginated audit log for the caller's org. Admin only.
+
+    Filters:
+    - action: exact match (e.g. "meeting.created")
+    - resource_type: exact match (e.g. "group", "meeting", "product", "user")
+    """
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    query = select(PortalAuditLog).where(PortalAuditLog.org_id == org.id)
+    count_query = select(func.count(PortalAuditLog.id)).where(PortalAuditLog.org_id == org.id)
+
+    if action:
+        query = query.where(PortalAuditLog.action == action)
+        count_query = count_query.where(PortalAuditLog.action == action)
+    if resource_type:
+        query = query.where(PortalAuditLog.resource_type == resource_type)
+        count_query = count_query.where(PortalAuditLog.resource_type == resource_type)
+
+    total = await db.scalar(count_query) or 0
+    offset = (page - 1) * size
+    result = await db.execute(
+        query.order_by(PortalAuditLog.created_at.desc()).offset(offset).limit(size)
+    )
+    items = result.scalars().all()
+
+    return AuditLogResponse(
+        items=[AuditLogEntry.model_validate(e) for e in items],
+        total=total,
+        page=page,
+        size=size,
+    )
