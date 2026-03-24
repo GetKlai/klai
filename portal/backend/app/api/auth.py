@@ -40,8 +40,8 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
