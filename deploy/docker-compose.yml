@@ -517,6 +517,18 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: victoriametrics-logs-datasource
       GRAFANA_POSTGRES_PASSWORD: ${GRAFANA_POSTGRES_PASSWORD}
+      # Zitadel OIDC — only users with the grafana_admin project role can log in
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: Klai
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: "365481665952219144"
+      GF_AUTH_GENERIC_OAUTH_SCOPES: "openid email profile urn:zitadel:iam:org:projects:roles"
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: https://auth.getklai.com/oauth/v2/authorize
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: https://auth.getklai.com/oauth/v2/token
+      GF_AUTH_GENERIC_OAUTH_API_URL: https://auth.getklai.com/oidc/v1/userinfo
+      GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "\"urn:zitadel:iam:org:project:roles\".grafana_admin && 'Admin' || ''"
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "true"
+      GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "false"
     depends_on:
       - victoriametrics
       - victorialogs
