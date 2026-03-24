@@ -48,11 +48,13 @@ async def create_system_groups(org_id: int, db: AsyncSession) -> None:
 
     for group, products in groups_to_create:
         for product in products:
-            db.add(PortalGroupProduct(
-                group_id=group.id,
-                org_id=org_id,
-                product=product,
-                enabled_by="system",
-            ))
+            db.add(
+                PortalGroupProduct(
+                    group_id=group.id,
+                    org_id=org_id,
+                    product=product,
+                    enabled_by="system",
+                )
+            )
 
     await db.commit()

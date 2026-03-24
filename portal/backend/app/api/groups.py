@@ -628,7 +628,6 @@ async def get_user_groups(
 
     return UserGroupsResponse(
         groups=[
-            UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id], is_system=g.is_system)
-            for g in groups
+            UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id], is_system=g.is_system) for g in groups
         ]
     )
