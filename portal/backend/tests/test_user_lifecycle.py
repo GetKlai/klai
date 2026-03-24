@@ -252,7 +252,7 @@ class TestOffboardUser:
             patch("app.api.admin.settings") as mock_settings,
         ):
             mock_settings.zitadel_portal_org_id = "org-id"
-            result = await offboard_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
+            await offboard_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
         assert user.status == "offboarded"
 

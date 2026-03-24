@@ -4,6 +4,7 @@ Tests for SPEC-AUTH-001: Group management endpoints.
 Pure unit tests -- no real DB, all async sessions are mocked.
 """
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -67,7 +68,7 @@ class TestListGroups:
 class TestCreateGroup:
     @pytest.mark.asyncio
     async def test_create_group_succeeds(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from app.api.groups import create_group
 
@@ -78,7 +79,7 @@ class TestCreateGroup:
         mock_db.flush = AsyncMock()
         mock_db.commit = AsyncMock()
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         async def fake_refresh(obj: object) -> None:
             obj.id = 10  # type: ignore[attr-defined]

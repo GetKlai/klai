@@ -43,10 +43,13 @@ class TestCharacterizeGenerateLibrechatEnv:
             slug="acme",
             client_id="cid-123",
             client_secret="csec-456",  # noqa: S106
+            litellm_api_key="test-litellm-master",
+            mongo_password="test-tenant-pw",  # noqa: S106
         )
 
         # MongoDB section
-        assert "MONGO_URI=mongodb://klai:test-mongo-pw@mongodb:27017/librechat-acme?authSource=admin" in result
+        assert "MONGO_URI=mongodb://librechat-acme:test-tenant-pw@mongodb:27017" in result
+        assert "authSource=librechat-acme" in result
 
         # Zitadel OIDC section
         assert "OPENID_ISSUER=https://auth.getklai.com" in result
@@ -87,6 +90,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",  # noqa: S106
             litellm_api_key="sk-team-key",
+            mongo_password="pw",  # noqa: S106
         )
 
         assert "LITELLM_API_KEY=sk-team-key" in result
@@ -100,6 +104,8 @@ class TestCharacterizeGenerateLibrechatEnv:
             slug="my-tenant",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
         )
 
         assert "librechat-my-tenant" in result
@@ -113,6 +119,8 @@ class TestCharacterizeGenerateLibrechatEnv:
             slug="test-org",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
         )
 
         lines = result.strip().split("\n")
@@ -127,6 +135,8 @@ class TestCharacterizeGenerateLibrechatEnv:
             slug="acme",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
         )
 
         for line in result.strip().split("\n"):
@@ -145,6 +155,8 @@ class TestCharacterizeGenerateLibrechatEnv:
             slug="acme",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
         )
 
         env = {}
@@ -166,6 +178,8 @@ class TestCharacterizeGenerateLibrechatEnv:
             slug="acme",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
         )
 
         assert isinstance(result, str)
@@ -182,6 +196,8 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             slug="acme",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
             zitadel_org_id="362771533686374406",
         )
 
@@ -195,6 +211,8 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             slug="acme",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
             zitadel_org_id="123",
         )
 
@@ -208,6 +226,8 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             slug="acme",
             client_id="cid",
             client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
         )
 
         assert "KLAI_ZITADEL_ORG_ID=" in result
@@ -221,6 +241,8 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             slug="acme",
             client_id="cid-123",
             client_secret="csec-456",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
             zitadel_org_id="org-id-789",
         )
 
