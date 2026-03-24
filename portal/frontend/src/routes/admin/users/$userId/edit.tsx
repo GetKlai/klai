@@ -179,8 +179,8 @@ function EditUserPage() {
 
   function getProductMeta(productName: string): UserProduct | undefined {
     return (userProducts?.products ?? []).find(
-      (p) => (typeof p === 'string' ? p : p.product) === productName
-    ) as UserProduct | undefined
+      (p): p is UserProduct => typeof p !== 'string' && p.product === productName
+    )
   }
 
   function handleToggleProduct(product: string, checked: boolean) {
