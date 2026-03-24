@@ -1,8 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Loader2, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,12 +31,6 @@ export const Route = createFileRoute('/admin/users/$userId/edit')({
 type Language = 'nl' | 'en'
 type UserStatus = 'active' | 'suspended' | 'offboarded'
 
-interface EditForm {
-  first_name: string
-  last_name: string
-  preferred_language: Language
-}
-
 interface User {
   zitadel_user_id: string
   email: string
@@ -47,12 +41,7 @@ interface User {
   invite_pending: boolean
 }
 
-interface UserGroup {
-  id: number
-  name: string
-}
-
-interface AllGroup {
+interface Group {
   id: number
   name: string
 }
@@ -64,14 +53,16 @@ function EditUserPage() {
   const navigate = useNavigate()
   const { userId } = Route.useParams()
 
-  const [form, setForm] = useState<EditForm>({
-    first_name: '',
-    last_name: '',
-    preferred_language: 'nl',
-  })
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [language, setLanguage] = useState<Language>('nl')
+  // Local staged group state: the desired final membership
+  const [memberGroupIds, setMemberGroupIds] = useState<Set<number>>(new Set())
+  const [groupsInitialized, setGroupsInitialized] = useState(false)
   const [selectedGroupId, setSelectedGroupId] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  const { data } = useQuery({
+  const { data: usersData } = useQuery({
     queryKey: ['admin-users', token],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/api/admin/users`, {
@@ -83,133 +74,112 @@ function EditUserPage() {
     enabled: !!token,
   })
 
-  const user = data?.users.find((u) => u.zitadel_user_id === userId)
+  const user = usersData?.users.find((u) => u.zitadel_user_id === userId)
 
   useEffect(() => {
     if (user) {
-      setForm({
-        first_name: user.first_name,
-        last_name: user.last_name,
-        preferred_language: user.preferred_language,
-      })
+      setFirstName(user.first_name)
+      setLastName(user.last_name)
+      setLanguage(user.preferred_language)
     }
   }, [user])
-
-  const editMutation = useMutation({
-    mutationFn: async (formData: EditForm) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_edit({ status: String(res.status) }))
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-      void navigate({ to: '/admin/users' })
-    },
-  })
-
-  // --- User groups query ---
 
   const { data: userGroupsData } = useQuery({
     queryKey: ['admin-user-groups', userId, token],
     queryFn: async () => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/users/${userId}/groups`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      if (!res.ok) return { groups: [] as UserGroup[] }
-      return res.json() as Promise<{ groups: UserGroup[] }>
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/groups`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return { groups: [] as Group[] }
+      return res.json() as Promise<{ groups: Group[] }>
     },
     enabled: !!token,
   })
 
   const { data: allGroupsData } = useQuery({
-    queryKey: ['admin-groups'],
+    queryKey: ['admin-groups', token],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/api/admin/groups`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) return { groups: [] as AllGroup[] }
-      return res.json() as Promise<{ groups: AllGroup[] }>
+      if (!res.ok) return { groups: [] as Group[] }
+      return res.json() as Promise<{ groups: Group[] }>
     },
     enabled: !!token,
   })
 
-  const userGroups = userGroupsData?.groups ?? []
-  const userGroupIds = new Set(userGroups.map((g) => g.id))
-  const availableGroups = (allGroupsData?.groups ?? []).filter((g) => !userGroupIds.has(g.id))
+  const allGroups = allGroupsData?.groups ?? []
 
-  // --- Group membership mutations ---
+  // Initialize staged group state once server data arrives
+  useEffect(() => {
+    if (!groupsInitialized && userGroupsData) {
+      setMemberGroupIds(new Set(userGroupsData.groups.map((g) => g.id)))
+      setGroupsInitialized(true)
+    }
+  }, [userGroupsData, groupsInitialized])
 
-  const addToGroupMutation = useMutation({
-    mutationFn: async (groupId: number) => {
-      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}/members`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ zitadel_user_id: userId }),
-      })
-      if (!res.ok) throw new Error(`Failed to add to group (${res.status})`)
-    },
-    onSuccess: () => {
+  const currentGroups = allGroups.filter((g) => memberGroupIds.has(g.id))
+  const availableGroups = allGroups.filter((g) => !memberGroupIds.has(g.id))
+
+  function stageAdd(groupId: number) {
+    setMemberGroupIds((prev) => new Set([...prev, groupId]))
+    setSelectedGroupId('')
+  }
+
+  function stageRemove(groupId: number) {
+    setMemberGroupIds((prev) => {
+      const next = new Set(prev)
+      next.delete(groupId)
+      return next
+    })
+  }
+
+  const originalGroupIds = new Set(userGroupsData?.groups.map((g) => g.id) ?? [])
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user) return
+    setSaving(true)
+    try {
+      const groupsToAdd = [...memberGroupIds].filter((id) => !originalGroupIds.has(id))
+      const groupsToRemove = [...originalGroupIds].filter((id) => !memberGroupIds.has(id))
+
+      await Promise.all([
+        fetch(`${API_BASE}/api/admin/users/${userId}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ first_name: firstName, last_name: lastName, preferred_language: language }),
+        }).then((r) => { if (!r.ok) throw new Error(m.admin_users_error_edit({ status: String(r.status) })) }),
+        ...groupsToAdd.map((id) =>
+          fetch(`${API_BASE}/api/admin/groups/${id}/members`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ zitadel_user_id: userId }),
+          }).then((r) => { if (!r.ok) throw new Error(`Groep toevoegen mislukt (${r.status})`) }),
+        ),
+        ...groupsToRemove.map((id) =>
+          fetch(`${API_BASE}/api/admin/groups/${id}/members/${userId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((r) => { if (!r.ok) throw new Error(`Groep verwijderen mislukt (${r.status})`) }),
+        ),
+      ])
+
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
       void queryClient.invalidateQueries({ queryKey: ['admin-user-groups', userId] })
       void queryClient.invalidateQueries({ queryKey: ['admin-group-members'] })
-      setSelectedGroupId('')
-      toast.success(m.admin_users_groups_add_success())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
-  const removeFromGroupMutation = useMutation({
-    mutationFn: async (groupId: number) => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/members/${userId}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      )
-      if (!res.ok) throw new Error(`Failed to remove from group (${res.status})`)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-user-groups', userId] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-group-members'] })
-      toast.success(m.admin_users_groups_remove_success())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
-  // --- Lifecycle hooks ---
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-memberships'] })
+      void navigate({ to: '/admin/users' })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : m.admin_users_error_edit_generic())
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
   const offboardMutation = useOffboardUser()
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    editMutation.mutate(form)
-  }
-
-  function handleCancel() {
-    void navigate({ to: '/admin/users' })
-  }
-
-  function handleAddToGroup() {
-    if (selectedGroupId) {
-      addToGroupMutation.mutate(Number(selectedGroupId))
-    }
-  }
 
   return (
     <div className="p-8 max-w-lg">
@@ -217,7 +187,7 @@ function EditUserPage() {
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.admin_users_edit_heading()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
+        <Button type="button" variant="ghost" size="sm" onClick={() => void navigate({ to: '/admin/users' })}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_users_cancel()}
         </Button>
@@ -225,7 +195,7 @@ function EditUserPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="first-name">{m.admin_users_field_first_name()}</Label>
@@ -233,8 +203,8 @@ function EditUserPage() {
                   id="first-name"
                   type="text"
                   required
-                  value={form.first_name}
-                  onChange={(e) => setForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
@@ -243,8 +213,8 @@ function EditUserPage() {
                   id="last-name"
                   type="text"
                   required
-                  value={form.last_name}
-                  onChange={(e) => setForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
                 />
               </div>
             </div>
@@ -253,99 +223,84 @@ function EditUserPage() {
               <Label htmlFor="language">{m.admin_users_field_language()}</Label>
               <Select
                 id="language"
-                value={form.preferred_language}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
-                }
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as Language)}
               >
                 <option value="nl">{m.admin_users_language_nl()}</option>
                 <option value="en">{m.admin_users_language_en()}</option>
               </Select>
             </div>
 
-            {editMutation.error && (
-              <p className="text-sm text-[var(--color-destructive)]">
-                {editMutation.error instanceof Error
-                  ? editMutation.error.message
-                  : m.admin_users_error_edit_generic()}
-              </p>
-            )}
+            <div className="border-t pt-4">
+              <Label className="mb-2 block">{m.admin_users_groups_title()}</Label>
 
-            <div className="pt-2">
-              <Button type="submit" disabled={editMutation.isPending || !user}>
-                {editMutation.isPending
-                  ? m.admin_users_edit_submit_loading()
-                  : m.admin_users_edit_submit()}
+              {currentGroups.length === 0 ? (
+                <p className="text-sm text-muted-foreground mb-3">{m.admin_users_groups_empty()}</p>
+              ) : (
+                <div className="space-y-1 mb-3">
+                  {currentGroups.map((group) => (
+                    <div key={group.id} className="flex items-center justify-between py-1">
+                      <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                        {group.name}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => stageRemove(group.id)}
+                      >
+                        <X className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {availableGroups.length > 0 && (
+                <div className="flex gap-2">
+                  <Select
+                    value={selectedGroupId}
+                    onChange={(e) => setSelectedGroupId(e.target.value)}
+                    className="flex-1"
+                  >
+                    <option value="">— {m.admin_users_groups_add()} —</option>
+                    {availableGroups.map((g) => (
+                      <option key={g.id} value={String(g.id)}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!selectedGroupId}
+                    onClick={() => stageAdd(Number(selectedGroupId))}
+                  >
+                    {m.admin_users_groups_add()}
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex gap-2">
+              <Button type="submit" disabled={saving || !user}>
+                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {saving ? m.admin_users_edit_submit_loading() : m.admin_users_edit_submit()}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => void navigate({ to: '/admin/users' })}
+              >
+                {m.admin_users_cancel()}
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
 
-      {/* Groups section */}
-      <Card className="mt-6">
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-lg">{m.admin_users_groups_title()}</h2>
-          </div>
-
-          {userGroups.length === 0 ? (
-            <p className="text-sm text-muted-foreground mb-4">
-              {m.admin_users_groups_empty()}
-            </p>
-          ) : (
-            <div className="space-y-2 mb-4">
-              {userGroups.map((group) => (
-                <div key={group.id} className="flex items-center justify-between py-1">
-                  <span className="text-sm font-medium text-[var(--color-purple-deep)]">
-                    {group.name}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={removeFromGroupMutation.isPending && removeFromGroupMutation.variables === group.id}
-                    onClick={() => removeFromGroupMutation.mutate(group.id)}
-                  >
-                    {removeFromGroupMutation.isPending && removeFromGroupMutation.variables === group.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
-                    )}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {availableGroups.length > 0 && (
-            <div className="flex gap-2">
-              <Select
-                value={selectedGroupId}
-                onChange={(e) => setSelectedGroupId(e.target.value)}
-                className="flex-1"
-              >
-                <option value="">— {m.admin_users_groups_add()} —</option>
-                {availableGroups.map((g) => (
-                  <option key={g.id} value={String(g.id)}>
-                    {g.name}
-                  </option>
-                ))}
-              </Select>
-              <Button
-                size="sm"
-                disabled={!selectedGroupId || addToGroupMutation.isPending}
-                onClick={handleAddToGroup}
-              >
-                {addToGroupMutation.isPending
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : m.admin_users_groups_add()}
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Lifecycle action buttons — only show when at least one button will render */}
+      {/* Lifecycle actions — destructive, separate from save */}
       {user && (user.status === 'suspended' || (user.status === 'active' && !user.invite_pending)) && (
         <Card className="mt-6">
           <CardContent className="pt-6 flex flex-wrap gap-3">
