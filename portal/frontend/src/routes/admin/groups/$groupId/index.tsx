@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,8 +34,7 @@ interface Group {
   id: number
   name: string
   description: string | null
-  created_at: string
-  created_by: string
+  products: string[]
 }
 
 interface Member {
@@ -50,12 +48,6 @@ interface OrgUser {
   email: string
   first_name: string
   last_name: string
-}
-
-interface GroupProduct {
-  product: string
-  enabled_at: string
-  enabled_by: string
 }
 
 // ---------------------------------------------------------------------------
@@ -135,61 +127,13 @@ function AdminGroupDetail() {
     enabled: !!token,
   })
 
-  const { data: availableProducts } = useQuery({
-    queryKey: ['admin-products', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/products`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return { products: [] as string[] }
-      return res.json() as Promise<{ products: string[] }>
-    },
-    enabled: !!token,
-  })
-
-  const { data: groupProductsData, isLoading: groupProductsLoading } = useQuery({
-    queryKey: ['admin-group-products', groupId, token],
-    queryFn: async () => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/products`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      if (!res.ok) return { products: [] as GroupProduct[] }
-      return res.json() as Promise<{ products: GroupProduct[] }>
-    },
-    enabled: !!token,
-  })
-
   const members = membersData?.members ?? []
   const orgUsers = usersData?.users ?? []
-
-  // Build lookup map for user display
   const usersMap = new Map(orgUsers.map((u) => [u.zitadel_user_id, u]))
-
-  const planProducts = availableProducts?.products ?? []
-  const assignedProducts = new Set((groupProductsData?.products ?? []).map((p) => p.product))
 
   // ---------------------------------------------------------------------------
   // Mutations
   // ---------------------------------------------------------------------------
-
-  const deleteMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to delete group (${res.status})`)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
-      toast.success(m.admin_groups_success_deleted())
-      void navigate({ to: '/admin/groups' })
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
 
   const removeMemberMutation = useMutation({
     mutationFn: async (userId: string) => {
@@ -203,87 +147,9 @@ function AdminGroupDetail() {
       if (!res.ok) throw new Error(`Failed to remove member (${res.status})`)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ['admin-group-members', groupId],
-      })
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-members', groupId] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-groups'] })
       toast.success(m.admin_groups_members_success_removed())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
-  const toggleAdminMutation = useMutation({
-    mutationFn: async ({
-      userId,
-      is_group_admin,
-    }: {
-      userId: string
-      is_group_admin: boolean
-    }) => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/members/${userId}`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ is_group_admin }),
-        },
-      )
-      if (!res.ok)
-        throw new Error(`Failed to toggle admin status (${res.status})`)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ['admin-group-members', groupId],
-      })
-      toast.success(m.admin_groups_members_admin_toggled())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
-  const assignGroupProductMutation = useMutation({
-    mutationFn: async (product: string) => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/products`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ product }),
-        },
-      )
-      if (!res.ok) throw new Error(`Failed to assign product (${res.status})`)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-group-products', groupId] })
-      toast.success(m.admin_groups_products_assign_success())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
-
-  const revokeGroupProductMutation = useMutation({
-    mutationFn: async (product: string) => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/products/${encodeURIComponent(product)}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      )
-      if (!res.ok) throw new Error(`Failed to revoke product (${res.status})`)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-group-products', groupId] })
-      toast.success(m.admin_groups_products_revoke_success())
     },
     onError: (err: Error) => {
       toast.error(err.message)
@@ -316,17 +182,19 @@ function AdminGroupDetail() {
   }
 
   return (
-    <div className="p-8 space-y-6 max-w-4xl">
+    <div className="p-8 space-y-6 max-w-2xl">
       {/* Header */}
       <div className="flex items-start justify-between">
-        <div className="space-y-1">
+        <div className="space-y-2">
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
             {groupData.name}
           </h1>
-          {groupData.description && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              {groupData.description}
-            </p>
+          {groupData.products.length > 0 && (
+            <div className="flex gap-2">
+              {groupData.products.map((p) => (
+                <Badge key={p} className="capitalize">{p}</Badge>
+              ))}
+            </div>
           )}
         </div>
         <Button
@@ -338,96 +206,6 @@ function AdminGroupDetail() {
           {m.admin_groups_title()}
         </Button>
       </div>
-
-      {/* Group info card */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-lg">
-              {m.admin_groups_edit()}
-            </h2>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate({ to: '/admin/groups/$groupId/edit', params: { groupId } })}
-              >
-                {m.admin_groups_edit()}
-              </Button>
-
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending && (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    )}
-                    {m.admin_groups_delete()}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      {m.admin_groups_confirm_delete_title()}
-                    </AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {m.admin_groups_confirm_delete_description()}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>
-                      {m.admin_users_cancel()}
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => deleteMutation.mutate()}
-                    >
-                      {m.admin_groups_delete()}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </div>
-
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            <div>
-              <dt className="text-[var(--color-muted-foreground)]">
-                {m.admin_groups_name()}
-              </dt>
-              <dd className="text-[var(--color-purple-deep)] font-medium">
-                {groupData.name}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--color-muted-foreground)]">
-                {m.admin_groups_description()}
-              </dt>
-              <dd className="text-[var(--color-purple-deep)]">
-                {groupData.description || '-'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--color-muted-foreground)]">
-                {m.admin_groups_created_at()}
-              </dt>
-              <dd className="text-[var(--color-purple-deep)]">
-                {formatDate(groupData.created_at)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--color-muted-foreground)]">
-                {m.admin_groups_created_by()}
-              </dt>
-              <dd className="text-[var(--color-purple-deep)]">
-                {groupData.created_by}
-              </dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
 
       {/* Members section */}
       <Card>
@@ -468,9 +246,6 @@ function AdminGroupDetail() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                       {m.admin_groups_members_joined_at()}
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                      {m.admin_groups_members_admin()}
-                    </th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                       {/* Actions */}
                     </th>
@@ -479,10 +254,6 @@ function AdminGroupDetail() {
                 <tbody>
                   {members.map((member, i) => {
                     const user = usersMap.get(member.zitadel_user_id)
-                    const isTogglingAdmin =
-                      toggleAdminMutation.isPending &&
-                      toggleAdminMutation.variables?.userId ===
-                        member.zitadel_user_id
                     const isRemoving =
                       removeMemberMutation.isPending &&
                       removeMemberMutation.variables === member.zitadel_user_id
@@ -504,25 +275,6 @@ function AdminGroupDetail() {
                         </td>
                         <td className="px-6 py-3 text-[var(--color-purple-deep)]">
                           {formatDate(member.joined_at)}
-                        </td>
-                        <td className="px-6 py-3">
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={member.is_group_admin}
-                              disabled={isTogglingAdmin}
-                              onCheckedChange={(checked) =>
-                                toggleAdminMutation.mutate({
-                                  userId: member.zitadel_user_id,
-                                  is_group_admin: checked,
-                                })
-                              }
-                            />
-                            {member.is_group_admin && (
-                              <Badge variant="secondary">
-                                {m.admin_groups_members_admin()}
-                              </Badge>
-                            )}
-                          </div>
                         </td>
                         <td className="px-6 py-3 text-right">
                           <AlertDialog>
@@ -554,9 +306,7 @@ function AdminGroupDetail() {
                                 </AlertDialogCancel>
                                 <AlertDialogAction
                                   onClick={() =>
-                                    removeMemberMutation.mutate(
-                                      member.zitadel_user_id,
-                                    )
+                                    removeMemberMutation.mutate(member.zitadel_user_id)
                                   }
                                 >
                                   {m.admin_groups_members_remove()}
@@ -574,55 +324,6 @@ function AdminGroupDetail() {
           )}
         </CardContent>
       </Card>
-
-      {/* Products section */}
-      <Card>
-        <CardContent className="pt-6">
-          <h2 className="font-semibold text-lg mb-4">
-            {m.admin_groups_products_title()}
-          </h2>
-
-          {groupProductsLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-              Loading...
-            </p>
-          ) : planProducts.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">
-              {m.admin_groups_products_empty()}
-            </p>
-          ) : (
-            <div className="space-y-4">
-              {planProducts.map((product) => {
-                const isAssigned = assignedProducts.has(product)
-                const isToggling =
-                  (assignGroupProductMutation.isPending && assignGroupProductMutation.variables === product) ||
-                  (revokeGroupProductMutation.isPending && revokeGroupProductMutation.variables === product)
-
-                return (
-                  <div key={product} className="flex items-center justify-between gap-4">
-                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">
-                      {product}
-                    </span>
-                    <Switch
-                      checked={isAssigned}
-                      disabled={isToggling}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          assignGroupProductMutation.mutate(product)
-                        } else {
-                          revokeGroupProductMutation.mutate(product)
-                        }
-                      }}
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
     </div>
   )
 }
