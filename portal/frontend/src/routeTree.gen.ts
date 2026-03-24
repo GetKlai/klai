@@ -53,6 +53,8 @@ import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$
 import { Route as AppFocusNotebookIdAddSourceRouteImport } from './routes/app/focus/$notebookId_.add-source'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
 import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
+import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
+import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
 
 const VerifyRoute = VerifyRouteImport.update({
   id: '/verify',
@@ -276,6 +278,17 @@ const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
   path: '/users/$userId/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
+  id: '/groups/$groupId/edit',
+  path: '/groups/$groupId/edit',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminGroupsGroupIdAddMemberRoute =
+  AdminGroupsGroupIdAddMemberRouteImport.update({
+    id: '/groups/$groupId/add-member',
+    path: '/groups/$groupId/add-member',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -317,6 +330,8 @@ export interface FileRoutesByFullPath {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
+  '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
+  '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
@@ -361,6 +376,8 @@ export interface FileRoutesByTo {
   '/app/focus': typeof AppFocusIndexRoute
   '/app/knowledge': typeof AppKnowledgeIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
+  '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
+  '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
@@ -408,6 +425,8 @@ export interface FileRoutesById {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
+  '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
+  '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
   '/admin/users/$userId/edit': typeof AdminUsersUserIdEditRoute
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
@@ -456,6 +475,8 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/knowledge/'
     | '/app/transcribe/'
+    | '/admin/groups/$groupId/add-member'
+    | '/admin/groups/$groupId/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
@@ -500,6 +521,8 @@ export interface FileRouteTypes {
     | '/app/focus'
     | '/app/knowledge'
     | '/app/transcribe'
+    | '/admin/groups/$groupId/add-member'
+    | '/admin/groups/$groupId/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
@@ -546,6 +569,8 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/knowledge/'
     | '/app/transcribe/'
+    | '/admin/groups/$groupId/add-member'
+    | '/admin/groups/$groupId/edit'
     | '/admin/users/$userId/edit'
     | '/app/docs/$kbSlug_/edit'
     | '/app/focus/$notebookId_/add-source'
@@ -880,6 +905,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/groups/$groupId/edit': {
+      id: '/admin/groups/$groupId/edit'
+      path: '/groups/$groupId/edit'
+      fullPath: '/admin/groups/$groupId/edit'
+      preLoaderRoute: typeof AdminGroupsGroupIdEditRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/groups/$groupId/add-member': {
+      id: '/admin/groups/$groupId/add-member'
+      path: '/groups/$groupId/add-member'
+      fullPath: '/admin/groups/$groupId/add-member'
+      preLoaderRoute: typeof AdminGroupsGroupIdAddMemberRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
   }
 }
 
@@ -905,6 +944,8 @@ interface AdminRouteRouteChildren {
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
+  AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
+  AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
 }
@@ -917,6 +958,8 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
+  AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
+  AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
 }

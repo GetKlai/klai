@@ -1,21 +1,10 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription,
-} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,19 +16,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
 import { ArrowLeft, Loader2, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
@@ -111,17 +87,6 @@ function AdminGroupDetail() {
   const navigate = useNavigate()
   const { groupId } = Route.useParams()
 
-  // --- Edit group state ---
-  const [editOpen, setEditOpen] = useState(false)
-  const [editName, setEditName] = useState('')
-  const [editDescription, setEditDescription] = useState('')
-  const [editDuplicateError, setEditDuplicateError] = useState(false)
-
-  // --- Add member state ---
-  const [addMemberOpen, setAddMemberOpen] = useState(false)
-  const [comboboxOpen, setComboboxOpen] = useState(false)
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
-
   // ---------------------------------------------------------------------------
   // Queries
   // ---------------------------------------------------------------------------
@@ -170,42 +135,9 @@ function AdminGroupDetail() {
   // Build lookup map for user display
   const usersMap = new Map(orgUsers.map((u) => [u.zitadel_user_id, u]))
 
-  // Users not yet members (for the add-member combobox)
-  const memberIds = new Set(members.map((mb) => mb.zitadel_user_id))
-  const availableUsers = orgUsers.filter((u) => !memberIds.has(u.zitadel_user_id))
-
   // ---------------------------------------------------------------------------
   // Mutations
   // ---------------------------------------------------------------------------
-
-  const updateMutation = useMutation({
-    mutationFn: async (body: { name: string; description: string }) => {
-      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      })
-      if (res.status === 409) throw new Error('duplicate')
-      if (!res.ok) throw new Error(`Failed to update group (${res.status})`)
-      return res.json() as Promise<Group>
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-group', groupId] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
-      toast.success(m.admin_groups_success_updated())
-      closeEditDialog()
-    },
-    onError: (err: Error) => {
-      if (err.message === 'duplicate') {
-        setEditDuplicateError(true)
-      } else {
-        toast.error(err.message)
-      }
-    },
-  })
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -222,38 +154,6 @@ function AdminGroupDetail() {
     },
     onError: (err: Error) => {
       toast.error(err.message)
-    },
-  })
-
-  const addMemberMutation = useMutation({
-    mutationFn: async (zitadel_user_id: string) => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/members`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ zitadel_user_id }),
-        },
-      )
-      if (res.status === 409) throw new Error('already_member')
-      if (!res.ok) throw new Error(`Failed to add member (${res.status})`)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ['admin-group-members', groupId],
-      })
-      toast.success(m.admin_groups_members_success_added())
-      closeAddMemberDialog()
-    },
-    onError: (err: Error) => {
-      if (err.message === 'already_member') {
-        toast.error(m.admin_groups_members_error_already_member())
-      } else {
-        toast.error(err.message)
-      }
     },
   })
 
@@ -313,47 +213,6 @@ function AdminGroupDetail() {
   })
 
   // ---------------------------------------------------------------------------
-  // Dialog helpers
-  // ---------------------------------------------------------------------------
-
-  function openEditDialog() {
-    if (groupData) {
-      setEditName(groupData.name)
-      setEditDescription(groupData.description ?? '')
-    }
-    setEditDuplicateError(false)
-    setEditOpen(true)
-  }
-
-  function closeEditDialog() {
-    setEditOpen(false)
-    setEditName('')
-    setEditDescription('')
-    setEditDuplicateError(false)
-  }
-
-  function handleEditSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setEditDuplicateError(false)
-    updateMutation.mutate({
-      name: editName.trim(),
-      description: editDescription.trim(),
-    })
-  }
-
-  function closeAddMemberDialog() {
-    setAddMemberOpen(false)
-    setSelectedUserId(null)
-    setComboboxOpen(false)
-  }
-
-  function handleAddMemberSubmit() {
-    if (selectedUserId) {
-      addMemberMutation.mutate(selectedUserId)
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
@@ -377,10 +236,6 @@ function AdminGroupDetail() {
       </div>
     )
   }
-
-  const selectedUser = selectedUserId
-    ? orgUsers.find((u) => u.zitadel_user_id === selectedUserId)
-    : null
 
   return (
     <div className="p-8 space-y-6 max-w-4xl">
@@ -414,7 +269,11 @@ function AdminGroupDetail() {
               {m.admin_groups_edit()}
             </h2>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={openEditDialog}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate({ to: '/admin/groups/$groupId/edit', params: { groupId } })}
+              >
                 {m.admin_groups_edit()}
               </Button>
 
@@ -501,7 +360,7 @@ function AdminGroupDetail() {
             </h2>
             <Button
               size="sm"
-              onClick={() => setAddMemberOpen(true)}
+              onClick={() => navigate({ to: '/admin/groups/$groupId/add-member', params: { groupId } })}
             >
               <UserPlus className="h-4 w-4 mr-2" />
               {m.admin_groups_members_add()}
@@ -638,162 +497,6 @@ function AdminGroupDetail() {
         </CardContent>
       </Card>
 
-      {/* Edit group dialog */}
-      <Dialog
-        open={editOpen}
-        onOpenChange={(open) => {
-          if (!open) closeEditDialog()
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{m.admin_groups_edit()}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {m.admin_groups_edit()}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEditSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-group-name">{m.admin_groups_name()}</Label>
-              <Input
-                id="edit-group-name"
-                value={editName}
-                onChange={(e) => {
-                  setEditName(e.target.value)
-                  setEditDuplicateError(false)
-                }}
-                placeholder={m.admin_groups_name_placeholder()}
-                required
-                autoFocus
-              />
-              {editDuplicateError && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {m.admin_groups_error_duplicate()}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-group-description">
-                {m.admin_groups_description()}
-              </Label>
-              <textarea
-                id="edit-group-description"
-                value={editDescription}
-                onChange={(e) => setEditDescription(e.target.value)}
-                placeholder={m.admin_groups_description_placeholder()}
-                rows={3}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-purple-deep)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeEditDialog}
-                disabled={updateMutation.isPending}
-              >
-                {m.admin_users_cancel()}
-              </Button>
-              <Button
-                type="submit"
-                disabled={updateMutation.isPending || !editName.trim()}
-              >
-                {updateMutation.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                {m.admin_groups_edit()}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add member dialog */}
-      <Dialog
-        open={addMemberOpen}
-        onOpenChange={(open) => {
-          if (!open) closeAddMemberDialog()
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{m.admin_groups_members_add()}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {m.admin_groups_members_add()}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Popover open={comboboxOpen} onOpenChange={setComboboxOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={comboboxOpen}
-                  className="w-full justify-between font-normal"
-                >
-                  {selectedUser
-                    ? `${selectedUser.first_name} ${selectedUser.last_name}`.trim() ||
-                      selectedUser.email
-                    : m.admin_groups_members_search_placeholder()}
-                  <span className="ml-2 opacity-50">&#x25BE;</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                <Command>
-                  <CommandInput
-                    placeholder={m.admin_groups_members_search_placeholder()}
-                  />
-                  <CommandList>
-                    <CommandEmpty>No users found</CommandEmpty>
-                    <CommandGroup>
-                      {availableUsers.map((u) => {
-                        const label =
-                          `${u.first_name} ${u.last_name}`.trim() || u.email
-                        return (
-                          <CommandItem
-                            key={u.zitadel_user_id}
-                            value={`${u.first_name} ${u.last_name} ${u.email}`}
-                            onSelect={() => {
-                              setSelectedUserId(u.zitadel_user_id)
-                              setComboboxOpen(false)
-                            }}
-                          >
-                            <span>{label}</span>
-                            <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
-                              {u.email}
-                            </span>
-                          </CommandItem>
-                        )
-                      })}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeAddMemberDialog}
-                disabled={addMemberMutation.isPending}
-              >
-                {m.admin_users_cancel()}
-              </Button>
-              <Button
-                type="button"
-                onClick={handleAddMemberSubmit}
-                disabled={addMemberMutation.isPending || !selectedUserId}
-              >
-                {addMemberMutation.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                {m.admin_groups_members_add()}
-              </Button>
-            </DialogFooter>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
