@@ -140,6 +140,16 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
+    # @MX:WARN external API call - deactivation is irreversible
+    async def deactivate_user(self, user_id: str, org_id: str) -> None:
+        """Deactivate a user in Zitadel (login disabled, not deleted)."""
+        resp = await self._http.post(
+            f"/management/v1/users/{user_id}/_deactivate",
+            headers={"x-zitadel-orgid": org_id},
+            json={},
+        )
+        resp.raise_for_status()
+
     # ── Token introspection ───────────────────────────────────────────────────
 
     async def get_userinfo(self, access_token: str) -> dict:

@@ -1,0 +1,394 @@
+"""
+Group management endpoints.
+All endpoints require authentication and are scoped to the caller's org.
+"""
+
+import logging
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.dependencies import (
+    _get_caller_org,
+    _require_admin,
+    _require_admin_or_group_admin,
+    bearer,
+)
+from app.core.database import get_db
+from app.models.groups import PortalGroup, PortalGroupMembership
+from app.models.portal import PortalUser
+
+log = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/admin", tags=["groups"])
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas
+# ---------------------------------------------------------------------------
+
+
+class GroupCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class GroupUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class GroupOut(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    created_at: datetime
+    created_by: str
+
+
+class GroupsResponse(BaseModel):
+    groups: list[GroupOut]
+
+
+class MemberAddRequest(BaseModel):
+    zitadel_user_id: str
+
+
+class MemberOut(BaseModel):
+    zitadel_user_id: str
+    is_group_admin: bool
+    joined_at: datetime
+
+
+class MembersResponse(BaseModel):
+    members: list[MemberOut]
+
+
+class GroupAdminToggleRequest(BaseModel):
+    is_group_admin: bool
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Group CRUD
+# ---------------------------------------------------------------------------
+
+
+@router.get("/groups", response_model=GroupsResponse)
+async def list_groups(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> GroupsResponse:
+    """List all groups in the caller's org."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalGroup)
+        .where(PortalGroup.org_id == org.id)
+        .order_by(PortalGroup.name)
+    )
+    groups = result.scalars().all()
+    return GroupsResponse(
+        groups=[
+            GroupOut(
+                id=g.id,
+                name=g.name,
+                description=g.description,
+                created_at=g.created_at,
+                created_by=g.created_by,
+            )
+            for g in groups
+        ]
+    )
+
+
+@router.post("/groups", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
+async def create_group(
+    body: GroupCreateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> GroupOut:
+    """Create a new group in the caller's org."""
+    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    group = PortalGroup(
+        org_id=org.id,
+        name=body.name,
+        description=body.description,
+        created_by=caller_user_id,
+    )
+    db.add(group)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Groepsnaam bestaat al in deze organisatie",
+        ) from exc
+
+    await db.commit()
+    await db.refresh(group)
+
+    return GroupOut(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        created_at=group.created_at,
+        created_by=group.created_by,
+    )
+
+
+@router.patch("/groups/{group_id}", response_model=GroupOut)
+async def update_group(
+    group_id: int,
+    body: GroupUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> GroupOut:
+    """Update a group's name or description."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    if body.name is not None:
+        group.name = body.name
+    if body.description is not None:
+        group.description = body.description
+
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Groepsnaam bestaat al in deze organisatie",
+        ) from exc
+
+    await db.commit()
+    await db.refresh(group)
+
+    return GroupOut(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        created_at=group.created_at,
+        created_by=group.created_by,
+    )
+
+
+@router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(
+    group_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a group (CASCADE removes memberships)."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    await db.delete(group)
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Membership management
+# ---------------------------------------------------------------------------
+
+
+@router.get("/groups/{group_id}/members", response_model=MembersResponse)
+async def list_members(
+    group_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MembersResponse:
+    """List members of a group. Accessible by org admin or group admin."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    await _require_admin_or_group_admin(group_id, caller_user, db)
+
+    result = await db.execute(
+        select(PortalGroupMembership)
+        .where(PortalGroupMembership.group_id == group_id)
+        .order_by(PortalGroupMembership.joined_at)
+    )
+    members = result.scalars().all()
+    return MembersResponse(
+        members=[
+            MemberOut(
+                zitadel_user_id=m.zitadel_user_id,
+                is_group_admin=m.is_group_admin,
+                joined_at=m.joined_at,
+            )
+            for m in members
+        ]
+    )
+
+
+@router.post("/groups/{group_id}/members", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+async def add_member(
+    group_id: int,
+    body: MemberAddRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Add a member to a group. Admin or group admin. Cross-org validation (R5)."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    group = group_result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    await _require_admin_or_group_admin(group_id, caller_user, db)
+
+    # R5: Cross-org security -- verify user belongs to same org as group
+    user_result = await db.execute(
+        select(PortalUser).where(PortalUser.zitadel_user_id == body.zitadel_user_id)
+    )
+    target_user = user_result.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+
+    if target_user.org_id != group.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Gebruiker behoort niet tot dezelfde organisatie als de groep",
+        )
+
+    membership = PortalGroupMembership(
+        group_id=group_id,
+        zitadel_user_id=body.zitadel_user_id,
+    )
+    db.add(membership)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Gebruiker is al lid van deze groep",
+        ) from exc
+
+    await db.commit()
+    return MessageResponse(message="Lid toegevoegd aan groep")
+
+
+@router.delete("/groups/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(
+    group_id: int,
+    user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a member from a group. Admin or group admin."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    await _require_admin_or_group_admin(group_id, caller_user, db)
+
+    result = await db.execute(
+        select(PortalGroupMembership).where(
+            PortalGroupMembership.group_id == group_id,
+            PortalGroupMembership.zitadel_user_id == user_id,
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lidmaatschap niet gevonden")
+
+    await db.delete(membership)
+    await db.commit()
+
+
+@router.patch("/groups/{group_id}/members/{user_id}", response_model=MessageResponse)
+async def toggle_group_admin(
+    group_id: int,
+    user_id: str,
+    body: GroupAdminToggleRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Toggle is_group_admin for a member. Admin only."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Verify group belongs to caller's org
+    group_result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    result = await db.execute(
+        select(PortalGroupMembership).where(
+            PortalGroupMembership.group_id == group_id,
+            PortalGroupMembership.zitadel_user_id == user_id,
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lidmaatschap niet gevonden")
+
+    membership.is_group_admin = body.is_group_admin
+    await db.commit()
+
+    action = "toegekend" if body.is_group_admin else "ingetrokken"
+    return MessageResponse(message=f"Groepsbeheerder rechten {action}")
