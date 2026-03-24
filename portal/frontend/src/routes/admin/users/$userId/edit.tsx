@@ -240,17 +240,35 @@ function EditUserPage() {
                 <div className="space-y-1 mb-3">
                   {currentGroups.map((group) => (
                     <div key={group.id} className="flex items-center justify-between py-1">
-                      <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                      <span className="text-sm text-[var(--color-purple-deep)]">
                         {group.name}
                       </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => stageRemove(group.id)}
-                      >
-                        <X className="h-4 w-4 text-muted-foreground" />
-                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button type="button" variant="ghost" size="sm">
+                            <X className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              {m.admin_users_confirm_remove_group_title()}
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {m.admin_users_confirm_remove_group_description({ name: group.name })}
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-[var(--color-destructive)] text-white hover:opacity-90"
+                              onClick={() => stageRemove(group.id)}
+                            >
+                              {m.admin_users_confirm_remove_group_title()}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   ))}
                 </div>

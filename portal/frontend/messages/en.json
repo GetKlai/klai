@@ -802,6 +802,8 @@
   "admin_users_groups_add": "Add to group",
   "admin_users_groups_add_success": "Added to group",
   "admin_users_groups_remove_success": "Removed from group",
+  "admin_users_confirm_remove_group_title": "Remove from group",
+  "admin_users_confirm_remove_group_description": "Remove {name} from this user? This takes effect when you save.",
 
   "admin_nav_connectors": "Connectors",
   "admin_section_connectors_title": "Connectors",
