@@ -91,11 +91,7 @@ async def list_groups(
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    result = await db.execute(
-        select(PortalGroup)
-        .where(PortalGroup.org_id == org.id)
-        .order_by(PortalGroup.name)
-    )
+    result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id).order_by(PortalGroup.name))
     groups = result.scalars().all()
     return GroupsResponse(
         groups=[
@@ -288,9 +284,7 @@ async def add_member(
     await _require_admin_or_group_admin(group_id, caller_user, db)
 
     # R5: Cross-org security -- verify user belongs to same org as group
-    user_result = await db.execute(
-        select(PortalUser).where(PortalUser.zitadel_user_id == body.zitadel_user_id)
-    )
+    user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == body.zitadel_user_id))
     target_user = user_result.scalar_one_or_none()
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")

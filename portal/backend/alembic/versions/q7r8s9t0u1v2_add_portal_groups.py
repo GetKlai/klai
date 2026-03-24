@@ -29,9 +29,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_portal_groups_org_id", "portal_groups", ["org_id"])
     # Case-insensitive unique constraint on (org_id, lower(name))
-    op.execute(
-        "CREATE UNIQUE INDEX uq_group_org_name_lower ON portal_groups (org_id, LOWER(name))"
-    )
+    op.execute("CREATE UNIQUE INDEX uq_group_org_name_lower ON portal_groups (org_id, LOWER(name))")
 
     op.create_table(
         "portal_group_memberships",

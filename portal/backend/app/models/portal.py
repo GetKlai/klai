@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -26,8 +26,8 @@ class PortalOrg(Base):
     )
     librechat_container: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    zitadel_librechat_client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
-    litellm_team_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    zitadel_librechat_client_secret: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    litellm_team_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     provisioning_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending", server_default="pending"
     )
@@ -53,9 +53,7 @@ class PortalUser(Base):
     preferred_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"
     )
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="active", server_default="active"
-    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")
