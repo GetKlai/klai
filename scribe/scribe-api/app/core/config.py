@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # Upload limits
     max_upload_mb: int = 100
 
+    # LiteLLM gateway (for AI summarization)
+    litellm_base_url: str = "http://litellm:4000"
+    litellm_master_key: str = ""
+    summarize_model: str = "klai-primary"
+
     log_level: str = "INFO"
 
     @property
