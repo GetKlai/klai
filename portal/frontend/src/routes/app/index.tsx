@@ -41,18 +41,18 @@ function AppHome() {
       helpId: 'home-tool-focus',
     },
     {
-      title: m.app_tool_docs_title(),
-      description: m.app_tool_docs_description(),
-      icon: BookMarked,
-      href: '/app/docs',
-      helpId: 'home-tool-docs',
-    },
-    {
       title: m.app_tool_knowledge_title(),
       description: m.app_tool_knowledge_description(),
       icon: Brain,
       href: '/app/knowledge',
       helpId: 'home-tool-knowledge',
+    },
+    {
+      title: m.app_tool_docs_title(),
+      description: m.app_tool_docs_description(),
+      icon: BookMarked,
+      href: '/app/docs',
+      helpId: 'home-tool-docs',
     },
   ]
 
