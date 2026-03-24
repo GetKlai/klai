@@ -10,7 +10,6 @@ import pytest
 
 from app.services.summarizer import extract_facts, summarize_meeting, synthesize_summary
 
-
 SAMPLE_FACTS = {
     "speakers_present": ["Alice", "Bob"],
     "topics": ["Q3 roadmap", "budget approval"],
