@@ -684,6 +684,7 @@
   "app_meetings_transcript_empty": "Geen transcriptie beschikbaar.",
   "app_meetings_copy": "Kopiëren",
   "app_meetings_download": "Downloaden",
+  "app_meetings_download_raw": "Raw JSON",
   "app_meetings_copy_done": "Gekopieerd!",
   "app_meetings_error_label": "Fout",
   "app_meetings_active_info": "We zijn onderweg naar je vergadering. Zie je een melding? Laat de bot even toe. Zodra de meeting klaar is wachten we 60 seconden, voor het geval iemand terugkomt. Daarna ronden we automatisch af en vind je de transcriptie in het overzicht. Je kunt dit venster gewoon sluiten.",
@@ -794,5 +795,11 @@
 
   "admin_nav_groups": "Groepen",
   "admin_home_groups_title": "Groepen",
-  "admin_home_groups_count": "Totaal aantal groepen"
+  "admin_home_groups_count": "Totaal aantal groepen",
+
+  "admin_users_groups_title": "Groepen",
+  "admin_users_groups_empty": "Niet in een groep",
+  "admin_users_groups_add": "Toevoegen aan groep",
+  "admin_users_groups_add_success": "Toegevoegd aan groep",
+  "admin_users_groups_remove_success": "Verwijderd uit groep"
 }
