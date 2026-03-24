@@ -38,7 +38,7 @@ class ParsedInvite:
 def parse_ics(ics_bytes: bytes) -> ParsedInvite | None:
     """Parse iCalendar bytes and return a ParsedInvite, or None if no valid meeting URL found."""
     try:
-        cal = Calendar.from_ical(ics_bytes)
+        cal = Calendar.from_ical(ics_bytes.decode("utf-8", errors="replace"))
     except Exception:
         logger.warning("Failed to parse iCalendar data")
         return None
