@@ -802,6 +802,8 @@
   "admin_users_groups_add": "Toevoegen aan groep",
   "admin_users_groups_add_success": "Toegevoegd aan groep",
   "admin_users_groups_remove_success": "Verwijderd uit groep",
+  "admin_users_confirm_remove_group_title": "Verwijder uit groep",
+  "admin_users_confirm_remove_group_description": "Verwijder {name} bij deze gebruiker? Dit gaat in bij opslaan.",
 
   "admin_nav_connectors": "Connectors",
   "admin_section_connectors_title": "Connectors",
