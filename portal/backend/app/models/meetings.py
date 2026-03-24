@@ -28,6 +28,7 @@ class VexaMeeting(Base):
     consent_given: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     transcript_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript_segments: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+    summary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
