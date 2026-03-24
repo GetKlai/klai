@@ -16,6 +16,7 @@ from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.services.bot_poller import poll_loop
+from app.services.events import _pending as _event_tasks
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
@@ -51,6 +52,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     poller_task.cancel()
+    if _event_tasks:
+        await asyncio.gather(*list(_event_tasks), return_exceptions=True)
     await vexa.close()
     await zitadel.close()
 

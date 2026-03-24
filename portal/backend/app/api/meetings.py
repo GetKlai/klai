@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.meetings import VexaMeeting
+from app.models.portal import PortalUser
+from app.services.events import emit_event
 from app.services.vexa import parse_meeting_url, vexa
 from app.services.zitadel import zitadel
 
@@ -147,9 +149,14 @@ async def start_meeting(
             detail="Maximaal 2 actieve vergaderingen tegelijk. Stop een bestaande bot om door te gaan.",
         )
 
+    # Resolve org_id before creating the meeting record
+    portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
+    org_id = portal_user.org_id if portal_user else None
+
     # Create meeting record
     meeting = VexaMeeting(
         zitadel_user_id=user_id,
+        org_id=org_id,
         platform=ref.platform,
         native_meeting_id=ref.native_meeting_id,
         meeting_url=body.meeting_url,
@@ -174,6 +181,7 @@ async def start_meeting(
 
     await db.commit()
     await db.refresh(meeting)
+    emit_event("meeting.started", org_id=org_id, user_id=user_id, properties={"platform": ref.platform})
     return MeetingResponse.model_validate(meeting)
 
 
@@ -284,6 +292,12 @@ async def summarize_meeting_endpoint(
 
     meeting.summary_json = summary
     await db.commit()
+    emit_event(
+        "meeting.summarized",
+        org_id=meeting.org_id,
+        user_id=meeting.zitadel_user_id,
+        properties={"language": meeting.language or "unknown"},
+    )
     return {"summary": summary}
 
 
@@ -519,4 +533,13 @@ async def vexa_webhook(
 
     await run_transcription(meeting, db)
     await db.commit()
+
+    if meeting.status == "done":
+        emit_event(
+            "meeting.completed",
+            org_id=meeting.org_id,
+            user_id=meeting.zitadel_user_id,
+            properties={"platform": meeting.platform, "duration_seconds": meeting.duration_seconds},
+        )
+
     return {"status": "ok"}

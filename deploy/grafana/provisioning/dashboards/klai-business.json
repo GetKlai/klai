@@ -1,0 +1,167 @@
+{
+  "annotations": { "list": [] },
+  "description": "Klai business metrics: customers, revenue, signups, and churn",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Seats Sold",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT SUM(seats) AS value FROM portal_orgs WHERE billing_status = 'active'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "MRR Estimate (€)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "unit": "currencyEUR", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT SUM(CASE WHEN plan='core' AND billing_cycle='monthly' THEN seats*28 WHEN plan='core' AND billing_cycle='yearly_early' THEN seats*20 WHEN plan='core' AND billing_cycle='yearly' THEN seats*22 WHEN plan='professional' AND billing_cycle='monthly' THEN seats*42 WHEN plan='professional' AND billing_cycle='yearly_early' THEN seats*29 WHEN plan='professional' AND billing_cycle='yearly' THEN seats*34 WHEN plan='knowledge' AND billing_cycle='monthly' THEN seats*68 WHEN plan='knowledge' AND billing_cycle='yearly_early' THEN seats*48 WHEN plan='knowledge' AND billing_cycle='yearly' THEN seats*54 ELSE 0 END) AS value FROM portal_orgs WHERE billing_status='active'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "ARR Locked-in (€)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "unit": "currencyEUR", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT SUM(CASE WHEN plan='core' AND billing_cycle='yearly_early' THEN seats*20*12 WHEN plan='core' AND billing_cycle='yearly' THEN seats*22*12 WHEN plan='professional' AND billing_cycle='yearly_early' THEN seats*29*12 WHEN plan='professional' AND billing_cycle='yearly' THEN seats*34*12 WHEN plan='knowledge' AND billing_cycle='yearly_early' THEN seats*48*12 WHEN plan='knowledge' AND billing_cycle='yearly' THEN seats*54*12 ELSE 0 END) AS value FROM portal_orgs WHERE billing_status='active'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Active Customers",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM portal_orgs WHERE billing_status = 'active'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Customers by Plan",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 5 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT plan AS metric, COUNT(*) AS value FROM portal_orgs WHERE billing_status = 'active' AND plan != 'free' GROUP BY plan ORDER BY plan",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Billing Status Distribution",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 5 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT billing_status AS metric, COUNT(*) AS value FROM portal_orgs GROUP BY billing_status ORDER BY billing_status",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Billing Cycle Distribution (Active)",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 5 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT billing_cycle AS metric, COUNT(*) AS value FROM portal_orgs WHERE billing_status = 'active' GROUP BY billing_cycle ORDER BY billing_cycle",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "New Signups Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(*) AS signups FROM product_events WHERE event_type = 'signup' AND created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Cancellations Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(*) AS cancellations FROM product_events WHERE event_type = 'billing.cancelled' AND created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["klai", "business"],
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Klai Business",
+  "uid": "klai-business",
+  "version": 1
+}

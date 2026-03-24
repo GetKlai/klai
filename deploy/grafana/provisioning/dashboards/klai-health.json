@@ -1,0 +1,102 @@
+{
+  "annotations": { "list": [] },
+  "description": "Klai system health: provisioning status, active meeting bots, API health",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Provisioning Failures",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 3 }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM portal_orgs WHERE provisioning_status = 'failed'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Active Meeting Bots",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 2 }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM vexa_meetings WHERE status IN ('pending', 'joining', 'recording')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Provisioning Status Distribution",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 5 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT provisioning_status AS metric, COUNT(*) AS value FROM portal_orgs GROUP BY provisioning_status ORDER BY provisioning_status",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "API Error Rate (5xx) — requires VictoriaMetrics scraping FastAPI",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (handler)",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "API Latency P95 — requires VictoriaMetrics scraping FastAPI",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["klai", "health"],
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Klai Health",
+  "uid": "klai-health",
+  "version": 1
+}

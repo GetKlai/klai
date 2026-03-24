@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
+from app.services.events import emit_event
 from app.services.moneybird import MoneybirdService
 from app.services.zitadel import zitadel
 
@@ -32,7 +33,8 @@ async def get_moneybird() -> AsyncIterator[MoneybirdService]:
 async def _get_org(
     credentials: HTTPAuthorizationCredentials,
     db: AsyncSession,
-) -> PortalOrg:
+) -> tuple[PortalOrg, str]:
+    """Return (org, zitadel_user_id) for the authenticated user."""
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
@@ -59,7 +61,7 @@ async def _get_org(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Organisatie niet gevonden",
         )
-    return org
+    return org, user_id
 
 
 class MandateRequest(BaseModel):
@@ -86,16 +88,23 @@ async def create_mandate(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org = await _get_org(credentials, db)
+    org, user_id = await _get_org(credentials, db)
 
     if settings.mock_billing:
         if not org.moneybird_contact_id:
             org.moneybird_contact_id = "mock"
+        old_plan = org.plan
         org.plan = body.plan
         org.billing_cycle = body.billing_cycle
         org.seats = body.seats
         org.billing_status = "mandate_requested"
         await db.commit()
+        emit_event(
+            "billing.plan_changed",
+            org_id=org.id,
+            user_id=user_id,
+            properties={"from_plan": old_plan, "to_plan": body.plan, "billing_cycle": body.billing_cycle},
+        )
         base = str(request.base_url).rstrip("/")
         return {"mandate_url": f"{base}/api/billing/mock-complete?org_id={org.id}"}
 
@@ -131,11 +140,18 @@ async def create_mandate(
             ) from exc
         org.moneybird_contact_id = str(contact["id"])
 
+    old_plan = org.plan
     org.plan = body.plan
     org.billing_cycle = body.billing_cycle
     org.seats = body.seats
     org.billing_status = "mandate_requested"
     await db.commit()
+    emit_event(
+        "billing.plan_changed",
+        org_id=org.id,
+        user_id=user_id,
+        properties={"from_plan": old_plan, "to_plan": body.plan, "billing_cycle": body.billing_cycle},
+    )
 
     try:
         mandate_url = await moneybird.get_mandate_url(org.moneybird_contact_id)
@@ -169,7 +185,7 @@ async def billing_status(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    org = await _get_org(credentials, db)
+    org, _ = await _get_org(credentials, db)
     return {
         "billing_status": org.billing_status,
         "plan": org.plan,
@@ -185,7 +201,7 @@ async def invoice_portal(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org = await _get_org(credentials, db)
+    org, _ = await _get_org(credentials, db)
 
     if not org.moneybird_contact_id:
         raise HTTPException(
@@ -210,7 +226,7 @@ async def cancel_subscription(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org = await _get_org(credentials, db)
+    org, user_id = await _get_org(credentials, db)
 
     if not org.moneybird_subscription_id:
         raise HTTPException(
@@ -228,5 +244,6 @@ async def cancel_subscription(
 
     org.billing_status = "cancelled"
     await db.commit()
+    emit_event("billing.cancelled", org_id=org.id, user_id=user_id, properties={"plan": org.plan})
 
     return {"status": "cancelled"}
