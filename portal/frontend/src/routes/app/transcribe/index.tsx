@@ -18,7 +18,6 @@ import {
   Download,
   Video,
   Square,
-  ExternalLink,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
@@ -567,18 +566,16 @@ function TranscribePage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-1">
-                                {/* Upload-only: rename */}
-                                {item.source === 'upload' && (
-                                  <Tooltip label={m.app_transcribe_edit_label()}>
-                                    <button
-                                      onClick={() => startEdit(item)}
-                                      aria-label={m.app_transcribe_edit_label()}
-                                      className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                                    >
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                )}
+                                {/* Rename */}
+                                <Tooltip label={m.app_transcribe_edit_label()}>
+                                  <button
+                                    onClick={() => startEdit(item)}
+                                    aria-label={m.app_transcribe_edit_label()}
+                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </Tooltip>
 
                                 {/* Active meeting: stop button */}
                                 {isActive && (
@@ -626,19 +623,6 @@ function TranscribePage() {
                                       className="flex h-7 w-7 items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
                                     >
                                       <Download className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                )}
-
-                                {/* Meeting: open detail */}
-                                {item.source === 'meeting' && (
-                                  <Tooltip label={m.app_transcribe_meeting_open()}>
-                                    <button
-                                      onClick={() => void navigate({ to: '/app/meetings/$meetingId', params: { meetingId: item.id } })}
-                                      aria-label={m.app_transcribe_meeting_open()}
-                                      className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-opacity hover:opacity-70"
-                                    >
-                                      <ExternalLink className="h-3.5 w-3.5" />
                                     </button>
                                   </Tooltip>
                                 )}
