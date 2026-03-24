@@ -749,7 +749,9 @@ export async function startGoogleRecording(page: Page, botConfig: BotConfig): Pr
               
               const leaveCfg = (botConfigData && (botConfigData as any).automaticLeave) || {};
               const startupAloneTimeoutSeconds = Number(leaveCfg.startupAloneTimeoutSeconds ?? (20 * 60));
-              const everyoneLeftTimeoutSeconds = Number(leaveCfg.everyoneLeftTimeoutSeconds ?? 10);
+              const everyoneLeftTimeoutSeconds = leaveCfg.everyoneLeftTimeout
+                ? Math.floor(Number(leaveCfg.everyoneLeftTimeout) / 1000)
+                : Number(leaveCfg.everyoneLeftTimeoutSeconds ?? 60);
               
               let aloneTime = 0;
               let lastParticipantCount = 0;
