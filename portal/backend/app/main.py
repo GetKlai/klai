@@ -50,9 +50,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")
 
+    imap_task: asyncio.Task[None] | None = None
+    if settings.imap_host and settings.imap_username:
+        from app.services.imap_listener import start_imap_listener
+
+        imap_task = asyncio.create_task(start_imap_listener())
+        logger.info("IMAP listener started")
+    else:
+        logger.warning("IMAP listener disabled: missing configuration")
+
     yield
 
     poller_task.cancel()
+    if imap_task is not None:
+        imap_task.cancel()
     if _event_tasks:
         await asyncio.gather(*list(_event_tasks), return_exceptions=True)
     await vexa.close()

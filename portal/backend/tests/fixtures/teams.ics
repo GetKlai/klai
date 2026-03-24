@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Microsoft Corporation//Outlook 16.0//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:teams-uid-789@microsoft.com
+DTSTART:20260402T090000Z
+DTEND:20260402T100000Z
+SUMMARY:Design Review
+ORGANIZER;CN=Carol:mailto:carol@example.com
+X-MICROSOFT-SKYPETEAMSMEETINGURL:https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc@thread.v2/0
+DESCRIPTION:Microsoft Teams meeting\nJoin on your computer or mobile app
+END:VEVENT
+END:VCALENDAR

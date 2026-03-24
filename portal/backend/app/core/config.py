@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # Dev mode — enables Swagger UI and /openapi.json; NEVER enable in production
     debug: bool = False
 
+    # IMAP calendar invite listener
+    imap_host: str | None = None
+    imap_port: int = 993
+    imap_username: str | None = None
+    imap_password: str | None = None
+    imap_poll_interval_seconds: int = 60
+
     # CORS — static origins + wildcard regex for tenant subdomains
     cors_origins: str = "http://localhost:5174"
     cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
