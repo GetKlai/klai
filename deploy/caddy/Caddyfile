@@ -91,6 +91,8 @@
                 window 1m
             }
         }
+        @grafana-html path / /login /logout /d/* /dashboards* /explore* /alerting* /datasources* /plugins* /admin*
+        header @grafana-html Cache-Control "no-cache, no-store, must-revalidate"
         reverse_proxy grafana:3000
     }
 
