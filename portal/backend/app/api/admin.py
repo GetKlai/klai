@@ -69,6 +69,7 @@ class UserOut(BaseModel):
     last_name: str
     role: Literal["admin", "member"]
     preferred_language: Literal["nl", "en"]
+    status: str
     created_at: datetime
     invite_pending: bool
 
@@ -199,6 +200,7 @@ async def list_users(
                 last_name=profile.get("lastName", ""),
                 role=portal_user.role,
                 preferred_language=portal_user.preferred_language,
+                status=portal_user.status,
                 created_at=portal_user.created_at,
                 invite_pending=z.get("state") == "USER_STATE_INITIAL",
             )
