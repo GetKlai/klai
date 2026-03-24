@@ -43,3 +43,19 @@ class PortalGroupMembership(Base):
     zitadel_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     is_group_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortalGroupProduct(Base):
+    __tablename__ = "portal_group_products"
+    __table_args__ = (
+        UniqueConstraint("group_id", "product", name="uq_group_products_group_product"),
+        Index("ix_group_products_group_id", "group_id"),
+        Index("ix_group_products_org_product", "org_id", "product"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("portal_groups.id", ondelete="CASCADE"), nullable=False)
+    org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"), nullable=False)
+    product: Mapped[str] = mapped_column(String(32), nullable=False)
+    enabled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    enabled_by: Mapped[str] = mapped_column(String(64), nullable=False)
