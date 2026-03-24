@@ -1,6 +1,7 @@
 import { AuthProvider, useAuth } from 'react-oidc-context'
 import { useEffect, type ReactNode } from 'react'
 import * as Sentry from '@sentry/react'
+import { authLogger } from '@/lib/logger'
 
 // Configure in .env.local:
 //   VITE_OIDC_AUTHORITY=https://auth.getklai.com
@@ -33,10 +34,24 @@ function SentryUserSync() {
   return null
 }
 
+// Clears stale auth state when the OIDC session expires or silent renewal fails.
+// After removeUser(), auth.isAuthenticated becomes false and the route guards
+// redirect to login automatically.
+function AuthSessionMonitor() {
+  const auth = useAuth()
+  useEffect(() => {
+    if (!auth.error) return
+    authLogger.warn('Auth error detected (silent renew failed or session expired), clearing auth state', auth.error)
+    void auth.removeUser()
+  }, [auth.error])
+  return null
+}
+
 export function KlaiAuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthProvider {...oidcConfig}>
       <SentryUserSync />
+      <AuthSessionMonitor />
       {children}
     </AuthProvider>
   )
