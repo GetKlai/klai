@@ -681,9 +681,7 @@ async def offboard_user(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Gebruiker is al offboarded")
 
     # Cascade: remove group memberships and product assignments
-    await db.execute(
-        delete(PortalGroupMembership).where(PortalGroupMembership.zitadel_user_id == zitadel_user_id)
-    )
+    await db.execute(delete(PortalGroupMembership).where(PortalGroupMembership.zitadel_user_id == zitadel_user_id))
     await db.execute(
         delete(PortalUserProduct).where(
             PortalUserProduct.zitadel_user_id == zitadel_user_id,

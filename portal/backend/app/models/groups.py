@@ -36,9 +36,7 @@ class PortalGroup(Base):
 
 class PortalGroupMembership(Base):
     __tablename__ = "portal_group_memberships"
-    __table_args__ = (
-        UniqueConstraint("group_id", "zitadel_user_id", name="uq_group_membership"),
-    )
+    __table_args__ = (UniqueConstraint("group_id", "zitadel_user_id", name="uq_group_membership"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("portal_groups.id", ondelete="CASCADE"), nullable=False)
