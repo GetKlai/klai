@@ -36,6 +36,7 @@ class VexaMeeting(Base):
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ical_uid: Mapped[str | None] = mapped_column(String(512), nullable=True, unique=True, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

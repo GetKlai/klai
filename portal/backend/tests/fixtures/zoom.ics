@@ -1,0 +1,13 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Zoom Video Communications//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:zoom-uid-456@zoom.us
+DTSTART;TZID=Europe/Amsterdam:20260401T160000
+DTEND;TZID=Europe/Amsterdam:20260401T170000
+SUMMARY:Client Call
+ORGANIZER;CN=Bob:mailto:bob@example.com
+DESCRIPTION:Join Zoom Meeting\nhttps://zoom.us/j/1234567890\n\nMeeting ID: 123 456 7890
+END:VEVENT
+END:VCALENDAR
