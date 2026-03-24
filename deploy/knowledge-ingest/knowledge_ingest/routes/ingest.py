@@ -16,10 +16,23 @@ from fastapi import APIRouter, HTTPException, Request
 
 from knowledge_ingest import chunker, embedder, pg_store, qdrant_store
 from knowledge_ingest.config import settings
-from knowledge_ingest.models import GiteaPushEvent, IngestRequest
+from knowledge_ingest.models import (
+    GiteaPushEvent,
+    IngestRequest,
+    UpdateKBVisibilityRequest,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _verify_internal_secret(request: Request) -> None:
+    """Verify X-Internal-Secret header for service-to-service calls."""
+    if not settings.knowledge_ingest_secret:
+        return
+    secret = request.headers.get("x-internal-secret", "")
+    if not hmac.compare_digest(secret, settings.knowledge_ingest_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _extract_title(content: str, path: str) -> str:
@@ -39,6 +52,26 @@ def _extract_title(content: str, path: str) -> str:
     return path.rsplit("/", 1)[-1].replace(".md", "")
 
 
+def _extract_frontmatter_metadata(content: str) -> dict:
+    """Extract indexable fields from YAML frontmatter for Qdrant payload."""
+    if not content.startswith("---"):
+        return {}
+    end = content.find("\n---", 3)
+    if end == -1:
+        return {}
+    try:
+        fm = yaml.safe_load(content[3:end])
+        if not isinstance(fm, dict):
+            return {}
+        result = {}
+        for key in ("tags", "provenance_type", "confidence", "source_note"):
+            if fm.get(key) is not None:
+                result[key] = fm[key]
+        return result
+    except Exception:
+        return {}
+
+
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk → embed → upsert."""
     chunks = chunker.chunk_markdown(
@@ -54,13 +87,18 @@ async def ingest_document(req: IngestRequest) -> dict:
 
     title = _extract_title(req.content, req.path)
 
+    extra_payload: dict = {"title": title}
+    if req.source_type:
+        extra_payload["source_type"] = req.source_type
+    extra_payload.update(_extract_frontmatter_metadata(req.content))
+
     await qdrant_store.upsert_chunks(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         path=req.path,
         chunks=texts,
         vectors=vectors,
-        extra_payload={"title": title},
+        extra_payload=extra_payload,
         user_id=req.user_id,
     )
     await pg_store.record_ingest(req.org_id, req.kb_slug, req.path, len(chunks))
@@ -140,7 +178,10 @@ async def gitea_webhook(request: Request) -> dict:
         if content is None:
             logger.warning("Could not fetch %s from %s", path, full_name)
             continue
-        req = IngestRequest(org_id=org_id, kb_slug=kb_slug, path=path, content=content)
+        req = IngestRequest(
+            org_id=org_id, kb_slug=kb_slug, path=path,
+            content=content, source_type="docs",
+        )
         try:
             await ingest_document(req)
             ingested += 1
@@ -177,6 +218,23 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
     except Exception as exc:
         logger.warning("Gitea API error for %s: %s", gitea_org_name, exc)
         return None
+
+
+@router.delete("/ingest/v1/kb")
+async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
+    """Delete all Qdrant chunks for a knowledge base. Called by Docs on KB deletion."""
+    _verify_internal_secret(request)
+    await qdrant_store.delete_kb(org_id, kb_slug)
+    logger.info("Deleted KB %s/%s from Qdrant (via API)", org_id, kb_slug)
+    return {"status": "ok"}
+
+
+@router.patch("/ingest/v1/kb/visibility")
+async def update_kb_visibility_route(request: Request, req: UpdateKBVisibilityRequest) -> dict:
+    """Update visibility for all chunks in a knowledge base. Called by Docs on visibility change."""
+    _verify_internal_secret(request)
+    await qdrant_store.update_kb_visibility(req.org_id, req.kb_slug, req.visibility)
+    return {"status": "ok"}
 
 
 async def _fetch_gitea_file(repo_full_name: str, path: str) -> str | None:

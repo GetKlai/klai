@@ -647,6 +647,8 @@ services:
       NEXT_PUBLIC_BASE_DOMAIN: ${DOMAIN}
       CADDY_TENANTS_DIR: /caddy/tenants
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
+      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     volumes:
       - caddy-tenants:/caddy/tenants
     networks:

@@ -7,6 +7,7 @@ class IngestRequest(BaseModel):
     path: str            # e.g. "my-note.md" (relative within KB)
     content: str = Field(max_length=500_000)  # Full markdown content (with optional frontmatter)
     user_id: str | None = None  # Set for user-scoped personal KB
+    source_type: str | None = None  # e.g. "docs", "connector", "crawl"
 
 
 class RetrieveRequest(BaseModel):
@@ -39,6 +40,17 @@ class CrawlResponse(BaseModel):
     url: str
     path: str
     chunks_ingested: int
+
+
+class DeleteKBRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+
+
+class UpdateKBVisibilityRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    visibility: str  # "public" | "private"
 
 
 class GiteaPusher(BaseModel):
