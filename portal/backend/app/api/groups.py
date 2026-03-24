@@ -438,22 +438,17 @@ async def list_group_products(
     _require_admin(caller_user)
 
     # Verify group belongs to caller's org
-    group_result = await db.execute(
-        select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id)
-    )
+    group_result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id))
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
 
     result = await db.execute(
-        select(PortalGroupProduct)
-        .where(PortalGroupProduct.group_id == group_id)
-        .order_by(PortalGroupProduct.product)
+        select(PortalGroupProduct).where(PortalGroupProduct.group_id == group_id).order_by(PortalGroupProduct.product)
     )
     products = result.scalars().all()
     return GroupProductsResponse(
         products=[
-            GroupProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by)
-            for p in products
+            GroupProductOut(product=p.product, enabled_at=p.enabled_at, enabled_by=p.enabled_by) for p in products
         ]
     )
 
@@ -470,9 +465,7 @@ async def assign_group_product(
     _require_admin(caller_user)
 
     # Verify group belongs to caller's org
-    group_result = await db.execute(
-        select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id)
-    )
+    group_result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id))
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
 
@@ -525,9 +518,7 @@ async def revoke_group_product(
     _require_admin(caller_user)
 
     # Verify group belongs to caller's org
-    group_result = await db.execute(
-        select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id)
-    )
+    group_result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org.id))
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
 

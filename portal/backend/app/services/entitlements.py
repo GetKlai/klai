@@ -14,9 +14,7 @@ from app.models.products import PortalUserProduct
 async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list[str]:
     """Return all products a user has access to (direct + group-inherited)."""
     # Direct assignments
-    direct_q = select(PortalUserProduct.product).where(
-        PortalUserProduct.zitadel_user_id == zitadel_user_id
-    )
+    direct_q = select(PortalUserProduct.product).where(PortalUserProduct.zitadel_user_id == zitadel_user_id)
 
     # Group-inherited assignments
     group_q = (
