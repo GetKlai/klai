@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertTriangle, Loader2, ArrowLeft } from 'lucide-react'
+import { AlertTriangle, Loader2, ArrowLeft, Info, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/meetings/start')({
@@ -30,6 +30,20 @@ function StartMeetingPage() {
   const [meetingTitle, setMeetingTitle] = useState('')
   const [consentGiven, setConsentGiven] = useState(false)
   const [urlError, setUrlError] = useState<string | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return localStorage.getItem('meetings_start_onboarding_dismissed') !== '1'
+    } catch {
+      return true
+    }
+  })
+
+  function dismissOnboarding() {
+    try {
+      localStorage.setItem('meetings_start_onboarding_dismissed', '1')
+    } catch { /* localStorage unavailable in sandboxed contexts */ }
+    setShowOnboarding(false)
+  }
 
   const platform = detectPlatform(meetingUrl)
   const isTeams = platform === 'Microsoft Teams'
@@ -83,6 +97,48 @@ function StartMeetingPage() {
           {m.app_meetings_back()}
         </Button>
       </div>
+
+      {showOnboarding && (
+        <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
+          <div className="flex items-start gap-3">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-purple-accent)]" />
+            <div className="flex-1 space-y-3 text-sm">
+              <p className="font-medium text-[var(--color-purple-deep)]">
+                {m.app_meetings_start_onboarding_title()}
+              </p>
+              <div className="space-y-0.5">
+                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                  {m.app_meetings_start_onboarding_url_heading()}
+                </p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {m.app_meetings_start_onboarding_url_body()}
+                </p>
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                  {m.app_meetings_start_onboarding_invite_heading()}
+                </p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {m.app_meetings_start_onboarding_invite_body()}
+                </p>
+              </div>
+              <button
+                onClick={dismissOnboarding}
+                className="text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+              >
+                {m.app_meetings_start_onboarding_dismiss()}
+              </button>
+            </div>
+            <button
+              onClick={dismissOnboarding}
+              className="shrink-0 rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] hover:text-[var(--color-foreground)] transition-colors"
+              aria-label={m.app_meetings_start_onboarding_dismiss()}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardContent className="pt-6">
