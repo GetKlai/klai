@@ -1,4 +1,5 @@
 import { AuthProvider, useAuth } from 'react-oidc-context'
+import { ErrorResponse } from 'oidc-client-ts'
 import { useEffect, type ReactNode } from 'react'
 import * as Sentry from '@sentry/react'
 import { authLogger } from '@/lib/logger'
@@ -36,15 +37,20 @@ function SentryUserSync() {
   return null
 }
 
-// Clears stale auth state when the OIDC session expires or silent renewal fails.
-// After removeUser(), auth.isAuthenticated becomes false and the route guards
-// redirect to login automatically.
+// Handles OIDC token renewal errors.
+// invalid_grant = refresh token expired or revoked → sign out, re-login required.
+// Any other error is unexpected and reported loudly — we do not sign out silently.
 function AuthSessionMonitor() {
   const auth = useAuth()
   useEffect(() => {
     if (!auth.error) return
-    authLogger.warn('Auth error detected (silent renew failed or session expired), clearing auth state', auth.error)
-    void auth.removeUser()
+    if (auth.error instanceof ErrorResponse && auth.error.error === 'invalid_grant') {
+      authLogger.info('Refresh token expired or revoked, signing out')
+      void auth.removeUser()
+      return
+    }
+    authLogger.error('Unexpected OIDC error during token renewal', auth.error)
+    Sentry.captureException(auth.error)
   }, [auth.error])
   return null
 }
