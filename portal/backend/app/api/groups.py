@@ -22,6 +22,7 @@ from app.api.dependencies import (
 from app.core.database import get_db
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalUser
+from app.services.audit import log_event
 
 log = logging.getLogger(__name__)
 
@@ -268,7 +269,7 @@ async def add_member(
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
     """Add a member to a group. Admin or group admin. Cross-org validation (R5)."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
 
     # Verify group belongs to caller's org
     group_result = await db.execute(
@@ -309,6 +310,15 @@ async def add_member(
             detail="Gebruiker is al lid van deze groep",
         ) from exc
 
+    await log_event(
+        db,
+        org_id=group.org_id,
+        actor=caller_id,
+        action="group.member_added",
+        resource_type="group",
+        resource_id=str(group_id),
+        details={"user_id": body.zitadel_user_id},
+    )
     await db.commit()
     return MessageResponse(message="Lid toegevoegd aan groep")
 
@@ -321,7 +331,7 @@ async def remove_member(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Remove a member from a group. Admin or group admin."""
-    _, org, caller_user = await _get_caller_org(credentials, db)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
 
     # Verify group belongs to caller's org
     group_result = await db.execute(
@@ -346,6 +356,15 @@ async def remove_member(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lidmaatschap niet gevonden")
 
     await db.delete(membership)
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=caller_id,
+        action="group.member_removed",
+        resource_type="group",
+        resource_id=str(group_id),
+        details={"user_id": user_id},
+    )
     await db.commit()
 
 
