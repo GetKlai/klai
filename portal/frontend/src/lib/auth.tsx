@@ -38,14 +38,17 @@ function SentryUserSync() {
 }
 
 // Handles OIDC token renewal errors.
-// invalid_grant = refresh token expired or revoked → sign out, re-login required.
-// Any other error is unexpected and reported loudly — we do not sign out silently.
+// Re-authentication errors (invalid_grant, login_required) → sign out so route
+// guards redirect to login. Any other error is unexpected: report loudly, don't
+// silently sign the user out.
+const REAUTHENTICATION_ERRORS = new Set(['invalid_grant', 'login_required'])
+
 function AuthSessionMonitor() {
   const auth = useAuth()
   useEffect(() => {
     if (!auth.error) return
-    if (auth.error instanceof ErrorResponse && auth.error.error === 'invalid_grant') {
-      authLogger.info('Refresh token expired or revoked, signing out')
+    if (auth.error instanceof ErrorResponse && auth.error.error !== null && REAUTHENTICATION_ERRORS.has(auth.error.error)) {
+      authLogger.info('Session ended, signing out', { error: auth.error.error })
       void auth.removeUser()
       return
     }
