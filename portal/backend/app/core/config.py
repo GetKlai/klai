@@ -87,8 +87,6 @@ class Settings(BaseSettings):
     vexa_api_key: str = ""
     vexa_webhook_secret: str = ""
 
-    # Vexa API-gateway (port 8123) — transcript segments with speaker labels
-    vexa_api_gateway_url: str = "http://vexa-api-gateway:8123"
 
     # LiteLLM (for summarization)
     litellm_base_url: str = "http://litellm:4000"
