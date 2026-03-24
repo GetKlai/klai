@@ -4,7 +4,7 @@ Tests for SPEC-AUTH-003: Audit log service (app/services/audit.py)
 Pure unit tests -- all async sessions are mocked.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -86,7 +86,6 @@ class TestLogEvent:
 
     @pytest.mark.asyncio
     async def test_log_event_without_details(self) -> None:
-        from app.models.audit import PortalAuditLog
         from app.services.audit import log_event
 
         db = AsyncMock()
@@ -113,7 +112,6 @@ class TestLogEvent:
     @pytest.mark.asyncio
     async def test_resource_id_is_always_string(self) -> None:
         """resource_id must be stored as string even if passed as int/UUID."""
-        from app.models.audit import PortalAuditLog
         from app.services.audit import log_event
 
         db = AsyncMock()
