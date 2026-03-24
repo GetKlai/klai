@@ -88,3 +88,39 @@ async def _require_admin_or_group_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Geen toegang: admin of groepsbeheerder rechten vereist",
         )
+
+
+async def _require_admin_or_group_manager(
+    caller_user: PortalUser,
+    org_id: int,
+    db: AsyncSession,
+) -> None:
+    """Raise 403 unless caller is org admin or member of the Group Management system group."""
+    if caller_user.role == "admin":
+        return
+
+    # Check if caller is in the Group Management system group for their org
+    from app.models.groups import PortalGroup
+    gm_result = await db.execute(
+        select(PortalGroup.id)
+        .where(
+            PortalGroup.org_id == org_id,
+            PortalGroup.system_key == "group_management",
+        )
+    )
+    gm_group_id = gm_result.scalar_one_or_none()
+    _no_access = HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Geen toegang: admin of groepsbeheerder rechten vereist",
+    )
+    if not gm_group_id:
+        raise _no_access
+
+    member_result = await db.execute(
+        select(PortalGroupMembership).where(
+            PortalGroupMembership.group_id == gm_group_id,
+            PortalGroupMembership.zitadel_user_id == caller_user.zitadel_user_id,
+        )
+    )
+    if not member_result.scalar_one_or_none():
+        raise _no_access

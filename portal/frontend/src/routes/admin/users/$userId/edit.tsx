@@ -52,12 +52,14 @@ interface UserGroup {
   id: number
   name: string
   products: string[]
+  is_system: boolean
 }
 
 interface AllGroup {
   id: number
   name: string
   products: string[]
+  is_system: boolean
 }
 
 function EditUserPage() {

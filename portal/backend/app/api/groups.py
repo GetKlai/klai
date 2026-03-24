@@ -17,6 +17,7 @@ from app.api.dependencies import (
     _get_caller_org,
     _require_admin,
     _require_admin_or_group_admin,
+    _require_admin_or_group_manager,
     bearer,
 )
 from app.core.database import get_db
@@ -58,6 +59,7 @@ class GroupOut(BaseModel):
     name: str
     description: str | None
     products: list[str]
+    is_system: bool
     created_at: datetime
     created_by: str
 
@@ -70,6 +72,7 @@ class UserGroupOut(BaseModel):
     id: int
     name: str
     products: list[str]
+    is_system: bool
 
 
 class UserGroupsResponse(BaseModel):
@@ -146,6 +149,7 @@ async def list_groups(
                 name=g.name,
                 description=g.description,
                 products=products_by_group[g.id],
+                is_system=g.is_system,
                 created_at=g.created_at,
                 created_by=g.created_by,
             )
@@ -162,7 +166,7 @@ async def create_group(
 ) -> GroupOut:
     """Create a new group in the caller's org."""
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
+    await _require_admin_or_group_manager(caller_user, org.id, db)
 
     group = PortalGroup(
         org_id=org.id,
@@ -188,6 +192,7 @@ async def create_group(
         name=group.name,
         description=group.description,
         products=[],
+        is_system=False,
         created_at=group.created_at,
         created_by=group.created_by,
     )
@@ -214,6 +219,9 @@ async def update_group(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
 
+    if group.is_system:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Systeemgroepen kunnen niet worden gewijzigd")
+
     if body.name is not None:
         group.name = body.name
     if body.description is not None:
@@ -236,6 +244,7 @@ async def update_group(
         name=group.name,
         description=group.description,
         products=[],
+        is_system=group.is_system,
         created_at=group.created_at,
         created_by=group.created_by,
     )
@@ -260,6 +269,12 @@ async def delete_group(
     group = result.scalar_one_or_none()
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+
+    if group.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Systeemgroepen kunnen niet worden verwijderd",
+        )
 
     await db.delete(group)
     await db.commit()
@@ -612,5 +627,8 @@ async def get_user_groups(
         products_by_group[row.group_id].append(row.product)
 
     return UserGroupsResponse(
-        groups=[UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id]) for g in groups]
+        groups=[
+            UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id], is_system=g.is_system)
+            for g in groups
+        ]
     )
