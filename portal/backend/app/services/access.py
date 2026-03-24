@@ -21,9 +21,7 @@ async def get_accessible_meetings(
 ) -> list[VexaMeeting]:
     """Return meetings the user can access: owned + group-scoped (within the same org)."""
     group_ids_subquery = (
-        select(PortalGroupMembership.group_id)
-        .where(PortalGroupMembership.zitadel_user_id == user_id)
-        .scalar_subquery()
+        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
     )
     result = await db.execute(
         select(VexaMeeting).where(
@@ -70,9 +68,7 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
     - "group:{group_id}" for each group the user belongs to
     """
     result = await db.execute(
-        select(PortalGroupMembership.group_id).where(
-            PortalGroupMembership.zitadel_user_id == user_id
-        )
+        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id)
     )
     group_ids = [row[0] for row in result.all()]
     return ["personal", "org"] + [f"group:{gid}" for gid in group_ids]
