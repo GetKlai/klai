@@ -452,7 +452,17 @@ function TranscribePage() {
                                 <div className="min-w-0">
                                   {item.title ? (
                                     <div>
-                                      <span className="block truncate font-medium">{item.title}</span>
+                                      {item.source === 'meeting' && item.status === 'done' ? (
+                                        <button
+                                          type="button"
+                                          className="block truncate font-medium text-left hover:underline cursor-pointer"
+                                          onClick={() => void navigate({ to: '/app/meetings/$meetingId', params: { meetingId: String(item.id) } })}
+                                        >
+                                          {item.title}
+                                        </button>
+                                      ) : (
+                                        <span className="block truncate font-medium">{item.title}</span>
+                                      )}
                                       {item.text && (
                                         <span className="block truncate text-xs text-[var(--color-muted-foreground)]">
                                           {item.text}
