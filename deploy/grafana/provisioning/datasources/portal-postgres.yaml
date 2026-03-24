@@ -5,9 +5,9 @@ datasources:
   - name: PortalPostgres
     type: postgres
     uid: portal-postgres
-    url: klai-core-postgres-1:5432
+    url: postgres:5432
     access: proxy
-    database: portal
+    database: klai
     user: grafana_reader
     secureJsonData:
       password: ${GRAFANA_POSTGRES_PASSWORD}
