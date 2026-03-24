@@ -638,3 +638,67 @@ async def get_user_groups(
             UserGroupOut(id=g.id, name=g.name, products=products_by_group[g.id], is_system=g.is_system) for g in groups
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Bulk user-group membership view (for users list page)
+# ---------------------------------------------------------------------------
+
+
+class UserMembershipsResponse(BaseModel):
+    memberships: dict[str, list[UserGroupOut]]
+
+
+@router.get("/group-memberships", response_model=UserMembershipsResponse)
+async def get_all_memberships(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> UserMembershipsResponse:
+    """Return all user-group memberships for the org, keyed by zitadel_user_id. Org admin only."""
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    # Fetch all groups in the org
+    groups_result = await db.execute(select(PortalGroup).where(PortalGroup.org_id == org.id))
+    groups = groups_result.scalars().all()
+
+    if not groups:
+        return UserMembershipsResponse(memberships={})
+
+    group_map = {g.id: g for g in groups}
+
+    # Fetch all memberships for these groups in one query
+    memberships_result = await db.execute(
+        select(PortalGroupMembership).where(PortalGroupMembership.group_id.in_(list(group_map.keys())))
+    )
+    memberships = memberships_result.scalars().all()
+
+    # Fetch all products for these groups
+    products_by_group: dict[int, list[str]] = {g.id: [] for g in groups}
+    prods_result = await db.execute(
+        select(PortalGroupProduct.group_id, PortalGroupProduct.product).where(
+            PortalGroupProduct.group_id.in_(list(group_map.keys()))
+        )
+    )
+    for row in prods_result:
+        products_by_group[row.group_id].append(row.product)
+
+    # Build map: user_id -> list of UserGroupOut
+    result: dict[str, list[UserGroupOut]] = {}
+    for membership in memberships:
+        g = group_map.get(membership.group_id)
+        if not g:
+            continue
+        user_id = membership.zitadel_user_id
+        if user_id not in result:
+            result[user_id] = []
+        result[user_id].append(
+            UserGroupOut(
+                id=g.id,
+                name=g.name,
+                products=products_by_group[g.id],
+                is_system=g.is_system,
+            )
+        )
+
+    return UserMembershipsResponse(memberships=result)

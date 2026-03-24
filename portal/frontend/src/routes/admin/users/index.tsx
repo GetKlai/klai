@@ -11,7 +11,6 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Select } from '@/components/ui/select'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -114,6 +113,20 @@ function UsersPage() {
 
   const users = data?.users ?? []
 
+  const { data: membershipsData } = useQuery({
+    queryKey: ['admin-group-memberships', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/admin/group-memberships`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(`Failed to fetch memberships (${res.status})`)
+      return res.json() as Promise<{ memberships: Record<string, { id: number; name: string; products: string[] }[]> }>
+    },
+    enabled: !!token,
+  })
+
+  const membershipsByUser = membershipsData?.memberships ?? {}
+
   const resendInviteMutation = useMutation({
     mutationFn: async (user: User) => {
       const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}/resend-invite`, {
@@ -140,29 +153,11 @@ function UsersPage() {
     },
   })
 
-  const roleMutation = useMutation({
-    mutationFn: async ({ user, newRole }: { user: User; newRole: Role }) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}/role`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ role: newRole }),
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_role({ status: String(res.status) }))
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-    },
-  })
-
 
 
   const pageError =
     (error instanceof Error ? error.message : error ? m.admin_users_error_generic() : null) ??
     (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
-    (roleMutation.error instanceof Error ? roleMutation.error.message : roleMutation.error ? m.admin_users_error_role_generic() : null) ??
     (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null)
 
   const columns = [
@@ -185,6 +180,23 @@ function UsersPage() {
       header: () => m.admin_users_col_status(),
       cell: (info) => <StatusBadge status={info.getValue()} />,
     }),
+    columnHelper.display({
+      id: 'groups',
+      header: () => 'Groups',
+      cell: ({ row }) => {
+        const groups = membershipsByUser[row.original.zitadel_user_id] ?? []
+        if (groups.length === 0) return <span className="text-xs text-[var(--color-muted-foreground)]">—</span>
+        return (
+          <div className="flex flex-wrap gap-1">
+            {groups.map((g) => (
+              <Badge key={g.id} variant="secondary" className="text-xs">
+                {g.name}
+              </Badge>
+            ))}
+          </div>
+        )
+      },
+    }),
     columnHelper.accessor('created_at', {
       header: () => m.admin_users_col_invited(),
       cell: (info) => formatDate(info.getValue()),
@@ -195,9 +207,6 @@ function UsersPage() {
       cell: ({ row }) => {
         const user = row.original
         const isSelf = user.zitadel_user_id === currentUserId
-        const isChangingRole =
-          roleMutation.isPending &&
-          roleMutation.variables?.user.zitadel_user_id === user.zitadel_user_id
         const isResending =
           resendInviteMutation.isPending &&
           resendInviteMutation.variables?.zitadel_user_id === user.zitadel_user_id
@@ -235,15 +244,6 @@ function UsersPage() {
 
         return (
           <div className="flex items-center gap-2">
-            <Select
-              value={user.role}
-              disabled={isSelf || isChangingRole}
-              onChange={(e) => roleMutation.mutate({ user, newRole: e.target.value as Role })}
-              className="w-auto px-2 py-1 text-xs"
-            >
-              <option value="admin">{m.admin_users_role_admin()}</option>
-              <option value="member">{m.admin_users_role_member()}</option>
-            </Select>
             {user.invite_pending && (
               <Tooltip label={m.admin_users_resend_invite()}>
                 <button
