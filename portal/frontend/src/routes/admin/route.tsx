@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard } from 'lucide-react'
+import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Cable } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -24,6 +24,7 @@ function AdminLayout() {
     { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban },
     { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
+    { to: '/admin/connectors', label: m.admin_nav_connectors(), icon: Cable },
   ]
 
   useEffect(() => {
@@ -40,7 +41,14 @@ function AdminLayout() {
     fetch(`${API_BASE}/api/me`, {
       headers: { Authorization: `Bearer ${auth.user!.access_token}` },
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (res.status === 401) {
+          authLogger.warn('/api/me returned 401 — Zitadel session expired, clearing auth state')
+          void auth.removeUser()
+          return null
+        }
+        return res.ok ? res.json() : null
+      })
       .then((me) => {
         if (me?.requires_2fa_setup) window.location.replace('/setup/2fa')
       })

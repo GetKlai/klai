@@ -34,7 +34,14 @@ function AppLayout() {
     fetch(`${API_BASE}/api/me`, {
       headers: { Authorization: `Bearer ${auth.user!.access_token}` },
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (res.status === 401) {
+          authLogger.warn('/api/me returned 401 — Zitadel session expired, clearing auth state')
+          void auth.removeUser()
+          return null
+        }
+        return res.ok ? res.json() : null
+      })
       .then((me) => {
         if (me?.requires_2fa_setup) window.location.replace('/setup/2fa')
       })
