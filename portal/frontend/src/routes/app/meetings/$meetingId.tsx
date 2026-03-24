@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download } from 'lucide-react'
@@ -196,39 +196,56 @@ function MeetingDetailPage() {
 
   return (
     <div className="p-8 max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-          {meeting.meeting_title ?? meeting.meeting_url}
-        </h1>
-        <div className="flex items-center gap-2">
-          {canStop && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => stopMutation.mutate()}
-              disabled={stopMutation.isPending}
-            >
-              {stopMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Square className="mr-2 h-4 w-4" />
-              )}
-              {m.app_meetings_stop_button()}
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate({ to: '/app/transcribe' })}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            {m.app_meetings_back()}
-          </Button>
-        </div>
-      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => navigate({ to: '/app/transcribe' })}
+        className="mb-6"
+      >
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        {m.app_meetings_back()}
+      </Button>
 
       <div className="space-y-6">
-      <StatusBadge status={meeting.status} />
+      {ACTIVE_STATUSES.includes(meeting.status) ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
+              {meeting.meeting_title ?? meeting.meeting_url}
+            </CardTitle>
+            <StatusBadge status={meeting.status} />
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {m.app_meetings_active_info()}
+            </p>
+          </CardContent>
+          {canStop && (
+            <CardFooter className="flex justify-end pt-0">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => stopMutation.mutate()}
+                disabled={stopMutation.isPending}
+              >
+                {stopMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Square className="mr-2 h-4 w-4" />
+                )}
+                {m.app_meetings_stop_button()}
+              </Button>
+            </CardFooter>
+          )}
+        </Card>
+      ) : (
+        <div className="flex items-center justify-between">
+          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            {meeting.meeting_title ?? meeting.meeting_url}
+          </h1>
+          <StatusBadge status={meeting.status} />
+        </div>
+      )}
 
       {meeting.status === 'failed' && meeting.error_message && (
         <Card className="border-[var(--color-destructive)]">
@@ -241,12 +258,6 @@ function MeetingDetailPage() {
             </p>
           </CardContent>
         </Card>
-      )}
-
-      {ACTIVE_STATUSES.includes(meeting.status) && (
-        <p className="text-sm text-[var(--color-muted-foreground)]">
-          {m.app_meetings_active_info()}
-        </p>
       )}
 
       {hasTranscript && (
