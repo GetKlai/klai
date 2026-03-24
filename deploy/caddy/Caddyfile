@@ -91,9 +91,6 @@
                 window 1m
             }
         }
-        basic_auth {
-            {$GRAFANA_CADDY_USER} {$GRAFANA_CADDY_HASH}
-        }
         reverse_proxy grafana:3000
     }
 
