@@ -6,6 +6,8 @@ Called after signup DB commit to set up a new customer's LibreChat instance.
 import asyncio
 import logging
 import secrets
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 import docker
@@ -16,12 +18,111 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.portal import PortalOrg
+from app.services.secrets import portal_secrets
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
 # File lock to prevent concurrent tenant caddyfile writes
 _caddy_lock = asyncio.Lock()
+
+
+@dataclass
+class _ProvisionState:
+    """Tracks provisioning artefacts for rollback on partial failure."""
+
+    slug: str = ""
+    zitadel_app_id: str = ""  # set after Zitadel OIDC app created
+    litellm_team_id: str = ""  # set after LiteLLM team created
+    env_file_path: str = ""  # set after .env written (container path)
+    container_started: bool = False
+    caddy_written: bool = False
+    mongo_user_created: bool = False
+    mongo_user_slug: str = ""
+
+
+async def _rollback(state: _ProvisionState) -> None:
+    """Best-effort cleanup of partial provisioning state."""
+    loop = asyncio.get_running_loop()
+
+    if state.caddy_written:
+        try:
+            tenant_file = Path(settings.caddy_tenants_path) / f"{state.slug}.caddyfile"
+            tenant_file.unlink(missing_ok=True)
+            async with _caddy_lock:
+                await loop.run_in_executor(None, _reload_caddy)
+        except Exception as exc:
+            logger.warning("Rollback: Caddy cleanup failed for %s: %s", state.slug, exc)
+
+    if state.container_started:
+        try:
+
+            def _remove_container(name: str) -> None:
+                client = docker.from_env()
+                try:
+                    c = client.containers.get(name)
+                    c.remove(force=True)
+                except docker.errors.NotFound:
+                    pass
+
+            await loop.run_in_executor(None, _remove_container, f"librechat-{state.slug}")
+        except Exception as exc:
+            logger.warning("Rollback: container removal failed for %s: %s", state.slug, exc)
+
+    if state.env_file_path:
+        try:
+            tenant_dir = Path(state.env_file_path).parent
+            shutil.rmtree(str(tenant_dir), ignore_errors=True)
+        except Exception as exc:
+            logger.warning("Rollback: filesystem cleanup failed for %s: %s", state.slug, exc)
+
+    if state.mongo_user_created and state.mongo_user_slug:
+        try:
+
+            def _drop_mongodb_tenant_user(slug: str) -> None:
+                c = docker.from_env()
+                db_name = f"librechat-{slug}"
+                user = f"librechat-{slug}"
+                script = f'db.getSiblingDB("{db_name}").dropUser("{user}")'
+                mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
+                container = c.containers.get(mongodb_container)
+                container.exec_run(
+                    [
+                        "mongosh",
+                        "--quiet",
+                        "-u",
+                        "root",
+                        "-p",
+                        settings.mongo_root_password,
+                        "--authenticationDatabase",
+                        "admin",
+                        "--eval",
+                        script,
+                    ],
+                    stdout=True,
+                    stderr=True,
+                )
+
+            await loop.run_in_executor(None, _drop_mongodb_tenant_user, state.mongo_user_slug)
+        except Exception as exc:
+            logger.warning("Rollback: MongoDB user deletion failed for %s: %s", state.mongo_user_slug, exc)
+
+    if state.litellm_team_id:
+        try:
+            async with httpx.AsyncClient(
+                base_url="http://litellm:4000",
+                headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
+                timeout=10.0,
+            ) as client:
+                await client.post("/team/delete", json={"team_ids": [state.litellm_team_id]})
+        except Exception as exc:
+            logger.warning("Rollback: LiteLLM team deletion failed for %s: %s", state.slug, exc)
+
+    if state.zitadel_app_id:
+        try:
+            await zitadel.delete_librechat_oidc_app(state.zitadel_app_id)
+        except Exception as exc:
+            logger.warning("Rollback: Zitadel OIDC app deletion failed for %s: %s", state.slug, exc)
 
 
 def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
@@ -41,11 +142,46 @@ def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
     return slug
 
 
+def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
+    """Create a per-tenant MongoDB user with readWrite access on the tenant's database only."""
+    client = docker.from_env()
+    db_name = f"librechat-{slug}"
+    user = f"librechat-{slug}"
+    script = (
+        f'db.getSiblingDB("{db_name}").createUser({{'
+        f'"user": "{user}", '
+        f'"pwd": "{tenant_password}", '
+        f'"roles": [{{"role": "readWrite", "db": "{db_name}"}}]'
+        f"}})"
+    )
+    mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
+    container = client.containers.get(mongodb_container)
+    exit_code, output = container.exec_run(
+        [
+            "mongosh",
+            "--quiet",
+            "-u",
+            "root",
+            "-p",
+            settings.mongo_root_password,
+            "--authenticationDatabase",
+            "admin",
+            "--eval",
+            script,
+        ],
+        stdout=True,
+        stderr=True,
+    )
+    if exit_code != 0:
+        raise RuntimeError(f"MongoDB tenant user creation failed for {slug} (exit {exit_code}): {output.decode()}")
+
+
 def _generate_librechat_env(
     slug: str,
     client_id: str,
     client_secret: str,
-    litellm_api_key: str | None = None,
+    litellm_api_key: str,
+    mongo_password: str,
     zitadel_org_id: str = "",
 ) -> str:
     """Generate the per-tenant LibreChat .env file content."""
@@ -55,14 +191,12 @@ def _generate_librechat_env(
     session_secret = secrets.token_hex(32)
     creds_key = secrets.token_hex(32)
     creds_iv = secrets.token_hex(8)
-    mongo_pw = settings.mongo_root_password
-    effective_litellm_key = litellm_api_key or settings.litellm_master_key
 
     return f"""# Auto-generated by portal-api at provisioning. Do not edit manually.
 # Tenant: {slug}
 
-# MongoDB -- tenant-isolated database
-MONGO_URI=mongodb://klai:{mongo_pw}@mongodb:27017/librechat-{slug}?authSource=admin
+# MongoDB -- tenant-isolated database (per-tenant user, NOT the shared admin)
+MONGO_URI=mongodb://librechat-{slug}:{mongo_password}@mongodb:27017/librechat-{slug}?authSource=librechat-{slug}
 
 # Zitadel OIDC
 OPENID_ISSUER=https://auth.{domain}
@@ -98,7 +232,7 @@ MEILI_MASTER_KEY={settings.meili_master_key}
 REDIS_URI=redis://:{settings.redis_password}@redis:6379
 
 # AI routing via LiteLLM
-LITELLM_API_KEY={effective_litellm_key}
+LITELLM_API_KEY={litellm_api_key}
 
 # Web search (shared services on klai-net)
 SEARXNG_INSTANCE_URL=http://searxng:8080
@@ -222,49 +356,45 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     slug = _slugify_unique(org.name, existing_slugs)
     logger.info("Provisioning tenant %s (org_id=%d)", slug, org_id)
 
+    state = _ProvisionState(slug=slug)
+
     try:
         # Step 1: Zitadel OIDC app for LibreChat
         redirect_uri = f"https://chat-{slug}.{settings.domain}/oauth/openid/callback"
         oidc_data = await zitadel.create_librechat_oidc_app(slug, redirect_uri)
         client_id = oidc_data.get("clientId", "")
         client_secret = oidc_data.get("clientSecret", "")
+        state.zitadel_app_id = oidc_data.get("appId", "")
         logger.info("Created Zitadel OIDC app for %s: %s", slug, client_id)
 
         # Step 2: Create LiteLLM team key for the tenant
-        litellm_team_key: str | None = None
-        try:
-            async with httpx.AsyncClient(
-                base_url="http://litellm:4000",
-                headers={
-                    "Authorization": f"Bearer {settings.litellm_master_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=10.0,
-            ) as llm_client:
-                # Step 2a: Create a LiteLLM team
-                team_resp = await llm_client.post("/team/new", json={"team_alias": slug})
-                team_resp.raise_for_status()
-                team_id = team_resp.json()["team_id"]
-                logger.info("Created LiteLLM team for %s: %s", slug, team_id)
+        async with httpx.AsyncClient(
+            base_url="http://litellm:4000",
+            headers={
+                "Authorization": f"Bearer {settings.litellm_master_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=10.0,
+        ) as llm_client:
+            # Step 2a: Create a LiteLLM team
+            team_resp = await llm_client.post("/team/new", json={"team_alias": slug})
+            team_resp.raise_for_status()
+            team_id = team_resp.json()["team_id"]
+            state.litellm_team_id = team_id
+            logger.info("Created LiteLLM team for %s: %s", slug, team_id)
 
-                # Step 2b: Generate a team key with org_id metadata
-                key_resp = await llm_client.post(
-                    "/key/generate",
-                    json={
-                        "team_id": team_id,
-                        "metadata": {"org_id": org.zitadel_org_id},
-                        "models": ["klai-llm", "klai-fallback"],
-                    },
-                )
-                key_resp.raise_for_status()
-                litellm_team_key = key_resp.json()["key"]
-                logger.info("Created LiteLLM team key for %s", slug)
-        except Exception as exc:
-            logger.warning(
-                "Could not create LiteLLM team key for %s, falling back to master key: %s",
-                slug,
-                exc,
+            # Step 2b: Generate a team key with org_id metadata
+            key_resp = await llm_client.post(
+                "/key/generate",
+                json={
+                    "team_id": team_id,
+                    "metadata": {"org_id": org.zitadel_org_id},
+                    "models": ["klai-llm", "klai-fallback"],
+                },
             )
+            key_resp.raise_for_status()
+            litellm_team_key: str = key_resp.json()["key"]
+            logger.info("Created LiteLLM team key for %s", slug)
 
         # Step 3: Add portal redirect URI for this tenant
         try:
@@ -272,12 +402,21 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         except Exception as exc:
             logger.warning("Could not add portal redirect URI for %s: %s", slug, exc)
 
-        # Step 4: Write LibreChat .env file
+        # Step 4: Create per-tenant MongoDB user (isolated credentials)
+        mongo_tenant_password = secrets.token_hex(24)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _create_mongodb_tenant_user, slug, mongo_tenant_password)
+        state.mongo_user_created = True
+        state.mongo_user_slug = slug
+        logger.info("Created MongoDB user for %s", slug)
+
+        # Step 5: Write LibreChat .env file
         env_content = _generate_librechat_env(
             slug,
             client_id,
             client_secret,
             litellm_api_key=litellm_team_key,
+            mongo_password=mongo_tenant_password,
             zitadel_org_id=org.zitadel_org_id,
         )
         container_data_base = Path(settings.librechat_container_data_path)
@@ -286,11 +425,12 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         (tenant_dir / "images").mkdir(exist_ok=True)
         env_file_container_path = tenant_dir / ".env"
         env_file_container_path.write_text(env_content)
+        state.env_file_path = str(env_file_container_path)
         # Host path for Docker volume mount
         env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
         logger.info("Wrote LibreChat .env for %s", slug)
 
-        # Step 5: Create personal KB via klai-docs API
+        # Step 6: Create personal KB via klai-docs API
         try:
             async with httpx.AsyncClient(
                 base_url="http://docs-app:3000",
@@ -310,29 +450,32 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         except Exception as exc:
             logger.warning("Could not create personal KB for %s: %s", slug, exc)
 
-        # Step 6: Start Docker container
+        # Step 7: Start Docker container
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path)
+        state.container_started = True
         logger.info("Started container librechat-%s", slug)
 
-        # Step 7: Write per-tenant Caddyfile and reload Caddy
+        # Step 8: Write per-tenant Caddyfile and reload Caddy
         async with _caddy_lock:
             _write_tenant_caddyfile(slug)
             await loop.run_in_executor(None, _reload_caddy)
+        state.caddy_written = True
         logger.info("Caddy reloaded for %s", slug)
 
-        # Step 8: Update DB
+        # Step 9: Update DB
         org.slug = slug
         org.librechat_container = f"librechat-{slug}"
         org.zitadel_librechat_client_id = client_id
-        org.zitadel_librechat_client_secret = client_secret
-        org.litellm_team_key = litellm_team_key
+        org.zitadel_librechat_client_secret = portal_secrets.encrypt(client_secret)
+        org.litellm_team_key = portal_secrets.encrypt(litellm_team_key) if litellm_team_key else None
         org.provisioning_status = "ready"
         await db.commit()
         logger.info("Tenant %s provisioning complete", slug)
 
     except Exception as exc:
         logger.error("Provisioning failed for org_id=%d: %s", org_id, exc, exc_info=True)
+        await _rollback(state)
         try:
             org.provisioning_status = "failed"
             await db.commit()

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
             raise ValueError(f"Moneybird product ID niet geconfigureerd voor {plan}/{cycle}")
         return value
 
+    # Application-level encryption for tenant secrets (zitadel_librechat_client_secret, litellm_team_key)
+    # 64-char hex string = 32 bytes; generate with: openssl rand -hex 32
+    portal_secrets_key: str  # PORTAL_API_PORTAL_SECRETS_KEY
+
     # Domain
     domain: str = "getklai.com"
 

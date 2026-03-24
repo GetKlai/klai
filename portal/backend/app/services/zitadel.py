@@ -408,6 +408,13 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()  # contains appId, clientId, clientSecret
 
+    async def delete_librechat_oidc_app(self, app_id: str) -> None:
+        """Delete a per-tenant LibreChat OIDC app from the Klai Platform project."""
+        resp = await self._http.delete(
+            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{app_id}",
+        )
+        resp.raise_for_status()
+
     async def add_portal_redirect_uri(self, slug: str) -> None:
         """Add {slug}.getklai.com/callback and /logged-out to the portal OIDC app's allowed URIs."""
         if not settings.zitadel_portal_app_id:
