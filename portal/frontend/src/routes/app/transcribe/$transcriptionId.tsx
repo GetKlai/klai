@@ -74,7 +74,7 @@ function TranscriptionDetailPage() {
         },
         body: JSON.stringify({
           recording_type: recordingType,
-          language: transcription.language,
+          language: transcription?.language ?? null,
         }),
       })
       if (!res.ok) {
