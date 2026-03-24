@@ -110,7 +110,41 @@ async def delete_document(org_id: str, kb_slug: str, path: str) -> None:
     )
 
 
-_ALLOWED_METADATA_FIELDS = frozenset({"title", "kb_slug", "chunk_index", "created_at"})
+async def delete_kb(org_id: str, kb_slug: str) -> None:
+    """Delete all Qdrant chunks for an entire knowledge base."""
+    client = get_client()
+    await client.delete(
+        COLLECTION,
+        points_selector=Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+            ]
+        ),
+    )
+    logger.info("Deleted all chunks for KB %s/%s", org_id, kb_slug)
+
+
+async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
+    """Update the visibility payload field for all chunks in a knowledge base."""
+    client = get_client()
+    await client.set_payload(
+        COLLECTION,
+        payload={"visibility": visibility},
+        points=Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+            ]
+        ),
+    )
+    logger.info("Updated visibility to %s for KB %s/%s", visibility, org_id, kb_slug)
+
+
+_ALLOWED_METADATA_FIELDS = frozenset({
+    "title", "kb_slug", "chunk_index", "created_at",
+    "source_type", "visibility", "tags", "provenance_type", "confidence",
+})
 
 
 async def search(
