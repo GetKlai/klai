@@ -67,7 +67,7 @@ class UserOut(BaseModel):
     email: str
     first_name: str
     last_name: str
-    role: Literal["admin", "member"]
+    role: Literal["admin", "group-admin", "member"]
     preferred_language: Literal["nl", "en"]
     status: str
     created_at: datetime
