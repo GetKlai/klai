@@ -39,6 +39,7 @@ jobs:
           VITE_OIDC_AUTHORITY: https://auth.getklai.com
           VITE_OIDC_CLIENT_ID: "362901948573220875"
           VITE_API_BASE_URL: ""
+          VITE_CONNECTOR_API_BASE_URL: https://connector.getklai.com
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 

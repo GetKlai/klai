@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.github import GitHubAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
@@ -80,7 +81,17 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="klai-connector", version="0.1.0", lifespan=lifespan)
 
-    # Middleware (excludes /health internally)
+    # CORS — allow portal frontend origin(s) to call the connector API
+    allowed_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allowed_origins,
+            allow_methods=["GET", "POST", "PUT", "DELETE"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+
+    # Auth middleware (excludes /health internally)
     app.add_middleware(AuthMiddleware, settings=settings)
 
     # Routes

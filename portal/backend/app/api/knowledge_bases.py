@@ -1,0 +1,287 @@
+"""Admin API for managing Knowledge Bases and their group access."""
+
+import logging
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.dependencies import _get_caller_org, _require_admin_or_group_admin_role, bearer
+from app.core.database import get_db
+from app.models.groups import PortalGroup
+from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
+
+log = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/admin", tags=["knowledge-bases"])
+
+
+# -- Pydantic schemas --------------------------------------------------------
+
+
+class KBCreateRequest(BaseModel):
+    name: str
+    slug: str
+    description: str | None = None
+
+
+class KBUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class KBOut(BaseModel):
+    id: int
+    name: str
+    slug: str
+    description: str | None
+    created_at: datetime
+    created_by: str
+
+
+class KBsResponse(BaseModel):
+    knowledge_bases: list[KBOut]
+
+
+class KBGroupAccessOut(BaseModel):
+    group_id: int
+    group_name: str
+    granted_at: datetime
+    granted_by: str
+
+
+class KBGroupsResponse(BaseModel):
+    groups: list[KBGroupAccessOut]
+
+
+class KBGroupGrantRequest(BaseModel):
+    group_id: int
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+# -- Knowledge Base CRUD -----------------------------------------------------
+
+
+@router.get("/knowledge-bases", response_model=KBsResponse)
+async def list_knowledge_bases(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> KBsResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    result = await db.execute(
+        select(PortalKnowledgeBase)
+        .where(PortalKnowledgeBase.org_id == org.id)
+        .order_by(PortalKnowledgeBase.name)
+    )
+    kbs = result.scalars().all()
+    return KBsResponse(
+        knowledge_bases=[
+            KBOut(
+                id=kb.id,
+                name=kb.name,
+                slug=kb.slug,
+                description=kb.description,
+                created_at=kb.created_at,
+                created_by=kb.created_by,
+            )
+            for kb in kbs
+        ]
+    )
+
+
+@router.post("/knowledge-bases", response_model=KBOut, status_code=status.HTTP_201_CREATED)
+async def create_knowledge_base(
+    body: KBCreateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> KBOut:
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    kb = PortalKnowledgeBase(
+        org_id=org.id,
+        name=body.name,
+        slug=body.slug,
+        description=body.description,
+        created_by=caller_id,
+    )
+    db.add(kb)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug bestaat al in deze organisatie",
+        ) from exc
+    await db.commit()
+    await db.refresh(kb)
+    return KBOut(
+        id=kb.id,
+        name=kb.name,
+        slug=kb.slug,
+        description=kb.description,
+        created_at=kb.created_at,
+        created_by=kb.created_by,
+    )
+
+
+@router.patch("/knowledge-bases/{kb_id}", response_model=KBOut)
+async def update_knowledge_base(
+    kb_id: int,
+    body: KBUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> KBOut:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.id == kb_id,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    if body.name is not None:
+        kb.name = body.name
+    if body.description is not None:
+        kb.description = body.description
+    await db.commit()
+    await db.refresh(kb)
+    return KBOut(
+        id=kb.id,
+        name=kb.name,
+        slug=kb.slug,
+        description=kb.description,
+        created_at=kb.created_at,
+        created_by=kb.created_by,
+    )
+
+
+@router.delete("/knowledge-bases/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_knowledge_base(
+    kb_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.id == kb_id,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    await db.delete(kb)
+    await db.commit()
+
+
+# -- Group access for Knowledge Bases ----------------------------------------
+
+
+@router.get("/knowledge-bases/{kb_id}/groups", response_model=KBGroupsResponse)
+async def list_kb_groups(
+    kb_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> KBGroupsResponse:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.id == kb_id,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    access_result = await db.execute(
+        select(PortalGroupKBAccess, PortalGroup)
+        .join(PortalGroup, PortalGroup.id == PortalGroupKBAccess.group_id)
+        .where(PortalGroupKBAccess.kb_id == kb_id)
+        .order_by(PortalGroup.name)
+    )
+    rows = access_result.all()
+    return KBGroupsResponse(
+        groups=[
+            KBGroupAccessOut(
+                group_id=a.group_id,
+                group_name=g.name,
+                granted_at=a.granted_at,
+                granted_by=a.granted_by,
+            )
+            for a, g in rows
+        ]
+    )
+
+
+@router.post("/knowledge-bases/{kb_id}/groups", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+async def grant_kb_group_access(
+    kb_id: int,
+    body: KBGroupGrantRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    kb_result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.id == kb_id,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
+    if not kb_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    group_result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == body.group_id,
+            PortalGroup.org_id == org.id,
+        )
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+    access = PortalGroupKBAccess(group_id=body.group_id, kb_id=kb_id, granted_by=caller_id)
+    db.add(access)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Groep heeft al toegang tot deze knowledge base",
+        ) from exc
+    await db.commit()
+    return MessageResponse(message="Toegang verleend")
+
+
+@router.delete("/knowledge-bases/{kb_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_kb_group_access(
+    kb_id: int,
+    group_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin_or_group_admin_role(caller_user)
+    result = await db.execute(
+        select(PortalGroupKBAccess).where(
+            PortalGroupKBAccess.kb_id == kb_id,
+            PortalGroupKBAccess.group_id == group_id,
+        )
+    )
+    access = result.scalar_one_or_none()
+    if not access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Toegang niet gevonden")
+    await db.delete(access)
+    await db.commit()

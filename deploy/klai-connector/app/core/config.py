@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Knowledge-ingest
     knowledge_ingest_url: str
 
+    # CORS — comma-separated list of allowed origins (e.g. https://getklai.com)
+    cors_origins: str = ""
+
     # Optional
     log_level: str = "INFO"
 
