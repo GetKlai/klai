@@ -35,6 +35,7 @@ interface Group {
   name: string
   description: string | null
   products: string[]
+  is_system: boolean
 }
 
 interface Member {
