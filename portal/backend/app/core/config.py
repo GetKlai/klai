@@ -88,7 +88,7 @@ class Settings(BaseSettings):
 
     # LiteLLM (for summarization)
     litellm_base_url: str = "http://litellm:4000"
-    summarize_model: str = "gpt-4o-mini"
+    summarize_model: str = "klai-primary"
 
     # Whisper server (internal -- for direct post-meeting transcription)
     whisper_server_url: str = "http://whisper-server:8000"
