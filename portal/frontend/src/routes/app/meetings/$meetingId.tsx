@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download } from 'lucide-react'
+import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 
@@ -174,6 +174,17 @@ function MeetingDetailPage() {
     setTimeout(() => setSummaryCopied(null), 2000)
   }
 
+  function downloadRaw() {
+    if (!meeting?.transcript_segments) return
+    const blob = new Blob([JSON.stringify(meeting.transcript_segments, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${meeting.meeting_title ?? 'vergadering'}-segments.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function copySummaryMarkdown() {
     if (!meeting?.summary_json?.markdown) return
     await navigator.clipboard.writeText(meeting.summary_json.markdown)
@@ -192,7 +203,7 @@ function MeetingDetailPage() {
   if (!meeting) return null
 
   const canStop = ['recording', 'joining'].includes(meeting.status)
-  const hasTranscript = meeting.status === 'done' && meeting.transcript_text
+  const hasTranscript = meeting.status === 'done' && !!(meeting.transcript_text || meeting.transcript_segments?.length)
 
   return (
     <div className="p-8 max-w-3xl">
@@ -284,6 +295,12 @@ function MeetingDetailPage() {
                 <Download className="mr-1.5 h-3.5 w-3.5" />
                 {m.app_meetings_download()}
               </Button>
+              {meeting.transcript_segments && meeting.transcript_segments.length > 0 && (
+                <Button variant="outline" size="sm" onClick={downloadRaw}>
+                  <FileJson className="mr-1.5 h-3.5 w-3.5" />
+                  {m.app_meetings_download_raw()}
+                </Button>
+              )}
             </div>
           </CardHeader>
           <CardContent>

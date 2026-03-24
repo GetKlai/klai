@@ -684,6 +684,7 @@
   "app_meetings_transcript_empty": "No transcript available.",
   "app_meetings_copy": "Copy",
   "app_meetings_download": "Download",
+  "app_meetings_download_raw": "Raw JSON",
   "app_meetings_copy_done": "Copied!",
   "app_meetings_error_label": "Error",
   "app_meetings_active_info": "We're on our way to your meeting. If you see a prompt, go ahead and admit the bot. Once the meeting wraps up, we wait 60 seconds, in case anyone comes back. Then we close out automatically and the transcript shows up in the overview. Feel free to close this window.",
@@ -794,5 +795,11 @@
 
   "admin_nav_groups": "Groups",
   "admin_home_groups_title": "Groups",
-  "admin_home_groups_count": "Total groups"
+  "admin_home_groups_count": "Total groups",
+
+  "admin_users_groups_title": "Groups",
+  "admin_users_groups_empty": "Not in any group",
+  "admin_users_groups_add": "Add to group",
+  "admin_users_groups_add_success": "Added to group",
+  "admin_users_groups_remove_success": "Removed from group"
 }
