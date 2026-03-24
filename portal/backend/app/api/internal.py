@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalUser
-from app.models.products import PortalUserProduct
+from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -75,8 +75,5 @@ async def get_user_products(
     """
     _require_internal_token(request)
 
-    result = await db.execute(
-        select(PortalUserProduct.product).where(PortalUserProduct.zitadel_user_id == zitadel_user_id)
-    )
-    products = list(result.scalars().all())
+    products = await get_effective_products(zitadel_user_id, db)
     return UserProductsResponse(products=products)
