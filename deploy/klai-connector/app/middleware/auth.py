@@ -56,7 +56,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._introspection_url = settings.zitadel_introspection_url
         self._client_id = settings.zitadel_client_id
         self._client_secret = settings.zitadel_client_secret
-        self._portal_secret = settings.portal_internal_secret
+        self._portal_secret = settings.portal_caller_secret
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request through authentication."""

@@ -36,7 +36,8 @@ class Settings(BaseSettings):
 
     # Portal control plane (used by klai-connector → portal for config + status callbacks)
     portal_api_url: str = "http://portal-api:8100"
-    portal_internal_secret: str = ""  # Must match portal's PORTAL_API_INTERNAL_SECRET
+    portal_internal_secret: str = ""  # Secret klai-connector sends TO portal (must match portal's INTERNAL_SECRET)
+    portal_caller_secret: str = ""  # Secret portal sends TO klai-connector (must match portal's KLAI_CONNECTOR_SECRET)
 
     # Optional
     log_level: str = "INFO"
