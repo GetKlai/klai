@@ -110,7 +110,6 @@ function EditGroupPage() {
   }, [membersData, membersInitialized])
 
   const orgUsers = usersData?.users ?? []
-  const usersMap = new Map(orgUsers.map((u) => [u.zitadel_user_id, u]))
   const originalMemberIds = new Set(membersData?.members.map((mb) => mb.zitadel_user_id) ?? [])
 
   const currentMembers = orgUsers.filter((u) => memberUserIds.has(u.zitadel_user_id))
