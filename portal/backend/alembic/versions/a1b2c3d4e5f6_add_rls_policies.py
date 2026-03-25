@@ -82,7 +82,7 @@ def upgrade() -> None:
 
     # portal_group_memberships: scope through portal_groups
     _enable_rls("portal_group_memberships")
-    op.execute(
+    op.execute(  # noqa: S608
         f"CREATE POLICY tenant_isolation ON portal_group_memberships "
         f"USING (group_id IN ("
         f"  SELECT id FROM portal_groups WHERE org_id = {_TENANT_EXPR}"
@@ -91,7 +91,7 @@ def upgrade() -> None:
 
     # portal_group_kb_access: scope through portal_knowledge_bases
     _enable_rls("portal_group_kb_access")
-    op.execute(
+    op.execute(  # noqa: S608
         f"CREATE POLICY tenant_isolation ON portal_group_kb_access "
         f"USING (kb_id IN ("
         f"  SELECT id FROM portal_knowledge_bases WHERE org_id = {_TENANT_EXPR}"
@@ -100,7 +100,7 @@ def upgrade() -> None:
 
     # portal_group_docs_access: scope through portal_docs_libraries
     _enable_rls("portal_group_docs_access")
-    op.execute(
+    op.execute(  # noqa: S608
         f"CREATE POLICY tenant_isolation ON portal_group_docs_access "
         f"USING (library_id IN ("
         f"  SELECT id FROM portal_docs_libraries WHERE org_id = {_TENANT_EXPR}"
