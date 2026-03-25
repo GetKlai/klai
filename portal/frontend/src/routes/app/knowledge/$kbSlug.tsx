@@ -219,10 +219,16 @@ function ConnectorsSection({
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
     try {
-      await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (res.ok) {
+        // Optimistically update cache so badge shows "Syncing" immediately
+        queryClient.setQueryData(['kb-connectors-portal', kbSlug], (old: ConnectorSummary[] | undefined) =>
+          old?.map((c) => c.id === id ? { ...c, last_sync_status: 'running' } : c)
+        )
+      }
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
     } finally {
       setSyncingIds((prev) => { const next = new Set(prev); next.delete(id); return next })
