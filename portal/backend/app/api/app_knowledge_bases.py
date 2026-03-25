@@ -55,6 +55,7 @@ class AppKBsResponse(BaseModel):
 
 # Members schemas
 
+
 class UserMemberOut(BaseModel):
     id: int
     user_id: str
@@ -92,6 +93,7 @@ class UpdateRoleRequest(BaseModel):
 
 
 # Stats schema
+
 
 class ConnectorStatusSummary(BaseModel):
     id: str
@@ -265,9 +267,7 @@ async def get_kb_stats(
     kb = await _get_kb_or_404(kb_slug, org.id, db)
 
     # Connectors from portal DB
-    conn_result = await db.execute(
-        select(PortalConnector).where(PortalConnector.kb_id == kb.id)
-    )
+    conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
     connectors = conn_result.scalars().all()
     connector_summaries = [
         ConnectorStatusSummary(
@@ -331,9 +331,7 @@ async def list_members(
     _, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
 
-    user_result = await db.execute(
-        select(PortalUserKBAccess).where(PortalUserKBAccess.kb_id == kb.id)
-    )
+    user_result = await db.execute(select(PortalUserKBAccess).where(PortalUserKBAccess.kb_id == kb.id))
     user_members = [
         UserMemberOut(
             id=r.id,
@@ -646,11 +644,13 @@ async def list_kbs_with_access(
 
     # All docs-enabled KBs (org-owned only; personal KBs stay private)
     result = await db.execute(
-        select(PortalKnowledgeBase).where(
+        select(PortalKnowledgeBase)
+        .where(
             PortalKnowledgeBase.org_id == org.id,
             PortalKnowledgeBase.docs_enabled == True,  # noqa: E712
             PortalKnowledgeBase.owner_type == "org",
-        ).order_by(PortalKnowledgeBase.name)
+        )
+        .order_by(PortalKnowledgeBase.name)
     )
     all_kbs = result.scalars().all()
 
