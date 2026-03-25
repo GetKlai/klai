@@ -20,6 +20,21 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["knowledge-bases"])
 
 
+# @MX:ANCHOR fan_in=6
+async def _get_kb_or_404(kb_id: int, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
+    """Fetch KB by ID, always scoped to org_id. Raises 404 if not found or cross-org."""
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.id == kb_id,
+            PortalKnowledgeBase.org_id == org_id,
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    return kb
+
+
 # -- Pydantic schemas --------------------------------------------------------
 
 
@@ -162,15 +177,7 @@ async def update_knowledge_base(
 ) -> KBOut:
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
-    result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.id == kb_id,
-            PortalKnowledgeBase.org_id == org.id,
-        )
-    )
-    kb = result.scalar_one_or_none()
-    if not kb:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    kb = await _get_kb_or_404(kb_id, org.id, db)
     if body.name is not None:
         kb.name = body.name
     if body.description is not None:
@@ -201,15 +208,7 @@ async def delete_knowledge_base(
 ) -> None:
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
-    result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.id == kb_id,
-            PortalKnowledgeBase.org_id == org.id,
-        )
-    )
-    kb = result.scalar_one_or_none()
-    if not kb:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    kb = await _get_kb_or_404(kb_id, org.id, db)
     await db.delete(kb)
     await db.commit()
 
@@ -225,14 +224,7 @@ async def list_kb_groups(
 ) -> KBGroupsResponse:
     _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
-    result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.id == kb_id,
-            PortalKnowledgeBase.org_id == org.id,
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    await _get_kb_or_404(kb_id, org.id, db)
     access_result = await db.execute(
         select(PortalGroupKBAccess, PortalGroup)
         .join(PortalGroup, PortalGroup.id == PortalGroupKBAccess.group_id)
@@ -263,14 +255,7 @@ async def grant_kb_group_access(
 ) -> MessageResponse:
     caller_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
-    kb_result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.id == kb_id,
-            PortalKnowledgeBase.org_id == org.id,
-        )
-    )
-    if not kb_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+    await _get_kb_or_404(kb_id, org.id, db)
     group_result = await db.execute(
         select(PortalGroup).where(
             PortalGroup.id == body.group_id,
@@ -300,8 +285,9 @@ async def revoke_kb_group_access(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    _, _org, caller_user = await _get_caller_org(credentials, db)
+    _, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin_or_group_admin_role(caller_user)
+    await _get_kb_or_404(kb_id, org.id, db)  # Verifies KB belongs to caller's org (IDOR guard)
     result = await db.execute(
         select(PortalGroupKBAccess).where(
             PortalGroupKBAccess.kb_id == kb_id,
