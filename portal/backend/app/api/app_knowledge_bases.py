@@ -101,7 +101,7 @@ async def get_app_knowledge_base(
     )
     kb = result.scalar_one_or_none()
     if not kb:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
     return AppKBOut(
         id=kb.id,
         name=kb.name,
@@ -141,7 +141,7 @@ async def create_app_knowledge_base(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Slug bestaat al in deze organisatie",
+            detail="Slug already exists in this organisation",
         ) from exc
 
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)

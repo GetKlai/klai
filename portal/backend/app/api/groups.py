@@ -36,7 +36,7 @@ async def _get_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> Por
     result = await db.execute(select(PortalGroup).where(PortalGroup.id == group_id, PortalGroup.org_id == org_id))
     group = result.scalar_one_or_none()
     if not group:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
     return group
 
 
@@ -188,7 +188,7 @@ async def create_group(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Groepsnaam bestaat al in deze organisatie",
+            detail="Group name already exists in this organisation",
         ) from exc
 
     await db.commit()
@@ -224,10 +224,10 @@ async def update_group(
     )
     group = result.scalar_one_or_none()
     if not group:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     if group.is_system:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Systeemgroepen kunnen niet worden gewijzigd")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System groups cannot be modified")
 
     if body.name is not None:
         group.name = body.name
@@ -240,7 +240,7 @@ async def update_group(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Groepsnaam bestaat al in deze organisatie",
+            detail="Group name already exists in this organisation",
         ) from exc
 
     await db.commit()
@@ -275,12 +275,12 @@ async def delete_group(
     )
     group = result.scalar_one_or_none()
     if not group:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     if group.is_system:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Systeemgroepen kunnen niet worden verwijderd",
+            detail="System groups cannot be deleted",
         )
 
     await db.delete(group)
@@ -309,7 +309,7 @@ async def list_members(
         )
     )
     if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     await _require_admin_or_group_admin(group_id, caller_user, db)
 
@@ -350,7 +350,7 @@ async def add_member(
     )
     group = group_result.scalar_one_or_none()
     if not group:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     await _require_admin_or_group_admin(group_id, caller_user, db)
 
@@ -358,12 +358,12 @@ async def add_member(
     user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == body.zitadel_user_id))
     target_user = user_result.scalar_one_or_none()
     if not target_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     if target_user.org_id != group.org_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Gebruiker behoort niet tot dezelfde organisatie als de groep",
+            detail="User does not belong to the same organisation as the group",
         )
 
     membership = PortalGroupMembership(
@@ -377,7 +377,7 @@ async def add_member(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Gebruiker is al lid van deze groep",
+            detail="User is already a member of this group",
         ) from exc
 
     await log_event(
@@ -390,7 +390,7 @@ async def add_member(
         details={"user_id": body.zitadel_user_id},
     )
     await db.commit()
-    return MessageResponse(message="Lid toegevoegd aan groep")
+    return MessageResponse(message="Member added to group")
 
 
 @router.delete("/groups/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -411,7 +411,7 @@ async def remove_member(
         )
     )
     if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     await _require_admin_or_group_admin(group_id, caller_user, db)
 
@@ -423,7 +423,7 @@ async def remove_member(
     )
     membership = result.scalar_one_or_none()
     if not membership:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lidmaatschap niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
 
     await db.delete(membership)
     await log_event(
@@ -458,7 +458,7 @@ async def toggle_group_admin(
         )
     )
     if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     result = await db.execute(
         select(PortalGroupMembership).where(
@@ -468,13 +468,13 @@ async def toggle_group_admin(
     )
     membership = result.scalar_one_or_none()
     if not membership:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lidmaatschap niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
 
     membership.is_group_admin = body.is_group_admin
     await db.commit()
 
-    action = "toegekend" if body.is_group_admin else "ingetrokken"
-    return MessageResponse(message=f"Groepsbeheerder rechten {action}")
+    action = "granted" if body.is_group_admin else "revoked"
+    return MessageResponse(message=f"Group admin rights {action}")
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +573,7 @@ async def revoke_group_product(
     )
     row = result.scalar_one_or_none()
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product toewijzing niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product assignment not found")
 
     await db.delete(row)
     await log_event(
@@ -607,7 +607,7 @@ async def get_user_groups(
         select(PortalUser).where(PortalUser.zitadel_user_id == user_id, PortalUser.org_id == org.id)
     )
     if not user_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     memberships_result = await db.execute(
         select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id)

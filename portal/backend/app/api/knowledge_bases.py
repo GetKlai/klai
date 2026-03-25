@@ -31,7 +31,7 @@ async def _get_kb_or_404(kb_id: int, org_id: int, db: AsyncSession) -> PortalKno
     )
     kb = result.scalar_one_or_none()
     if not kb:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
     return kb
 
 
@@ -147,7 +147,7 @@ async def create_knowledge_base(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Slug bestaat al in deze organisatie",
+            detail="Slug already exists in this organisation",
         ) from exc
 
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
@@ -206,9 +206,13 @@ async def delete_knowledge_base(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    _, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin_or_group_admin_role(caller_user)
+    caller_id, org, caller_user = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_id, org.id, db)
+    if caller_user.role != "admin" and kb.created_by != caller_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the creator or an admin can delete a knowledge base",
+        )
     await db.delete(kb)
     await db.commit()
 
@@ -263,7 +267,7 @@ async def grant_kb_group_access(
         )
     )
     if not group_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
     access = PortalGroupKBAccess(group_id=body.group_id, kb_id=kb_id, granted_by=caller_id, role=body.role)
     db.add(access)
     try:
@@ -272,10 +276,10 @@ async def grant_kb_group_access(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Groep heeft al toegang tot deze knowledge base",
+            detail="Group already has access to this knowledge base",
         ) from exc
     await db.commit()
-    return MessageResponse(message="Toegang verleend")
+    return MessageResponse(message="Access granted")
 
 
 @router.delete("/knowledge-bases/{kb_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -296,6 +300,6 @@ async def revoke_kb_group_access(
     )
     access = result.scalar_one_or_none()
     if not access:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Toegang niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Access not found")
     await db.delete(access)
     await db.commit()

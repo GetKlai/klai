@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
 from app.core.database import get_db, set_tenant
-from app.models.groups import PortalGroupMembership
+from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
@@ -47,11 +47,11 @@ async def _get_caller_org(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     zitadel_user_id = info.get("sub")
     if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden in token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
 
     result = await db.execute(
         select(PortalOrg, PortalUser)
@@ -60,7 +60,7 @@ async def _get_caller_org(
     )
     row = result.one_or_none()
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisatie niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
     org, caller_user = row
     await set_tenant(db, org.id)
@@ -71,7 +71,7 @@ async def _get_caller_org(
 def _require_admin(caller_user: PortalUser) -> None:
     """Raise 403 if the caller is not an admin."""
     if caller_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang: admin rechten vereist")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: admin role required")
 
 
 def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
@@ -80,7 +80,7 @@ def _require_admin_or_group_admin_role(caller_user: PortalUser) -> None:
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Geen toegang: admin of groepsbeheerder rechten vereist",
+        detail="Access denied: admin or group admin role required",
     )
 
 
@@ -89,21 +89,29 @@ async def _require_admin_or_group_admin(
     caller_user: PortalUser,
     db: AsyncSession,
 ) -> None:
-    """Raise 403 unless caller is org admin or group admin for the given group."""
-    if caller_user.role in ("admin", "group-admin"):
+    """Raise 403 unless caller may manage members of this group.
+
+    Rules:
+    - Org admin (role='admin'): may manage any group, including system groups.
+    - group-admin role: may manage any non-system group.
+    - System groups (system_key IS NOT NULL): only org admins may manage members.
+    """
+    if caller_user.role == "admin":
         return
 
-    result = await db.execute(
-        select(PortalGroupMembership).where(
-            PortalGroupMembership.group_id == group_id,
-            PortalGroupMembership.zitadel_user_id == caller_user.zitadel_user_id,
-            PortalGroupMembership.is_group_admin.is_(True),
-        )
-    )
-    if not result.scalar_one_or_none():
+    # Block access to system groups for everyone except org admin
+    group_result = await db.execute(select(PortalGroup.system_key).where(PortalGroup.id == group_id))
+    system_key = group_result.scalar_one_or_none()
+    if system_key is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Geen toegang: admin of groepsbeheerder rechten vereist",
+            detail="Access denied: system groups can only be managed by org admins",
+        )
+
+    if caller_user.role != "group-admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: admin or group admin role required",
         )
 
 
@@ -117,8 +125,6 @@ async def _require_admin_or_group_manager(
         return
 
     # Check if caller is in the Group Management system group for their org
-    from app.models.groups import PortalGroup
-
     gm_result = await db.execute(
         select(PortalGroup.id).where(
             PortalGroup.org_id == org_id,
@@ -128,7 +134,7 @@ async def _require_admin_or_group_manager(
     gm_group_id = gm_result.scalar_one_or_none()
     _no_access = HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Geen toegang: admin of groepsbeheerder rechten vereist",
+        detail="Access denied: admin or group admin role required",
     )
     if not gm_group_id:
         raise _no_access
