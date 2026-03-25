@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""
 
+    # klai-connector integration (used by portal → klai-connector for sync orchestration)
+    klai_connector_url: str = "http://klai-connector:8200"
+    klai_connector_secret: str = ""  # Shared internal secret; generate with: openssl rand -hex 32
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod

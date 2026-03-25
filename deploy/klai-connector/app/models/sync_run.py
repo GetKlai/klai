@@ -3,9 +3,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, ForeignKey, Integer, String, func
+from sqlalchemy import BigInteger, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.connector import Base
 
@@ -13,10 +13,14 @@ from app.models.connector import Base
 class SyncRun(Base):
     """Sync run history model.
 
+    connector_id is a portal connector UUID (portal_connectors.id in the portal DB).
+    There is intentionally NO foreign key to connector.connectors — klai-connector is
+    a stateless execution plane and does not maintain a local connector registry.
+
     Columns:
         id: UUID primary key
-        connector_id: UUID foreign key -> connector.connectors
-        status: VARCHAR(20) -- 'running', 'completed', 'failed', 'auth_error'
+        connector_id: UUID — portal_connectors.id (no FK; portal is source of truth)
+        status: VARCHAR(20) -- 'running', 'completed', 'failed', 'auth_error', 'pending'
         started_at: TIMESTAMPTZ
         completed_at: TIMESTAMPTZ
         documents_total: INTEGER
@@ -33,9 +37,9 @@ class SyncRun(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     connector_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("connector.connectors.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+        # No ForeignKey — connector_id is a portal UUID, portal is source of truth.
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
@@ -46,8 +50,3 @@ class SyncRun(Base):
     bytes_processed: Mapped[int] = mapped_column(BigInteger, default=0)
     error_details: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # type: ignore[type-arg]
     cursor_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # type: ignore[type-arg]
-
-    connector: Mapped["Connector"] = relationship(  # type: ignore[name-defined]  # noqa: F821
-        "Connector",
-        back_populates="sync_runs",
-    )

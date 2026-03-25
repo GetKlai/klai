@@ -9,14 +9,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
-from app.models.connector import Connector
 from app.models.sync_run import SyncRun
-from app.routes.deps import get_org_id
 from app.schemas.sync import SyncRunResponse
 
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["sync"])
+
+
+def _require_portal_call(request: Request) -> None:
+    """Reject requests that did not arrive via the portal internal secret.
+
+    All sync operations are initiated by the portal control plane.
+    Direct user calls are no longer supported on these endpoints.
+    """
+    if not getattr(request.state, "from_portal", False):
+        raise HTTPException(status_code=403, detail="Portal service token required")
 
 
 @router.post("/connectors/{connector_id}/sync", status_code=202, response_model=SyncRunResponse)
@@ -28,18 +36,14 @@ async def trigger_sync(
 ) -> SyncRun:
     """Trigger an on-demand sync for a connector.
 
-    Returns 202 Accepted with the new SyncRun immediately.
-    Returns 409 if a sync is already running for this connector.
+    Called by the portal control plane. Returns 202 Accepted with the new
+    SyncRun immediately; sync executes in the background.
+
+    Returns 409 if a sync is already in progress for this connector.
     """
-    org_id = get_org_id(request)
-    connector = await session.get(Connector, connector_id)
-    if connector is None or connector.org_id != org_id:
-        raise HTTPException(status_code=404, detail="Connector not found")
+    _require_portal_call(request)
 
-    if not connector.is_enabled:
-        raise HTTPException(status_code=400, detail="Connector is disabled")
-
-    # Check for active sync
+    # Check for active sync (in-DB guard; the in-memory lock is an additional layer).
     active_run_result = await session.execute(
         select(SyncRun).where(
             SyncRun.connector_id == connector_id,
@@ -49,7 +53,7 @@ async def trigger_sync(
     if active_run_result.scalars().first() is not None:
         raise HTTPException(status_code=409, detail="Sync already running for this connector")
 
-    # Create sync run record
+    # Create sync run record.
     sync_run = SyncRun(
         connector_id=connector_id,
         status=SyncStatus.RUNNING,
@@ -58,13 +62,14 @@ async def trigger_sync(
     await session.commit()
     await session.refresh(sync_run)
 
-    # Schedule background sync
+    # Schedule background sync.
     sync_engine = getattr(request.app.state, "sync_engine", None)
     if sync_engine:
         background_tasks.add_task(sync_engine.run_sync, connector_id, sync_run.id)
 
     logger.info(
-        "Sync triggered for connector %s", connector_id,
+        "Sync triggered for connector %s",
+        connector_id,
         extra={"connector_id": str(connector_id), "sync_run_id": str(sync_run.id)},
     )
     return sync_run
@@ -77,11 +82,11 @@ async def list_sync_runs(
     limit: int = 20,
     session: AsyncSession = Depends(get_session),
 ) -> list[SyncRun]:
-    """List sync history for a connector (most recent first)."""
-    org_id = get_org_id(request)
-    connector = await session.get(Connector, connector_id)
-    if connector is None or connector.org_id != org_id:
-        raise HTTPException(status_code=404, detail="Connector not found")
+    """List sync history for a connector (most recent first).
+
+    Called by the portal control plane to retrieve sync history for the UI.
+    """
+    _require_portal_call(request)
 
     result = await session.execute(
         select(SyncRun)
@@ -100,10 +105,7 @@ async def get_sync_run(
     session: AsyncSession = Depends(get_session),
 ) -> SyncRun:
     """Get details of a specific sync run."""
-    org_id = get_org_id(request)
-    connector = await session.get(Connector, connector_id)
-    if connector is None or connector.org_id != org_id:
-        raise HTTPException(status_code=404, detail="Connector not found")
+    _require_portal_call(request)
 
     sync_run = await session.get(SyncRun, run_id)
     if sync_run is None or sync_run.connector_id != connector_id:

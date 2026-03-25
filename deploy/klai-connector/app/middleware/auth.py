@@ -56,6 +56,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._introspection_url = settings.zitadel_introspection_url
         self._client_id = settings.zitadel_client_id
         self._client_secret = settings.zitadel_client_secret
+        self._portal_secret = settings.portal_internal_secret
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request through authentication."""
@@ -68,6 +69,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
         token = auth_header[7:]
+
+        # Portal service-to-service calls bypass Zitadel introspection.
+        # Portal is the control plane and is the only caller with this secret.
+        if self._portal_secret and token == self._portal_secret:
+            request.state.from_portal = True
+            request.state.org_id = None  # no user org in portal calls
+            return await call_next(request)
+
         token_hash = hashlib.sha256(token.encode()).hexdigest()
 
         # Check cache

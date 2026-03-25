@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from typing import Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -15,6 +16,7 @@ from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services.access import get_user_role_for_kb
+from app.services.klai_connector_client import SyncRunData, klai_connector_client
 
 log = logging.getLogger(__name__)
 
@@ -215,3 +217,73 @@ async def delete_connector(
         )
     await db.delete(connector)
     await db.commit()
+
+
+@router.post("/{connector_id}/sync", response_model=SyncRunData, status_code=status.HTTP_202_ACCEPTED)
+async def trigger_sync(
+    kb_slug: str,
+    connector_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> SyncRunData:
+    """Trigger an on-demand sync for a connector. Requires owner access.
+
+    Delegates to klai-connector execution service. Returns 202 with the new
+    SyncRun immediately; sync runs in the background.
+    """
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    result = await db.execute(
+        select(PortalConnector).where(
+            PortalConnector.id == connector_id,
+            PortalConnector.kb_id == kb.id,
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if not connector.is_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connector is disabled")
+    if connector.last_sync_status == "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
+
+    try:
+        return await klai_connector_client.trigger_sync(connector_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == status.HTTP_409_CONFLICT:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
+        log.exception("klai-connector returned error for connector %s", connector_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service error")
+    except httpx.HTTPError:
+        log.exception("Failed to reach klai-connector for connector %s", connector_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable")
+
+
+@router.get("/{connector_id}/syncs", response_model=list[SyncRunData])
+async def list_sync_runs(
+    kb_slug: str,
+    connector_id: str,
+    limit: int = 20,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> list[SyncRunData]:
+    """List sync history for a connector (most recent first).
+
+    Proxies to klai-connector execution service.
+    """
+    _, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_for_org(kb_slug, org.id, db)
+    exists = await db.execute(
+        select(PortalConnector.id).where(
+            PortalConnector.id == connector_id,
+            PortalConnector.kb_id == kb.id,
+        )
+    )
+    if not exists.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    try:
+        return await klai_connector_client.get_sync_runs(connector_id, limit=limit)
+    except httpx.HTTPError:
+        log.exception("Failed to reach klai-connector for sync history of %s", connector_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable")
