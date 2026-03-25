@@ -162,6 +162,8 @@ class SyncEngine:
                             extra={"connector_id": str(connector_id)},
                         )
 
+                await adapter.post_sync(connector)
+
             except CrawlJobPending as exc:
                 # Async crawl job not finished yet: mark as PENDING so the
                 # next scheduled sync resumes polling.
