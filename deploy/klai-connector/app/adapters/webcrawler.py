@@ -161,7 +161,11 @@ class WebCrawlerAdapter(BaseAdapter):
 
         for page in results:
             url: str = page.get("url", "")
-            markdown: str = page.get("markdown", "") or page.get("markdown_v2", {}).get("raw_markdown", "")
+            # crawl4ai >= 0.8 returns `markdown` as a dict (like markdown_v2); handle both.
+            _md = page.get("markdown", "")
+            if isinstance(_md, dict):
+                _md = _md.get("raw_markdown", "")
+            markdown: str = _md or page.get("markdown_v2", {}).get("raw_markdown", "")
 
             if not url or not markdown or not markdown.strip():
                 if url:
