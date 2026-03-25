@@ -162,7 +162,12 @@ async def list_meetings(
     return MeetingListResponse(items=items, total=total)
 
 
-@router.post("/meetings", status_code=status.HTTP_202_ACCEPTED, response_model=MeetingResponse, dependencies=[Depends(require_product("scribe"))])
+@router.post(
+    "/meetings",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=MeetingResponse,
+    dependencies=[Depends(require_product("scribe"))],
+)
 async def start_meeting(
     body: StartMeetingRequest,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -257,7 +262,11 @@ async def get_meeting(
     return await _build_meeting_response(meeting, db)
 
 
-@router.post("/meetings/{meeting_id}/stop", response_model=MeetingResponse, dependencies=[Depends(require_product("scribe"))])
+@router.post(
+    "/meetings/{meeting_id}/stop",
+    response_model=MeetingResponse,
+    dependencies=[Depends(require_product("scribe"))],
+)
 async def stop_meeting(
     meeting_id: UUID,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -287,7 +296,11 @@ async def stop_meeting(
     return await _build_meeting_response(meeting, db)
 
 
-@router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_product("scribe"))])
+@router.delete(
+    "/meetings/{meeting_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_product("scribe"))],
+)
 async def delete_meeting(
     meeting_id: UUID,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
