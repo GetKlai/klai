@@ -7,15 +7,15 @@ Portal calls klai-connector to trigger syncs and retrieve sync history.
 klai-connector calls back to portal's internal API to report results.
 """
 
+import logging
 from datetime import datetime
 
 import httpx
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.logging import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class SyncRunData(BaseModel):
