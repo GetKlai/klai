@@ -11,14 +11,17 @@ function getStoredProducts(): string[] {
   }
 }
 
+function isAdmin(): boolean {
+  return sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+}
+
 interface ProductGuardProps {
   product: string
   children: ReactNode
 }
 
 export function ProductGuard({ product, children }: ProductGuardProps) {
-  const products = getStoredProducts()
-  if (products.includes(product)) {
+  if (isAdmin() || getStoredProducts().includes(product)) {
     return <>{children}</>
   }
 

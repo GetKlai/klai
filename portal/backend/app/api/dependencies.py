@@ -12,16 +12,27 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
+_ADMIN_ROLES = {"admin"}
+
 bearer = HTTPBearer()
 
 
 def require_product(product: str):
-    """Return a FastAPI dependency callable that raises 403 if user lacks the product."""
+    """Return a FastAPI dependency callable that raises 403 if user lacks the product.
+
+    Org admins bypass the check — they have access to all products.
+    """
 
     async def dependency(
         user_id: str = Depends(get_current_user_id),
         db: AsyncSession = Depends(get_db),
     ) -> None:
+        result = await db.execute(
+            select(PortalUser.role).where(PortalUser.zitadel_user_id == user_id)
+        )
+        portal_role = result.scalar_one_or_none()
+        if portal_role in _ADMIN_ROLES:
+            return
         products = await get_effective_products(user_id, db)
         if product not in products:
             raise HTTPException(

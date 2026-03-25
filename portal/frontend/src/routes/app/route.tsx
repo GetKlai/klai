@@ -42,10 +42,13 @@ function AppLayout() {
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
   ]
 
-  const appNav = allNavItems.filter((item) => {
-    const required = PRODUCT_ROUTES[item.to]
-    return !required || required.some((p) => products.includes(p))
-  })
+  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const appNav = isAdmin
+    ? allNavItems
+    : allNavItems.filter((item) => {
+        const required = PRODUCT_ROUTES[item.to]
+        return !required || required.some((p) => products.includes(p))
+      })
 
   useEffect(() => {
     if (auth.isLoading) return
