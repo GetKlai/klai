@@ -44,8 +44,8 @@ function KnowledgeDetailPage() {
     retry: false,
   })
 
-  const searchParams = Route.useSearch() as { tab?: Tab }
-  const activeTab: Tab = searchParams.tab ?? 'docs'
+  const searchParams = Route.useSearch()
+  const activeTab: Tab = (searchParams.tab as Tab | undefined) ?? 'docs'
 
   if (isLoading) {
     return (
