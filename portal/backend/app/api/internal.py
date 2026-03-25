@@ -8,6 +8,8 @@ Used by klai-mailer to look up a user's preferred language so it can append
 ?lang= to email action URLs (verify, password-reset, etc.).
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -17,7 +19,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
@@ -85,7 +87,7 @@ class ConnectorConfigResponse(BaseModel):
     connector_id: str
     kb_id: int
     kb_slug: str
-    org_id: int
+    zitadel_org_id: str  # Zitadel org ID string — used by klai-connector for Qdrant partitioning
     connector_type: str
     config: dict
     schedule: str | None
@@ -101,8 +103,9 @@ async def get_connector_config(
     """Return connector config for klai-connector service."""
     _require_internal_token(request)
     result = await db.execute(
-        select(PortalConnector, PortalKnowledgeBase)
+        select(PortalConnector, PortalKnowledgeBase, PortalOrg)
         .join(PortalKnowledgeBase, PortalConnector.kb_id == PortalKnowledgeBase.id)
+        .join(PortalOrg, PortalConnector.org_id == PortalOrg.id)
         .where(PortalConnector.id == connector_id)
     )
     row = result.one_or_none()
@@ -111,14 +114,46 @@ async def get_connector_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Connector not found",
         )
-    connector, kb = row
+    connector, kb, org = row
     return ConnectorConfigResponse(
         connector_id=str(connector.id),
         kb_id=connector.kb_id,
         kb_slug=kb.slug,
-        org_id=connector.org_id,
+        zitadel_org_id=org.zitadel_org_id,
         connector_type=connector.connector_type,
         config=connector.config,
         schedule=connector.schedule,
         is_enabled=connector.is_enabled,
     )
+
+
+class SyncStatusCallback(BaseModel):
+    sync_run_id: str
+    status: str
+    completed_at: datetime
+    documents_total: int = 0
+    documents_ok: int = 0
+    documents_failed: int = 0
+    bytes_processed: int = 0
+    error_details: list[dict] | None = None
+
+
+@router.post("/connectors/{connector_id}/sync-status", status_code=status.HTTP_204_NO_CONTENT)
+async def receive_sync_status(
+    connector_id: str,
+    body: SyncStatusCallback,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Receive sync completion callback from klai-connector.
+
+    Updates last_sync_at and last_sync_status on the portal connector record.
+    Called by klai-connector after each sync run completes (success or failure).
+    """
+    _require_internal_token(request)
+    connector = await db.get(PortalConnector, connector_id)
+    if connector is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    connector.last_sync_at = body.completed_at
+    connector.last_sync_status = body.status
+    await db.commit()

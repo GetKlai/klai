@@ -21,6 +21,7 @@ from app.routes.connectors import router as connectors_router
 from app.routes.health import router as health_router
 from app.routes.sync import router as sync_router
 from app.services.crypto import PostgresSecretsStore
+from app.services.portal_client import PortalClient
 from app.services.scheduler import ConnectorScheduler
 from app.services.sync_engine import SyncEngine
 
@@ -57,6 +58,9 @@ def create_app() -> FastAPI:
         ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url)
         app.state.ingest_client = ingest_client
 
+        # Portal client (control plane)
+        portal_client = PortalClient(settings)
+
         # Sync engine
         if _db.session_maker is None:
             raise RuntimeError("Database session maker not initialised")
@@ -64,6 +68,7 @@ def create_app() -> FastAPI:
             session_maker=_db.session_maker,
             registry=registry,
             ingest_client=ingest_client,
+            portal_client=portal_client,
         )
         app.state.sync_engine = sync_engine
 

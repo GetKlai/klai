@@ -1,11 +1,16 @@
-"""SQLAlchemy model for the connector.connectors table."""
+"""SQLAlchemy model for the connector.connectors table.
+
+NOTE: This table is the legacy connector registry used by the scheduler.
+      New connector config is owned by the portal (portal_connectors).
+      sync_runs no longer has a FK back to this table.
+"""
 
 import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, Integer, LargeBinary, String, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
@@ -48,9 +53,3 @@ class Connector(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    sync_runs: Mapped[list["SyncRun"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
-        "SyncRun",
-        back_populates="connector",
-        cascade="all, delete-orphan",
-        lazy="select",
-    )

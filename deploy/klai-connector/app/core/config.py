@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     crawl4ai_api_url: str = "http://crawl4ai:11235"
     crawl4ai_internal_key: str = ""
 
+    # Portal control plane (used by klai-connector → portal for config + status callbacks)
+    portal_api_url: str = "http://portal-api:8100"
+    portal_internal_secret: str = ""  # Must match portal's PORTAL_API_INTERNAL_SECRET
+
     # Optional
     log_level: str = "INFO"
 
