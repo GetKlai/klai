@@ -19,6 +19,7 @@ from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase,
 from app.models.portal import PortalUser
 from app.services import docs_client
 from app.services.access import get_user_role_for_kb
+from app.services.zitadel import zitadel
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
@@ -82,7 +83,7 @@ class MembersResponse(BaseModel):
 
 
 class InviteUserRequest(BaseModel):
-    user_id: str
+    email: str
     role: str
 
 
@@ -412,9 +413,25 @@ async def invite_user(
             detail="Personal KBs cannot be shared",
         )
 
+    # Resolve email → Zitadel user_id
+    resolved_user_id = await zitadel.find_user_id_by_email(body.email)
+    if not resolved_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No user found with that email address",
+        )
+
+    # Cache display info in portal_users if they have a row (org member)
+    user_row = await db.execute(
+        select(PortalUser).where(PortalUser.zitadel_user_id == resolved_user_id)
+    )
+    portal_user = user_row.scalar_one_or_none()
+    if portal_user and portal_user.email != body.email:
+        portal_user.email = body.email
+
     access = PortalUserKBAccess(
         kb_id=kb.id,
-        user_id=body.user_id,
+        user_id=resolved_user_id,
         org_id=org.id,
         role=body.role,
         granted_by=caller_id,
@@ -432,6 +449,8 @@ async def invite_user(
     return UserMemberOut(
         id=access.id,
         user_id=access.user_id,
+        display_name=portal_user.display_name if portal_user else None,
+        email=body.email,
         role=access.role,
         granted_at=access.granted_at,
         granted_by=access.granted_by,
