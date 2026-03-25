@@ -37,11 +37,11 @@ async def _get_caller_org(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     zitadel_user_id = info.get("sub")
     if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden in token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
 
     result = await db.execute(
         select(PortalOrg, PortalUser)
@@ -50,7 +50,7 @@ async def _get_caller_org(
     )
     row = result.one_or_none()
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisatie niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
     org, caller_user = row
     return zitadel_user_id, org, caller_user
@@ -59,7 +59,7 @@ async def _get_caller_org(
 def _require_admin(caller_user: "PortalUser") -> None:
     """Raise 403 if the caller is not an admin."""
     if caller_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang: admin rechten vereist")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: admin role required")
 
 
 class UserOut(BaseModel):
@@ -248,7 +248,7 @@ async def invite_user(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon gebruiker niet uitnodigen: {exc}",
+            detail=f"Failed to invite user: {exc}",
         ) from exc
 
     zitadel_user_id: str = user_data["userId"]
@@ -262,7 +262,7 @@ async def invite_user(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon projectrol niet toewijzen: {exc}",
+            detail=f"Failed to assign project role: {exc}",
         ) from exc
 
     user_row = PortalUser(
@@ -311,7 +311,7 @@ async def update_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     try:
         await zitadel.update_user_profile(
@@ -324,13 +324,13 @@ async def update_user(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon gebruiker niet bijwerken: {exc}",
+            detail=f"Failed to update user: {exc}",
         ) from exc
 
     user.preferred_language = body.preferred_language
     await db.commit()
 
-    return MessageResponse(message="Gebruiker bijgewerkt.")
+    return MessageResponse(message="User updated.")
 
 
 @router.patch("/users/{zitadel_user_id}/role", response_model=MessageResponse)
@@ -351,7 +351,7 @@ async def update_user_role(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.role = body.role
     await db.commit()
@@ -401,7 +401,7 @@ async def resend_invite(
         )
     )
     if not result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     try:
         await zitadel.resend_init_mail(
@@ -411,10 +411,10 @@ async def resend_invite(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon uitnodiging niet opnieuw sturen: {exc}",
+            detail=f"Failed to resend invitation: {exc}",
         ) from exc
 
-    return MessageResponse(message="Uitnodiging opnieuw verstuurd.")
+    return MessageResponse(message="Invitation resent.")
 
 
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
@@ -435,20 +435,20 @@ async def remove_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     try:
         await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon gebruiker niet verwijderen: {exc}",
+            detail=f"Failed to delete user: {exc}",
         ) from exc
 
     await db.delete(user)
     await db.commit()
 
-    return MessageResponse(message="Gebruiker verwijderd.")
+    return MessageResponse(message="User deleted.")
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +493,7 @@ async def assign_product(
         )
     )
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # Check for duplicate
     existing = await db.scalar(
@@ -597,7 +597,7 @@ async def get_user_products(
         )
     )
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     result = await db.execute(
         select(PortalUserProduct).where(
@@ -629,7 +629,7 @@ async def get_user_effective_products(
         )
     )
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     products: list[EffectiveProductOut] = []
     seen: set[str] = set()
@@ -737,11 +737,11 @@ async def suspend_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status in ("suspended", "offboarded"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Gebruiker heeft status '{user.status}' en kan niet worden geschorst",
+            detail=f"User has status '{user.status}' and cannot be suspended",
         )
 
     user.status = "suspended"
@@ -754,7 +754,7 @@ async def suspend_user(
         resource_id=zitadel_user_id,
     )
     await db.commit()
-    return MessageResponse(message=f"Gebruiker {zitadel_user_id} geschorst.")
+    return MessageResponse(message=f"User {zitadel_user_id} suspended.")
 
 
 @router.post("/users/{zitadel_user_id}/reactivate", response_model=MessageResponse)
@@ -775,16 +775,16 @@ async def reactivate_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status != "suspended":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Gebruiker heeft status '{user.status}' en kan niet worden gereactiveerd",
+            detail=f"User has status '{user.status}' and cannot be reactivated",
         )
 
     user.status = "active"
     await db.commit()
-    return MessageResponse(message=f"Gebruiker {zitadel_user_id} gereactiveerd.")
+    return MessageResponse(message=f"User {zitadel_user_id} reactivated.")
 
 
 @router.post("/users/{zitadel_user_id}/offboard", response_model=MessageResponse)
@@ -805,9 +805,9 @@ async def offboard_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status == "offboarded":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Gebruiker is al offboarded")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User has already been offboarded")
 
     # Cascade: remove group memberships and product assignments
     await db.execute(delete(PortalGroupMembership).where(PortalGroupMembership.zitadel_user_id == zitadel_user_id))
@@ -829,7 +829,7 @@ async def offboard_user(
     )
     await zitadel.deactivate_user(settings.zitadel_portal_org_id, zitadel_user_id)
     await db.commit()
-    return MessageResponse(message=f"Gebruiker {zitadel_user_id} offboarded.")
+    return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
 
 
 # ---------------------------------------------------------------------------

@@ -135,7 +135,7 @@ def _validate_callback_url(url: str) -> str:
         log.error("callback_url failed validation: %r", url)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Inloggen mislukt, probeer het later opnieuw",
+            detail="Login failed, please try again later",
         )
     return url
 
@@ -147,10 +147,10 @@ async def get_current_user_id(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
     user_id = info.get("sub")
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return user_id
 
 
@@ -172,11 +172,11 @@ async def _finalize_and_set_cookie(
         if exc.response.status_code == 404:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Inlogverzoek is verlopen, probeer opnieuw",
+                detail="Login request expired, please try again",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Inloggen mislukt, probeer het later opnieuw",
+            detail="Login failed, please try again later",
         ) from exc
 
     response.set_cookie(
@@ -288,11 +288,11 @@ async def password_set(body: PasswordSetRequest) -> None:
         if exc.response.status_code in (400, 404, 410):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Link is verlopen of ongeldig, vraag een nieuwe reset-link aan",
+                detail="Link has expired or is invalid, request a new reset link",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Wachtwoord instellen mislukt, probeer het later opnieuw",
+            detail="Failed to set password, please try again later",
         ) from exc
 
 
@@ -317,11 +317,11 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         if exc.response.status_code in (400, 401, 404, 412):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="E-mailadres of wachtwoord is onjuist",
+                detail="Email address or password is incorrect",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Inloggen mislukt, probeer het later opnieuw",
+            detail="Login failed, please try again later",
         ) from exc
 
     emit_event("login", user_id=zitadel_user_id, properties={"method": "password"})
@@ -353,7 +353,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
     if not pending:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sessie verlopen, log opnieuw in",
+            detail="Session expired, please log in again",
         )
 
     # Reject immediately if the token is already locked out
@@ -361,7 +361,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
         _pending_totp.pop(body.temp_token)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Te veel mislukte pogingen, log opnieuw in",
+            detail="Too many failed attempts, please log in again",
         )
 
     # Verify TOTP code by updating the session
@@ -379,15 +379,15 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
                 _pending_totp.pop(body.temp_token)
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Te veel mislukte pogingen, log opnieuw in",
+                    detail="Too many failed attempts, please log in again",
                 ) from exc
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ongeldige code, probeer opnieuw",
+                detail="Invalid code, please try again",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Verificatie mislukt, probeer het later opnieuw",
+            detail="Verification failed, please try again later",
         ) from exc
 
     session_id = updated.get("sessionId", pending["session_id"])
@@ -457,7 +457,7 @@ async def totp_setup(
         log.error("register_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="2FA instellen mislukt, probeer het later opnieuw",
+            detail="Failed to set up 2FA, please try again later",
         ) from exc
 
     return TOTPSetupResponse(uri=result["uri"], secret=result["totpSecret"])
@@ -479,11 +479,11 @@ async def verify_email(body: VerifyEmailRequest) -> None:
         if exc.response.status_code in (400, 404):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ongeldige of verlopen verificatielink.",
+                detail="Invalid or expired verification link.",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Verificatie mislukt, probeer het later opnieuw.",
+            detail="Verification failed, please try again later.",
         ) from exc
 
 
@@ -500,11 +500,11 @@ async def totp_confirm(
         if exc.response.status_code in (400, 401):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ongeldige code, probeer opnieuw",
+                detail="Invalid code, please try again",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="2FA bevestigen mislukt, probeer het later opnieuw",
+            detail="Failed to confirm 2FA, please try again later",
         ) from exc
 
 
@@ -523,7 +523,7 @@ async def passkey_setup(
         log.error("start_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Passkey instellen mislukt, probeer het later opnieuw",
+            detail="Failed to set up passkey, please try again later",
         ) from exc
     return PasskeySetupResponse(
         passkey_id=result["passkeyId"],
@@ -546,11 +546,11 @@ async def passkey_confirm(
         if exc.response.status_code in (400, 401):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Passkey verificatie mislukt, probeer opnieuw",
+                detail="Passkey verification failed, please try again",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Passkey instellen mislukt, probeer het later opnieuw",
+            detail="Failed to set up passkey, please try again later",
         ) from exc
 
 
@@ -565,7 +565,7 @@ async def email_otp_setup(
         log.error("register_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="E-mailcode instellen mislukt, probeer het later opnieuw",
+            detail="Failed to set up email code, please try again later",
         ) from exc
 
 
@@ -582,7 +582,7 @@ async def email_otp_resend(
             log.error("remove_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="E-mailcode opnieuw versturen mislukt, probeer het later opnieuw",
+                detail="Failed to resend email code, please try again later",
             ) from exc
     try:
         await zitadel.register_email_otp(user_id)
@@ -590,7 +590,7 @@ async def email_otp_resend(
         log.error("register_email_otp (resend) failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="E-mailcode opnieuw versturen mislukt, probeer het later opnieuw",
+            detail="Failed to resend email code, please try again later",
         ) from exc
 
 
@@ -607,9 +607,9 @@ async def email_otp_confirm(
         if exc.response.status_code in (400, 401):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ongeldige code, probeer opnieuw",
+                detail="Invalid code, please try again",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="E-mailcode bevestigen mislukt, probeer het later opnieuw",
+            detail="Failed to confirm email code, please try again later",
         ) from exc

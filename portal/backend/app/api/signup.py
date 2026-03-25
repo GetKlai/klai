@@ -47,7 +47,7 @@ class SignupRequest(BaseModel):
     @classmethod
     def not_empty(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("Veld mag niet leeg zijn")
+            raise ValueError("Field cannot be empty")
         return v.strip()
 
     @field_validator("preferred_language")
@@ -93,16 +93,16 @@ async def signup(
         if exc.response.status_code == 409:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Deze bedrijfsnaam is al in gebruik. Probeer een andere naam.",
+                detail="This company name is already in use. Please try a different name.",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Aanmaken mislukt, probeer het later opnieuw",
+            detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Aanmaken mislukt, probeer het later opnieuw",
+            detail="Creation failed, please try again later",
         ) from exc
 
     zitadel_org_id: str = org_data["id"]
@@ -121,16 +121,16 @@ async def signup(
         if exc.response.status_code == 409:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Dit e-mailadres is al geregistreerd. Probeer in te loggen.",
+                detail="This email address is already registered. Please try logging in.",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Aanmaken mislukt, probeer het later opnieuw",
+            detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Aanmaken mislukt, probeer het later opnieuw",
+            detail="Creation failed, please try again later",
         ) from exc
 
     zitadel_user_id: str = user_data["userId"]
@@ -145,7 +145,7 @@ async def signup(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Aanmaken mislukt, probeer het later opnieuw",
+            detail="Creation failed, please try again later",
         ) from exc
 
     # 4. Persist to PostgreSQL
@@ -170,7 +170,7 @@ async def signup(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Aanmaken mislukt, probeer het later opnieuw",
+            detail="Creation failed, please try again later",
         ) from exc
 
     background_tasks.add_task(provision_tenant, org_row.id)
@@ -179,5 +179,5 @@ async def signup(
     return SignupResponse(
         org_id=zitadel_org_id,
         user_id=zitadel_user_id,
-        message="Account aangemaakt. Controleer je e-mail om je account te bevestigen.",
+        message="Account created. Check your email to confirm your account.",
     )

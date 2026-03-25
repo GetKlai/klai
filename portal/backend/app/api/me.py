@@ -71,7 +71,7 @@ async def me(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ongeldig of verlopen token",
+            detail="Invalid or expired token",
         ) from exc
 
     zitadel_user_id = info.get("sub", "")
@@ -133,16 +133,16 @@ async def update_my_language(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     zitadel_user_id = info.get("sub", "")
     if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found")
 
     result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gebruiker niet gevonden")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.preferred_language = body.preferred_language
     await db.commit()

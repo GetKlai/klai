@@ -49,11 +49,11 @@ async def _get_user_and_org(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ongeldig of verlopen token",
+            detail="Invalid or expired token",
         ) from exc
     user_id = info.get("sub", "")
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Geen gebruiker gevonden")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found")
 
     portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
     org_id = portal_user.org_id if portal_user else None
@@ -182,7 +182,7 @@ async def start_meeting(
     if ref is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Geen geldig vergader-URL (Google Meet, Zoom of Teams)",
+            detail="Invalid meeting URL (Google Meet, Zoom or Teams)",
         )
 
     # R5: Validate group membership before setting group_id
@@ -190,14 +190,14 @@ async def start_meeting(
         if not await is_member_of_group(user_id, body.group_id, db):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Geen lid van de opgegeven groep",
+                detail="Not a member of the specified group",
             )
 
     active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(_BILLABLE_STATUSES)))
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Maximaal 2 actieve vergaderingen tegelijk. Stop een bestaande bot om door te gaan.",
+            detail="Maximum 2 active meetings at a time. Stop an existing bot to continue.",
         )
 
     meeting = VexaMeeting(
@@ -257,7 +257,7 @@ async def get_meeting(
     # Check read access: owner, group member, or same org
     accessible = await get_accessible_meetings(user_id, org_id, db)
     if not any(m.id == meeting_id for m in accessible):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang tot deze vergadering")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this meeting")
 
     return await _build_meeting_response(meeting, db)
 
@@ -278,7 +278,7 @@ async def stop_meeting(
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     if not await can_write_meeting(user_id, meeting, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen schrijftoegang tot deze vergadering")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No write access to this meeting")
     if meeting.status not in ACTIVE_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Meeting is not active")
 
@@ -312,7 +312,7 @@ async def delete_meeting(
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     if not await can_write_meeting(user_id, meeting, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen schrijftoegang tot deze vergadering")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No write access to this meeting")
 
     ref = parse_meeting_url(meeting.meeting_url)
     if ref and meeting.status in ACTIVE_STATUSES:
@@ -343,7 +343,7 @@ async def summarize_meeting_endpoint(
     # Read access sufficient for summarize
     accessible = await get_accessible_meetings(user_id, org_id, db)
     if not any(m.id == meeting_id for m in accessible):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang tot deze vergadering")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this meeting")
 
     if not meeting.transcript_text:
         raise HTTPException(

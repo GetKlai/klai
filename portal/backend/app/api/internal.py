@@ -109,7 +109,7 @@ async def get_connector_config(
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Connector niet gevonden",
+            detail="Connector not found",
         )
     connector, kb = row
     return ConnectorConfigResponse(

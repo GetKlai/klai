@@ -84,7 +84,7 @@ async def _get_kb_with_contributor_check(
     if not access_result.first():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Geen schrijftoegang tot deze knowledge base",
+            detail="No write access to this knowledge base",
         )
 
     return kb
@@ -106,7 +106,7 @@ async def _get_kb_for_org(
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base niet gevonden",
+            detail="Knowledge base not found",
         )
     return kb
 
@@ -189,7 +189,7 @@ async def update_connector(
     if not connector:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Connector niet gevonden",
+            detail="Connector not found",
         )
     if body.name is not None:
         connector.name = body.name
@@ -224,7 +224,7 @@ async def delete_connector(
     if not connector:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Connector niet gevonden",
+            detail="Connector not found",
         )
     await db.delete(connector)
     await db.commit()

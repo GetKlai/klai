@@ -40,14 +40,14 @@ async def _get_org(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ongeldig of verlopen token",
+            detail="Invalid or expired token",
         ) from exc
 
     user_id: str | None = info.get("sub")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Geen gebruiker gevonden in token",
+            detail="No user found in token",
         )
 
     result = await db.execute(
@@ -59,7 +59,7 @@ async def _get_org(
     if org is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Organisatie niet gevonden",
+            detail="Organisation not found",
         )
     return org, user_id
 
@@ -116,7 +116,7 @@ async def create_mandate(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ongeldig token") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     if not org.moneybird_contact_id:
         try:
@@ -136,7 +136,7 @@ async def create_mandate(
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Kon Moneybird contact niet aanmaken: {exc}",
+                detail=f"Failed to create Moneybird contact: {exc}",
             ) from exc
         org.moneybird_contact_id = str(contact["id"])
 
@@ -206,7 +206,7 @@ async def invoice_portal(
     if not org.moneybird_contact_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Geen Moneybird contact gekoppeld",
+            detail="No Moneybird contact linked",
         )
 
     try:
@@ -214,7 +214,7 @@ async def invoice_portal(
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon factuurportaal URL niet ophalen: {exc}",
+            detail=f"Failed to retrieve invoice portal URL: {exc}",
         ) from exc
 
     return {"portal_url": portal_url}
@@ -231,7 +231,7 @@ async def cancel_subscription(
     if not org.moneybird_subscription_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Geen actief abonnement gevonden",
+            detail="No active subscription found",
         )
 
     try:
@@ -239,7 +239,7 @@ async def cancel_subscription(
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kon abonnement niet opzeggen: {exc}",
+            detail=f"Failed to cancel subscription: {exc}",
         ) from exc
 
     org.billing_status = "cancelled"

@@ -84,7 +84,7 @@ async def get_knowledge_stats(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ongeldig of verlopen token",
+            detail="Invalid or expired token",
         ) from exc
 
     # Zitadel does not include resourceowner:id in JWT access tokens or userinfo.
@@ -105,7 +105,7 @@ async def get_knowledge_stats(
     if not org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Geen organisatie gevonden voor deze gebruiker",
+            detail="No organisation found for this user",
         )
 
     user_id = info.get("sub", "")
