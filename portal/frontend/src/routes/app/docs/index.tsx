@@ -3,6 +3,7 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, BookMarked, Globe, Lock, Pencil } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -16,16 +17,13 @@ export const Route = createFileRoute('/app/docs/')({
   ),
 })
 
-interface KnowledgeBase {
+interface KBWithAccess {
   id: number
   slug: string
   name: string
   visibility: 'public' | 'internal'
   gitea_repo_slug: string | null
-}
-
-interface KBsResponse {
-  knowledge_bases: KnowledgeBase[]
+  is_accessible: boolean
 }
 
 function DocsPage() {
@@ -33,23 +31,25 @@ function DocsPage() {
   const token = auth.user?.access_token
   const navigate = useNavigate()
 
-  const { data: kbs = [], isLoading, error } = useQuery<KnowledgeBase[]>({
-    queryKey: ['docs-kbs', window.location.hostname],
+  const { data: kbs = [], isLoading, error } = useQuery<KBWithAccess[]>({
+    queryKey: ['docs-kbs-with-access'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases?docs_only=true`, {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases-with-access`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('Laden mislukt')
-      const data: KBsResponse = await res.json()
-      return data.knowledge_bases
+      return res.json() as Promise<KBWithAccess[]>
     },
     enabled: !!token,
   })
 
+  const accessibleKbs = kbs.filter((kb) => kb.is_accessible)
+  const lockedKbs = kbs.filter((kb) => !kb.is_accessible)
+
   const countLabel =
-    kbs.length === 1
+    accessibleKbs.length === 1
       ? m.docs_kbs_count_one()
-      : m.docs_kbs_count({ count: String(kbs.length) })
+      : m.docs_kbs_count({ count: String(accessibleKbs.length) })
 
   return (
     <div className="p-8 space-y-6">
@@ -102,12 +102,11 @@ function DocsPage() {
                 </tr>
               </thead>
               <tbody>
-                {kbs.map((kb, i) => (
+                {/* Accessible KBs */}
+                {accessibleKbs.map((kb, i) => (
                   <tr
                     key={kb.id}
-                    className={
-                      i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'
-                    }
+                    className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
                   >
                     <td
                       className="px-6 py-3 text-[var(--color-purple-deep)] font-medium cursor-pointer hover:underline"
@@ -143,6 +142,41 @@ function DocsPage() {
                           </button>
                         </Tooltip>
                       </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Locked KBs */}
+                {lockedKbs.map((kb, i) => (
+                  <tr
+                    key={kb.id}
+                    className={
+                      (accessibleKbs.length + i) % 2 === 0
+                        ? 'bg-[var(--color-card)] opacity-60'
+                        : 'bg-[var(--color-secondary)] opacity-60'
+                    }
+                  >
+                    <td className="px-6 py-3 text-[var(--color-muted-foreground)] font-medium">
+                      <Tooltip label={m.docs_kb_locked_tooltip()}>
+                        <span className="inline-flex items-center gap-2 cursor-default">
+                          <Lock size={12} className="shrink-0" />
+                          {kb.name}
+                        </span>
+                      </Tooltip>
+                    </td>
+                    <td className="px-6 py-3">
+                      <Badge variant="outline" className="text-xs">{m.docs_kb_locked_badge()}</Badge>
+                    </td>
+                    <td className="px-3 py-3 w-20 text-right">
+                      <Tooltip label={m.docs_kb_locked_tooltip()}>
+                        <button
+                          disabled
+                          aria-label={m.docs_kb_request_access()}
+                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] opacity-50 cursor-not-allowed px-2 py-1 rounded border border-[var(--color-border)]"
+                        >
+                          {m.docs_kb_request_access()}
+                        </button>
+                      </Tooltip>
                     </td>
                   </tr>
                 ))}

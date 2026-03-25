@@ -2,12 +2,16 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus } from 'lucide-react'
+import {
+  Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus,
+  BookOpen, Users, BarChart2, Zap,
+} from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,20 +24,19 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
-import { API_BASE, CONNECTOR_API_BASE } from '@/lib/api'
+import { API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug')({
-  validateSearch: (search: Record<string, unknown>): { tab?: Tab } => ({
-    tab: (search.tab as Tab | undefined) ?? undefined,
-  }),
   component: () => (
     <ProductGuard product="knowledge">
       <KnowledgeDetailPage />
     </ProductGuard>
   ),
 })
+
+// -- Types -------------------------------------------------------------------
 
 interface KnowledgeBase {
   id: number
@@ -46,19 +49,44 @@ interface KnowledgeBase {
   owner_type: string
 }
 
-interface Connector {
+interface ConnectorSummary {
   id: string
   name: string
   connector_type: string
-  is_enabled: boolean
-  last_sync_at: string | null
   last_sync_status: string | null
-  created_at: string
-  schedule: string | null
-  config: Record<string, unknown>
+  last_sync_at: string | null
 }
 
-type Tab = 'docs' | 'sources' | 'stats'
+interface KBStats {
+  docs_count: number | null
+  connector_count: number
+  connectors: ConnectorSummary[]
+  volume: number | null
+  usage_last_30d: number | null
+}
+
+interface UserMember {
+  id: number
+  user_id: string
+  role: string
+  granted_at: string
+  granted_by: string
+}
+
+interface GroupMember {
+  id: number
+  group_id: number
+  group_name: string
+  role: string
+  granted_at: string
+  granted_by: string
+}
+
+interface MembersResponse {
+  users: UserMember[]
+  groups: GroupMember[]
+}
+
 type ConnectorType = 'github' | 'google_drive' | 'notion' | 'ms_docs'
 
 interface GitHubConfig {
@@ -69,36 +97,38 @@ interface GitHubConfig {
   path_filter: string
 }
 
-function TypeBadge({ type }: { type: string }) {
+// -- Small helpers -----------------------------------------------------------
+
+function roleBadge(role: string) {
   const labels: Record<string, () => string> = {
-    github: m.admin_connectors_type_github,
-    google_drive: m.admin_connectors_type_google_drive,
-    notion: m.admin_connectors_type_notion,
-    ms_docs: m.admin_connectors_type_ms_docs,
+    viewer: m.knowledge_members_role_viewer,
+    contributor: m.knowledge_members_role_contributor,
+    owner: m.knowledge_members_role_owner,
   }
-  const label = labels[type] ?? (() => type)
-  return <Badge variant="secondary">{label()}</Badge>
+  return <Badge variant="secondary">{(labels[role] ?? (() => role))()}</Badge>
 }
 
-function StatusBadge({ connector }: { connector: Connector }) {
-  if (!connector.is_enabled) {
-    return <Badge variant="outline">{m.admin_connectors_status_disabled()}</Badge>
-  }
-  switch (connector.last_sync_status) {
-    case 'RUNNING':
-      return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
-    case 'COMPLETED':
-      return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
-    case 'FAILED':
-      return <Badge variant="destructive">{m.admin_connectors_status_failed()}</Badge>
-    case 'AUTH_ERROR':
-      return <Badge variant="destructive">{m.admin_connectors_status_auth_error()}</Badge>
-    default:
-      return <Badge variant="secondary">{m.admin_connectors_status_never()}</Badge>
+function SyncStatusBadge({ status }: { status: string | null }) {
+  switch (status) {
+    case 'RUNNING': return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
+    case 'COMPLETED': return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
+    case 'FAILED': return <Badge variant="destructive">{m.admin_connectors_status_failed()}</Badge>
+    case 'AUTH_ERROR': return <Badge variant="destructive">{m.admin_connectors_status_auth_error()}</Badge>
+    default: return <Badge variant="secondary">{m.admin_connectors_status_never()}</Badge>
   }
 }
 
-function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefined }) {
+// -- Connectors section (owner: full CRUD; others: read-only) ---------------
+
+function ConnectorsSection({
+  kbSlug,
+  token,
+  isOwner,
+}: {
+  kbSlug: string
+  token: string | undefined
+  isOwner: boolean
+}) {
   const queryClient = useQueryClient()
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
@@ -107,43 +137,36 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
   const [name, setName] = useState('')
   const [schedule, setSchedule] = useState('')
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
-    installation_id: '',
-    repo_owner: '',
-    repo_name: '',
-    branch: 'main',
-    path_filter: '',
+    installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
   })
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['kb-connectors', kbSlug, token],
+  const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
+    queryKey: ['kb-connectors-portal', kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${CONNECTOR_API_BASE}/api/v1/connectors`, {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error(m.admin_connectors_error_fetch({ status: String(res.status) }))
-      const all = await res.json() as Connector[]
-      return all.filter((c) => c.config?.kb_slug === kbSlug)
+      return res.json() as Promise<ConnectorSummary[]>
     },
     enabled: !!token,
   })
 
-  const connectors = data ?? []
-
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${CONNECTOR_API_BASE}/api/v1/connectors/${id}`, {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error(m.admin_connectors_delete_error({ status: String(res.status) }))
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-connectors', kbSlug] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] }),
   })
 
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!selectedType) return
-      const config: Record<string, unknown> = { kb_slug: kbSlug }
+      const config: Record<string, unknown> = {}
       if (selectedType === 'github') {
         config.installation_id = Number(githubConfig.installation_id)
         config.repo_owner = githubConfig.repo_owner
@@ -151,7 +174,7 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
         config.branch = githubConfig.branch
         if (githubConfig.path_filter) config.path_filter = githubConfig.path_filter
       }
-      const res = await fetch(`${CONNECTOR_API_BASE}/api/v1/connectors`, {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, connector_type: selectedType, config, schedule: schedule || null }),
@@ -159,7 +182,7 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
       if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
       setShowAdd(false)
       setSelectedType(null)
       setName('')
@@ -171,11 +194,11 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
     try {
-      await fetch(`${CONNECTOR_API_BASE}/api/v1/connectors/${id}/sync`, {
+      await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
     } finally {
       setSyncingIds((prev) => { const next = new Set(prev); next.delete(id); return next })
     }
@@ -189,86 +212,55 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
   ]
 
   if (isLoading) {
-    return <p className="py-8 text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
-  }
-
-  if (error) {
-    return (
-      <p className="py-8 text-sm text-[var(--color-destructive)]">
-        {error instanceof Error ? error.message : m.admin_connectors_error_generic()}
-      </p>
-    )
+    return <p className="py-4 text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_subtitle()}</p>
-        {!showAdd && (
-          <Button size="sm" onClick={() => setShowAdd(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            {m.admin_connectors_add_button()}
-          </Button>
-        )}
-      </div>
-
+    <div className="space-y-3">
       {connectors.length > 0 && (
         <Card>
           <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.admin_connectors_col_name()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.admin_connectors_col_type()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.admin_connectors_col_status()}
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.admin_connectors_col_actions()}
-                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">{m.admin_connectors_col_name()}</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">{m.admin_connectors_col_status()}</th>
+                  {isOwner && <th className="px-4 py-2.5 w-20" />}
                 </tr>
               </thead>
               <tbody>
-                {connectors.map((connector, i) => {
-                  const isSyncing = syncingIds.has(connector.id)
-                  const isRunning = connector.last_sync_status === 'RUNNING'
+                {connectors.map((c, i) => {
+                  const isSyncing = syncingIds.has(c.id)
+                  const isRunning = c.last_sync_status === 'RUNNING'
                   return (
-                    <tr
-                      key={connector.id}
-                      className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
-                    >
-                      <td className="px-6 py-3 font-medium text-[var(--color-purple-deep)]">{connector.name}</td>
-                      <td className="px-6 py-3"><TypeBadge type={connector.connector_type} /></td>
-                      <td className="px-6 py-3"><StatusBadge connector={connector} /></td>
-                      <td className="px-6 py-3">
-                        <div className="flex items-center gap-1">
-                          <Tooltip label={m.admin_connectors_action_sync()}>
-                            <button
-                              disabled={isSyncing || isRunning}
-                              onClick={() => void handleSync(connector.id)}
-                              aria-label={m.admin_connectors_action_sync()}
-                              className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
-                            >
-                              {isSyncing || isRunning
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                : <RefreshCw className="h-3.5 w-3.5" />}
-                            </button>
-                          </Tooltip>
-                          <Tooltip label={m.admin_connectors_action_delete()}>
-                            <button
-                              onClick={() => setConfirmingDeleteId(connector.id)}
-                              aria-label={m.admin_connectors_action_delete()}
-                              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </Tooltip>
-                        </div>
-                      </td>
+                    <tr key={c.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
+                      <td className="px-4 py-2.5 font-medium text-[var(--color-purple-deep)]">{c.name}</td>
+                      <td className="px-4 py-2.5"><SyncStatusBadge status={c.last_sync_status} /></td>
+                      {isOwner && (
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1">
+                            <Tooltip label={m.admin_connectors_action_sync()}>
+                              <button
+                                disabled={isSyncing || isRunning}
+                                onClick={() => void handleSync(c.id)}
+                                aria-label={m.admin_connectors_action_sync()}
+                                className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] hover:opacity-70 disabled:opacity-40"
+                              >
+                                {isSyncing || isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                              </button>
+                            </Tooltip>
+                            <Tooltip label={m.admin_connectors_action_delete()}>
+                              <button
+                                onClick={() => setConfirmingDeleteId(c.id)}
+                                aria-label={m.admin_connectors_action_delete()}
+                                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] hover:opacity-70"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -279,151 +271,88 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
       )}
 
       {connectors.length === 0 && !showAdd && (
-        <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_empty()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_empty_description()}</p>
-          <Button variant="outline" size="sm" onClick={() => setShowAdd(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            {m.admin_connectors_add_button()}
-          </Button>
-        </div>
+        <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_connectors_empty()}</p>
+      )}
+
+      {isOwner && !showAdd && (
+        <Button size="sm" variant="outline" onClick={() => setShowAdd(true)}>
+          <Plus className="h-4 w-4 mr-1" />
+          {m.admin_connectors_add_button()}
+        </Button>
       )}
 
       {showAdd && (
         <Card>
           <CardContent className="pt-6">
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-[var(--color-purple-deep)]">
-                  {m.admin_connectors_field_type()}
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  {connectorTypes.map(({ type, label, available }) => (
-                    <button
-                      key={type}
-                      type="button"
-                      disabled={!available}
-                      onClick={() => { if (available) setSelectedType(type) }}
-                      className={[
-                        'relative flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
-                        !available && 'cursor-not-allowed opacity-50',
-                        available && selectedType === type
-                          ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
-                          : available
-                            ? 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50'
-                            : 'border-[var(--color-border)] bg-[var(--color-card)]',
-                      ].join(' ')}
-                    >
-                      <span className="text-sm font-medium text-[var(--color-purple-deep)]">{label()}</span>
-                      {!available && (
-                        <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>
-                      )}
-                    </button>
-                  ))}
-                </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {connectorTypes.map(({ type, label, available }) => (
+                  <button
+                    key={type}
+                    type="button"
+                    disabled={!available}
+                    onClick={() => { if (available) setSelectedType(type) }}
+                    className={[
+                      'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
+                      !available && 'cursor-not-allowed opacity-50',
+                      available && selectedType === type
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
+                        : available
+                          ? 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50'
+                          : 'border-[var(--color-border)] bg-[var(--color-card)]',
+                    ].join(' ')}
+                  >
+                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">{label()}</span>
+                    {!available && <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>}
+                  </button>
+                ))}
               </div>
 
               {selectedType === 'github' && (
-                <form
-                  onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }}
-                  className="space-y-4"
-                >
+                <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-name">{m.admin_connectors_field_name()}</Label>
-                    <Input
-                      id="conn-name"
-                      required
-                      placeholder={m.admin_connectors_field_name_placeholder()}
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                    />
+                    <Input id="conn-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="conn-installation-id">{m.admin_connectors_github_installation_id()}</Label>
-                    <Input
-                      id="conn-installation-id"
-                      type="number"
-                      required
-                      value={githubConfig.installation_id}
-                      onChange={(e) => setGithubConfig((p) => ({ ...p, installation_id: e.target.value }))}
-                    />
+                    <Label htmlFor="conn-install">{m.admin_connectors_github_installation_id()}</Label>
+                    <Input id="conn-install" type="number" required value={githubConfig.installation_id} onChange={(e) => setGithubConfig((p) => ({ ...p, installation_id: e.target.value }))} />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="conn-repo-owner">{m.admin_connectors_github_repo_owner()}</Label>
-                      <Input
-                        id="conn-repo-owner"
-                        required
-                        value={githubConfig.repo_owner}
-                        onChange={(e) => setGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))}
-                      />
+                      <Label htmlFor="conn-owner">{m.admin_connectors_github_repo_owner()}</Label>
+                      <Input id="conn-owner" required value={githubConfig.repo_owner} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="conn-repo-name">{m.admin_connectors_github_repo_name()}</Label>
-                      <Input
-                        id="conn-repo-name"
-                        required
-                        value={githubConfig.repo_name}
-                        onChange={(e) => setGithubConfig((p) => ({ ...p, repo_name: e.target.value }))}
-                      />
+                      <Label htmlFor="conn-repo">{m.admin_connectors_github_repo_name()}</Label>
+                      <Input id="conn-repo" required value={githubConfig.repo_name} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_name: e.target.value }))} />
                     </div>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-branch">{m.admin_connectors_github_branch()}</Label>
-                    <Input
-                      id="conn-branch"
-                      required
-                      placeholder={m.admin_connectors_github_branch_placeholder()}
-                      value={githubConfig.branch}
-                      onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-path-filter">{m.admin_connectors_github_path_filter()}</Label>
-                    <Input
-                      id="conn-path-filter"
-                      placeholder={m.admin_connectors_github_path_filter_placeholder()}
-                      value={githubConfig.path_filter}
-                      onChange={(e) => setGithubConfig((p) => ({ ...p, path_filter: e.target.value }))}
-                    />
+                    <Input id="conn-branch" required placeholder={m.admin_connectors_github_branch_placeholder()} value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-schedule">{m.admin_connectors_field_schedule()}</Label>
-                    <Input
-                      id="conn-schedule"
-                      placeholder={m.admin_connectors_field_schedule_placeholder()}
-                      value={schedule}
-                      onChange={(e) => setSchedule(e.target.value)}
-                    />
-                    <p className="text-xs text-[var(--color-muted-foreground)]">
-                      {m.admin_connectors_field_schedule_hint()}
-                    </p>
+                    <Input id="conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
                   </div>
                   {createMutation.error && (
                     <p className="text-sm text-[var(--color-destructive)]">
-                      {createMutation.error instanceof Error
-                        ? createMutation.error.message
-                        : m.admin_connectors_error_create_generic()}
+                      {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
                     </p>
                   )}
-                  <div className="flex gap-2 pt-2">
-                    <Button type="submit" disabled={createMutation.isPending}>
-                      {createMutation.isPending
-                        ? m.admin_connectors_create_submit_loading()
-                        : m.admin_connectors_create_submit()}
+                  <div className="flex gap-2 pt-1">
+                    <Button type="submit" size="sm" disabled={createMutation.isPending}>
+                      {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                     </Button>
-                    <Button type="button" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null) }}>
-                      {m.admin_connectors_cancel()}
-                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null) }}>{m.admin_connectors_cancel()}</Button>
                   </div>
                 </form>
               )}
 
               {!selectedType && (
                 <div className="flex justify-end">
-                  <Button type="button" variant="ghost" onClick={() => setShowAdd(false)}>
-                    {m.admin_connectors_cancel()}
-                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setShowAdd(false)}>{m.admin_connectors_cancel()}</Button>
                 </div>
               )}
             </div>
@@ -431,10 +360,7 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
         </Card>
       )}
 
-      <AlertDialog
-        open={confirmingDeleteId !== null}
-        onOpenChange={(open) => { if (!open) setConfirmingDeleteId(null) }}
-      >
+      <AlertDialog open={confirmingDeleteId !== null} onOpenChange={(open) => { if (!open) setConfirmingDeleteId(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{m.admin_connectors_delete_confirm_title()}</AlertDialogTitle>
@@ -444,10 +370,7 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
             <AlertDialogCancel>{m.admin_connectors_cancel()}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-              onClick={() => {
-                if (confirmingDeleteId) deleteMutation.mutate(confirmingDeleteId)
-                setConfirmingDeleteId(null)
-              }}
+              onClick={() => { if (confirmingDeleteId) deleteMutation.mutate(confirmingDeleteId); setConfirmingDeleteId(null) }}
             >
               {m.admin_connectors_action_delete()}
             </AlertDialogAction>
@@ -457,6 +380,336 @@ function SourcesTab({ kbSlug, token }: { kbSlug: string; token: string | undefin
     </div>
   )
 }
+
+// -- Members section (owner only) --------------------------------------------
+
+function MembersSection({
+  kbSlug,
+  token,
+  isOwner,
+  isPersonal,
+}: {
+  kbSlug: string
+  token: string | undefined
+  isOwner: boolean
+  isPersonal: boolean
+}) {
+  const queryClient = useQueryClient()
+  const [showInviteUser, setShowInviteUser] = useState(false)
+  const [showInviteGroup, setShowInviteGroup] = useState(false)
+  const [inviteUserId, setInviteUserId] = useState('')
+  const [inviteGroupId, setInviteGroupId] = useState('')
+  const [inviteRole, setInviteRole] = useState('viewer')
+  const [confirmingRemoveUser, setConfirmingRemoveUser] = useState<number | null>(null)
+  const [confirmingRemoveGroup, setConfirmingRemoveGroup] = useState<number | null>(null)
+
+  const { data: members, isLoading } = useQuery<MembersResponse>({
+    queryKey: ['kb-members', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Members laden mislukt')
+      return res.json() as Promise<MembersResponse>
+    },
+    enabled: !!token,
+  })
+
+  const inviteUserMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/users`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: inviteUserId, role: inviteRole }),
+      })
+      if (!res.ok) throw new Error('Uitnodigen mislukt')
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
+      setShowInviteUser(false)
+      setInviteUserId('')
+      setInviteRole('viewer')
+    },
+  })
+
+  const inviteGroupMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/groups`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_id: Number(inviteGroupId), role: inviteRole }),
+      })
+      if (!res.ok) throw new Error('Groep toevoegen mislukt')
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
+      setShowInviteGroup(false)
+      setInviteGroupId('')
+      setInviteRole('viewer')
+    },
+  })
+
+  const removeUserMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/users/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Verwijderen mislukt')
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
+  })
+
+  const removeGroupMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/groups/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Verwijderen mislukt')
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
+  })
+
+  if (isPersonal) {
+    return (
+      <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_personal_kb_hint()}</p>
+    )
+  }
+
+  if (isLoading) {
+    return <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+  }
+
+  const roles = ['viewer', 'contributor', 'owner'] as const
+
+  return (
+    <div className="space-y-4">
+      {/* Individual users */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{m.knowledge_members_users_heading()}</p>
+          {isOwner && !showInviteUser && (
+            <Button size="sm" variant="outline" onClick={() => setShowInviteUser(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              {m.knowledge_members_invite_user()}
+            </Button>
+          )}
+        </div>
+
+        {members?.users && members.users.length > 0 ? (
+          <Card>
+            <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)]">
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">{m.knowledge_members_col_member()}</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">{m.knowledge_members_col_role()}</th>
+                    {isOwner && <th className="px-4 py-2.5 w-16" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.users.map((u, i) => (
+                    <tr key={u.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
+                      <td className="px-4 py-2.5 font-mono text-xs text-[var(--color-foreground)]">{u.user_id}</td>
+                      <td className="px-4 py-2.5">{roleBadge(u.role)}</td>
+                      {isOwner && (
+                        <td className="px-4 py-2.5">
+                          <Tooltip label={m.knowledge_members_remove_button()}>
+                            <button
+                              onClick={() => setConfirmingRemoveUser(u.id)}
+                              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] hover:opacity-70"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        ) : (
+          !showInviteUser && (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_users()}</p>
+          )
+        )}
+
+        {showInviteUser && (
+          <Card className="mt-2">
+            <CardContent className="pt-4">
+              <form onSubmit={(e) => { e.preventDefault(); inviteUserMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-user-id">{m.knowledge_members_user_id_label()}</Label>
+                  <Input id="invite-user-id" required placeholder={m.knowledge_members_user_id_placeholder()} value={inviteUserId} onChange={(e) => setInviteUserId(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-user-role">{m.knowledge_members_role_label()}</Label>
+                  <Select id="invite-user-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                    {roles.map((r) => <option key={r} value={r}>{roleBadge(r)}</option>)}
+                  </Select>
+                </div>
+                {inviteUserMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">{String(inviteUserMutation.error)}</p>
+                )}
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={inviteUserMutation.isPending}>
+                    {inviteUserMutation.isPending ? m.knowledge_members_invite_user_submit_loading() : m.knowledge_members_invite_submit()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setShowInviteUser(false)}>{m.knowledge_members_invite_cancel()}</Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Groups */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{m.knowledge_members_groups_heading()}</p>
+          {isOwner && !showInviteGroup && (
+            <Button size="sm" variant="outline" onClick={() => setShowInviteGroup(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              {m.knowledge_members_invite_group()}
+            </Button>
+          )}
+        </div>
+
+        {members?.groups && members.groups.length > 0 ? (
+          <Card>
+            <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)]">
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">{m.knowledge_members_col_member()}</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">{m.knowledge_members_col_role()}</th>
+                    {isOwner && <th className="px-4 py-2.5 w-16" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.groups.map((g, i) => (
+                    <tr key={g.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
+                      <td className="px-4 py-2.5 font-medium text-[var(--color-foreground)]">{g.group_name}</td>
+                      <td className="px-4 py-2.5">{roleBadge(g.role)}</td>
+                      {isOwner && (
+                        <td className="px-4 py-2.5">
+                          <Tooltip label={m.knowledge_members_remove_button()}>
+                            <button
+                              onClick={() => setConfirmingRemoveGroup(g.id)}
+                              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] hover:opacity-70"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        ) : (
+          !showInviteGroup && (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_groups()}</p>
+          )
+        )}
+
+        {showInviteGroup && (
+          <Card className="mt-2">
+            <CardContent className="pt-4">
+              <form onSubmit={(e) => { e.preventDefault(); inviteGroupMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-group-id">{m.knowledge_members_group_label()}</Label>
+                  <Input id="invite-group-id" type="number" required placeholder="Group ID" value={inviteGroupId} onChange={(e) => setInviteGroupId(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="invite-group-role">{m.knowledge_members_role_label()}</Label>
+                  <Select id="invite-group-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                    {roles.map((r) => <option key={r} value={r}>{roleBadge(r)}</option>)}
+                  </Select>
+                </div>
+                {inviteGroupMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">{String(inviteGroupMutation.error)}</p>
+                )}
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={inviteGroupMutation.isPending}>
+                    {inviteGroupMutation.isPending ? m.knowledge_members_invite_group_submit_loading() : m.knowledge_members_invite_submit()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setShowInviteGroup(false)}>{m.knowledge_members_invite_cancel()}</Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Remove confirmations */}
+      <AlertDialog open={confirmingRemoveUser !== null} onOpenChange={(open) => { if (!open) setConfirmingRemoveUser(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.knowledge_members_remove_confirm_title()}</AlertDialogTitle>
+            <AlertDialogDescription>{m.knowledge_members_remove_confirm_body()}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.knowledge_members_invite_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              onClick={() => { if (confirmingRemoveUser) removeUserMutation.mutate(confirmingRemoveUser); setConfirmingRemoveUser(null) }}
+            >
+              {m.knowledge_members_remove_button()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmingRemoveGroup !== null} onOpenChange={(open) => { if (!open) setConfirmingRemoveGroup(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.knowledge_members_remove_confirm_title()}</AlertDialogTitle>
+            <AlertDialogDescription>{m.knowledge_members_remove_confirm_body()}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.knowledge_members_invite_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              onClick={() => { if (confirmingRemoveGroup) removeGroupMutation.mutate(confirmingRemoveGroup); setConfirmingRemoveGroup(null) }}
+            >
+              {m.knowledge_members_remove_button()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+// -- Dashboard section card --------------------------------------------------
+
+function DashboardSection({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ElementType
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <Icon className="h-4 w-4 text-[var(--color-purple-deep)]" />
+        <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">{title}</h2>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// -- Main page ---------------------------------------------------------------
 
 function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
@@ -479,8 +732,34 @@ function KnowledgeDetailPage() {
     retry: false,
   })
 
-  const { tab } = Route.useSearch()
-  const activeTab: Tab = tab ?? 'docs'
+  const { data: stats } = useQuery<KBStats>({
+    queryKey: ['kb-stats', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/stats`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Stats laden mislukt')
+      return res.json() as Promise<KBStats>
+    },
+    enabled: !!token && !!kb,
+  })
+
+  // Determine caller's role for this KB
+  const { data: members } = useQuery<MembersResponse>({
+    queryKey: ['kb-members', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Members laden mislukt')
+      return res.json() as Promise<MembersResponse>
+    },
+    enabled: !!token && !!kb,
+  })
+
+  const myUserId = auth.user?.profile?.sub as string | undefined
+  const isOwner = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isPersonal = kb?.owner_type === 'user'
 
   if (isLoading) {
     return (
@@ -499,76 +778,87 @@ function KnowledgeDetailPage() {
     )
   }
 
+  const docsLabel =
+    stats?.docs_count == null
+      ? m.knowledge_detail_docs_none()
+      : stats.docs_count === 1
+        ? m.knowledge_detail_docs_count_one()
+        : m.knowledge_detail_docs_count({ count: String(stats.docs_count) })
+
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-8 max-w-2xl space-y-8">
       {/* Header */}
-      <div className="flex items-start gap-3 mb-6">
+      <div className="flex items-start gap-3">
         <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0 mt-0.5">
           <Brain className="h-5 w-5 text-[var(--color-purple-deep)]" />
         </div>
         <div className="flex-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
-            {kb.name}
-          </h1>
+          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{kb.name}</h1>
           {kb.description && (
             <p className="text-sm text-[var(--color-muted-foreground)] mt-1">{kb.description}</p>
           )}
-          <div className="flex items-center gap-1.5 mt-2 text-xs text-[var(--color-muted-foreground)]">
-            {kb.visibility === 'public' ? (
-              <Globe className="h-3.5 w-3.5" />
-            ) : (
-              <Lock className="h-3.5 w-3.5" />
-            )}
-            <span>
-              {kb.visibility === 'public'
-                ? m.knowledge_page_kb_visibility_public()
-                : m.knowledge_page_kb_visibility_internal()}
-            </span>
+          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-[var(--color-muted-foreground)]">
+            {kb.visibility === 'public' ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+            <span>{kb.visibility === 'public' ? m.knowledge_page_kb_visibility_public() : m.knowledge_page_kb_visibility_internal()}</span>
           </div>
         </div>
+        <Link to="/app/knowledge">
+          <Button variant="ghost" size="sm">{m.knowledge_new_cancel()}</Button>
+        </Link>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 border-b border-[var(--color-border)] mb-6">
-        {(['docs', 'sources', 'stats'] as Tab[]).map((tab) => (
-          <Link
-            key={tab}
-            to="/app/knowledge/$kbSlug"
-            params={{ kbSlug }}
-            search={{ tab }}
-            className={[
-              'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-              activeTab === tab
-                ? 'border-[var(--color-purple-deep)] text-[var(--color-purple-deep)]'
-                : 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
-            ].join(' ')}
-          >
-            {tab === 'docs'
-              ? m.knowledge_detail_tab_docs()
-              : tab === 'sources'
-                ? m.knowledge_detail_tab_sources()
-                : m.knowledge_detail_tab_stats()}
-          </Link>
-        ))}
-      </div>
+      <div className="h-px bg-[var(--color-border)]" />
 
-      {/* Tab content */}
-      {activeTab === 'docs' && (
-        <div className="flex flex-col items-center gap-4 py-12 text-center text-[var(--color-muted-foreground)]">
-          <FileText className="h-10 w-10" />
-          <p className="text-sm">{m.knowledge_detail_docs_stub()}</p>
+      {/* Docs section */}
+      <DashboardSection icon={BookOpen} title={m.knowledge_detail_section_docs()}>
+        {!kb.docs_enabled ? (
+          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_docs_not_enabled()}</p>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+              <span className="text-sm text-[var(--color-foreground)]">{docsLabel}</span>
+            </div>
+            {kb.gitea_repo_slug && (
+              <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }}>
+                <Button variant="outline" size="sm">{m.knowledge_detail_view_in_docs()}</Button>
+              </Link>
+            )}
+          </div>
+        )}
+      </DashboardSection>
+
+      {/* Connectors section */}
+      <DashboardSection icon={Zap} title={m.knowledge_detail_section_connectors()}>
+        <ConnectorsSection kbSlug={kbSlug} token={token} isOwner={isOwner} />
+      </DashboardSection>
+
+      {/* Stats section */}
+      <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
+        <div className="flex gap-8">
+          <div>
+            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Volume</p>
+            <p className="text-sm font-medium text-[var(--color-foreground)]">
+              {stats?.volume != null
+                ? m.knowledge_detail_volume({ count: String(stats.volume) })
+                : m.knowledge_detail_volume_unknown()}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Queries (30d)</p>
+            <p className="text-sm font-medium text-[var(--color-foreground)]">
+              {stats?.usage_last_30d != null
+                ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })
+                : m.knowledge_detail_usage_unknown()}
+            </p>
+          </div>
         </div>
-      )}
+      </DashboardSection>
 
-      {activeTab === 'sources' && (
-        <SourcesTab kbSlug={kbSlug} token={token} />
-      )}
-
-      {activeTab === 'stats' && (
-        <div className="py-12 text-center text-sm text-[var(--color-muted-foreground)]">
-          {m.knowledge_detail_stats_stub()}
-        </div>
-      )}
+      {/* Members section */}
+      <DashboardSection icon={Users} title={m.knowledge_detail_section_members()}>
+        <MembersSection kbSlug={kbSlug} token={token} isOwner={isOwner} isPersonal={isPersonal} />
+      </DashboardSection>
     </div>
   )
 }

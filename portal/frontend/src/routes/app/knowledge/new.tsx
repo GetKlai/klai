@@ -36,6 +36,7 @@ function KnowledgeNewPage() {
   const [slug, setSlug] = useState('')
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false)
   const [visibility, setVisibility] = useState<'internal' | 'public'>('internal')
+  const [ownerType, setOwnerType] = useState<'org' | 'user'>('org')
   const [errorKey, setErrorKey] = useState<'conflict' | 'generic' | null>(null)
 
   function handleNameChange(value: string) {
@@ -58,7 +59,7 @@ function KnowledgeNewPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name, slug, visibility }),
+        body: JSON.stringify({ name, slug, visibility, owner_type: ownerType }),
       })
       if (res.status === 409) {
         throw new Error('conflict')
@@ -94,6 +95,32 @@ function KnowledgeNewPage() {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
+          <Label htmlFor="kb-scope">{m.knowledge_new_scope_label()}</Label>
+          <div className="grid grid-cols-2 gap-3">
+            {(['org', 'user'] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setOwnerType(type)}
+                className={[
+                  'flex flex-col items-start gap-1 rounded-xl border p-4 text-left transition-all',
+                  ownerType === type
+                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
+                ].join(' ')}
+              >
+                <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                  {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
+                </span>
+                <span className="text-xs text-[var(--color-muted-foreground)]">
+                  {type === 'org' ? m.knowledge_new_scope_org_description() : m.knowledge_new_scope_personal_description()}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor="kb-name">{m.knowledge_new_name_label()}</Label>
           <Input
             id="kb-name"
@@ -123,17 +150,19 @@ function KnowledgeNewPage() {
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="kb-visibility">{m.knowledge_new_visibility_label()}</Label>
-          <Select
-            id="kb-visibility"
-            value={visibility}
-            onChange={(e) => setVisibility(e.target.value as 'internal' | 'public')}
-          >
-            <option value="internal">{m.knowledge_new_visibility_internal()}</option>
-            <option value="public">{m.knowledge_new_visibility_public()}</option>
-          </Select>
-        </div>
+        {ownerType === 'org' && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="kb-visibility">{m.knowledge_new_visibility_label()}</Label>
+            <Select
+              id="kb-visibility"
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value as 'internal' | 'public')}
+            >
+              <option value="internal">{m.knowledge_new_visibility_internal()}</option>
+              <option value="public">{m.knowledge_new_visibility_public()}</option>
+            </Select>
+          </div>
+        )}
 
         {errorKey === 'generic' && (
           <p className="text-sm text-[var(--color-destructive)]">{m.knowledge_new_error()}</p>

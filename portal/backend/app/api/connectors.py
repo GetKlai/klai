@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
-from app.models.groups import PortalGroup, PortalGroupMembership
-from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
+from app.models.knowledge_bases import PortalKnowledgeBase
+from app.services.access import get_user_role_for_kb
 
 log = logging.getLogger(__name__)
 
@@ -60,33 +60,20 @@ class ConnectorOut(BaseModel):
 # -- Helpers ------------------------------------------------------------------
 
 
-async def _get_kb_with_contributor_check(
+async def _get_kb_with_owner_check(
     kb_slug: str,
     caller_id: str,
     org_id: int,
     db: AsyncSession,
 ) -> PortalKnowledgeBase:
-    """Look up KB by slug + org_id and verify caller has contributor or admin access."""
+    """Look up KB by slug + org_id and verify caller has owner role."""
     kb = await _get_kb_for_org(kb_slug, org_id, db)
-    access_result = await db.execute(
-        select(PortalGroupKBAccess.role)
-        .join(PortalGroup, PortalGroup.id == PortalGroupKBAccess.group_id)
-        .join(
-            PortalGroupMembership,
-            PortalGroupMembership.group_id == PortalGroup.id,
-        )
-        .where(
-            PortalGroupKBAccess.kb_id == kb.id,
-            PortalGroupMembership.zitadel_user_id == caller_id,
-            PortalGroupKBAccess.role.in_(["contributor", "admin"]),
-        )
-    )
-    if not access_result.first():
+    role = await get_user_role_for_kb(kb.id, caller_id, db)
+    if role != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No write access to this knowledge base",
+            detail="Owner access required to manage connectors",
         )
-
     return kb
 
 
@@ -152,7 +139,7 @@ async def create_connector(
 ) -> ConnectorOut:
     """Create a connector for a KB. Requires contributor access."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_contributor_check(kb_slug, caller_id, org.id, db)
+    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     connector = PortalConnector(
         kb_id=kb.id,
         org_id=org.id,
@@ -178,7 +165,7 @@ async def update_connector(
 ) -> ConnectorOut:
     """Update a connector. Requires contributor access."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_contributor_check(kb_slug, caller_id, org.id, db)
+    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
@@ -213,7 +200,7 @@ async def delete_connector(
 ) -> None:
     """Delete a connector. Requires contributor access."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_with_contributor_check(kb_slug, caller_id, org.id, db)
+    kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     result = await db.execute(
         select(PortalConnector).where(
             PortalConnector.id == connector_id,
