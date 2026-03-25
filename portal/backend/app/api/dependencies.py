@@ -15,8 +15,8 @@ from app.services.zitadel import zitadel
 bearer = HTTPBearer()
 
 
-def require_product(product: str) -> Depends:  # type: ignore[type-arg]
-    """Return a FastAPI dependency that raises 403 if user lacks the product."""
+def require_product(product: str):
+    """Return a FastAPI dependency callable that raises 403 if user lacks the product."""
 
     async def dependency(
         user_id: str = Depends(get_current_user_id),
@@ -29,7 +29,7 @@ def require_product(product: str) -> Depends:  # type: ignore[type-arg]
                 detail=f"Product access required: {product}",
             )
 
-    return Depends(dependency)
+    return dependency
 
 
 # @MX:ANCHOR fan_in=8
