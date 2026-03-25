@@ -71,7 +71,7 @@ def create_app() -> FastAPI:
         app.state.registry = registry
 
         # Knowledge-ingest client
-        ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url)
+        ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url, settings.knowledge_ingest_secret)
         app.state.ingest_client = ingest_client
 
         # Portal client (control plane)

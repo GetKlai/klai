@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # Knowledge-ingest
     knowledge_ingest_url: str
+    knowledge_ingest_secret: str = ""  # X-Internal-Secret for service-to-service auth
 
     # CORS — comma-separated list of allowed origins (e.g. https://getklai.com)
     cors_origins: str = ""
