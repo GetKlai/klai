@@ -82,7 +82,7 @@ class InviteRequest(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
-    role: Literal["admin", "member"] = "member"
+    role: Literal["admin", "group-admin", "member"] = "member"
     preferred_language: Literal["nl", "en"] = "nl"
 
 
@@ -98,7 +98,7 @@ class UserUpdateRequest(BaseModel):
 
 
 class RoleUpdateRequest(BaseModel):
-    role: Literal["admin", "member"]
+    role: Literal["admin", "group-admin", "member"]
 
 
 class OrgSettingsOut(BaseModel):

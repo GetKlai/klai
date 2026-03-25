@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.groups import PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
@@ -63,6 +63,7 @@ async def _get_caller_org(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisatie niet gevonden")
 
     org, caller_user = row
+    await set_tenant(db, org.id)
     return zitadel_user_id, org, caller_user
 
 

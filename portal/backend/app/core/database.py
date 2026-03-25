@@ -1,8 +1,14 @@
+import contextlib
 from collections.abc import AsyncGenerator
+from contextvars import ContextVar
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+
+# Tracks the current request's org_id so RLS context can be set once per request.
+current_org_id: ContextVar[int | None] = ContextVar("current_org_id", default=None)
 
 engine = create_async_engine(settings.database_url, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
@@ -10,4 +16,25 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            # Reset tenant context before connection returns to the pool.
+            # set_config(..., false) = session-level (persists across commits in the same
+            # connection checkout). Resetting here ensures the next request gets a clean slate.
+            with contextlib.suppress(Exception):
+                await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
+
+
+async def set_tenant(session: AsyncSession, org_id: int) -> None:
+    """Set PostgreSQL session-level tenant context for RLS.
+
+    Uses set_config with is_local=false so the setting survives commits within
+    the same connection checkout. get_db() resets it on cleanup.
+    Called once per request by _get_caller_org after authentication.
+    """
+    await session.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, false)"),
+        {"org_id": str(org_id)},
+    )
+    current_org_id.set(org_id)
