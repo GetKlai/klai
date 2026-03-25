@@ -202,13 +202,13 @@ class WebCrawlerAdapter(BaseAdapter):
         If a previous run left a pending crawl job (stored in cursor_context),
         checks its status first. Otherwise starts a new crawl.
 
-        Uses a per-connector cache keyed by connector.id to avoid
+        Uses a per-connector cache keyed by connector.connector_id to avoid
         cross-contamination during concurrent syncs.
 
         Raises:
             CrawlJobPending: If the crawl is still running (SyncEngine handles this).
         """
-        connector_id = str(connector.id)
+        connector_id = str(connector.connector_id)
         cache: dict[str, str] = {}
         self._crawl_cache[connector_id] = cache
         config: dict[str, Any] = connector.config
@@ -238,7 +238,7 @@ class WebCrawlerAdapter(BaseAdapter):
         Raises:
             KeyError: If the URL was not found in the crawl cache.
         """
-        connector_id = str(connector.id)
+        connector_id = str(connector.connector_id)
         cache = self._crawl_cache.get(connector_id, {})
         url = ref.ref
         if url not in cache:
@@ -247,7 +247,7 @@ class WebCrawlerAdapter(BaseAdapter):
 
     async def post_sync(self, connector: Any) -> None:
         """Free the per-connector crawl cache after all documents have been fetched."""
-        self._crawl_cache.pop(str(connector.id), None)
+        self._crawl_cache.pop(str(connector.connector_id), None)
 
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return cursor state for the web crawler.
@@ -255,7 +255,7 @@ class WebCrawlerAdapter(BaseAdapter):
         Contains the base URL and page count for comparison on next sync.
         """
         config: dict[str, Any] = connector.config
-        connector_id = str(connector.id)
+        connector_id = str(connector.connector_id)
         url_count = len(self._crawl_cache.get(connector_id, {}))
         return {
             "last_crawl_at": datetime.now(UTC).isoformat(),
