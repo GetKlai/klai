@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # CORS — comma-separated list of allowed origins (e.g. https://getklai.com)
     cors_origins: str = ""
 
+    # Crawl4AI
+    crawl4ai_api_url: str = "http://crawl4ai:11235"
+    crawl4ai_internal_key: str = ""
+
     # Optional
     log_level: str = "INFO"
 

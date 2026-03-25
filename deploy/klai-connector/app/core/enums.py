@@ -10,3 +10,4 @@ class SyncStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     AUTH_ERROR = "auth_error"
+    PENDING = "pending"

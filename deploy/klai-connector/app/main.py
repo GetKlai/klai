@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.github import GitHubAdapter
+from app.adapters.registry import AdapterRegistry
+from app.adapters.webcrawler import WebCrawlerAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
 import app.core.database as _db
@@ -45,9 +47,11 @@ def create_app() -> FastAPI:
         secrets_store = PostgresSecretsStore(cipher)
         app.state.secrets_store = secrets_store
 
-        # GitHub adapter
-        adapter = GitHubAdapter(settings)
-        app.state.adapter = adapter
+        # Adapter registry
+        registry = AdapterRegistry()
+        registry.register("github", GitHubAdapter(settings))
+        registry.register("web_crawler", WebCrawlerAdapter(settings))
+        app.state.registry = registry
 
         # Knowledge-ingest client
         ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url)
@@ -58,7 +62,7 @@ def create_app() -> FastAPI:
             raise RuntimeError("Database session maker not initialised")
         sync_engine = SyncEngine(
             session_maker=_db.session_maker,
-            adapter=adapter,
+            registry=registry,
             ingest_client=ingest_client,
         )
         app.state.sync_engine = sync_engine
@@ -74,7 +78,7 @@ def create_app() -> FastAPI:
         # -- Shutdown --
         logger.info("Shutting down klai-connector")
         await scheduler.shutdown()
-        await adapter.aclose()
+        await registry.aclose()
         await ingest_client.aclose()
         await dispose_engine()
         logger.info("klai-connector shut down")
