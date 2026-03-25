@@ -26,7 +26,7 @@ def require_product(product: str) -> Depends:  # type: ignore[type-arg]
         if product not in products:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Product '{product}' not available",
+                detail=f"Product access required: {product}",
             )
 
     return Depends(dependency)

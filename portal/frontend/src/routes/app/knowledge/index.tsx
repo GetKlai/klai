@@ -7,9 +7,14 @@ import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/knowledge/')({
-  component: KnowledgePage,
+  component: () => (
+    <ProductGuard product="knowledge">
+      <KnowledgePage />
+    </ProductGuard>
+  ),
 })
 
 interface KnowledgeStats {

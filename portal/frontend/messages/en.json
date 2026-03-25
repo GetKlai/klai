@@ -973,5 +973,8 @@
   "admin_docs_groups_add": "Add Group",
   "admin_docs_groups_empty": "No groups have access yet",
   "admin_docs_groups_grant_success": "Group access granted",
-  "admin_docs_groups_revoke_success": "Group access revoked"
+  "admin_docs_groups_revoke_success": "Group access revoked",
+  "product_guard_title": "Upgrade required",
+  "product_guard_description": "This feature is not included in your current plan.",
+  "product_guard_cta": "Contact your admin to upgrade"
 }

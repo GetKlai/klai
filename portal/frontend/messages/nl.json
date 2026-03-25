@@ -973,5 +973,8 @@
   "admin_docs_groups_add": "Groep toevoegen",
   "admin_docs_groups_empty": "Nog geen groepen hebben toegang",
   "admin_docs_groups_grant_success": "Groepstoegang verleend",
-  "admin_docs_groups_revoke_success": "Groepstoegang ingetrokken"
+  "admin_docs_groups_revoke_success": "Groepstoegang ingetrokken",
+  "product_guard_title": "Upgrade vereist",
+  "product_guard_description": "Deze functie is niet inbegrepen in uw huidige plan.",
+  "product_guard_cta": "Neem contact op met uw beheerder om te upgraden"
 }

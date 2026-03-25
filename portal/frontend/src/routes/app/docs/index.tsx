@@ -8,9 +8,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/docs/')({
-  component: DocsPage,
+  component: () => (
+    <ProductGuard product="knowledge">
+      <DocsPage />
+    </ProductGuard>
+  ),
 })
 
 const DOCS_BASE = '/docs/api'

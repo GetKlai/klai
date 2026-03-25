@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import require_product
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.access import get_accessible_kb_slugs
@@ -73,7 +74,7 @@ async def _qdrant_count(filters: dict) -> int:
         return 0
 
 
-@router.get("/stats", response_model=KnowledgeStats)
+@router.get("/stats", response_model=KnowledgeStats, dependencies=[Depends(require_product("knowledge"))])
 async def get_knowledge_stats(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),

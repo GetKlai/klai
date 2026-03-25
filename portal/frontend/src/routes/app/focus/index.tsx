@@ -10,9 +10,14 @@ import { Plus, Loader2, Trash2, Check, X, BookOpen, Pencil } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/focus/')({
-  component: FocusPage,
+  component: () => (
+    <ProductGuard product="chat">
+      <FocusPage />
+    </ProductGuard>
+  ),
 })
 
 const FOCUS_BASE = '/research/v1'

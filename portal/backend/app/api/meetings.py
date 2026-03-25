@@ -17,6 +17,7 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import require_product
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.groups import PortalGroup
@@ -139,7 +140,7 @@ async def _build_meeting_response(meeting: VexaMeeting, db: AsyncSession) -> Mee
 # -- Endpoints ---------------------------------------------------------------
 
 
-@router.get("/meetings", response_model=MeetingListResponse)
+@router.get("/meetings", response_model=MeetingListResponse, dependencies=[Depends(require_product("scribe"))])
 async def list_meetings(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
@@ -161,7 +162,7 @@ async def list_meetings(
     return MeetingListResponse(items=items, total=total)
 
 
-@router.post("/meetings", status_code=status.HTTP_202_ACCEPTED, response_model=MeetingResponse)
+@router.post("/meetings", status_code=status.HTTP_202_ACCEPTED, response_model=MeetingResponse, dependencies=[Depends(require_product("scribe"))])
 async def start_meeting(
     body: StartMeetingRequest,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -236,7 +237,7 @@ async def start_meeting(
     return await _build_meeting_response(meeting, db)
 
 
-@router.get("/meetings/{meeting_id}", response_model=MeetingResponse)
+@router.get("/meetings/{meeting_id}", response_model=MeetingResponse, dependencies=[Depends(require_product("scribe"))])
 async def get_meeting(
     meeting_id: UUID,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -256,7 +257,7 @@ async def get_meeting(
     return await _build_meeting_response(meeting, db)
 
 
-@router.post("/meetings/{meeting_id}/stop", response_model=MeetingResponse)
+@router.post("/meetings/{meeting_id}/stop", response_model=MeetingResponse, dependencies=[Depends(require_product("scribe"))])
 async def stop_meeting(
     meeting_id: UUID,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -286,7 +287,7 @@ async def stop_meeting(
     return await _build_meeting_response(meeting, db)
 
 
-@router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_product("scribe"))])
 async def delete_meeting(
     meeting_id: UUID,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),

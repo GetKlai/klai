@@ -8,9 +8,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AlertTriangle, Loader2, ArrowLeft, Info, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/meetings/start')({
-  component: StartMeetingPage,
+  component: () => (
+    <ProductGuard product="scribe">
+      <StartMeetingPage />
+    </ProductGuard>
+  ),
 })
 
 const BOTS_BASE = '/api/bots'

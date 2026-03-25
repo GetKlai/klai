@@ -47,6 +47,9 @@ function CallbackPage() {
             }
           }
 
+          // Persist product entitlements for frontend access control
+          sessionStorage.setItem(STORAGE_KEYS.products, JSON.stringify(me.products ?? []))
+
           // Resolve role first so MFA redirect can use it
           const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
           sessionStorage.setItem(STORAGE_KEYS.isAdmin, String(isAdmin))
