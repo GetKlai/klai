@@ -7,6 +7,7 @@ Revision ID: a1b2c3d4e5f6
 Revises: z2a3b4c5d6e7
 Create Date: 2026-03-25
 """
+# ruff: noqa: S608  -- all SQL in this file is static DDL, not user-controlled input
 
 import sqlalchemy as sa
 from alembic import op
@@ -16,27 +17,9 @@ down_revision = "z2a3b4c5d6e7"
 branch_labels = None
 depends_on = None
 
-# Tenant context expression reused across all policies.
-# current_setting(..., true) returns '' (not an error) when the setting is absent.
-# NULLIF converts '' to NULL so the cast to int doesn't fail.
-_TENANT_EXPR = "NULLIF(current_setting('app.current_org_id', true), '')::int"
-
-# Pre-built DDL for junction-table policies (all values are hardcoded constants).
-_MEMBERSHIPS_POLICY = (
-    "CREATE POLICY tenant_isolation ON portal_group_memberships "  # noqa: S608
-    "USING (group_id IN ("
-    "  SELECT id FROM portal_groups WHERE org_id = " + _TENANT_EXPR + "))"
-)
-_KB_ACCESS_POLICY = (
-    "CREATE POLICY tenant_isolation ON portal_group_kb_access "  # noqa: S608
-    "USING (kb_id IN ("
-    "  SELECT id FROM portal_knowledge_bases WHERE org_id = " + _TENANT_EXPR + "))"
-)
-_DOCS_ACCESS_POLICY = (
-    "CREATE POLICY tenant_isolation ON portal_group_docs_access "  # noqa: S608
-    "USING (library_id IN ("
-    "  SELECT id FROM portal_docs_libraries WHERE org_id = " + _TENANT_EXPR + "))"
-)
+# Tenant context expression — inlined as a literal so all SQL strings use pure
+# implicit concatenation (no + operator) which ruff format handles cleanly.
+_T = "NULLIF(current_setting('app.current_org_id', true), '')::int"
 
 
 def _enable_rls(table: str) -> None:
@@ -46,10 +29,7 @@ def _enable_rls(table: str) -> None:
 
 def _create_org_policy(table: str) -> None:
     """Standard policy for tables with a direct org_id column."""
-    op.execute(
-        f"CREATE POLICY tenant_isolation ON {table} "
-        f"USING (org_id = {_TENANT_EXPR})"
-    )
+    op.execute(f"CREATE POLICY tenant_isolation ON {table} USING (org_id = {_T})")
 
 
 def upgrade() -> None:
@@ -99,15 +79,24 @@ def upgrade() -> None:
 
     # portal_group_memberships: scope through portal_groups
     _enable_rls("portal_group_memberships")
-    op.execute(_MEMBERSHIPS_POLICY)
+    op.execute(
+        f"CREATE POLICY tenant_isolation ON portal_group_memberships "
+        f"USING (group_id IN (SELECT id FROM portal_groups WHERE org_id = {_T}))"
+    )
 
     # portal_group_kb_access: scope through portal_knowledge_bases
     _enable_rls("portal_group_kb_access")
-    op.execute(_KB_ACCESS_POLICY)
+    op.execute(
+        f"CREATE POLICY tenant_isolation ON portal_group_kb_access "
+        f"USING (kb_id IN (SELECT id FROM portal_knowledge_bases WHERE org_id = {_T}))"
+    )
 
     # portal_group_docs_access: scope through portal_docs_libraries
     _enable_rls("portal_group_docs_access")
-    op.execute(_DOCS_ACCESS_POLICY)
+    op.execute(
+        f"CREATE POLICY tenant_isolation ON portal_group_docs_access "
+        f"USING (library_id IN (SELECT id FROM portal_docs_libraries WHERE org_id = {_T}))"
+    )
 
 
 def downgrade() -> None:
