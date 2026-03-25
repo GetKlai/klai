@@ -482,30 +482,14 @@ function KBEditorPage() {
       {/* Wikilink picker modal — opened from slash menu "Koppelen aan pagina" */}
       {showWikilinkPicker && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 50,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(0,0,0,0.35)',
-          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35"
           onClick={() => { setShowWikilinkPicker(false); setWikilinkSearch('') }}
         >
           <div
-            style={{
-              background: 'var(--color-card)',
-              border: '1px solid var(--color-border)',
-              borderRadius: '0.75rem',
-              padding: '1rem',
-              width: '360px',
-              maxWidth: '90vw',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-            }}
+            className="w-[360px] max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p style={{ fontSize: '0.75rem', color: 'var(--color-muted-foreground)', marginBottom: '0.5rem' }}>
+            <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
               Koppelen aan pagina
             </p>
             <Input
@@ -515,7 +499,7 @@ function KBEditorPage() {
               onChange={(e) => setWikilinkSearch(e.target.value)}
               className="mb-2"
             />
-            <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
+            <div className="max-h-[280px] overflow-y-auto">
               {pageIndex
                 .filter((p) => p.slug !== selectedPath)
                 .filter((p) =>
