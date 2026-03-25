@@ -69,7 +69,7 @@ function KBCard({ kb }: { kb: KnowledgeBase }) {
 function KnowledgePage() {
   const auth = useAuth()
   const token = auth.user?.access_token
-  const myUserId = auth.user?.profile?.sub as string | undefined
+  const myUserId = auth.user?.profile?.sub
 
   const { data: stats, isLoading: statsLoading } = useQuery<KnowledgeStats>({
     queryKey: ['knowledge-stats'],
