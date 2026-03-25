@@ -128,9 +128,7 @@ async def get_user_role_for_kb(kb_id: int, user_id: str, db: AsyncSession) -> st
 
     # Via group membership
     group_ids_subq = (
-        select(PortalGroupMembership.group_id)
-        .where(PortalGroupMembership.zitadel_user_id == user_id)
-        .scalar_subquery()
+        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
     )
     group_result = await db.execute(
         select(PortalGroupKBAccess.role).where(
