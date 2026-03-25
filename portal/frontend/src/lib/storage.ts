@@ -5,4 +5,5 @@ export const STORAGE_KEYS = {
   isGroupAdmin: 'klai:isGroupAdmin',
   mfaPolicy: 'klai:mfaPolicy',
   helpEnabled: 'klai_help_enabled',
+  products: 'klai:products',
 } as const

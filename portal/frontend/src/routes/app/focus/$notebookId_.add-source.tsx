@@ -7,9 +7,14 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/focus/$notebookId_/add-source')({
-  component: AddSourcePage,
+  component: () => (
+    <ProductGuard product="chat">
+      <AddSourcePage />
+    </ProductGuard>
+  ),
 })
 
 const FOCUS_BASE = '/research/v1'

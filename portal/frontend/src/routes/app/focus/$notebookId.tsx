@@ -21,9 +21,14 @@ import {
 import { useState, useRef, useEffect } from 'react'
 import * as m from '@/paraglide/messages'
 import { SaveToKnowledgeModal } from '@/components/knowledge/SaveToKnowledgeModal'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/focus/$notebookId')({
-  component: NotebookDetailPage,
+  component: () => (
+    <ProductGuard product="chat">
+      <NotebookDetailPage />
+    </ProductGuard>
+  ),
 })
 
 const FOCUS_BASE = '/research/v1'

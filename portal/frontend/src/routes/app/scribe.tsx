@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/scribe')({
   component: ScribePage,
@@ -7,6 +8,7 @@ export const Route = createFileRoute('/app/scribe')({
 
 function ScribePage() {
   return (
+    <ProductGuard product="scribe">
     <div className="p-8 space-y-6 max-w-3xl">
       <div className="space-y-1">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{m.app_tool_scribe_title()}</h1>
@@ -16,5 +18,6 @@ function ScribePage() {
       </div>
 
     </div>
+    </ProductGuard>
   )
 }

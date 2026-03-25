@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
+from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class MeResponse(BaseModel):
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
+    products: list[str] = []
 
 
 def _extract_roles(info: dict) -> list[str]:
@@ -104,6 +106,8 @@ async def me(
         except Exception:  # noqa: S110 — intentional: MFA check must not block login
             pass
 
+    products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
+
     return MeResponse(
         user_id=zitadel_user_id,
         email=info.get("email", ""),
@@ -116,6 +120,7 @@ async def me(
         mfa_policy=mfa_policy,
         preferred_language=preferred_language,
         portal_role=portal_role,
+        products=products,
     )
 
 

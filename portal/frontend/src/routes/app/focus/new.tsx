@@ -9,9 +9,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/focus/new')({
-  component: NewFocusPage,
+  component: () => (
+    <ProductGuard product="chat">
+      <NewFocusPage />
+    </ProductGuard>
+  ),
 })
 
 const FOCUS_BASE = '/research/v1'

@@ -22,12 +22,17 @@ import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { API_BASE, CONNECTOR_API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   validateSearch: (search: Record<string, unknown>): { tab?: Tab } => ({
     tab: (search.tab as Tab | undefined) ?? undefined,
   }),
-  component: KnowledgeDetailPage,
+  component: () => (
+    <ProductGuard product="knowledge">
+      <KnowledgeDetailPage />
+    </ProductGuard>
+  ),
 })
 
 interface KnowledgeBase {

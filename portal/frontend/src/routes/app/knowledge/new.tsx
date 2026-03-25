@@ -9,9 +9,14 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/knowledge/new')({
-  component: KnowledgeNewPage,
+  component: () => (
+    <ProductGuard product="knowledge">
+      <KnowledgeNewPage />
+    </ProductGuard>
+  ),
 })
 
 function slugify(value: string): string {

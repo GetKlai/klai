@@ -22,8 +22,14 @@ import { AccessControlPanel } from '@/components/kb-editor/AccessControlPanel'
 import { EditorHeader } from '@/components/kb-editor/EditorHeader'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
 
+import { ProductGuard } from '@/components/layout/ProductGuard'
+
 export const Route = createFileRoute('/app/docs/$kbSlug')({
-  component: KBEditorPage,
+  component: () => (
+    <ProductGuard product="knowledge">
+      <KBEditorPage />
+    </ProductGuard>
+  ),
 })
 
 interface PageData {

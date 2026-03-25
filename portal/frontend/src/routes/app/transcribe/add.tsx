@@ -9,9 +9,14 @@ import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/transcribe/add')({
-  component: AddTranscribePage,
+  component: () => (
+    <ProductGuard product="scribe">
+      <AddTranscribePage />
+    </ProductGuard>
+  ),
 })
 
 const SCRIBE_BASE = '/scribe/v1'

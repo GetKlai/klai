@@ -8,9 +8,14 @@ import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/meetings/$meetingId')({
-  component: MeetingDetailPage,
+  component: () => (
+    <ProductGuard product="scribe">
+      <MeetingDetailPage />
+    </ProductGuard>
+  ),
 })
 
 const BOTS_BASE = '/api/bots'

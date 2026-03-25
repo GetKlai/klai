@@ -21,9 +21,14 @@ import {
   FileText,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/transcribe/')({
-  component: TranscribePage,
+  component: () => (
+    <ProductGuard product="scribe">
+      <TranscribePage />
+    </ProductGuard>
+  ),
 })
 
 const SCRIBE_BASE = '/scribe/v1'
