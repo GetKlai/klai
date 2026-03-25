@@ -196,19 +196,18 @@ function AdminGroupDetail() {
         </div>
         <div className="flex items-center gap-2">
           {!groupData.is_system && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={() =>
                 navigate({
                   to: '/admin/groups/$groupId/edit',
                   params: { groupId },
                 })
               }
+              className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+              aria-label={m.admin_groups_edit()}
             >
-              <Pencil className="h-4 w-4 mr-2" />
-              {m.admin_groups_edit()}
-            </Button>
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
           )}
           <Button
             variant="ghost"

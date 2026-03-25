@@ -229,9 +229,7 @@ function AdminGroups() {
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
           {!row.original.is_system && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={() =>
                 navigate({
                   to: '/admin/groups/$groupId/edit',
@@ -239,13 +237,12 @@ function AdminGroups() {
                 })
               }
               aria-label={`Edit ${row.original.name}`}
+              className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
             >
-              <Pencil className="h-4 w-4" />
-            </Button>
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
             onClick={() =>
               navigate({
                 to: '/admin/groups/$groupId',
@@ -253,9 +250,10 @@ function AdminGroups() {
               })
             }
             aria-label={row.original.name}
+            className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
           >
-            <Eye className="h-4 w-4" />
-          </Button>
+            <Eye className="h-3.5 w-3.5" />
+          </button>
         </div>
       ),
     }),
