@@ -3,9 +3,12 @@
 import base64
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from sqlalchemy import update
 
 from app.adapters.github import GitHubAdapter
 from app.adapters.registry import AdapterRegistry
@@ -14,9 +17,11 @@ from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
 import app.core.database as _db
 from app.core.database import dispose_engine, init_engine
+from app.core.enums import SyncStatus
 from app.core.logging import get_logger, setup_logging
 from app.core.security import AESGCMCipher
 from app.middleware.auth import AuthMiddleware
+from app.models.sync_run import SyncRun
 from app.routes.connectors import router as connectors_router
 from app.routes.health import router as health_router
 from app.routes.sync import router as sync_router
@@ -41,6 +46,17 @@ def create_app() -> FastAPI:
 
         # Database
         init_engine(settings.database_url)
+
+        # Mark any sync_runs that were left RUNNING (e.g. from a previous crash/restart) as FAILED.
+        if _db.session_maker is not None:
+            async with _db.session_maker() as session:
+                await session.execute(
+                    update(SyncRun)
+                    .where(SyncRun.status == SyncStatus.RUNNING)
+                    .values(status=SyncStatus.FAILED, completed_at=datetime.now(UTC))
+                )
+                await session.commit()
+            logger.info("Cleaned up stuck RUNNING sync_runs on startup")
 
         # Encryption
         key_bytes = base64.b64decode(settings.encryption_key)
