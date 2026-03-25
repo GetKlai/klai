@@ -1,5 +1,7 @@
 # Klai Knowledge — Platform Architecture
 
+> **Gerelateerd:** [knowledge-system-fundamentals.md](./knowledge-system-fundamentals.md) — de empirische onderbouwing van de architectuurkeuzes in dit document. Lees dit eerst voor de "waarom" achter de beslissingen hier.
+
 > Status: Active reference. Research phases complete for §§ 1–12. §13.5 (cross-org federation) remains an open decision. Implementation tracking: `klai-claude/docs/specs/klai-knowledge-implementation.md`.
 >
 > Source synthesis: `helpdesk-extractie-pipeline.md` (2026-03-18) + `Sovereign Knowledge, Augmented` (2026-01-13). The helpdesk pipeline is now treated as one ingestion adapter, not the product goal. The product goal is Klai Knowledge.
@@ -10,48 +12,25 @@
 
 ## Contents
 
-| § | Section | Status |
-|---|---|---|
-| 0 | [Current State vs. Target Architecture](#0-current-state-vs-target-architecture) | Reference |
-| 1 | [What Klai Knowledge Is](#1-what-klai-knowledge-is) | Stable |
-| 2 | [Platform Service Architecture](#2-platform-service-architecture) | Stable |
-| 3 | [Knowledge Model](#3-knowledge-model) | Stable |
-| 4 | [Ingestion Architecture](#4-ingestion-architecture) | Stable |
-| 5 | [Storage Architecture](#5-storage-architecture) | Stable |
-| 6 | [Taxonomy](#6-taxonomy) | Researched |
-| 7 | [Retrieval Architecture](#7-retrieval-architecture) | Stable |
-| 8 | [Gap Detection](#8-gap-detection) | Stable |
-| 9 | [AI Interface](#9-ai-interface) | Stable |
-| 10 | [Multi-tenancy, Personal Knowledge, Federated Knowledge](#10-multi-tenancy-personal-knowledge-and-federated-knowledge) | Stable |
-| 11 | [Publication Layer](#11-publication-layer) | Stable |
-| 12 | [The Self-Improving Loop](#12-the-self-improving-loop) | Stable |
-| 13 | [Open Questions](#13-open-questions-requiring-resolution) | Mixed — see table in §13 |
-| 14 | [Technology Stack](#14-technology-stack) | Stable |
-| — | [Appendix: Relation to Existing Klai Components](#appendix-relation-to-existing-klai-components) | Reference |
-
----
-
-## 1. What Klai Knowledge Is
-
-Klai Knowledge is the organizational memory layer of the Klai platform. It is not a document storage system, not a helpdesk tool, and not a search engine. It is a **living knowledge graph** — continuously updated by human contributions and AI-assisted extraction — that makes organizational knowledge queryable, traceable, and self-improving.
-
-Every organization that uses Klai has a Klai Knowledge instance. That instance accumulates knowledge from every source the organization feeds it: help articles, internal procedures, meeting notes, support transcripts, product documentation. The knowledge is structured, not flat. It knows where claims come from, how confident they are, and whether they are still current.
-
-The AI interface on top is a lens, not an owner. AI helps navigate and surface knowledge. The organization owns the knowledge, in open formats, with full provenance.
-
-### Why it is the platform heart
-
-Without Klai Knowledge:
-- The AI chat widget has no grounded answers
-- The helpdesk gap detection has no KB to compare against
-- The publication layer has no intelligent structure
-- Onboarding a new employee means pointing them at 47 documents
-
-With Klai Knowledge:
-- Every interface (chat widget, internal tools, external KB) draws from one structured source
-- Gap detection identifies what is missing relative to what the organization actually knows
-- New employees can ask the knowledge base natural language questions and get grounded answers
-- Knowledge that exists in one source flows to others automatically
+| § | Section | Status | Beschrijving |
+|---|---|---|---|
+| 0 | [Current State vs. Target Architecture](#0-current-state-vs-target-architecture) | Reference | Wat er nu draait op core-01 vs. wat nog gebouwd moet worden; gap-overzicht per component. |
+| 1 | [What Klai Knowledge Is](#1-what-klai-knowledge-is) | Stable | Definitie, positionering als platform-hart, en waarom het geen document-opslag is. |
+| 2 | [Platform Service Architecture](#2-platform-service-architecture) | Stable | Klai Focus vs. Klai Knowledge, gedeelde infrastructuur, Qdrant scope-conventies, LibreChat-integratie. |
+| 3 | [Knowledge Model](#3-knowledge-model) | Stable | Twee artifact-typen, drie metadata-assen (provenance / assertion mode / synthesis depth), provenance-keten en evolutie. |
+| 4 | [Ingestion Architecture](#4-ingestion-architecture) | Stable | Adapters per brontype, enrichment-pipeline (Contextual Retrieval + HyPE + BGE-M3), helpdesk-extractie in detail. |
+| 5 | [Storage Architecture](#5-storage-architecture) | Stable | Qdrant single-collection multitenancy, PostgreSQL `knowledge`-schema, graph-laag (uitgesteld), YAML frontmatter. |
+| 6 | [Taxonomy](#6-taxonomy) | Researched | BERTopic/HDBSCAN-evaluatie, tiered aanpak per tenant-grootte, wat automatiseerbaar is vs. wat menselijke goedkeuring vereist. |
+| 7 | [Retrieval Architecture](#7-retrieval-architecture) | Stable | Drie-laags hybrid search (sparse + dense + RRF + reranker), meertalige ondersteuning, cross-encoder. |
+| 8 | [Gap Detection](#8-gap-detection) | Stable | Definitie van een kennishiaat, detectie-pipeline, lifecycle van gaps, editorial inbox-prioritering. |
+| 9 | [AI Interface](#9-ai-interface) | Stable | Principles, MCP-tools, routing RAG vs. SQL, grounded responses, LibreChat context-injectie via LiteLLM hook. |
+| 10 | [Multi-tenancy, Personal Knowledge, Federated Knowledge](#10-multi-tenancy-personal-knowledge-and-federated-knowledge) | Stable | Organisatie-isolatie, persoonlijke kennisscopes, zichtbaarheidsmodel, promotie naar org-kennisbank, offboarding. |
+| 11 | [Publication Layer](#11-publication-layer) | Stable | Git-backed publicatie via Gitea + Next.js, navigatiestructuur, toegangscontrole, MDX vs. remark-directive. |
+| 12 | [The Self-Improving Loop](#12-the-self-improving-loop) | Stable | End-to-end feedbacklus van gebruikersvraag naar kennisbank-verbetering, zonder constante handmatige curation. |
+| 13 | [Open Questions](#13-open-questions-requiring-resolution) | Mixed | Openstaande architectuurbeslissingen; zie statustabel in §13 voor per-vraag status. |
+| — | [Roadmap](#roadmap) | Active | Confirmed next build items: graph layer (FalkorDB + Graphiti), sparse embeddings (O2), Zod validation (O3), human review queue, cross-org federation (V2). |
+| 14 | [Technology Stack](#14-technology-stack) | Stable | Overzicht van alle gekozen componenten per laag met deployment-status en motivatie. |
+| — | [Appendix: Relation to Existing Klai Components](#appendix-relation-to-existing-klai-components) | Reference | Mapping van bestaande klai-services naar hun rol in de Klai Knowledge architectuur. |
 
 ---
 
@@ -85,12 +64,13 @@ This document describes the **target architecture** for Klai Knowledge. Most of 
 | Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/retrieve` |
 | LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook`, retrieval verified for `getklai` tenant |
 | Knowledge model fields in frontmatter | ✅ `KnowledgeFrontmatter` in klai-docs; Zod validation deferred |
+| `klai-connector` | ✅ Deployed — connector execution service; handles GitHub, Notion, web_crawler, Google Drive, ms_docs adapters; triggered via portal connector API |
 
 ### What does NOT exist yet
 
 | Component | Where described | Status |
 |---|---|---|
-| Gap detection | §8 | Not built — deferred pending >50 indexed docs |
+| Gap detection | §8 | Not built — deferred pending sufficient query volume |
 | Personal knowledge scopes | §10.2 | Partial — webhook auto-provisioned on KB creation; retrieval not yet personal-scoped |
 | Sparse embeddings (FlagEmbedding) | §4.2 | Deferred — TEI dense-only until >1K docs |
 | Retrieval orchestration (Haystack) | §14 | Removed from V1 scope — direct Qdrant client used |
@@ -106,6 +86,30 @@ This document describes the **target architecture** for Klai Knowledge. Most of 
 ### Component ownership today
 
 The BlockNote editor **currently lives in `klai-portal`** (frontend SPA). It was previously in klai-docs but was migrated to the portal for a unified session flow. klai-docs now contains only the reader and the REST API. A standalone editor in klai-docs can be restored from git (commit `a50797a`) if needed.
+
+---
+
+## 1. What Klai Knowledge Is
+
+Klai Knowledge is the organizational memory layer of the Klai platform. It is not a document storage system, not a helpdesk tool, and not a search engine. It is a **living knowledge graph** — continuously updated by human contributions and AI-assisted extraction — that makes organizational knowledge queryable, traceable, and self-improving.
+
+Every organization that uses Klai has a Klai Knowledge instance. That instance accumulates knowledge from every source the organization feeds it: help articles, internal procedures, meeting notes, support transcripts, product documentation. The knowledge is structured, not flat. It knows where claims come from, how confident they are, and whether they are still current.
+
+The AI interface on top is a lens, not an owner. AI helps navigate and surface knowledge. The organization owns the knowledge, in open formats, with full provenance.
+
+### Why it is the platform heart
+
+Without Klai Knowledge:
+- The AI chat widget has no grounded answers
+- The helpdesk gap detection has no KB to compare against
+- The publication layer has no intelligent structure
+- Onboarding a new employee means pointing them at 47 documents
+
+With Klai Knowledge:
+- Every interface (chat widget, internal tools, external KB) draws from one structured source
+- Gap detection identifies what is missing relative to what the organization actually knows
+- New employees can ask the knowledge base natural language questions and get grounded answers
+- Knowledge that exists in one source flows to others automatically
 
 ---
 
@@ -156,7 +160,7 @@ Both products run on top of shared platform services. Neither owns these service
 └─────────────────┘          └──────────────────────┘
 ```
 
-### 2.7 LibreChat integration via LiteLLM hook
+### 2.3 LibreChat integration via LiteLLM hook
 
 LibreChat tenants access organizational knowledge automatically through a pre-call hook in the LiteLLM proxy. This is the primary consumer interface for §9.5.
 
@@ -177,7 +181,7 @@ Tenant isolation: one LiteLLM team key per LibreChat container, carrying `org_id
 
 **No tech stack duplication.** If Focus chunks a PDF, it calls the shared chunking-service. If Knowledge chunks a help article, it calls the same service. BGE-M3 runs once. Qdrant runs once.
 
-### 2.3 Qdrant scope conventions
+### 2.4 Qdrant scope conventions
 
 All scopes live in one Qdrant collection with `tenant_id` payload indexing.
 
@@ -201,7 +205,7 @@ Focus owns the `notebook_*` scopes. Knowledge owns the rest. Neither reads the o
 
 The hook retrieves org scope only — the team key metadata carries `zitadel_org_id`, but the hook has no reliable way to obtain the Zitadel user ID from a shared-key LibreChat request. Personal scope retrieval and saving go through the MCP server, which runs within a Zitadel-authenticated session.
 
-### 2.4 Chat modes in Focus
+### 2.5 Chat modes in Focus
 
 The three Focus modes map directly onto retrieval scope:
 
@@ -215,7 +219,7 @@ The three Focus modes map directly onto retrieval scope:
 
 This means **Focus broad mode is already a consumer of Klai Knowledge** — by design, not by accident. When the org KB has no relevant content yet, broad falls back gracefully to notebook-only results.
 
-### 2.5 The "Save to Knowledge" action
+### 2.6 The "Save to Knowledge" action
 
 A Focus session produces insights. Those insights should not die in the notebook. The "Save to Knowledge" action promotes a user-written synthesis from Focus into Klai Knowledge:
 
@@ -233,7 +237,7 @@ User writes conclusion in Focus chat or as a note
 
 The notebook sources that fed the synthesis become the `derived_from` chain — the provenance is preserved automatically.
 
-### 2.6 What the Focus rewrite requires
+### 2.7 What the Focus rewrite requires
 
 The current `/research/v1` backend has its own chunking and embedding pipeline. That is the duplication to remove.
 
@@ -420,6 +424,8 @@ Generate 3–5 questions that the chunk answers; embed those questions instead o
 **Step 3: BGE-M3 embedding**
 Dense (1024-dim) + sparse (SPLADE-style) in a single model pass. The only production-compatible approach for BGE-M3 sparse is `FlagEmbedding` — not TEI (open bug since June 2024) and not FastEmbed.
 
+> ⚠️ Mogelijk verouderd: §0 meldt dat sparse embeddings (FlagEmbedding) zijn uitgesteld — TEI draait dense-only tot >1K documenten. De huidige productie-pipeline gebruikt dus alleen dense embeddings, niet het sparse+dense dubbel dat hier beschreven staat.
+
 ### 4.3 Helpdesk transcript extraction (one adapter in detail)
 
 The helpdesk adapter extracts structured contributions from support transcripts. Key signals:
@@ -432,6 +438,8 @@ The helpdesk adapter extracts structured contributions from support transcripts.
 - `resolution.resolved` — unresolved conversations are the heaviest gap candidates
 
 A two-pass extraction strategy improves recall on the critical `unanswered_questions` field: the first pass extracts all fields; a second "gleaning" pass runs only when `knowledge_gap_signal != none` OR `resolution.resolved == false`. The second condition is essential — without it, the gleaning pass misses exactly the cases where the model underreported the gap in pass 1.
+
+> **Not yet built — blocked on PII detection.** The `POST /ingest/v1/transcript` endpoint does not exist yet. Prerequisite: a PII redaction service (Presidio + GLiNER, see §14) must run on `klai-net` and strip personal data (names, phone numbers, email addresses) before any transcript content reaches Qdrant. Also requires a GDPR retention/deletion hook: when a transcript is deleted in scribe-api, all derived chunks must be removed from Qdrant. Do not build this adapter until PII redaction is operational and tested on a real transcript sample.
 
 ---
 
@@ -622,7 +630,7 @@ The taxonomy is the navigational and analytical structure over the knowledge bas
 - How knowledge items are categorized for browsing and filtering
 - How gap-detection results are prioritized and grouped
 - How the gap-detection output tells editors *where* a new article belongs
-- How analytical queries (SQLite) are structured
+- How analytical queries (PostgreSQL) are structured
 
 ### 6.2 The "self-managing taxonomy" claim: verdict
 
@@ -687,7 +695,7 @@ The minimum viable review process based on practitioner research is a pull-reque
 3. Reviewer approves or rejects with a brief rationale (single click for clear cases, text field for complex ones)
 4. Approved changes are applied; rejected changes are logged
 
-Estimate per Argilla/Prodigy active learning research: a single reviewer spending 2–4 hours per quarter can maintain quality for a corpus of thousands of documents using active learning to surface only uncertain edge cases.
+Estimate per active learning annotation research (Prodigy/active learning literature): a single reviewer spending 2–4 hours per quarter can maintain quality for a corpus of thousands of documents using active learning to surface only uncertain edge cases.
 
 ### 6.6 Technology selection
 
@@ -699,7 +707,7 @@ Estimate per Argilla/Prodigy active learning research: a single reviewer spendin
 
 **FASTopic** (2024): benchmarks show better coherence and stability scores than BERTopic on multiple datasets with significantly faster inference. Worth evaluating as the primary discovery model for production — less battle-tested but the performance case is credible.
 
-**Argilla** (open source): the most practical tool for the human review queue. Supports active learning (surfaces uncertain classifications first, not random samples), integrates with Python pipelines, and has a UI accessible to non-technical reviewers. This is the interface through which taxonomy proposals and classification reviews flow.
+**Human review queue (to be built in portal):** The review interface for taxonomy proposals and classification reviews will be built into the existing klai-portal, not as a separate tool. It should support active learning (surfaces uncertain classifications first, not random samples) and be accessible to non-technical reviewers. See Roadmap section for build priority and prerequisites.
 
 ### 6.7 Quality metrics
 
@@ -749,6 +757,8 @@ The cross-encoder reads query + document together and assesses relevance at clai
 
 ## 8. Gap Detection
 
+> ⚠️ Mogelijk verouderd: Volgens §0 is gap detection nog niet gebouwd ("deferred pending sufficient query volume"). Deze sectie beschrijft de doelarchitectuur. Verificeer de implementatiestatus voordat je hier wijzigingen op baseert.
+
 Gap detection is the mechanism by which Klai Knowledge identifies what an organization's knowledge base does not cover, based on what users actually ask.
 
 ### 8.1 What constitutes a gap
@@ -758,6 +768,19 @@ A knowledge gap is a pattern of questions or problems that cannot be satisfactor
 1. **Unanswered questions** — extracted from transcripts: questions the agent could not answer
 2. **Unresolved conversations** — conversations marked `resolved: false`
 3. **Low retrieval confidence** — AI chat responses where top retrieved chunk similarity falls below a threshold
+
+### 8.1a Gap detection trigger: query volume, not document count
+
+The trigger for activating gap detection is **sufficient query volume**, not document count. Document count is a poor proxy — a corpus of 200 documents can generate a useful gap signal if it receives enough queries; a corpus of 2,000 documents with no user queries cannot.
+
+The system needs enough user queries with retrieval data to distinguish noise (a single unanswered query) from signal (a recurring cluster of failing queries on the same topic).
+
+**The gap detection mechanism:**
+1. Log queries where no retrieved document exceeds a configurable similarity threshold
+2. Group recurring failing queries by topic cluster
+3. When a cluster reaches sufficient frequency → flag as a knowledge gap
+
+**On confidence thresholds:** These are corpus-specific and must be configurable, not hardcoded. RE-RAG (EMNLP 2024) calibrated 0.7 as optimal for their dataset — this is a useful starting point, not a universal value. Cosine similarity alone is also insufficient: research ("The Semantic Illusion", 2024) shows it fails to detect real hallucinations in a significant share of cases. The threshold values in §8.2 (0.60/0.90) are starting points that require per-tenant calibration on real data.
 
 ### 8.2 Gap detection pipeline
 
@@ -876,8 +899,10 @@ mcpServers:
         - klai-knowledge-mcp
 ```
 
-Implementation: `klai-infra/core-01/klai-knowledge-mcp/main.py`
-Agent system prompt: `klai-infra/core-01/klai-knowledge-mcp/agent-system-prompt.md`
+Implementation: `deploy/klai-knowledge-mcp/main.py`
+Agent system prompt: `deploy/klai-knowledge-mcp/agent-system-prompt.md`
+
+> **Note:** The implementation lives at `deploy/klai-knowledge-mcp/` in the monorepo (Dockerfile, main.py, pyproject.toml, tests/), not `klai-infra/core-01/klai-knowledge-mcp/` as previously documented. It is deployed and running.
 
 This design is model-agnostic — the write layer is independent of which model drives the agent.
 
@@ -920,7 +945,9 @@ If an answer is not found in retrieved sources, the system explicitly says so. I
 
 ### 9.5 LibreChat automatic context injection via LiteLLM pre-call hook
 
-**Status: decided 2026-03-21. Implementation is greenfield — Klai Knowledge service does not exist yet.**
+> **Status (2026-03-25):** Hook deployed and verified. See §0 for current state. Check whether provisioning changes below have been applied to all existing tenants.
+
+**Status: deployed 2026-03-21. `KlaiKnowledgeHook` is active; retrieval verified for `getklai` tenant. Klai Knowledge service (the `/knowledge/v1/retrieve` endpoint) is also deployed as `knowledge-ingest` — see §0.**
 
 Every LibreChat chat message is automatically enriched with relevant organizational knowledge before it reaches the model. This is transparent to the user and to LibreChat.
 
@@ -1011,14 +1038,14 @@ At tenant creation, provisioning adds a step:
 
 `zitadel_org_id` is used (not the integer PK) — it is the stable cross-system identifier available on `PortalOrg.zitadel_org_id`, and the correct key for Qdrant scope `org_{zitadel_org_id}`.
 
-`klai-infra/core-01/litellm/config.yaml` change:
+`deploy/litellm/config.yaml` change:
 ```yaml
 litellm_settings:
   callbacks:
     - klai_knowledge.KlaiKnowledgeHook
 ```
 
-Hook file: `klai-infra/core-01/litellm/klai_knowledge.py`, mounted read-only at `/app/custom/` with `PYTHONPATH=/app/custom` in the container env.
+Hook file: `deploy/litellm/klai_knowledge.py`, mounted read-only at `/app/custom/` with `PYTHONPATH=/app/custom` in the container env.
 
 #### Graceful degradation
 
@@ -1035,6 +1062,8 @@ Each organization occupies an isolated tenant scope in Qdrant (via `tenant_id` p
 **Gitea:** one Git repository per organization for human-authored knowledge. Organization A's repo is not accessible to organization B.
 
 ### 10.2 Personal knowledge: hard isolation within an org
+
+> ⚠️ Mogelijk verouderd: §0 meldt dat personal-scope retrieval nog niet geïmplementeerd is ("webhook auto-provisioned on KB creation; retrieval not yet personal-scoped"). De Gitea storage layout en schrijfpad (via `klai-knowledge-mcp`) zijn wel actief. Retrieval vanuit personal scope werkt nog niet.
 
 Every user in an organization has access to two distinct knowledge scopes:
 
@@ -1350,6 +1379,8 @@ Does Klai want to enable knowledge sharing between organizations? If yes, this r
 
 **Validation gate before production commit:** Run 100 representative Dutch chunks through both Qwen2.5-14B and Mistral Small 3.1. Compare prefix coherence and question diversity. This must happen before scale ingestion begins — the Dutch quality gap is a known unknown.
 
+> **At implementation time:** Verify which models are actually deployed in `deploy/litellm/config.yaml` before choosing. Current production LiteLLM aliases (as of 2026-03-25): `klai-primary` = `mistral-small-latest` (unpinned), `klai-fast` = `open-mistral-nemo`, `klai-large` = `mistral-large-latest`. Qwen2.5-14B is not yet self-hosted. The enrichment pipeline recommendations above are for the *target* state; use the deployed models during initial rollout and migrate to self-hosted Qwen when volume warrants it.
+
 ### 13.7 The editor gap [KNOWN LIMITATION]
 
 No existing tool combines: Notion-quality web editor + Git as storage + wikilinks with bidirectional backlinks + markdown-native. BlockNote + Gitea covers most of this but lacks native wikilink support with cross-document backlinks. This is a known limitation accepted for V1. Evaluate whether to build wikilink support into the BlockNote integration or defer.
@@ -1406,22 +1437,86 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 
 ---
 
+## Roadmap
+
+Confirmed next build items, in priority order. These are decisions made — they are not open questions.
+
+### Graph layer: FalkorDB + Graphiti (next major milestone)
+
+The next architectural milestone after the current PostgreSQL + Qdrant foundation is a knowledge graph layer:
+
+- **FalkorDB** as the graph store (open source, Redis-compatible)
+- **Graphiti** (Zep) for temporal knowledge graph management: entity extraction at ingest, invalidation of superseded facts, bi-temporal edge tracking
+- **GLiNER NER** for entity extraction at ingest time (zero LLM cost, 94% of LLM-based construction quality per SAP study)
+
+This is not blocked on anything — it requires planning and a SPEC. The gate condition from §13.3 still applies: sample 200 real user queries first to confirm that multi-hop relational queries are a significant share of traffic before building.
+
+### O2 — Sparse embeddings: BGE-M3 SPLADE (hybrid search)
+
+Current retrieval uses dense vectors only. Adding SPLADE sparse vectors enables hybrid search, which delivers better precision on exact terms: product names, error codes, acronyms.
+
+**Trigger:** document count exceeds ~1,000 per org, OR exact-term retrieval quality issues are reported.
+
+**What to build:**
+- Extend the embedding pipeline to produce sparse vectors via `FlagEmbedding` (the only production-compatible path for BGE-M3 sparse — see §4.2)
+- Add sparse vector field to the Qdrant `klai_knowledge` collection
+- Update the `/knowledge/v1/retrieve` endpoint to use RRF fusion of dense + sparse results
+
+Until the trigger is reached, TEI dense-only is sufficient. Do not build in anticipation.
+
+### O3 — Zod validation for klai-docs frontmatter PUT handler
+
+**Technical debt:** The `extraFm` object from PUT requests is written to Gitea without field-level validation. Invalid values for `assertion_mode`, `visibility`, or `belief_time_*` are silently accepted and corrupt the knowledge layer.
+
+**Risk:** Silent data corruption — no error surface, no recovery path without manual Gitea editing.
+
+**What to build:**
+- Zod schema for `KnowledgeFrontmatter` in `klai-docs/lib/markdown.ts`
+- Apply the schema in the PUT handler at `app/api/orgs/[org]/kbs/[kb]/pages/[...path]/route.ts`
+- Reject invalid values with a 422 response and a field-level error message
+
+This is a prerequisite for trusting that frontmatter-stored knowledge model metadata is correct.
+
+### Human review queue (portal-integrated)
+
+An estimated 10–15% of documents require human classification review — cases where the system is uncertain about taxonomy assignment, `assertion_mode`, or `belief_time_*` values.
+
+**Build in the existing portal** — a simple review queue UI, not a separate tool. The editorial inbox (§8.4) is the right home for this.
+
+**Prerequisite:** taxonomy must be defined and activated for the tenant before the review queue can surface meaningful classification candidates. Build this after the taxonomy layer is stable.
+
+### Cross-org knowledge federation (V2)
+
+Future direction — allows organizations to optionally share parts of their knowledge base with other organizations.
+
+No production knowledge platform currently supports this natively. This is a genuine architectural gap, not an oversight.
+
+Main challenges:
+- **Metadata fragmentation** — each org's taxonomy and entity registry is independent; cross-org queries require reconciliation
+- **Authorization complexity** — fine-grained control over which items are shared, with whom, under what conditions
+- **Governance accountability** — who is responsible when shared knowledge is incorrect or outdated?
+- **Legal/contractual** — data sharing agreements between orgs using the same SaaS platform is legally non-trivial
+
+Requires its own SPEC before any design decisions. Do not anticipate this in V1 or V2 database schemas.
+
+---
+
 ## 14. Technology Stack
 
 | Layer | Component | Notes |
 |---|---|---|
-| **Enrichment LLM** | Mistral Small 3.2 via API (ramp-up) → Qwen3-8B self-hosted (scale) | No Anthropic API anywhere. Mistral API allowed for non-sensitive enrichment. Transcript extraction self-hosted only (GDPR). See §13.6. |
-| **Extraction** | Instructor + Qwen3-8B or Mistral Small 3.2 (both self-hosted) | Self-hosted only for transcript data; no cloud API |
+| **Enrichment LLM** | Mistral Small 3.1 via API (ramp-up) → Qwen2.5-14B-Instruct self-hosted (scale) | No Anthropic API anywhere. Mistral API allowed for non-sensitive enrichment. Transcript extraction self-hosted only (GDPR). See §13.6. |
+| **Extraction** | Instructor + Qwen2.5-14B-Instruct or Mistral Small 3.1 (both self-hosted) | Self-hosted only for transcript data; no cloud API |
 | **Document parsing** | docling-serve (self-hosted) | HybridChunker for token-aware, structure-preserving chunking |
 | **Web crawling (ingest pipeline)** | Crawl4AI (self-hosted, `crawl4ai` service on core-01) | Open source, async, BFS deep crawl. Used by `klai-connector` web_crawler adapter for KB ingestion. Internal only — not exposed via Caddy. |
 | **Web crawling (LibreChat webSearch)** | Firecrawl (self-hosted) | Scraper for LibreChat webSearch mode only. Separate from the ingest pipeline. |
 | **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse. **Today:** TEI already runs BGE-M3 (dense only) for research-api — switching to FlagEmbedding is a new service. |
-| **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. **Today:** not deployed; research-api uses pgvector. |
+| **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. **Today:** ~~not deployed; research-api uses pgvector~~ — zie §0: Qdrant is gedeployed (maart 2026) met `klai_knowledge` collection. Research-api gebruikt nog steeds pgvector. |
 | **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |
 | **Graph layer** | None (V1) | Deferred: evidence does not support graph RAG for B2B single-hop/procedural query patterns. Gate condition: if >20% of real queries are multi-hop relational, evaluate HippoRAG2 + SpaCy. Kùzu (previously suggested) archived Oct 2025 by Apple acquisition. |
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
 | **Taxonomy discovery** | BERTopic + HDBSCAN | Starting point; human approval gate required |
-| **Retrieval orchestration** | Haystack | Production-grade, Qdrant native, exposes as REST/MCP via Hayhooks |
+| **Retrieval orchestration** | Direct Qdrant client (V1) | Haystack removed from V1 scope — direct Qdrant client used to avoid service boundary overhead. Revisit if orchestration complexity grows. |
 | **Reranking** | bge-reranker-v2-m3 via Infinity server (self-hosted, CPU) | **Deployed** (March 2026) as `infinity-reranker` on core-01. Jina-compatible `/v1/rerank` endpoint. Currently serves LibreChat webSearch; will also serve Knowledge retrieval pipeline. |
 | **LLM interface** | Claude via LiteLLM | Grounded responses with source citations |
 | **PII detection** | Presidio + GLiNER (gliner_multi-v2.1) | For Dutch transcripts; pseudonymization, not anonymization |
