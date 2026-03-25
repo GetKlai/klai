@@ -271,7 +271,7 @@ function EditUserPage() {
                             size="sm"
                             onClick={() => setConfirmRemoveId(group.id)}
                           >
-                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                            <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
                           </Button>
                         )}
                       </div>
