@@ -13,7 +13,21 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, Eye, Lock, Plus } from 'lucide-react'
+import { Loader2, Eye, Lock, Pencil, Plus } from 'lucide-react'
+
+// Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
+const AVATAR_COLORS = [
+  'bg-purple-100 text-purple-700',
+  'bg-blue-100 text-blue-700',
+  'bg-green-100 text-green-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+]
+
+function avatarColor(uid: string): string {
+  const hash = uid.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length]
+}
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
@@ -67,7 +81,7 @@ function MemberAvatars({
           <div
             key={uid}
             title={title}
-            className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--color-secondary)] text-[var(--color-purple-deep)]"
+            className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium ${avatarColor(uid)}`}
           >
             {label}
           </div>
@@ -185,7 +199,7 @@ function AdminGroups() {
       cell: (info) => (
         <div className="flex gap-1">
           {info.getValue().map((p) => (
-            <Badge key={p} variant="secondary" className="text-xs capitalize">
+            <Badge key={p} variant="outline" className="text-xs capitalize">
               {p}
             </Badge>
           ))}
@@ -213,19 +227,36 @@ function AdminGroups() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            navigate({
-              to: '/admin/groups/$groupId',
-              params: { groupId: String(row.original.id) },
-            })
-          }
-          aria-label={row.original.name}
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center justify-end gap-1">
+          {!row.original.is_system && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                navigate({
+                  to: '/admin/groups/$groupId/edit',
+                  params: { groupId: String(row.original.id) },
+                })
+              }
+              aria-label={`Edit ${row.original.name}`}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              navigate({
+                to: '/admin/groups/$groupId',
+                params: { groupId: String(row.original.id) },
+              })
+            }
+            aria-label={row.original.name}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+        </div>
       ),
     }),
   ]
