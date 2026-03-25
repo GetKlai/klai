@@ -39,52 +39,22 @@ function DeleteModal({ kb, onCancel, onConfirm, isDeleting }: DeleteModalProps) 
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.4)',
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={onCancel}
     >
       <div
-        style={{
-          background: 'var(--color-card)',
-          border: '1px solid var(--color-border)',
-          borderRadius: '0.75rem',
-          padding: '1.5rem',
-          width: '100%',
-          maxWidth: '420px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-        }}
+        className="w-full max-w-[420px] rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2
-          style={{
-            fontSize: '1.1rem',
-            fontWeight: 700,
-            color: 'var(--color-purple-deep)',
-            marginBottom: '0.75rem',
-          }}
-        >
+        <h2 className="mb-3 text-lg font-bold text-[var(--color-purple-deep)]">
           {m.docs_kb_delete_modal_title()}
         </h2>
-        <p
-          style={{
-            fontSize: '0.875rem',
-            color: 'var(--color-muted-foreground)',
-            marginBottom: '1rem',
-            lineHeight: 1.5,
-          }}
-        >
+        <p className="mb-4 text-sm leading-relaxed text-[var(--color-muted-foreground)]">
           Dit verwijdert alle pagina's en kan niet ongedaan worden gemaakt. Typ{' '}
-          <strong style={{ color: 'var(--color-purple-deep)' }}>{kb.name}</strong>{' '}
+          <strong className="text-[var(--color-purple-deep)]">{kb.name}</strong>{' '}
           ter bevestiging.
         </p>
-        <div style={{ marginBottom: '1.25rem' }}>
+        <div className="mb-5">
           <Input
             value={confirmName}
             onChange={(e) => setConfirmName(e.target.value)}
@@ -92,17 +62,14 @@ function DeleteModal({ kb, onCancel, onConfirm, isDeleting }: DeleteModalProps) 
             autoFocus
           />
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+        <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onCancel} disabled={isDeleting}>
             {m.docs_kb_delete_cancel_action()}
           </Button>
           <Button
             onClick={onConfirm}
             disabled={!canDelete || isDeleting}
-            style={{
-              backgroundColor: canDelete ? 'var(--color-destructive)' : undefined,
-              color: canDelete ? 'white' : undefined,
-            }}
+            className={canDelete ? 'bg-[var(--color-destructive)] text-white hover:opacity-90' : ''}
           >
             {isDeleting ? (
               <Loader2 className="h-4 w-4 animate-spin" />

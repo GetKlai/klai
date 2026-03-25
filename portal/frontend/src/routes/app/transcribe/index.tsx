@@ -136,14 +136,14 @@ function formatDate(dateStr: string): string {
 
 function MeetingStatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; classes: string }> = {
-    pending: { label: m.app_meetings_status_pending(), classes: 'bg-blue-100 text-blue-800' },
-    joining: { label: m.app_meetings_status_joining(), classes: 'bg-blue-100 text-blue-800 animate-pulse' },
-    recording: { label: m.app_meetings_status_recording(), classes: 'bg-red-100 text-red-800 animate-pulse' },
-    processing: { label: m.app_meetings_status_processing(), classes: 'bg-amber-100 text-amber-800 animate-pulse' },
-    done: { label: m.app_meetings_status_done(), classes: 'bg-green-100 text-green-800' },
-    failed: { label: m.app_meetings_status_failed(), classes: 'bg-red-100 text-red-800' },
+    pending:    { label: m.app_meetings_status_pending(),    classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)]' },
+    joining:    { label: m.app_meetings_status_joining(),    classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
+    recording:  { label: m.app_meetings_status_recording(),  classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)] animate-pulse' },
+    processing: { label: m.app_meetings_status_processing(), classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
+    done:       { label: m.app_meetings_status_done(),       classes: 'bg-[var(--color-success)]/10 text-[var(--color-success)]' },
+    failed:     { label: m.app_meetings_status_failed(),     classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]' },
   }
-  const c = config[status] ?? { label: status, classes: 'bg-gray-100 text-gray-800' }
+  const c = config[status] ?? { label: status, classes: 'bg-[var(--color-sand-mid)] text-[var(--color-purple-deep)]' }
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${c.classes}`}>
       {c.label}
