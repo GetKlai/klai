@@ -265,14 +265,12 @@ function EditUserPage() {
                             </Button>
                           </>
                         ) : (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
+                          <button
                             onClick={() => setConfirmRemoveId(group.id)}
+                            className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                           >
-                            <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
-                          </Button>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         )}
                       </div>
                     </div>
