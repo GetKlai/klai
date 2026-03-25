@@ -43,7 +43,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { Loader2, Lock, Plus, Trash2, UserPlus, Users } from 'lucide-react'
+import { Loader2, Lock, Pencil, Plus, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
@@ -55,6 +55,7 @@ export const Route = createFileRoute('/admin/groups/')({
 interface Group {
   id: number
   name: string
+  description: string | null
   products: string[]
   is_system: boolean
 }
@@ -155,7 +156,29 @@ function GroupSheet({
   const queryClient = useQueryClient()
   const [comboboxOpen, setComboboxOpen] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editName, setEditName] = useState(group.name)
+  const [editDescription, setEditDescription] = useState(group.description ?? '')
   const groupId = String(group.id)
+
+  const editMutation = useMutation({
+    mutationFn: async ({ name, description }: { name: string; description: string }) => {
+      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: description || null }),
+      })
+      if (res.status === 409) throw new Error(m.admin_groups_error_duplicate())
+      if (!res.ok) throw new Error(`Failed to update group (${res.status})`)
+      return res.json()
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
+      setIsEditing(false)
+      toast.success(m.admin_groups_success_updated())
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
 
   const { data: membersData, isLoading: membersLoading } = useQuery({
     queryKey: ['admin-group-members', groupId],
@@ -220,16 +243,77 @@ function GroupSheet({
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
       <SheetContent className="sm:max-w-lg overflow-y-auto flex flex-col gap-0">
         <SheetHeader className="mb-4">
-          <SheetTitle className="font-serif text-xl flex items-center gap-2 text-[var(--color-purple-deep)]">
-            {group.is_system && <Lock className="h-4 w-4 text-[var(--color-muted-foreground)]" />}
-            {group.name}
-          </SheetTitle>
-          {group.products.length > 0 && (
-            <div className="flex gap-2 flex-wrap mt-1">
-              {group.products.map((p) => (
-                <Badge key={p} variant="secondary" className="capitalize">{p}</Badge>
-              ))}
+          {isEditing ? (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="edit-group-name">{m.admin_groups_name()}</Label>
+                <Input
+                  id="edit-group-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder={m.admin_groups_name_placeholder()}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-group-description">{m.admin_groups_description()}</Label>
+                <Input
+                  id="edit-group-description"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder={m.admin_groups_description_placeholder()}
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm"
+                  disabled={!editName.trim() || editMutation.isPending}
+                  onClick={() => editMutation.mutate({ name: editName.trim(), description: editDescription })}
+                >
+                  {editMutation.isPending && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                  Opslaan
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsEditing(false)
+                    setEditName(group.name)
+                    setEditDescription(group.description ?? '')
+                  }}
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  {m.admin_users_cancel()}
+                </Button>
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <SheetTitle className="font-serif text-xl flex items-center gap-2 text-[var(--color-purple-deep)]">
+                  {group.is_system && <Lock className="h-4 w-4 text-[var(--color-muted-foreground)]" />}
+                  {editName !== group.name ? editName : group.name}
+                </SheetTitle>
+                {!group.is_system && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {editDescription && (
+                <p className="text-sm text-[var(--color-muted-foreground)]">{editDescription}</p>
+              )}
+              {group.products.length > 0 && (
+                <div className="flex gap-2 flex-wrap mt-1">
+                  {group.products.map((p) => (
+                    <Badge key={p} variant="secondary" className="capitalize">{p}</Badge>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </SheetHeader>
 
