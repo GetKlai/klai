@@ -36,9 +36,7 @@ import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/in
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
-import { Route as AdminKnowledgeBasesIndexRouteImport } from './routes/admin/knowledge-bases/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
-import { Route as AdminConnectorsIndexRouteImport } from './routes/admin/connectors/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
 import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
@@ -47,15 +45,11 @@ import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
 import { Route as AppKnowledgeKbSlugRouteImport } from './routes/app/knowledge/$kbSlug'
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
-import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
 import { Route as AppDocsKbSlugRouteImport } from './routes/app/docs/$kbSlug'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
-import { Route as AdminKnowledgeBasesKbIdRouteImport } from './routes/admin/knowledge-bases/$kbId'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
-import { Route as AdminConnectorsNewRouteImport } from './routes/admin/connectors/new'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
-import { Route as AdminConnectorsConnectorIdIndexRouteImport } from './routes/admin/connectors/$connectorId/index'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 import { Route as AppFocusNotebookIdAddSourceRouteImport } from './routes/app/focus/$notebookId_.add-source'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
@@ -198,20 +192,9 @@ const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminKnowledgeBasesIndexRoute =
-  AdminKnowledgeBasesIndexRouteImport.update({
-    id: '/knowledge-bases/',
-    path: '/knowledge-bases/',
-    getParentRoute: () => AdminRouteRoute,
-  } as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
   id: '/groups/',
   path: '/groups/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminConnectorsIndexRoute = AdminConnectorsIndexRouteImport.update({
-  id: '/connectors/',
-  path: '/connectors/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
@@ -255,11 +238,6 @@ const AppFocusNotebookIdRoute = AppFocusNotebookIdRouteImport.update({
   path: '/focus/$notebookId',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppDocsNewRoute = AppDocsNewRouteImport.update({
-  id: '/docs/new',
-  path: '/docs/new',
-  getParentRoute: () => AppRouteRoute,
-} as any)
 const AppDocsKbSlugRoute = AppDocsKbSlugRouteImport.update({
   id: '/docs/$kbSlug',
   path: '/docs/$kbSlug',
@@ -270,19 +248,9 @@ const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   path: '/users/invite',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminKnowledgeBasesKbIdRoute = AdminKnowledgeBasesKbIdRouteImport.update({
-  id: '/knowledge-bases/$kbId',
-  path: '/knowledge-bases/$kbId',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
   id: '/groups/new',
   path: '/groups/new',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminConnectorsNewRoute = AdminConnectorsNewRouteImport.update({
-  id: '/connectors/new',
-  path: '/connectors/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
@@ -295,12 +263,6 @@ const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   path: '/groups/$groupId/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminConnectorsConnectorIdIndexRoute =
-  AdminConnectorsConnectorIdIndexRouteImport.update({
-    id: '/connectors/$connectorId/',
-    path: '/connectors/$connectorId/',
-    getParentRoute: () => AdminRouteRoute,
-  } as any)
 const AppFocusNotebookIdEditRoute = AppFocusNotebookIdEditRouteImport.update({
   id: '/focus/$notebookId_/edit',
   path: '/focus/$notebookId/edit',
@@ -358,12 +320,9 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
-  '/admin/connectors/new': typeof AdminConnectorsNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
-  '/admin/knowledge-bases/$kbId': typeof AdminKnowledgeBasesKbIdRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
-  '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
@@ -372,9 +331,7 @@ export interface FileRoutesByFullPath {
   '/app/meetings/start': typeof AppMeetingsStartRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
-  '/admin/connectors/': typeof AdminConnectorsIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
-  '/admin/knowledge-bases/': typeof AdminKnowledgeBasesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
@@ -386,7 +343,6 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
-  '/admin/connectors/$connectorId/': typeof AdminConnectorsConnectorIdIndexRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -411,12 +367,9 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
-  '/admin/connectors/new': typeof AdminConnectorsNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
-  '/admin/knowledge-bases/$kbId': typeof AdminKnowledgeBasesKbIdRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
-  '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
@@ -425,9 +378,7 @@ export interface FileRoutesByTo {
   '/app/meetings/start': typeof AppMeetingsStartRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
-  '/admin/connectors': typeof AdminConnectorsIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
-  '/admin/knowledge-bases': typeof AdminKnowledgeBasesIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
@@ -439,7 +390,6 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
-  '/admin/connectors/$connectorId': typeof AdminConnectorsConnectorIdIndexRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
 }
 export interface FileRoutesById {
@@ -467,12 +417,9 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
-  '/admin/connectors/new': typeof AdminConnectorsNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
-  '/admin/knowledge-bases/$kbId': typeof AdminKnowledgeBasesKbIdRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
-  '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
@@ -481,9 +428,7 @@ export interface FileRoutesById {
   '/app/meetings/start': typeof AppMeetingsStartRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
-  '/admin/connectors/': typeof AdminConnectorsIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
-  '/admin/knowledge-bases/': typeof AdminKnowledgeBasesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
@@ -495,7 +440,6 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
-  '/admin/connectors/$connectorId/': typeof AdminConnectorsConnectorIdIndexRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -524,12 +468,9 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/app/'
     | '/$locale/password/forgot'
-    | '/admin/connectors/new'
     | '/admin/groups/new'
-    | '/admin/knowledge-bases/$kbId'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
-    | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/knowledge/$kbSlug'
@@ -538,9 +479,7 @@ export interface FileRouteTypes {
     | '/app/meetings/start'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
-    | '/admin/connectors/'
     | '/admin/groups/'
-    | '/admin/knowledge-bases/'
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
@@ -552,7 +491,6 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
-    | '/admin/connectors/$connectorId/'
     | '/admin/groups/$groupId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -577,12 +515,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/$locale/password/forgot'
-    | '/admin/connectors/new'
     | '/admin/groups/new'
-    | '/admin/knowledge-bases/$kbId'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
-    | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/knowledge/$kbSlug'
@@ -591,9 +526,7 @@ export interface FileRouteTypes {
     | '/app/meetings/start'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
-    | '/admin/connectors'
     | '/admin/groups'
-    | '/admin/knowledge-bases'
     | '/admin/users'
     | '/app/docs'
     | '/app/focus'
@@ -605,7 +538,6 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
-    | '/admin/connectors/$connectorId'
     | '/admin/groups/$groupId'
   id:
     | '__root__'
@@ -632,12 +564,9 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/app/'
     | '/$locale/password/forgot'
-    | '/admin/connectors/new'
     | '/admin/groups/new'
-    | '/admin/knowledge-bases/$kbId'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
-    | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/knowledge/$kbSlug'
@@ -646,9 +575,7 @@ export interface FileRouteTypes {
     | '/app/meetings/start'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
-    | '/admin/connectors/'
     | '/admin/groups/'
-    | '/admin/knowledge-bases/'
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
@@ -660,7 +587,6 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug_/edit'
     | '/app/focus/$notebookId_/add-source'
     | '/app/focus/$notebookId_/edit'
-    | '/admin/connectors/$connectorId/'
     | '/admin/groups/$groupId/'
   fileRoutesById: FileRoutesById
 }
@@ -872,25 +798,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/knowledge-bases/': {
-      id: '/admin/knowledge-bases/'
-      path: '/knowledge-bases'
-      fullPath: '/admin/knowledge-bases/'
-      preLoaderRoute: typeof AdminKnowledgeBasesIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/groups/': {
       id: '/admin/groups/'
       path: '/groups'
       fullPath: '/admin/groups/'
       preLoaderRoute: typeof AdminGroupsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/connectors/': {
-      id: '/admin/connectors/'
-      path: '/connectors'
-      fullPath: '/admin/connectors/'
-      preLoaderRoute: typeof AdminConnectorsIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/app/transcribe/add': {
@@ -949,13 +861,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppFocusNotebookIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/docs/new': {
-      id: '/app/docs/new'
-      path: '/docs/new'
-      fullPath: '/app/docs/new'
-      preLoaderRoute: typeof AppDocsNewRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/app/docs/$kbSlug': {
       id: '/app/docs/$kbSlug'
       path: '/docs/$kbSlug'
@@ -970,25 +875,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersInviteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/knowledge-bases/$kbId': {
-      id: '/admin/knowledge-bases/$kbId'
-      path: '/knowledge-bases/$kbId'
-      fullPath: '/admin/knowledge-bases/$kbId'
-      preLoaderRoute: typeof AdminKnowledgeBasesKbIdRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/groups/new': {
       id: '/admin/groups/new'
       path: '/groups/new'
       fullPath: '/admin/groups/new'
       preLoaderRoute: typeof AdminGroupsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/connectors/new': {
-      id: '/admin/connectors/new'
-      path: '/connectors/new'
-      fullPath: '/admin/connectors/new'
-      preLoaderRoute: typeof AdminConnectorsNewRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/$locale/password/forgot': {
@@ -1003,13 +894,6 @@ declare module '@tanstack/react-router' {
       path: '/groups/$groupId'
       fullPath: '/admin/groups/$groupId/'
       preLoaderRoute: typeof AdminGroupsGroupIdIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/connectors/$connectorId/': {
-      id: '/admin/connectors/$connectorId/'
-      path: '/connectors/$connectorId'
-      fullPath: '/admin/connectors/$connectorId/'
-      preLoaderRoute: typeof AdminConnectorsConnectorIdIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/app/focus/$notebookId_/edit': {
@@ -1075,18 +959,13 @@ interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
-  AdminConnectorsNewRoute: typeof AdminConnectorsNewRoute
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
-  AdminKnowledgeBasesKbIdRoute: typeof AdminKnowledgeBasesKbIdRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
-  AdminConnectorsIndexRoute: typeof AdminConnectorsIndexRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
-  AdminKnowledgeBasesIndexRoute: typeof AdminKnowledgeBasesIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
-  AdminConnectorsConnectorIdIndexRoute: typeof AdminConnectorsConnectorIdIndexRoute
   AdminGroupsGroupIdIndexRoute: typeof AdminGroupsGroupIdIndexRoute
 }
 
@@ -1094,18 +973,13 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
-  AdminConnectorsNewRoute: AdminConnectorsNewRoute,
   AdminGroupsNewRoute: AdminGroupsNewRoute,
-  AdminKnowledgeBasesKbIdRoute: AdminKnowledgeBasesKbIdRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
-  AdminConnectorsIndexRoute: AdminConnectorsIndexRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
-  AdminKnowledgeBasesIndexRoute: AdminKnowledgeBasesIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
-  AdminConnectorsConnectorIdIndexRoute: AdminConnectorsConnectorIdIndexRoute,
   AdminGroupsGroupIdIndexRoute: AdminGroupsGroupIdIndexRoute,
 }
 
@@ -1119,7 +993,6 @@ interface AppRouteRouteChildren {
   AppScribeRoute: typeof AppScribeRoute
   AppIndexRoute: typeof AppIndexRoute
   AppDocsKbSlugRoute: typeof AppDocsKbSlugRoute
-  AppDocsNewRoute: typeof AppDocsNewRoute
   AppFocusNotebookIdRoute: typeof AppFocusNotebookIdRoute
   AppFocusNewRoute: typeof AppFocusNewRoute
   AppKnowledgeKbSlugRoute: typeof AppKnowledgeKbSlugRoute
@@ -1143,7 +1016,6 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppScribeRoute: AppScribeRoute,
   AppIndexRoute: AppIndexRoute,
   AppDocsKbSlugRoute: AppDocsKbSlugRoute,
-  AppDocsNewRoute: AppDocsNewRoute,
   AppFocusNotebookIdRoute: AppFocusNotebookIdRoute,
   AppFocusNewRoute: AppFocusNewRoute,
   AppKnowledgeKbSlugRoute: AppKnowledgeKbSlugRoute,
