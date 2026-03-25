@@ -14,12 +14,15 @@ class DocumentRef:
         ref: Source-specific reference (e.g., git blob SHA).
         size: File size in bytes.
         content_type: MIME type or file extension.
+        source_ref: Adapter-specific source reference string
+            (e.g., "owner/repo:branch:path" for GitHub, full URL for web crawler).
     """
 
     path: str
     ref: str
     size: int
     content_type: str
+    source_ref: str = ""
 
 
 class BaseAdapter(ABC):
@@ -30,8 +33,15 @@ class BaseAdapter(ABC):
     """
 
     @abstractmethod
-    async def list_documents(self, connector: Any) -> list[DocumentRef]:
-        """List all documents available for sync from the external source."""
+    async def list_documents(
+        self, connector: Any, cursor_context: dict[str, Any] | None = None,
+    ) -> list[DocumentRef]:
+        """List all documents available for sync from the external source.
+
+        Args:
+            connector: Connector model instance.
+            cursor_context: Previous sync run's cursor_state, if any.
+        """
         ...
 
     @abstractmethod

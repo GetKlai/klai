@@ -804,6 +804,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
+      CRAWL4AI_API_URL: http://crawl4ai:11235
+      CRAWL4AI_INTERNAL_KEY: ${CRAWL4AI_INTERNAL_KEY}
       LOG_LEVEL: INFO
     networks:
       - klai-net
@@ -813,6 +815,20 @@ services:
         condition: service_healthy
       knowledge-ingest:
         condition: service_started
+
+  # ─── Crawl4AI (internal web crawler for klai-connector) ─────────────────────
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    restart: unless-stopped
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
+    networks:
+      - klai-net
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
 
   # ─── Web search stack (LibreChat web mode) ───────────────────────────────────
 

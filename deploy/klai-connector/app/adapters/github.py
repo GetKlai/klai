@@ -108,7 +108,9 @@ class GitHubAdapter(BaseAdapter):
 
     # -- BaseAdapter interface ------------------------------------------------
 
-    async def list_documents(self, connector: Any) -> list[DocumentRef]:
+    async def list_documents(
+        self, connector: Any, cursor_context: dict[str, Any] | None = None,
+    ) -> list[DocumentRef]:
         """List all supported files in the repository.
 
         Applies the optional ``path_filter`` glob pattern from the connector config.
@@ -146,6 +148,7 @@ class GitHubAdapter(BaseAdapter):
                     ref=item["sha"],
                     size=item.get("size", 0),
                     content_type=ext,
+                    source_ref=f"{repo_owner}/{repo_name}:{branch}:{path}",
                 )
             )
 
