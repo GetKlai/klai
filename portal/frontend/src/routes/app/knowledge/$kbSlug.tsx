@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -715,6 +715,23 @@ function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
   const token = auth.user?.access_token
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+
+  const { mutate: deleteKb, isPending: isDeleting } = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Verwijderen mislukt')
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
+      void navigate({ to: '/app/knowledge' })
+    },
+  })
 
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -802,10 +819,43 @@ function KnowledgeDetailPage() {
             <span>{kb.visibility === 'public' ? m.knowledge_page_kb_visibility_public() : m.knowledge_page_kb_visibility_internal()}</span>
           </div>
         </div>
-        <Link to="/app/knowledge">
-          <Button variant="ghost" size="sm">{m.knowledge_new_cancel()}</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {isOwner && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+          <Link to="/app/knowledge">
+            <Button variant="ghost" size="sm">{m.knowledge_new_cancel()}</Button>
+          </Link>
+        </div>
       </div>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.knowledge_detail_delete_confirm_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.knowledge_detail_delete_confirm_body({ name: kb.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.knowledge_new_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteKb()}
+              disabled={isDeleting}
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+            >
+              {m.knowledge_detail_delete_confirm_action()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="h-px bg-[var(--color-border)]" />
 

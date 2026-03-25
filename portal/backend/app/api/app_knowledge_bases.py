@@ -253,6 +253,20 @@ async def create_app_knowledge_base(
     return _kb_out(kb)
 
 
+@router.delete("/knowledge-bases/{kb_slug}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_app_knowledge_base(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a KB. Requires owner access."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+    await db.delete(kb)
+    await db.commit()
+
+
 # -- Stats --------------------------------------------------------------------
 
 
