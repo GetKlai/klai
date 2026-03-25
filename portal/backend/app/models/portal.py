@@ -55,5 +55,7 @@ class PortalUser(Base):
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")

@@ -97,6 +97,13 @@ async def me(
             portal_role = portal_user.role
             if org.slug:
                 workspace_url = f"https://{org.slug}.{settings.domain}"
+            # Cache display info from OIDC token so members endpoints can resolve names
+            new_display_name = info.get("name", info.get("preferred_username")) or None
+            new_email = info.get("email") or None
+            if portal_user.display_name != new_display_name or portal_user.email != new_email:
+                portal_user.display_name = new_display_name
+                portal_user.email = new_email
+                await db.commit()
 
     # Check whether the user has any MFA method enrolled
     mfa_enrolled = False

@@ -68,6 +68,8 @@ interface KBStats {
 interface UserMember {
   id: number
   user_id: string
+  display_name: string | null
+  email: string | null
   role: string
   granted_at: string
   granted_by: string
@@ -511,7 +513,12 @@ function MembersSection({
                 <tbody>
                   {members.users.map((u, i) => (
                     <tr key={u.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
-                      <td className="px-4 py-2.5 font-mono text-xs text-[var(--color-foreground)]">{u.user_id}</td>
+                      <td className="px-4 py-2.5 text-sm text-[var(--color-foreground)]">
+                        <span>{u.display_name ?? u.email ?? u.user_id}</span>
+                        {u.display_name && u.email && (
+                          <span className="block text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5">{roleBadge(u.role)}</td>
                       {isOwner && (
                         <td className="px-4 py-2.5">
