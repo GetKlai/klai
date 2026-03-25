@@ -15,9 +15,11 @@ class KnowledgeIngestClient:
 
     Args:
         base_url: Base URL of the knowledge-ingest service (e.g. ``http://knowledge-ingest:8100``).
+        internal_secret: Value for the ``X-Internal-Secret`` header (service-to-service auth).
     """
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, internal_secret: str = "") -> None:
+        self._internal_secret = internal_secret
         self._client = httpx.AsyncClient(base_url=base_url, timeout=60.0)
 
     async def ingest_document(
@@ -42,6 +44,10 @@ class KnowledgeIngestClient:
         Raises:
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
         """
+        headers: dict[str, str] = {}
+        if self._internal_secret:
+            headers["x-internal-secret"] = self._internal_secret
+
         response = await self._client.post(
             "/ingest/v1/document",
             json={
@@ -52,6 +58,7 @@ class KnowledgeIngestClient:
                 "source_connector_id": source_connector_id,
                 "source_ref": source_ref,
             },
+            headers=headers,
         )
         response.raise_for_status()
         logger.info("Ingested document: %s", path)
