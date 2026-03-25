@@ -67,27 +67,31 @@ class WebCrawlerAdapter(BaseAdapter):
         max_pages: int = min(config.get("max_pages", 200), 2000)
         allowed_path_prefix: str | None = config.get("path_prefix") or None
 
-        crawler_config: dict[str, Any] = {
-            "deep_crawl_strategy": {
-                "type": "BFS",
-                "max_depth": max_depth,
-                "max_pages": max_pages,
-            },
-            "scraping_strategy": {"type": "LXMLWebScrapingStrategy"},
-            "markdown_generator": {
-                "type": "DefaultMarkdownGenerator",
-                "options": {"ignore_links": False, "body_width": 0},
-            },
+        deep_crawl_params: dict[str, Any] = {
+            "max_depth": max_depth,
+            "max_pages": max_pages,
         }
-
         if allowed_path_prefix:
-            crawler_config["deep_crawl_strategy"]["filter_chain"] = [
-                {"type": "URLPatternFilter", "patterns": [allowed_path_prefix]},
+            deep_crawl_params["filter_chain"] = [
+                {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
             ]
 
         payload = {
             "urls": [base_url],
-            "crawler_config": crawler_config,
+            "crawler_config": {
+                "type": "CrawlerRunConfig",
+                "params": {
+                    "deep_crawl_strategy": {
+                        "type": "BFSDeepCrawlStrategy",
+                        "params": deep_crawl_params,
+                    },
+                    "scraping_strategy": {"type": "LXMLWebScrapingStrategy", "params": {}},
+                    "markdown_generator": {
+                        "type": "DefaultMarkdownGenerator",
+                        "params": {"options": {"ignore_links": False, "body_width": 0}},
+                    },
+                },
+            },
         }
 
         response = await self._http_client.post(
