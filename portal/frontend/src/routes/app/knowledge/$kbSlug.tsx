@@ -711,6 +711,8 @@ function DashboardSection({
 
 // -- Main page ---------------------------------------------------------------
 
+type KBTab = 'overview' | 'connectors' | 'members'
+
 function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
@@ -718,6 +720,7 @@ function KnowledgeDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [activeTab, setActiveTab] = useState<KBTab>('overview')
 
   const { mutate: deleteKb, isPending: isDeleting } = useMutation({
     mutationFn: async () => {
@@ -857,58 +860,83 @@ function KnowledgeDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="h-px bg-[var(--color-border)]" />
+      {/* Tab bar */}
+      <div className="border-b border-[var(--color-border)]">
+        <nav className="-mb-px flex gap-6">
+          {([
+            { id: 'overview', icon: BarChart2, label: m.knowledge_detail_tab_overview() },
+            { id: 'connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
+            { id: 'members', icon: Users, label: m.knowledge_detail_tab_members() },
+          ] as { id: KBTab; icon: React.ElementType; label: string }[]).map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={[
+                'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
+                activeTab === id
+                  ? 'border-[var(--color-accent)] text-[var(--color-purple-deep)]'
+                  : 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+              ].join(' ')}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
-      {/* Docs section */}
-      <DashboardSection icon={BookOpen} title={m.knowledge_detail_section_docs()}>
-        {!kb.docs_enabled ? (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_docs_not_enabled()}</p>
-        ) : (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-[var(--color-muted-foreground)]" />
-              <span className="text-sm text-[var(--color-foreground)]">{docsLabel}</span>
-            </div>
-            {kb.gitea_repo_slug && (
-              <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }}>
-                <Button variant="outline" size="sm">{m.knowledge_detail_view_in_docs()}</Button>
-              </Link>
+      {/* Tab panels */}
+      {activeTab === 'overview' && (
+        <div className="space-y-8">
+          <DashboardSection icon={BookOpen} title={m.knowledge_detail_section_docs()}>
+            {!kb.docs_enabled ? (
+              <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_docs_not_enabled()}</p>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                  <span className="text-sm text-[var(--color-foreground)]">{docsLabel}</span>
+                </div>
+                {kb.gitea_repo_slug && (
+                  <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }}>
+                    <Button variant="outline" size="sm">{m.knowledge_detail_view_in_docs()}</Button>
+                  </Link>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </DashboardSection>
+          </DashboardSection>
 
-      {/* Connectors section */}
-      <DashboardSection icon={Zap} title={m.knowledge_detail_section_connectors()}>
-        <ConnectorsSection kbSlug={kbSlug} token={token} isOwner={isOwner} />
-      </DashboardSection>
-
-      {/* Stats section */}
-      <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
-        <div className="flex gap-8">
-          <div>
-            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Volume</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
-              {stats?.volume != null
-                ? m.knowledge_detail_volume({ count: String(stats.volume) })
-                : m.knowledge_detail_volume_unknown()}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Queries (30d)</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
-              {stats?.usage_last_30d != null
-                ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })
-                : m.knowledge_detail_usage_unknown()}
-            </p>
-          </div>
+          <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
+            <div className="flex gap-8">
+              <div>
+                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Volume</p>
+                <p className="text-sm font-medium text-[var(--color-foreground)]">
+                  {stats?.volume != null
+                    ? m.knowledge_detail_volume({ count: String(stats.volume) })
+                    : m.knowledge_detail_volume_unknown()}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Queries (30d)</p>
+                <p className="text-sm font-medium text-[var(--color-foreground)]">
+                  {stats?.usage_last_30d != null
+                    ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })
+                    : m.knowledge_detail_usage_unknown()}
+                </p>
+              </div>
+            </div>
+          </DashboardSection>
         </div>
-      </DashboardSection>
+      )}
 
-      {/* Members section */}
-      <DashboardSection icon={Users} title={m.knowledge_detail_section_members()}>
+      {activeTab === 'connectors' && (
+        <ConnectorsSection kbSlug={kbSlug} token={token} isOwner={isOwner} />
+      )}
+
+      {activeTab === 'members' && (
         <MembersSection kbSlug={kbSlug} token={token} isOwner={isOwner} isPersonal={isPersonal} />
-      </DashboardSection>
+      )}
     </div>
   )
 }
