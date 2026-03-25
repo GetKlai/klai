@@ -138,7 +138,7 @@ function KnowledgeNewPage() {
             value={slug}
             onChange={(e) => handleSlugChange(e.target.value)}
             required
-            pattern="[a-z0-9-]+"
+            pattern="[a-z0-9\-]+"
           />
           <p className="text-xs text-[var(--color-muted-foreground)]">
             {m.knowledge_new_slug_hint()}
