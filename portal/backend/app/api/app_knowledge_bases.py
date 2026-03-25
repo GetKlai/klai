@@ -422,9 +422,7 @@ async def invite_user(
         )
 
     # Cache display info in portal_users if they have a row (org member)
-    user_row = await db.execute(
-        select(PortalUser).where(PortalUser.zitadel_user_id == resolved_user_id)
-    )
+    user_row = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == resolved_user_id))
     portal_user = user_row.scalar_one_or_none()
     if portal_user and portal_user.email != body.email:
         portal_user.email = body.email
@@ -487,9 +485,14 @@ async def update_user_role(
     access.role = body.role
     await db.commit()
     await db.refresh(access)
+
+    profile = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == access.user_id))
+    portal_user = profile.scalar_one_or_none()
     return UserMemberOut(
         id=access.id,
         user_id=access.user_id,
+        display_name=portal_user.display_name if portal_user else None,
+        email=portal_user.email if portal_user else None,
         role=access.role,
         granted_at=access.granted_at,
         granted_by=access.granted_by,
