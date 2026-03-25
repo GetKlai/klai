@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
+from app.models.portal import PortalUser
 from app.services import docs_client
 from app.services.access import get_user_role_for_kb
 
@@ -59,6 +60,8 @@ class AppKBsResponse(BaseModel):
 class UserMemberOut(BaseModel):
     id: int
     user_id: str
+    display_name: str | None = None
+    email: str | None = None
     role: str
     granted_at: datetime
     granted_by: str
@@ -345,16 +348,22 @@ async def list_members(
     _, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
 
-    user_result = await db.execute(select(PortalUserKBAccess).where(PortalUserKBAccess.kb_id == kb.id))
+    user_result = await db.execute(
+        select(PortalUserKBAccess, PortalUser.display_name, PortalUser.email)
+        .outerjoin(PortalUser, PortalUser.zitadel_user_id == PortalUserKBAccess.user_id)
+        .where(PortalUserKBAccess.kb_id == kb.id)
+    )
     user_members = [
         UserMemberOut(
-            id=r.id,
-            user_id=r.user_id,
-            role=r.role,
-            granted_at=r.granted_at,
-            granted_by=r.granted_by,
+            id=row.PortalUserKBAccess.id,
+            user_id=row.PortalUserKBAccess.user_id,
+            display_name=row.display_name,
+            email=row.email,
+            role=row.PortalUserKBAccess.role,
+            granted_at=row.PortalUserKBAccess.granted_at,
+            granted_by=row.PortalUserKBAccess.granted_by,
         )
-        for r in user_result.scalars().all()
+        for row in user_result.all()
     ]
 
     group_result = await db.execute(
