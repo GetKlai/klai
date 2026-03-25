@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2, X } from 'lucide-react'
+import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -60,6 +60,7 @@ function EditUserPage() {
   const [memberGroupIds, setMemberGroupIds] = useState<Set<number>>(new Set())
   const [groupsInitialized, setGroupsInitialized] = useState(false)
   const [selectedGroupId, setSelectedGroupId] = useState('')
+  const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
   const { data: usersData } = useQuery({
@@ -243,32 +244,37 @@ function EditUserPage() {
                       <span className="text-sm text-[var(--color-purple-deep)]">
                         {group.name}
                       </span>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button type="button" variant="ghost" size="sm">
-                            <X className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              {m.admin_users_confirm_remove_group_title()}
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {m.admin_users_confirm_remove_group_description({ name: group.name })}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-                            <AlertDialogAction
+                      <div className="flex items-center gap-1">
+                        {confirmRemoveId === group.id ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
                               className="bg-[var(--color-destructive)] text-white hover:opacity-90"
-                              onClick={() => stageRemove(group.id)}
+                              onClick={() => { stageRemove(group.id); setConfirmRemoveId(null) }}
                             >
                               {m.admin_users_confirm_remove_group_title()}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setConfirmRemoveId(null)}
+                            >
+                              {m.admin_users_cancel()}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setConfirmRemoveId(group.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
