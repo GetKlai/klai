@@ -752,6 +752,110 @@ ssh core-01 "curl -s https://auth.getklai.com/v2/sessions \
 
 ---
 
+## docs-app (klai-docs / Next.js)
+
+---
+
+## platform-docs-app-port
+
+**Severity:** HIGH
+
+**Trigger:** Calling the docs-app internal API from portal-api (`docs_client.py`)
+
+The docs-app (klai-docs) runs on port **3010**, not 3000. Docker service name is `docs-app`.
+
+**Wrong:**
+```python
+base_url="http://docs-app:3000"
+```
+
+**Correct:**
+```python
+base_url="http://docs-app:3010/docs"
+```
+
+**Source:** SPEC-KB-003 integration debugging, 2026-03-25
+
+---
+
+## platform-docs-app-basepath
+
+**Severity:** HIGH
+
+**Trigger:** Calling any API endpoint on docs-app
+
+The Next.js app has `basePath: "/docs"` in `next.config.ts`. All routes — including internal API routes — are served under `/docs/api/...`, not `/api/...`.
+
+**Wrong:**
+```
+POST http://docs-app:3010/api/orgs/{slug}/kbs   → 404 Not Found
+```
+
+**Correct:**
+```
+POST http://docs-app:3010/docs/api/orgs/{slug}/kbs
+```
+
+Use `base_url="http://docs-app:3010/docs"` in the httpx client so relative paths resolve correctly.
+
+**Source:** SPEC-KB-003 integration debugging, 2026-03-25
+
+---
+
+## platform-docs-app-visibility-values
+
+**Severity:** HIGH
+
+**Trigger:** Creating a KB via the docs-app API when the portal visibility is `internal`
+
+The docs-app DB has a check constraint that only accepts `public` or `private` as visibility values. The portal uses `internal` as its third visibility option. Passing `internal` causes a 500 from docs-app.
+
+**Wrong:**
+```python
+json={"visibility": "internal"}  # → 500 Internal Server Error
+```
+
+**Correct:**
+```python
+docs_visibility = "public" if visibility == "public" else "private"
+json={"visibility": docs_visibility}
+```
+
+Map portal `internal` → docs-app `private` before calling the API.
+
+**Source:** SPEC-KB-003 integration debugging, 2026-03-25
+
+---
+
+## platform-docs-app-error-logging
+
+**Severity:** MEDIUM
+
+**Trigger:** Debugging docs-app integration failures from portal-api logs
+
+Without the response body in the log, all failures look the same (`httpx.HTTPStatusError`). Always log status code + response text.
+
+**Wrong:**
+```python
+log.exception("Gitea provisioning failed for KB slug=%s", kb_slug)
+```
+
+**Correct:**
+```python
+log.error(
+    "Gitea provisioning failed for KB slug=%s: %s %s",
+    kb_slug,
+    exc.response.status_code,
+    exc.response.text[:500],
+)
+```
+
+Also catch `httpx.ConnectError` separately — a connection refused error has no `.response` attribute and will itself raise an `AttributeError` if you try to access it.
+
+**Source:** SPEC-KB-003 integration debugging, 2026-03-25
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
