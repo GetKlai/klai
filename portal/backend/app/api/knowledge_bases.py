@@ -14,6 +14,7 @@ from app.api.dependencies import _get_caller_org, _require_admin_or_group_admin_
 from app.core.database import get_db
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
+from app.services import docs_client
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["knowledge-bases"])
@@ -133,6 +134,11 @@ async def create_knowledge_base(
             status_code=status.HTTP_409_CONFLICT,
             detail="Slug bestaat al in deze organisatie",
         ) from exc
+
+    kb.gitea_repo_slug = await docs_client.provision_and_store(
+        org.slug, body.name, body.slug, body.visibility, db
+    )
+
     await db.commit()
     await db.refresh(kb)
     return KBOut(
