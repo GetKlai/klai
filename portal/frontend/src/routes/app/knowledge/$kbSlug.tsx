@@ -757,7 +757,7 @@ function KnowledgeDetailPage() {
     enabled: !!token && !!kb,
   })
 
-  const myUserId = auth.user?.profile?.sub as string | undefined
+  const myUserId = auth.user?.profile?.sub
   const isOwner = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isPersonal = kb?.owner_type === 'user'
 
