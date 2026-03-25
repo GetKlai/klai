@@ -251,12 +251,12 @@ async def trigger_sync(
         return await klai_connector_client.trigger_sync(connector_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == status.HTTP_409_CONFLICT:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running") from exc
         log.exception("klai-connector returned error for connector %s", connector_id)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service error")
-    except httpx.HTTPError:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service error") from exc
+    except httpx.HTTPError as exc:
         log.exception("Failed to reach klai-connector for connector %s", connector_id)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc
 
 
 @router.get("/{connector_id}/syncs", response_model=list[SyncRunData])
@@ -284,6 +284,6 @@ async def list_sync_runs(
 
     try:
         return await klai_connector_client.get_sync_runs(connector_id, limit=limit)
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         log.exception("Failed to reach klai-connector for sync history of %s", connector_id)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc
