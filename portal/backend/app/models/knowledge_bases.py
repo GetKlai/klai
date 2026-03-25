@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -22,6 +22,11 @@ class PortalKnowledgeBase(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    visibility: Mapped[str] = mapped_column(Text, nullable=False, server_default="internal")
+    docs_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    gitea_repo_slug: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="org")
+    owner_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PortalGroupKBAccess(Base):
@@ -37,3 +42,4 @@ class PortalGroupKBAccess(Base):
     kb_id: Mapped[int] = mapped_column(ForeignKey("portal_knowledge_bases.id", ondelete="CASCADE"), nullable=False)
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     granted_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default="viewer")
