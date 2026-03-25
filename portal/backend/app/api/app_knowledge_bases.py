@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.services import docs_client
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
@@ -51,14 +52,19 @@ class AppKBsResponse(BaseModel):
 
 @router.get("/knowledge-bases", response_model=AppKBsResponse)
 async def list_app_knowledge_bases(
+    docs_only: bool = False,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBsResponse:
     """Return all KBs for the caller's org. Any authenticated org member can call this."""
     _, org, _ = await _get_caller_org(credentials, db)
-    result = await db.execute(
-        select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id).order_by(PortalKnowledgeBase.name)
-    )
+    query = select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id)
+    if docs_only:
+        query = query.where(
+            PortalKnowledgeBase.docs_enabled == True,  # noqa: E712
+            PortalKnowledgeBase.gitea_repo_slug.isnot(None),
+        )
+    result = await db.execute(query.order_by(PortalKnowledgeBase.name))
     kbs = result.scalars().all()
     return AppKBsResponse(
         knowledge_bases=[
@@ -137,6 +143,11 @@ async def create_app_knowledge_base(
             status_code=status.HTTP_409_CONFLICT,
             detail="Slug bestaat al in deze organisatie",
         ) from exc
+
+    kb.gitea_repo_slug = await docs_client.provision_and_store(
+        org.slug, body.name, body.slug, body.visibility, db
+    )
+
     await db.commit()
     await db.refresh(kb)
     return AppKBOut(

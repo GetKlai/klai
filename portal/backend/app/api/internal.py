@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.connectors import PortalConnector
+from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalUser
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
@@ -77,3 +79,46 @@ async def get_user_products(
 
     products = await get_effective_products(zitadel_user_id, db)
     return UserProductsResponse(products=products)
+
+
+class ConnectorConfigResponse(BaseModel):
+    connector_id: str
+    kb_id: int
+    kb_slug: str
+    org_id: int
+    connector_type: str
+    config: dict
+    schedule: str | None
+    is_enabled: bool
+
+
+@router.get("/connectors/{connector_id}", response_model=ConnectorConfigResponse)
+async def get_connector_config(
+    connector_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> ConnectorConfigResponse:
+    """Return connector config for klai-connector service."""
+    _require_internal_token(request)
+    result = await db.execute(
+        select(PortalConnector, PortalKnowledgeBase)
+        .join(PortalKnowledgeBase, PortalConnector.kb_id == PortalKnowledgeBase.id)
+        .where(PortalConnector.id == connector_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Connector niet gevonden",
+        )
+    connector, kb = row
+    return ConnectorConfigResponse(
+        connector_id=str(connector.id),
+        kb_id=connector.kb_id,
+        kb_slug=kb.slug,
+        org_id=connector.org_id,
+        connector_type=connector.connector_type,
+        config=connector.config,
+        schedule=connector.schedule,
+        is_enabled=connector.is_enabled,
+    )
