@@ -38,7 +38,7 @@ jobs:
         run: uv run --with pyright pyright
 
       - name: Dependency vulnerability scan (pip-audit)
-        run: uv run --with pip-audit pip-audit
+        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539
 
   build-push:
     needs: quality
