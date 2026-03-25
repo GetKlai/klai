@@ -29,6 +29,23 @@ class PortalKnowledgeBase(Base):
     owner_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class PortalUserKBAccess(Base):
+    __tablename__ = "portal_user_kb_access"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "user_id", name="uq_user_kb_access"),
+        Index("ix_user_kb_access_kb_id", "kb_id"),
+        Index("ix_user_kb_access_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kb_id: Mapped[int] = mapped_column(ForeignKey("portal_knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    granted_by: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class PortalGroupKBAccess(Base):
     __tablename__ = "portal_group_kb_access"
     __table_args__ = (
