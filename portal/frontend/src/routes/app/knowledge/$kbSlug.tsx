@@ -117,7 +117,7 @@ function roleBadge(role: string) {
 }
 
 function SyncStatusBadge({ status }: { status: string | null }) {
-  switch (status) {
+  switch (status?.toUpperCase()) {
     case 'RUNNING': return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
     case 'COMPLETED': return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
     case 'FAILED': return <Badge variant="destructive">{m.admin_connectors_status_failed()}</Badge>
@@ -162,6 +162,13 @@ function ConnectorsSection({
       return res.json() as Promise<ConnectorSummary[]>
     },
     enabled: !!token,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (Array.isArray(data) && data.some((c) => c.last_sync_status === 'RUNNING' || c.last_sync_status === 'running')) {
+        return 5000
+      }
+      return false
+    },
   })
 
   const deleteMutation = useMutation({
@@ -250,7 +257,7 @@ function ConnectorsSection({
               <tbody>
                 {connectors.map((c, i) => {
                   const isSyncing = syncingIds.has(c.id)
-                  const isRunning = c.last_sync_status === 'RUNNING'
+                  const isRunning = c.last_sync_status?.toUpperCase() === 'RUNNING'
                   return (
                     <tr key={c.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
                       <td className="px-4 py-2.5 font-medium text-[var(--color-purple-deep)]">{c.name}</td>
