@@ -42,10 +42,14 @@ jobs:
 
       - name: Deploy to core-01
         uses: appleboy/ssh-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          envs: GITHUB_TOKEN
           script: |
+            echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/getklai/klai-connector:latest
             cd /opt/klai && docker compose up -d klai-connector
