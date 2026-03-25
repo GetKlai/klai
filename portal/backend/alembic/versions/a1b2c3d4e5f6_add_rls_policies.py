@@ -21,6 +21,23 @@ depends_on = None
 # NULLIF converts '' to NULL so the cast to int doesn't fail.
 _TENANT_EXPR = "NULLIF(current_setting('app.current_org_id', true), '')::int"
 
+# Pre-built DDL for junction-table policies (string concat avoids ruff S608 false positives).
+_MEMBERSHIPS_POLICY = (
+    "CREATE POLICY tenant_isolation ON portal_group_memberships "
+    "USING (group_id IN ("
+    "  SELECT id FROM portal_groups WHERE org_id = " + _TENANT_EXPR + "))"
+)
+_KB_ACCESS_POLICY = (
+    "CREATE POLICY tenant_isolation ON portal_group_kb_access "
+    "USING (kb_id IN ("
+    "  SELECT id FROM portal_knowledge_bases WHERE org_id = " + _TENANT_EXPR + "))"
+)
+_DOCS_ACCESS_POLICY = (
+    "CREATE POLICY tenant_isolation ON portal_group_docs_access "
+    "USING (library_id IN ("
+    "  SELECT id FROM portal_docs_libraries WHERE org_id = " + _TENANT_EXPR + "))"
+)
+
 
 def _enable_rls(table: str) -> None:
     op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
@@ -82,30 +99,15 @@ def upgrade() -> None:
 
     # portal_group_memberships: scope through portal_groups
     _enable_rls("portal_group_memberships")
-    op.execute(  # noqa: S608
-        f"CREATE POLICY tenant_isolation ON portal_group_memberships "
-        f"USING (group_id IN ("
-        f"  SELECT id FROM portal_groups WHERE org_id = {_TENANT_EXPR}"
-        f"))"
-    )
+    op.execute(_MEMBERSHIPS_POLICY)
 
     # portal_group_kb_access: scope through portal_knowledge_bases
     _enable_rls("portal_group_kb_access")
-    op.execute(  # noqa: S608
-        f"CREATE POLICY tenant_isolation ON portal_group_kb_access "
-        f"USING (kb_id IN ("
-        f"  SELECT id FROM portal_knowledge_bases WHERE org_id = {_TENANT_EXPR}"
-        f"))"
-    )
+    op.execute(_KB_ACCESS_POLICY)
 
     # portal_group_docs_access: scope through portal_docs_libraries
     _enable_rls("portal_group_docs_access")
-    op.execute(  # noqa: S608
-        f"CREATE POLICY tenant_isolation ON portal_group_docs_access "
-        f"USING (library_id IN ("
-        f"  SELECT id FROM portal_docs_libraries WHERE org_id = {_TENANT_EXPR}"
-        f"))"
-    )
+    op.execute(_DOCS_ACCESS_POLICY)
 
 
 def downgrade() -> None:
