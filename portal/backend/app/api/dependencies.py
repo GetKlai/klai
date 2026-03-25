@@ -20,13 +20,12 @@ def require_product(product: str):
 
     Org admins bypass the check and always have access to all products.
     """
+
     async def dependency(
         user_id: str = Depends(get_current_user_id),
         db: AsyncSession = Depends(get_db),
     ) -> None:
-        role_result = await db.execute(
-            select(PortalUser.role).where(PortalUser.zitadel_user_id == user_id)
-        )
+        role_result = await db.execute(select(PortalUser.role).where(PortalUser.zitadel_user_id == user_id))
         if role_result.scalar_one_or_none() == "admin":
             return
         products = await get_effective_products(user_id, db)

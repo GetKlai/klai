@@ -135,9 +135,7 @@ async def create_knowledge_base(
             detail="Slug bestaat al in deze organisatie",
         ) from exc
 
-    kb.gitea_repo_slug = await docs_client.provision_and_store(
-        org.slug, body.name, body.slug, body.visibility, db
-    )
+    kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
 
     await db.commit()
     await db.refresh(kb)
