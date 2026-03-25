@@ -1,21 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import { ArrowLeft, Loader2, Trash2, UserPlus } from 'lucide-react'
+import { ArrowLeft, Loader2, Pencil, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
@@ -85,6 +75,7 @@ function AdminGroupDetail() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { groupId } = Route.useParams()
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
 
   // ---------------------------------------------------------------------------
   // Queries
@@ -149,7 +140,9 @@ function AdminGroupDetail() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-group-members', groupId] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-memberships'] })
       void queryClient.invalidateQueries({ queryKey: ['admin-user-groups'] })
+      setConfirmRemoveId(null)
       toast.success(m.admin_groups_members_success_removed())
     },
     onError: (err: Error) => {
@@ -175,9 +168,7 @@ function AdminGroupDetail() {
   if (!groupData) {
     return (
       <div className="p-8">
-        <p className="text-sm text-[var(--color-destructive)]">
-          Group not found
-        </p>
+        <p className="text-sm text-[var(--color-destructive)]">Group not found</p>
       </div>
     )
   }
@@ -190,6 +181,11 @@ function AdminGroupDetail() {
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
             {groupData.name}
           </h1>
+          {groupData.description && (
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {groupData.description}
+            </p>
+          )}
           {groupData.products.length > 0 && (
             <div className="flex gap-2">
               {groupData.products.map((p) => (
@@ -198,14 +194,31 @@ function AdminGroupDetail() {
             </div>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate({ to: '/admin/groups' })}
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.admin_groups_title()}
-        </Button>
+        <div className="flex items-center gap-2">
+          {!groupData.is_system && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                navigate({
+                  to: '/admin/groups/$groupId/edit',
+                  params: { groupId },
+                })
+              }
+            >
+              <Pencil className="h-4 w-4 mr-2" />
+              {m.admin_groups_edit()}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate({ to: '/admin/groups' })}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.admin_groups_title()}
+          </Button>
+        </div>
       </div>
 
       {/* Members section */}
@@ -217,7 +230,12 @@ function AdminGroupDetail() {
             </h2>
             <Button
               size="sm"
-              onClick={() => navigate({ to: '/admin/groups/$groupId/add-member', params: { groupId } })}
+              onClick={() =>
+                navigate({
+                  to: '/admin/groups/$groupId/add-member',
+                  params: { groupId },
+                })
+              }
             >
               <UserPlus className="h-4 w-4 mr-2" />
               {m.admin_groups_members_add()}
@@ -258,6 +276,7 @@ function AdminGroupDetail() {
                     const isRemoving =
                       removeMemberMutation.isPending &&
                       removeMemberMutation.variables === member.zitadel_user_id
+                    const isConfirming = confirmRemoveId === member.zitadel_user_id
 
                     return (
                       <tr
@@ -278,43 +297,43 @@ function AdminGroupDetail() {
                           {formatDate(member.joined_at)}
                         </td>
                         <td className="px-6 py-3 text-right">
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={isRemoving}
-                              >
-                                {isRemoving ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
-                                )}
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>
-                                  {m.admin_groups_members_remove()}
-                                </AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  {displayName(user, member)}
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>
-                                  {m.admin_users_cancel()}
-                                </AlertDialogCancel>
-                                <AlertDialogAction
+                          <div className="flex items-center justify-end gap-1">
+                            {isConfirming ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  className="bg-[var(--color-destructive)] text-white hover:opacity-90"
+                                  disabled={isRemoving}
                                   onClick={() =>
                                     removeMemberMutation.mutate(member.zitadel_user_id)
                                   }
                                 >
-                                  {m.admin_groups_members_remove()}
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                                  {isRemoving ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    m.admin_groups_members_remove()
+                                  )}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setConfirmRemoveId(null)}
+                                >
+                                  {m.admin_users_cancel()}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setConfirmRemoveId(member.zitadel_user_id)
+                                }
+                              >
+                                <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
