@@ -1413,7 +1413,8 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 | **Enrichment LLM** | Mistral Small 3.2 via API (ramp-up) → Qwen3-8B self-hosted (scale) | No Anthropic API anywhere. Mistral API allowed for non-sensitive enrichment. Transcript extraction self-hosted only (GDPR). See §13.6. |
 | **Extraction** | Instructor + Qwen3-8B or Mistral Small 3.2 (both self-hosted) | Self-hosted only for transcript data; no cloud API |
 | **Document parsing** | docling-serve (self-hosted) | HybridChunker for token-aware, structure-preserving chunking |
-| **Web crawling** | Crawl4AI | Open source, async, sitemap-aware |
+| **Web crawling (ingest pipeline)** | Crawl4AI (self-hosted, `crawl4ai` service on core-01) | Open source, async, BFS deep crawl. Used by `klai-connector` web_crawler adapter for KB ingestion. Internal only — not exposed via Caddy. |
+| **Web crawling (LibreChat webSearch)** | Firecrawl (self-hosted) | Scraper for LibreChat webSearch mode only. Separate from the ingest pipeline. |
 | **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse. **Today:** TEI already runs BGE-M3 (dense only) for research-api — switching to FlagEmbedding is a new service. |
 | **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. **Today:** not deployed; research-api uses pgvector. |
 | **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |

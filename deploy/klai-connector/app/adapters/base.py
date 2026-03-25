@@ -53,3 +53,10 @@ class BaseAdapter(ABC):
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return the current cursor state for incremental sync."""
         ...
+
+    async def post_sync(self, connector: Any) -> None:
+        """Called after all documents have been fetched for a sync run.
+
+        Override to release per-sync resources (e.g. in-memory caches).
+        Default implementation is a no-op.
+        """

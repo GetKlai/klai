@@ -245,6 +245,10 @@ class WebCrawlerAdapter(BaseAdapter):
             raise KeyError(f"URL not found in crawl cache for connector {connector_id}: {url}")
         return cache[url].encode("utf-8")
 
+    async def post_sync(self, connector: Any) -> None:
+        """Free the per-connector crawl cache after all documents have been fetched."""
+        self._crawl_cache.pop(str(connector.id), None)
+
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return cursor state for the web crawler.
 
