@@ -31,9 +31,11 @@ async def provision_gitea_repo(
         },
         timeout=10.0,
     ) as client:
+        # docs-app only accepts "public"/"private"; portal uses "internal" for private
+        docs_visibility = "public" if visibility == "public" else "private"
         resp = await client.post(
             f"/api/orgs/{org_slug}/kbs",
-            json={"name": kb_name, "slug": kb_slug, "visibility": visibility},
+            json={"name": kb_name, "slug": kb_slug, "visibility": docs_visibility},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -72,8 +74,20 @@ async def provision_and_store(
     """
     try:
         return await provision_gitea_repo(org_slug, kb_name, kb_slug, visibility)
-    except (httpx.HTTPStatusError, httpx.ConnectError) as exc:
-        log.exception("Gitea provisioning failed for KB slug=%s", kb_slug)
+    except httpx.HTTPStatusError as exc:
+        log.error(
+            "Gitea provisioning failed for KB slug=%s: %s %s",
+            kb_slug,
+            exc.response.status_code,
+            exc.response.text[:500],
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Gitea provisioning mislukt",
+        ) from exc
+    except httpx.ConnectError as exc:
+        log.error("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
