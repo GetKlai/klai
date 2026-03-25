@@ -265,11 +265,11 @@ function ConnectorsSection({
                       {isOwner && (
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1">
-                            <Tooltip label={m.admin_connectors_action_sync()}>
+                            <Tooltip label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}>
                               <button
                                 disabled={isSyncing || isRunning}
                                 onClick={() => void handleSync(c.id)}
-                                aria-label={m.admin_connectors_action_sync()}
+                                aria-label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}
                                 className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] hover:opacity-70 disabled:opacity-40"
                               >
                                 {isSyncing || isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
