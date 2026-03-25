@@ -248,7 +248,7 @@ async def trigger_sync(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running")
 
     try:
-        return await klai_connector_client.trigger_sync(connector_id)
+        sync_run = await klai_connector_client.trigger_sync(connector_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == status.HTTP_409_CONFLICT:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running") from exc
@@ -257,6 +257,11 @@ async def trigger_sync(
     except httpx.HTTPError as exc:
         log.exception("Failed to reach klai-connector for connector %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc
+
+    # Optimistically mark as running so the UI reflects it immediately.
+    connector.last_sync_status = "running"
+    await db.commit()
+    return sync_run
 
 
 @router.get("/{connector_id}/syncs", response_model=list[SyncRunData])
