@@ -7,6 +7,9 @@ import { API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug')({
+  validateSearch: (search: Record<string, unknown>): { tab?: Tab } => ({
+    tab: (search.tab as Tab | undefined) ?? undefined,
+  }),
   component: KnowledgeDetailPage,
 })
 
@@ -44,8 +47,8 @@ function KnowledgeDetailPage() {
     retry: false,
   })
 
-  const searchParams = Route.useSearch()
-  const activeTab: Tab = (searchParams.tab as Tab | undefined) ?? 'docs'
+  const { tab } = Route.useSearch()
+  const activeTab: Tab = tab ?? 'docs'
 
   if (isLoading) {
     return (
