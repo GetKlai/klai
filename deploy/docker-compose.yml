@@ -729,6 +729,12 @@ services:
       TRANSCRIBER_URL: http://whisper-server:8000/v1/audio/transcriptions
       TRANSCRIBER_API_KEY: internal
       ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
+    volumes:
+      # Persistent patches - survive image updates until fixed upstream
+      # Fix #189: removes track.stop() + transceiver renegotiation that caused bot to leave mid-meeting
+      # Fix #190: replaces poll-based participant counting with MutationObserver registry
+      - ./vexa-patches/screen-content.js:/app/vexa-bot/dist/services/screen-content.js:ro
+      - ./vexa-patches/recording.js:/app/vexa-bot/dist/platforms/googlemeet/recording.js:ro
     depends_on:
       postgres:
         condition: service_healthy
