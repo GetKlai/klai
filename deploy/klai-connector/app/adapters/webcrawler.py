@@ -95,7 +95,7 @@ class WebCrawlerAdapter(BaseAdapter):
         }
 
         response = await self._http_client.post(
-            f"{self._api_url}/crawl",
+            f"{self._api_url}/crawl/job",
             json=payload,
             headers=self._auth_headers(),
         )
@@ -119,7 +119,7 @@ class WebCrawlerAdapter(BaseAdapter):
 
         while elapsed < _MAX_POLL_SECONDS:
             response = await self._http_client.get(
-                f"{self._api_url}/task/{task_id}",
+                f"{self._api_url}/crawl/job/{task_id}",
                 headers=self._auth_headers(),
             )
             response.raise_for_status()
@@ -127,7 +127,7 @@ class WebCrawlerAdapter(BaseAdapter):
             status = data.get("status", "").lower()
 
             if status == "completed":
-                return data
+                return data["result"]
             if status == "failed":
                 error_msg = data.get("error", "Unknown crawl error")
                 raise RuntimeError(f"Crawl job {task_id} failed: {error_msg}")
