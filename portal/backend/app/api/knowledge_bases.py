@@ -26,11 +26,14 @@ class KBCreateRequest(BaseModel):
     name: str
     slug: str
     description: str | None = None
+    visibility: str = "internal"
+    docs_enabled: bool = True
 
 
 class KBUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    visibility: str | None = None
 
 
 class KBOut(BaseModel):
@@ -40,6 +43,10 @@ class KBOut(BaseModel):
     description: str | None
     created_at: datetime
     created_by: str
+    visibility: str
+    docs_enabled: bool
+    gitea_repo_slug: str | None
+    owner_type: str
 
 
 class KBsResponse(BaseModel):
@@ -51,6 +58,7 @@ class KBGroupAccessOut(BaseModel):
     group_name: str
     granted_at: datetime
     granted_by: str
+    role: str
 
 
 class KBGroupsResponse(BaseModel):
@@ -59,6 +67,7 @@ class KBGroupsResponse(BaseModel):
 
 class KBGroupGrantRequest(BaseModel):
     group_id: int
+    role: str = "viewer"
 
 
 class MessageResponse(BaseModel):
@@ -88,6 +97,10 @@ async def list_knowledge_bases(
                 description=kb.description,
                 created_at=kb.created_at,
                 created_by=kb.created_by,
+                visibility=kb.visibility,
+                docs_enabled=kb.docs_enabled,
+                gitea_repo_slug=kb.gitea_repo_slug,
+                owner_type=kb.owner_type,
             )
             for kb in kbs
         ]
@@ -108,6 +121,8 @@ async def create_knowledge_base(
         slug=body.slug,
         description=body.description,
         created_by=caller_id,
+        visibility=body.visibility,
+        docs_enabled=body.docs_enabled,
     )
     db.add(kb)
     try:
@@ -127,6 +142,10 @@ async def create_knowledge_base(
         description=kb.description,
         created_at=kb.created_at,
         created_by=kb.created_by,
+        visibility=kb.visibility,
+        docs_enabled=kb.docs_enabled,
+        gitea_repo_slug=kb.gitea_repo_slug,
+        owner_type=kb.owner_type,
     )
 
 
@@ -152,6 +171,8 @@ async def update_knowledge_base(
         kb.name = body.name
     if body.description is not None:
         kb.description = body.description
+    if body.visibility is not None:
+        kb.visibility = body.visibility
     await db.commit()
     await db.refresh(kb)
     return KBOut(
@@ -161,6 +182,10 @@ async def update_knowledge_base(
         description=kb.description,
         created_at=kb.created_at,
         created_by=kb.created_by,
+        visibility=kb.visibility,
+        docs_enabled=kb.docs_enabled,
+        gitea_repo_slug=kb.gitea_repo_slug,
+        owner_type=kb.owner_type,
     )
 
 
@@ -218,6 +243,7 @@ async def list_kb_groups(
                 group_name=g.name,
                 granted_at=a.granted_at,
                 granted_by=a.granted_by,
+                role=a.role,
             )
             for a, g in rows
         ]
@@ -249,7 +275,7 @@ async def grant_kb_group_access(
     )
     if not group_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Groep niet gevonden")
-    access = PortalGroupKBAccess(group_id=body.group_id, kb_id=kb_id, granted_by=caller_id)
+    access = PortalGroupKBAccess(group_id=body.group_id, kb_id=kb_id, granted_by=caller_id, role=body.role)
     db.add(access)
     try:
         await db.flush()
