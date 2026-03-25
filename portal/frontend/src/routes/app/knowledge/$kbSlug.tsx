@@ -89,7 +89,7 @@ interface MembersResponse {
   groups: GroupMember[]
 }
 
-type ConnectorType = 'github' | 'google_drive' | 'notion' | 'ms_docs'
+type ConnectorType = 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
 
 interface GitHubConfig {
   installation_id: string
@@ -97,6 +97,12 @@ interface GitHubConfig {
   repo_name: string
   branch: string
   path_filter: string
+}
+
+interface WebCrawlerConfig {
+  base_url: string
+  path_prefix: string
+  max_pages: string
 }
 
 // -- Small helpers -----------------------------------------------------------
@@ -116,6 +122,7 @@ function SyncStatusBadge({ status }: { status: string | null }) {
     case 'COMPLETED': return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
     case 'FAILED': return <Badge variant="destructive">{m.admin_connectors_status_failed()}</Badge>
     case 'AUTH_ERROR': return <Badge variant="destructive">{m.admin_connectors_status_auth_error()}</Badge>
+    case 'PENDING': return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
     default: return <Badge variant="secondary">{m.admin_connectors_status_never()}</Badge>
   }
 }
@@ -140,6 +147,9 @@ function ConnectorsSection({
   const [schedule, setSchedule] = useState('')
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
+  })
+  const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
+    base_url: '', path_prefix: '', max_pages: '200',
   })
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
@@ -176,6 +186,11 @@ function ConnectorsSection({
         config.branch = githubConfig.branch
         if (githubConfig.path_filter) config.path_filter = githubConfig.path_filter
       }
+      if (selectedType === 'web_crawler') {
+        config.base_url = webcrawlerConfig.base_url
+        if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
+        if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
+      }
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -190,6 +205,7 @@ function ConnectorsSection({
       setName('')
       setSchedule('')
       setGithubConfig({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
+      setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200' })
     },
   })
 
@@ -208,6 +224,7 @@ function ConnectorsSection({
 
   const connectorTypes: { type: ConnectorType; label: () => string; available: boolean }[] = [
     { type: 'github', label: m.admin_connectors_type_github, available: true },
+    { type: 'web_crawler', label: m.admin_connectors_type_website, available: true },
     { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: false },
     { type: 'notion', label: m.admin_connectors_type_notion, available: false },
     { type: 'ms_docs', label: m.admin_connectors_type_ms_docs, available: false },
@@ -352,6 +369,42 @@ function ConnectorsSection({
                 </form>
               )}
 
+              {selectedType === 'web_crawler' && (
+                <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-name">{m.admin_connectors_field_name()}</Label>
+                    <Input id="conn-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
+                    <Input id="conn-base-url" type="url" required placeholder={m.admin_connectors_webcrawler_base_url_placeholder()} value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                    <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                    <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-schedule-wc">{m.admin_connectors_field_schedule()}</Label>
+                    <Input id="conn-schedule-wc" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+                  </div>
+                  {createMutation.error && (
+                    <p className="text-sm text-[var(--color-destructive)]">
+                      {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                    </p>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <Button type="submit" size="sm" disabled={createMutation.isPending}>
+                      {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null) }}>{m.admin_connectors_cancel()}</Button>
+                  </div>
+                </form>
+              )}
+
               {!selectedType && (
                 <div className="flex justify-end">
                   <Button type="button" size="sm" variant="ghost" onClick={() => setShowAdd(false)}>{m.admin_connectors_cancel()}</Button>
@@ -399,7 +452,7 @@ function MembersSection({
   const queryClient = useQueryClient()
   const [showInviteUser, setShowInviteUser] = useState(false)
   const [showInviteGroup, setShowInviteGroup] = useState(false)
-  const [inviteUserId, setInviteUserId] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
   const [inviteGroupId, setInviteGroupId] = useState('')
   const [inviteRole, setInviteRole] = useState('viewer')
   const [confirmingRemoveUser, setConfirmingRemoveUser] = useState<number | null>(null)
@@ -422,14 +475,15 @@ function MembersSection({
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/users`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: inviteUserId, role: inviteRole }),
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       })
-      if (!res.ok) throw new Error('Uitnodigen mislukt')
+      if (res.status === 404) throw new Error(m.knowledge_members_invite_not_found())
+      if (!res.ok) throw new Error(m.knowledge_members_invite_error())
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
       setShowInviteUser(false)
-      setInviteUserId('')
+      setInviteEmail('')
       setInviteRole('viewer')
     },
   })
@@ -549,8 +603,8 @@ function MembersSection({
             <CardContent className="pt-4">
               <form onSubmit={(e) => { e.preventDefault(); inviteUserMutation.mutate() }} className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="invite-user-id">{m.knowledge_members_user_id_label()}</Label>
-                  <Input id="invite-user-id" required placeholder={m.knowledge_members_user_id_placeholder()} value={inviteUserId} onChange={(e) => setInviteUserId(e.target.value)} />
+                  <Label htmlFor="invite-user-email">{m.knowledge_members_invite_email_label()}</Label>
+                  <Input id="invite-user-email" type="email" required placeholder={m.knowledge_members_invite_email_placeholder()} value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="invite-user-role">{m.knowledge_members_role_label()}</Label>
