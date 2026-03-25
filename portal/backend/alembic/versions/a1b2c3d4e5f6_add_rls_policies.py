@@ -21,21 +21,22 @@ depends_on = None
 # NULLIF converts '' to NULL so the cast to int doesn't fail.
 _TENANT_EXPR = "NULLIF(current_setting('app.current_org_id', true), '')::int"
 
-# Pre-built DDL for junction-table policies (string concat avoids ruff S608 false positives).
+# Pre-built DDL for junction-table policies. All values are hardcoded constants;
+# the noqa suppresses ruff S608 false positives on the SELECT keyword in the string.
 _MEMBERSHIPS_POLICY = (
     "CREATE POLICY tenant_isolation ON portal_group_memberships "
     "USING (group_id IN ("
-    "  SELECT id FROM portal_groups WHERE org_id = " + _TENANT_EXPR + "))"
+    "  SELECT id FROM portal_groups WHERE org_id = " + _TENANT_EXPR + "))"  # noqa: S608
 )
 _KB_ACCESS_POLICY = (
     "CREATE POLICY tenant_isolation ON portal_group_kb_access "
     "USING (kb_id IN ("
-    "  SELECT id FROM portal_knowledge_bases WHERE org_id = " + _TENANT_EXPR + "))"
+    "  SELECT id FROM portal_knowledge_bases WHERE org_id = " + _TENANT_EXPR + "))"  # noqa: S608
 )
 _DOCS_ACCESS_POLICY = (
     "CREATE POLICY tenant_isolation ON portal_group_docs_access "
     "USING (library_id IN ("
-    "  SELECT id FROM portal_docs_libraries WHERE org_id = " + _TENANT_EXPR + "))"
+    "  SELECT id FROM portal_docs_libraries WHERE org_id = " + _TENANT_EXPR + "))"  # noqa: S608
 )
 
 
