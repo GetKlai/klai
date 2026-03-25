@@ -139,9 +139,7 @@ async def list_connectors(
     """List connectors for a KB. Any org member with access to the KB can view."""
     _, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_for_org(kb_slug, org.id, db)
-    result = await db.execute(
-        select(PortalConnector).where(PortalConnector.kb_id == kb.id)
-    )
+    result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
     return [_connector_out(c) for c in result.scalars().all()]
 
 
