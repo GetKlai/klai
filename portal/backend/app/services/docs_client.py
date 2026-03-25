@@ -23,7 +23,7 @@ async def provision_gitea_repo(
     Raises httpx.HTTPStatusError on failure.
     """
     async with httpx.AsyncClient(
-        base_url="http://docs-app:3000",
+        base_url="http://docs-app:3010",
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
@@ -43,7 +43,7 @@ async def provision_gitea_repo(
 async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
     """Return the number of published docs pages for a KB, or None on error."""
     async with httpx.AsyncClient(
-        base_url="http://docs-app:3000",
+        base_url="http://docs-app:3010",
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
@@ -72,7 +72,7 @@ async def provision_and_store(
     """
     try:
         return await provision_gitea_repo(org_slug, kb_name, kb_slug, visibility)
-    except httpx.HTTPStatusError as exc:
+    except (httpx.HTTPStatusError, httpx.ConnectError) as exc:
         log.exception("Gitea provisioning failed for KB slug=%s", kb_slug)
         await db.rollback()
         raise HTTPException(
