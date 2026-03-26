@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 async def _warmup_reranker() -> None:
     """Send a dummy request to load the reranker model before the first real query."""
-    if not settings.tei_reranker_url:
+    if not settings.reranker_enabled or not settings.tei_reranker_url:
         return
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
