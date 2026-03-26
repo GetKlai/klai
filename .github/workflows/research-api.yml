@@ -46,8 +46,10 @@ jobs:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
-          envs: GITHUB_TOKEN,GITHUB_ACTOR
           script: |
-            echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-            docker pull ghcr.io/getklai/research-api:latest
+            cd /tmp && rm -rf klai-build
+            git clone --depth=1 --filter=blob:none --sparse https://github.com/GetKlai/klai.git klai-build
+            cd klai-build && git sparse-checkout set focus/research-api
+            docker build -t ghcr.io/getklai/research-api:latest ./focus/research-api
+            rm -rf /tmp/klai-build
             cd /opt/klai && docker compose up -d research-api
