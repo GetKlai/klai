@@ -14,11 +14,9 @@ dependencies = [
     "pyyaml>=6.0",
     "html2text>=2024.2",
     "cachetools>=5.5",
-    # procrastinate 2.x API: PsycopgConnector, open_async(), run_worker_async()
-    # Upgrade to 3.x requires code migration — see deploy/VERSIONS.md
-    # procrastinate 2.x API: PsycopgConnector uses psycopg3 (not asyncpg extra)
-    # Upgrade to 3.x requires code migration — see deploy/VERSIONS.md
-    "procrastinate>=2.15,<3",
+    # procrastinate 3.x: PsycopgConnector, open_async(), run_worker_async() all unchanged.
+    # DB schema was already 3.x-compatible (queueing_lock + full status enum added in 2.15).
+    "procrastinate>=3.0,<4",
     "structlog>=25.0",
 ]
 

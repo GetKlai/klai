@@ -47,22 +47,12 @@ Dependabot ignores the constraints listed here via its `ignore` rules.
 
 ## Python packages
 
-### `procrastinate>=2.15,<3` (knowledge-ingest)
+### `procrastinate>=3.0,<4` (knowledge-ingest)
 
-**Current:** procrastinate 2.x (latest: 2.15.1)
-**Latest available:** 3.7.2
+**Current:** 3.7.2 ✅ up to date
+**Upgraded from:** 2.15.1 on 2026-03-26
 
-**Why pinned:** knowledge-ingest uses procrastinate 2.x-specific API:
-- `procrastinate.PsycopgConnector` (connector class name changed in 3.x)
-- `app.open_async()` / `app.run_worker_async()` (worker API changed in 3.x)
-
-Dependabot is configured to ignore procrastinate `>=3` for knowledge-ingest.
-
-**Upgrade path:**
-1. Read [procrastinate 3.x changelog](https://procrastinate.readthedocs.io/en/stable/changelog.html)
-2. Update connector and worker calls in `knowledge_ingest/app.py` and `knowledge_ingest/enrichment_tasks.py`
-3. Run procrastinate DB migrations: `procrastinate migrate`
-4. Update pyproject.toml constraint to `>=3.0,<4`
+API unchanged between 2.x and 3.x (PsycopgConnector, open_async(), run_worker_async() all the same). DB schema was already 3.x-compatible (queueing_lock + full status enum were added in procrastinate 2.15). No DB migration was needed.
 
 ---
 
