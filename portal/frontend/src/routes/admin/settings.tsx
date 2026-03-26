@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { API_BASE } from '@/lib/api'
 import * as m from '@/paraglide/messages'
+import { adminLogger } from '@/lib/logger'
 
 export const Route = createFileRoute('/admin/settings')({
   component: AdminSettingsPage,
@@ -44,12 +45,12 @@ function AdminSettingsPage() {
 
   const langMutation = useMutation({
     mutationFn: (lang: 'nl' | 'en') => patchSettings({ default_language: lang }),
-    onSuccess: () => { setSavedLang(true); setTimeout(() => setSavedLang(false), 2500) },
+    onSuccess: (_data, lang) => { adminLogger.info('Default language changed', { language: lang }); setSavedLang(true); setTimeout(() => setSavedLang(false), 2500) },
   })
 
   const mfaMutation = useMutation({
     mutationFn: (policy: 'optional' | 'recommended' | 'required') => patchSettings({ mfa_policy: policy }),
-    onSuccess: () => { setSavedMfa(true); setTimeout(() => setSavedMfa(false), 2500) },
+    onSuccess: (_data, policy) => { adminLogger.info('MFA policy changed', { policy }); setSavedMfa(true); setTimeout(() => setSavedMfa(false), 2500) },
   })
 
   const [selectedLang, setSelectedLang] = useState<'nl' | 'en'>('nl')

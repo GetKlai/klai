@@ -9,6 +9,7 @@ import { API_BASE } from '@/lib/api'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { STORAGE_KEYS } from '@/lib/storage'
+import { authLogger } from '@/lib/logger'
 
 export const Route = createFileRoute('/setup/mfa')({
   component: SetupMFAPage,
@@ -170,6 +171,7 @@ function PasskeySetup({
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
         setError(null)
       } else {
+        authLogger.error('Passkey setup failed', err)
         setError(m.setup_mfa_passkey_error_failed())
       }
     } finally {
@@ -438,7 +440,7 @@ function TOTPSetup({
         setUri(data.uri)
         setSecret(data.secret)
       })
-      .catch(() => setLoadError(m.error_connection()))
+      .catch((err) => { authLogger.warn('TOTP setup QR fetch failed', err); setLoadError(m.error_connection()) })
   }, [token, retryCount])
 
   async function handleSubmit(e: React.FormEvent) {

@@ -9,7 +9,7 @@ Creates:
 
 Returns 201 on success. The user still needs to verify their email before logging in.
 """
-
+import logging
 import re
 import unicodedata
 
@@ -24,6 +24,8 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
 from app.services.zitadel import zitadel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -95,17 +97,20 @@ async def signup(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This company name is already in use. Please try a different name.",
             ) from exc
+        logger.error("Org creation failed for %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
+        logger.error("Org creation failed for %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
 
     zitadel_org_id: str = org_data["id"]
+    logger.info("Org created in Zitadel: name=%s, org_id=%s", body.company_name, zitadel_org_id)
 
     # 2. Create human user in the portal org (all users live here for OIDC compatibility)
     try:
@@ -123,11 +128,13 @@ async def signup(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This email address is already registered. Please try logging in.",
             ) from exc
+        logger.error("User creation failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
+        logger.error("User creation failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
@@ -143,6 +150,7 @@ async def signup(
             role="org:owner",
         )
     except Exception as exc:
+        logger.error("Role grant failed during signup for user %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
@@ -168,11 +176,13 @@ async def signup(
         await db.commit()
     except Exception as exc:
         await db.rollback()
+        logger.error("DB commit failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
 
+    logger.info("Provisioning queued for org_id=%d, slug=%s", org_row.id, org_row.slug)
     background_tasks.add_task(provision_tenant, org_row.id)
     emit_event("signup", org_id=org_row.id, user_id=zitadel_user_id, properties={"plan": org_row.plan})
 

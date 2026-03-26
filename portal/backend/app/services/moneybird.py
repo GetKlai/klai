@@ -1,8 +1,11 @@
+import logging
 from datetime import date, timedelta
 
 import httpx
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class MoneybirdService:
@@ -18,6 +21,10 @@ class MoneybirdService:
 
     async def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.is_error:
+            logger.error(
+                "Moneybird API %s %s failed: status=%d, body=%s",
+                resp.request.method, resp.request.url.path, resp.status_code, resp.text[:200],
+            )
             raise RuntimeError(resp.text)
 
     async def create_contact(

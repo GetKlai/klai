@@ -25,6 +25,9 @@ from app.services.zitadel import zitadel
 
 log = logging.getLogger(__name__)
 
+        logger.warning("Admin auth: userinfo fetch failed: %s", exc)
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 bearer = HTTPBearer()
 
@@ -246,6 +249,7 @@ async def invite_user(
             preferred_language=body.preferred_language,
         )
     except Exception as exc:
+        logger.error("User invite failed for %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to invite user: {exc}",
@@ -260,6 +264,7 @@ async def invite_user(
             role="org:owner",
         )
     except Exception as exc:
+        logger.error("Role grant failed for invited user %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to assign project role: {exc}",
@@ -286,6 +291,7 @@ async def invite_user(
         )
 
     await db.commit()
+    logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
 
     return InviteResponse(
         user_id=zitadel_user_id,
@@ -355,6 +361,7 @@ async def update_user_role(
 
     user.role = body.role
     await db.commit()
+    logger.info("Role changed: user_id=%s, new_role=%s, org_id=%d", zitadel_user_id, body.role, org.id)
 
     return MessageResponse(message="Rol bijgewerkt.")
 
@@ -382,6 +389,7 @@ async def update_org_settings(
     if body.mfa_policy is not None:
         org.mfa_policy = body.mfa_policy
     await db.commit()
+    logger.info("Org settings updated: org_id=%d", org.id)
     return OrgSettingsOut(name=org.name, default_language=org.default_language, mfa_policy=org.mfa_policy)
 
 
@@ -440,6 +448,7 @@ async def remove_user(
     try:
         await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
     except Exception as exc:
+        logger.error("User removal failed for user %s: %s", zitadel_user_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to delete user: {exc}",
@@ -869,7 +878,7 @@ async def get_audit_log(
     offset = (page - 1) * size
     result = await db.execute(query.order_by(PortalAuditLog.created_at.desc()).offset(offset).limit(size))
     items = result.scalars().all()
-
+import logging
     return AuditLogResponse(
         items=[AuditLogEntry.model_validate(e) for e in items],
         total=total,

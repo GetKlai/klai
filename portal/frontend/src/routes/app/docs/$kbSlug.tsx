@@ -16,6 +16,7 @@ import {
 } from '@/lib/kb-editor/tree-utils'
 import type { NavNode } from '@/lib/kb-editor/tree-utils'
 
+import { editorLogger, treeLogger } from '@/lib/logger'
 import { BlockPageEditor } from '@/components/kb-editor/BlockPageEditor'
 import type { BlockPageEditorHandle } from '@/components/kb-editor/BlockPageEditor'
 import { AccessControlPanel } from '@/components/kb-editor/AccessControlPanel'
@@ -264,8 +265,8 @@ function KBEditorPage() {
       setNewPageTitle('')
       setShowNewPage(false)
       setNewPageParent(null)
-    } catch {
-      // silently fail; tree refetch will show state
+    } catch (err) {
+      editorLogger.error('Page creation failed', { slug: path, err })
     }
   }
 
@@ -314,7 +315,8 @@ function KBEditorPage() {
         setSaveStatus('renamed')
         setTimeout(() => setSaveStatus('idle'), 2500)
         void refetchTree()
-      } catch {
+      } catch (err) {
+        editorLogger.error('Page rename failed', { from: currentSlug, to: newSlug, err })
         setSaveStatus('error')
         setTimeout(() => setSaveStatus('idle'), 3000)
       }
@@ -335,7 +337,8 @@ function KBEditorPage() {
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
       void refetchTree()
-    } catch {
+    } catch (err) {
+      editorLogger.error('Page save failed', { slug: currentSlug, err })
       setSaveStatus('error')
       setTimeout(() => setSaveStatus('idle'), 3000)
     }
@@ -363,7 +366,8 @@ function KBEditorPage() {
       if (!res.ok) throw new Error('Save failed')
       setAccessSaveStatus('saved')
       setTimeout(() => setAccessSaveStatus('idle'), 2000)
-    } catch {
+    } catch (err) {
+      editorLogger.error('Access control save failed', { path: selectedPath, err })
       setAccessSaveStatus('error')
       setTimeout(() => setAccessSaveStatus('idle'), 3000)
     }
@@ -389,8 +393,8 @@ function KBEditorPage() {
       if (!res.ok) throw new Error('Sidebar update failed')
       // Clear optimistic state — next refetch gives fresh data
       await refetchTree()
-    } catch {
-      // Revert on failure
+    } catch (err) {
+      treeLogger.error('Sidebar reorder failed, reverting', err)
       setLocalTree(previousTree)
     }
   }, [orgSlug, kbSlug, authHeader, localTree, tree, refetchTree])

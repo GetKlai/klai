@@ -15,6 +15,7 @@ import {
   ChevronUp,
   X,
   History,
+import { focusLogger } from '@/lib/logger'
   Info,
   RotateCcw,
 } from 'lucide-react'
@@ -301,7 +302,8 @@ function NotebookDetailPage() {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      focusLogger.error('Chat message failed', { notebookId, mode: chatMode, err })
       setChatError(m.app_focus_chat_error())
       setMessages((prev) => prev.filter((_, i) => i !== prev.length - 1))
     } finally {

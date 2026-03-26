@@ -2,13 +2,27 @@
 Zitadel management API client.
 All calls use the portal-api service account PAT — never exposed to the browser.
 """
+import logging
 
 import httpx
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class ZitadelClient:
+    @staticmethod
+    async def _log_response_errors(response: httpx.Response) -> None:
+        """Log error responses from Zitadel API."""
+        if response.is_error:
+            await response.aread()
+            logger.error(
+                "Zitadel API %s %s failed: status=%d, body=%s",
+                response.request.method, response.url.path,
+                response.status_code, response.text[:200],
+            )
+
     def __init__(self) -> None:
         self._http = httpx.AsyncClient(
             base_url=settings.zitadel_base_url,
@@ -17,6 +31,7 @@ class ZitadelClient:
                 "Content-Type": "application/json",
             },
             timeout=15.0,
+            event_hooks={"response": [self._log_response_errors]},
         )
 
     async def close(self) -> None:

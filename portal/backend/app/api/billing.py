@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from typing import Literal
 
@@ -14,6 +15,8 @@ from app.models.portal import PortalOrg, PortalUser
 from app.services.events import emit_event
 from app.services.moneybird import MoneybirdService
 from app.services.zitadel import zitadel
+
+logger = logging.getLogger(__name__)
 
 Plan = Literal["core", "professional", "complete", "free"]
 BillingCycle = Literal["monthly", "yearly"]
@@ -134,6 +137,7 @@ async def create_mandate(
                 send_invoices_to_email=body.billing_email,
             )
         except RuntimeError as exc:
+            logger.error("Moneybird contact creation failed for org %d: %s", org.id, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to create Moneybird contact: {exc}",
@@ -153,9 +157,12 @@ async def create_mandate(
         properties={"from_plan": old_plan, "to_plan": body.plan, "billing_cycle": body.billing_cycle},
     )
 
+    logger.info("Billing mandate requested for org %d, plan=%s", org.id, body.plan)
+
     try:
         mandate_url = await moneybird.get_mandate_url(org.moneybird_contact_id)
-    except RuntimeError:
+    except RuntimeError as exc:
+        logger.warning("Mandate URL fetch failed for org %d, falling back: %s", org.id, exc)
         # Moneybird Payments not yet available (BV not activated) — return null,
         # frontend shows manual-processing notice, billing_status is already set.
         mandate_url = None
@@ -212,6 +219,7 @@ async def invoice_portal(
     try:
         portal_url = await moneybird.get_invoice_portal_url(org.moneybird_contact_id)
     except RuntimeError as exc:
+        logger.warning("Invoice portal URL fetch failed for org %d: %s", org.id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to retrieve invoice portal URL: {exc}",
@@ -237,6 +245,7 @@ async def cancel_subscription(
     try:
         await moneybird.cancel_subscription(org.moneybird_subscription_id)
     except RuntimeError as exc:
+        logger.error("Subscription cancellation failed for org %d: %s", org.id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to cancel subscription: {exc}",
