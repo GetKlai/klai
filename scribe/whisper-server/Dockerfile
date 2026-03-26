@@ -11,7 +11,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir uv && \
     uv pip install --system --no-cache -r pyproject.toml
 
-COPY main.py ./
+COPY logging_setup.py main.py ./
 
 ENV WHISPER_MODEL=large-v3-turbo
 ENV WHISPER_DEVICE=cpu
