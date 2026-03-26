@@ -19,7 +19,7 @@ Author voice: Mark Vletter (see `klai-claude/rules/gtm/mark-tone-of-voice.md`)
 | A2 | The self-improving knowledge base | arch 8, arch 12 (gap detection, self-improving loop) | published |
 | A3 | Five conversations your company has, five pipelines you need | fund 12 (communication as knowledge source) | published |
 | A4 | Decisions deserve their own data model | fund 10 (Decision as 6th entity type) | published |
-| A5 | The 15-minute correction window | fund 12 meetings (FRAME, correction window, kappa=0.36) | planned |
+| A5 | The 15-minute correction window | fund 12 meetings (FRAME, correction window, kappa=0.36) | published |
 
 ### Series B: "Modelling knowledge" (mid: architects, knowledge managers)
 
