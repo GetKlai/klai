@@ -243,7 +243,7 @@ function ConnectorsSection({
       if (connector.connector_type === 'web_crawler') {
         config.base_url = editWebcrawlerConfig.base_url
         if (editWebcrawlerConfig.path_prefix) config.path_prefix = editWebcrawlerConfig.path_prefix
-        if (editWebcrawlerConfig.max_pages && editWebcrawlerConfig.max_pages !== '200') config.max_pages = Number(editWebcrawlerConfig.max_pages)
+        if (editWebcrawlerConfig.max_pages) config.max_pages = Number(editWebcrawlerConfig.max_pages)
       }
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
         method: 'PATCH',
