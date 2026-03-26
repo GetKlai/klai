@@ -884,6 +884,7 @@ services:
       CRAWL4AI_API_URL: http://crawl4ai:11235
       CRAWL4AI_INTERNAL_KEY: ${CRAWL4AI_INTERNAL_KEY}
       PORTAL_API_URL: http://portal-api:8010
+      PORTAL_CALLER_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
       LOG_LEVEL: INFO
     networks:
       - klai-net
