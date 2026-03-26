@@ -17,6 +17,16 @@ class Settings(BaseSettings):
     # Infinity reranker (optional — disabled when empty)
     reranker_url: str = ""
     reranker_model: str = "bge-reranker-v2-m3"
+    # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
+    litellm_url: str = "http://litellm:4000"
+    litellm_api_key: str = ""
+    enrichment_enabled: bool = True  # global kill switch
+    enrichment_model: str = "klai-fast"
+    enrichment_timeout: float = 15.0
+    enrichment_max_concurrent: int = 5
+    enrichment_max_document_tokens: int = 2000
+    # Qdrant collection name — set to klai_knowledge_v2 after migration
+    qdrant_collection: str = "klai_knowledge"
 
     model_config = {"env_file": ".env"}
 
