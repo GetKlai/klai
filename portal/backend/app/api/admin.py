@@ -23,9 +23,6 @@ from app.models.products import PortalUserProduct
 from app.services.audit import log_event
 from app.services.zitadel import zitadel
 
-log = logging.getLogger(__name__)
-
-        logger.warning("Admin auth: userinfo fetch failed: %s", exc)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -40,6 +37,7 @@ async def _get_caller_org(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
+        logger.warning("Admin auth: userinfo fetch failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     zitadel_user_id = info.get("sub")
@@ -699,7 +697,7 @@ async def change_plan(
     all_assignments = revoked_result.scalars().all()
     for row in all_assignments:
         if row.product not in new_products:
-            log.info(
+            logger.info(
                 "Plan downgrade: revoking product %s from user %s (org %s, %s -> %s)",
                 row.product,
                 row.zitadel_user_id,
@@ -714,7 +712,7 @@ async def change_plan(
     all_group_assignments = group_revoked_result.scalars().all()
     for row in all_group_assignments:
         if row.product not in new_products:
-            log.info(
+            logger.info(
                 "Plan downgrade: revoking group product %s from group %s (org %s, %s -> %s)",
                 row.product,
                 row.group_id,
@@ -878,7 +876,6 @@ async def get_audit_log(
     offset = (page - 1) * size
     result = await db.execute(query.order_by(PortalAuditLog.created_at.desc()).offset(offset).limit(size))
     items = result.scalars().all()
-import logging
     return AuditLogResponse(
         items=[AuditLogEntry.model_validate(e) for e in items],
         total=total,
