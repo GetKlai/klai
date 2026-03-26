@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     caddy_tenants_path: str = "/caddy/tenants"  # per-tenant .caddyfile dir (caddy-tenants volume)
     librechat_container_data_path: str = "/librechat"  # base dir for per-tenant librechat files
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
-    librechat_image: str = "ghcr.io/danny-avila/librechat:v0.8.3-rc2"  # pinned image for tenants
+    librechat_image: str = "ghcr.io/danny-avila/librechat:latest"
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy reload
 
     # Internal service-to-service secret (used by klai-mailer → portal)
@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
+
+    # Knowledge ingest service (internal)
+    knowledge_ingest_url: str = "http://knowledge-ingest:8000"
+    knowledge_ingest_secret: str = ""  # PORTAL_API_KNOWLEDGE_INGEST_SECRET
 
     # Knowledge / Qdrant
     qdrant_url: str = "http://qdrant:6333"

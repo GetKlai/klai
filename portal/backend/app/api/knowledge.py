@@ -1,8 +1,8 @@
 """
-GET /api/knowledge/stats
-
-Returns the number of indexed chunks (Qdrant vectors) for the current org,
-split by personal, org, and group scope.
+Knowledge API routes:
+  GET    /api/knowledge/stats                        — chunk counts by scope
+  GET    /api/knowledge/personal/items               — list personal artifacts
+  DELETE /api/knowledge/personal/items/{artifact_id}  — delete personal artifact
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_product
+from app.api.dependencies import _get_caller_org, require_product
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.access import get_accessible_kb_slugs
@@ -156,3 +156,55 @@ async def get_knowledge_stats(
     group_count = sum(results[2:] if personal_filter is not None else results[1:])
 
     return KnowledgeStats(personal_count=personal_count, org_count=org_count, group_count=group_count)
+
+
+# -- Personal knowledge items (proxy to knowledge-ingest) --------------------
+
+
+@router.get("/personal/items", dependencies=[Depends(require_product("knowledge"))])
+async def list_personal_items(
+    limit: int = 50,
+    offset: int = 0,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """List personal knowledge artifacts for the authenticated user."""
+    zitadel_user_id, org, _caller = await _get_caller_org(credentials, db)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{settings.knowledge_ingest_url}/knowledge/v1/personal/items",
+            headers={"x-internal-secret": settings.knowledge_ingest_secret},
+            params={
+                "org_id": org.zitadel_org_id,
+                "user_id": zitadel_user_id,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+    if not resp.is_success:
+        logger.warning("knowledge-ingest list items failed: HTTP %s", resp.status_code)
+        raise HTTPException(status_code=resp.status_code, detail="Failed to list personal items")
+    return resp.json()
+
+
+@router.delete("/personal/items/{artifact_id}", dependencies=[Depends(require_product("knowledge"))])
+async def delete_personal_item(
+    artifact_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete a personal knowledge artifact for the authenticated user."""
+    zitadel_user_id, org, _caller = await _get_caller_org(credentials, db)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.delete(
+            f"{settings.knowledge_ingest_url}/knowledge/v1/personal/items/{artifact_id}",
+            headers={"x-internal-secret": settings.knowledge_ingest_secret},
+            params={
+                "org_id": org.zitadel_org_id,
+                "user_id": zitadel_user_id,
+            },
+        )
+    if not resp.is_success:
+        logger.warning("knowledge-ingest delete item failed: HTTP %s", resp.status_code)
+        raise HTTPException(status_code=resp.status_code, detail="Failed to delete personal item")
+    return resp.json()

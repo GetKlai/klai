@@ -42,6 +42,65 @@ async def create_artifact(
     return artifact_id
 
 
+async def list_personal_artifacts(
+    org_id: str,
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    """List active personal artifacts for a user, newest first."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT id, path, assertion_mode, created_at
+        FROM knowledge.artifacts
+        WHERE org_id = $1 AND user_id = $2
+          AND kb_slug = 'personal'
+          AND belief_time_end = $3
+        ORDER BY created_at DESC
+        LIMIT $4 OFFSET $5
+        """,
+        org_id, user_id, _SENTINEL, limit, offset,
+    )
+    return [dict(r) for r in rows]
+
+
+async def count_personal_artifacts(org_id: str, user_id: str) -> int:
+    """Count active personal artifacts for a user."""
+    pool = await get_pool()
+    row = await pool.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM knowledge.artifacts
+        WHERE org_id = $1 AND user_id = $2
+          AND kb_slug = 'personal'
+          AND belief_time_end = $3
+        """,
+        org_id, user_id, _SENTINEL,
+    )
+    return row or 0
+
+
+async def get_personal_artifact(
+    artifact_id: str,
+    org_id: str,
+    user_id: str,
+) -> dict | None:
+    """Get a single active personal artifact, or None if not found / wrong user."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT id, path
+        FROM knowledge.artifacts
+        WHERE id = $1 AND org_id = $2 AND user_id = $3
+          AND kb_slug = 'personal'
+          AND belief_time_end = $4
+        """,
+        artifact_id, org_id, user_id, _SENTINEL,
+    )
+    return dict(row) if row else None
+
+
 async def soft_delete_artifact(org_id: str, kb_slug: str, path: str) -> None:
     """Set belief_time_end = now for all active artifacts matching this path."""
     now = int(time.time())

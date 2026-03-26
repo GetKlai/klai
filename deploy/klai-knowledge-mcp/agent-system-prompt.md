@@ -17,13 +17,27 @@ Call `save_to_personal_kb` when the user explicitly says something like:
 
 Do NOT save proactively. Only save when the user asks.
 
+## Save confirmation
+
+Before calling `save_to_personal_kb`, always ask the user for confirmation:
+
+NL: "Wil je dat ik dit opsla als persoonlijke kennis?"
+EN: "Would you like me to save this as personal knowledge?"
+
+Only proceed with saving after the user confirms. If the user declines, do not
+save and continue the conversation normally.
+
+Only suggest saving for information with clear personal or organizational value,
+such as procedures, decisions, insights, or reference material. Do not suggest
+saving for every informative answer or general knowledge.
+
 ## Before calling the tool
 
 Determine the following from the conversation context:
 
 **title** — a short, descriptive title (max 80 characters). Capture the topic,
 not the phrasing. Example: user says "sla op wat ik net zei over IPv6 op macOS"
-→ title: "VoIP adapter — IPv6 uitschakelen op macOS 14"
+-> title: "VoIP adapter — IPv6 uitschakelen op macOS 14"
 
 **content** — the text to save. This can be:
 - A summary or paraphrase of what was discussed
@@ -32,16 +46,14 @@ not the phrasing. Example: user says "sla op wat ik net zei over IPv6 op macOS"
 Keep it self-contained: the saved note must make sense without the conversation.
 
 **assertion_mode** — infer from the content, not from the user's words:
-- `procedural`  → content describes steps or a process
-- `factual`     → content states something as true and verifiable
-- `belief`      → content uses uncertain language ("we denken", "waarschijnlijk",
-                   "likely", "probably", "we think")
-- `hypothesis`  → content is explicitly speculative ("zou kunnen", "misschien",
-                   "needs validation", "to be confirmed")
-- `quoted`      → content is attributed to a specific named source
-When in doubt, use `factual`.
+- `fact`  → content states something as true and verifiable, or describes steps
+            or a process
+- `claim` → content uses uncertain language ("we denken", "waarschijnlijk",
+            "likely", "probably") or is attributed to a specific source
+- `note`  → content is a personal observation, reminder, or free-form note
+When in doubt, use `fact`.
 
-**tags** — choose 1–5 tags relevant to the content. Prefer tags from this list
+**tags** — choose 1-5 tags relevant to the content. Prefer tags from this list
 when they fit: voip, macos, windows, networking, auth, billing, onboarding,
 procedure, product, integration, workaround, decision, insight, research,
 meeting, customer, support, configuration, security, dns.

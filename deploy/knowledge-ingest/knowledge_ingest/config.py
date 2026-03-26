@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # Max chars per chunk (roughly 300-400 tokens for BGE-M3)
     chunk_size: int = 1500
     chunk_overlap: int = 200
+    # Infinity reranker (optional — disabled when empty)
+    reranker_url: str = ""
+    reranker_model: str = "bge-reranker-v2-m3"
 
     model_config = {"env_file": ".env"}
 
