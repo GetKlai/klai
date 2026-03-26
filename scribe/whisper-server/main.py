@@ -113,8 +113,10 @@ def _run_transcription(audio_bytes: bytes, language: str | None) -> dict:
             language=language or None,
             beam_size=5,
         )
-        text_parts = [seg.text for seg in segments]
+        # Consume the generator into a list before building output
+        segments_list = list(segments)
         elapsed = time.monotonic() - t0
+        text_parts = [seg.text for seg in segments_list]
         full_text = " ".join(text_parts).strip()
         return {
             "text": full_text,
@@ -122,6 +124,10 @@ def _run_transcription(audio_bytes: bytes, language: str | None) -> dict:
             "duration": info.duration,
             "inference_time_seconds": round(elapsed, 3),
             "model": WHISPER_MODEL,
+            "segments": [
+                {"start": round(seg.start, 3), "end": round(seg.end, 3), "text": seg.text.strip()}
+                for seg in segments_list
+            ],
         }
     finally:
         tmp_path.unlink(missing_ok=True)

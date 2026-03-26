@@ -24,7 +24,7 @@ The `knowledge.artifacts` table has no `content_type` field. The `extra` JSONB f
 
 ## What this SPEC builds
 
-Two things: a content-type-aware enrichment parameter system (replacing the `synthesis_depth <= 1` heuristic), and two intake adapters (Scribe transcripts, web crawler).
+Two things: a content-type-aware enrichment parameter system (replacing the `synthesis_depth <= 1` heuristic), and three intake adapters (meeting transcripts via Vexa, Scribe audio transcripts, web crawler).
 
 ### Part 1: Content-type parameter profiles
 
@@ -37,12 +37,13 @@ Each profile specifies:
 - Target chunk size range
 - What HyPE questions should focus on (prompt instruction)
 
-### Part 2: Two intake adapters
+### Part 2: Three intake adapters
 
-1. **Scribe adapter** -- ingests transcripts from Scribe (meeting transcripts and free-form recordings)
-2. **Web crawler adapter** -- crawls external knowledge bases and PDFs for bulk ingestion
+1. **Meeting adapter (Vexa)** -- ingests meeting transcripts from VexaMeeting records (Vexa bot joins a meeting call and produces diarized segments)
+2. **Scribe adapter** -- ingests audio upload and recording transcripts from the scribe-api (Whisper-based, no speaker labels)
+3. **Web crawler adapter** -- crawls external knowledge bases and PDFs for bulk ingestion
 
-Both adapters produce artifacts with a `content_type` and adapter-specific metadata in a new `extra` JSONB column on `knowledge.artifacts`, then call the existing ingest pipeline.
+All three adapters produce artifacts with a `content_type` and adapter-specific metadata in a new `extra` JSONB column on `knowledge.artifacts`, then call the existing ingest pipeline.
 
 ---
 
@@ -96,20 +97,23 @@ The profile stores a callable `hype_enabled(synthesis_depth: int) -> bool` rathe
 
 The profile specifies `chunk_tokens_min` and `chunk_tokens_max` as guidance for the chunker. The actual chunking logic remains in `chunker.py` -- the profile does not replace the chunker. For transcripts, chunking is done by the adapter (speaker-turn clusters), not by `chunker.chunk_markdown`. The profile's chunk size range is used by the adapter to decide cluster size.
 
-### D6: Scribe adapter detects meeting vs. 1-on-1 by speaker count
+### D6: Meeting adapter uses Vexa speaker segments; Scribe adapter uses recording_type
 
-Scribe provides speaker-diarized transcripts with speaker labels. The adapter uses a simple heuristic:
-- 3 or more unique speakers --> `meeting_transcript`
-- 2 or fewer unique speakers --> `1on1_transcript`
-- If Scribe metadata includes a `recording_type` field, prefer that over speaker count
+Two separate detection mechanisms for two separate systems:
 
-This avoids building a classifier. The heuristic is correct for >95% of cases (a 2-person meeting is functionally a 1-on-1 for knowledge extraction purposes). If Scribe evolves its metadata, the adapter can be updated without schema changes.
+- **Meeting adapter (Vexa)**: Speaker labels come directly from Vexa's diarized transcript segments (`{speaker: "Mark Vletter", text: "...", start: 0.0, end: 4.2}`). `content_type` is always `meeting_transcript`. Meetings are always multi-party -- Vexa bot joins a meeting call and captures speaker-attributed audio. No heuristic is needed.
 
-### D7: Scribe adapter chunks by speaker-turn clusters, not fixed tokens
+- **Scribe adapter**: No speaker labels available. Whisper (used by Scribe) does not perform speaker diarization. `content_type` is determined by the `recording_type` field the user provides when summarizing: `"meeting"` → `meeting_transcript`, `"recording"` → `1on1_transcript`. This field already exists in the Scribe API.
 
-Transcript chunking by fixed token windows breaks mid-sentence and mid-turn, destroying speaker attribution. The adapter groups consecutive speaker turns into clusters of 3-5 turns per chunk, respecting the profile's `chunk_tokens_max` as a soft ceiling.
+The earlier assumption that "Scribe provides speaker-diarized transcripts" was incorrect. Whisper does not perform speaker diarization. Vexa (the meeting bot) does, because it captures audio per-participant from the meeting platform.
 
-The chunker in `chunker.py` is not used for transcripts. The adapter produces pre-chunked text and passes it directly to the ingest pipeline with `skip_chunking=True` (a new flag on the ingest request model).
+### D7: Meeting adapter chunks by speaker-turn clusters; Scribe adapter chunks by segment clusters
+
+Transcript chunking by fixed token windows breaks mid-sentence and mid-turn, destroying speaker attribution or segment coherence. Both transcript adapters produce pre-chunked text and pass it directly to the ingest pipeline with `skip_chunking=True` (a new flag on the ingest request model). The chunker in `chunker.py` is not used for transcripts.
+
+**Meeting adapter (Vexa)**: Groups consecutive speaker turns into clusters of 3-5 turns per chunk. Speaker labels are available from Vexa's diarized segments, so each chunk preserves speaker attribution. Respects the profile's `chunk_tokens_max` as a soft ceiling (max 400 tokens per chunk).
+
+**Scribe adapter**: Groups consecutive Whisper segments into clusters of 3-5 segments per chunk using time-based boundaries. No speaker attribution is available. Falls back to paragraph splitting of `text` when `segments_json` is absent.
 
 ### D8: Web crawler uses crawl4ai, not Playwright
 
@@ -203,7 +207,7 @@ The scribe-api stores segments in a new `segments_json` column on `scribe.transc
 
 The Scribe knowledge adapter uses `segments_json` when available, falling back to paragraph-split of `text` when not. The adapter clusters 3-5 consecutive segments into one chunk, targeting 150-400 tokens per chunk (consistent with D7 and Bevinding 14 from KB-005 research).
 
-Note: faster-whisper segments do NOT include speaker labels. Speaker diarization is a future concern (requires pyannote.audio or equivalent). Segment clustering is time-based, without speaker attribution.
+Note: faster-whisper segments do NOT include speaker labels. The Scribe adapter uses time-based segment clustering without speaker attribution. The meeting adapter (Vexa) does have speaker labels -- see D6.
 
 ### D14: Meeting extraction prompt enriched for knowledge-grade structured output
 
@@ -512,7 +516,62 @@ In `ingest_document()`:
 3. If `skip_chunking` is True, use `req.content` as pre-chunked list (adapter already chunked)
 4. Pass `content_type` to the Procrastinate enrichment task
 
-### New: `adapters/scribe.py` -- Scribe transcript adapter
+### New: `adapters/meeting.py` -- Meeting (Vexa) adapter
+
+```python
+# knowledge_ingest/adapters/meeting.py
+
+from knowledge_ingest.ingest import ingest_document
+from knowledge_ingest.models import IngestRequest
+
+async def ingest_vexa_meeting(
+    org_id: str,
+    kb_slug: str,
+    meeting_id: int,  # VexaMeeting ID from portal-api DB
+) -> str:
+    """
+    Process a VexaMeeting transcript into the knowledge pipeline.
+
+    Steps:
+    1. Read transcript_segments (JSONB) from portal.vexa_meetings via portal-api
+    2. Cluster segments by speaker turn into chunks (3-5 turns, max 400 tokens)
+    3. Call ingest_document with skip_chunking=True and content_type="meeting_transcript"
+
+    content_type is always "meeting_transcript" -- meetings are always multi-party.
+    Speaker labels are available from Vexa's diarized segments.
+    """
+    meeting = await _fetch_vexa_meeting(meeting_id)
+    segments = meeting["transcript_segments"]  # list of {start, end, text, speaker, ...}
+    chunks = _chunk_by_speaker_turns(segments, max_tokens=400)
+    participants = _extract_participants(segments)
+    full_text = " ".join(seg["text"] for seg in segments)
+
+    return await ingest_document(IngestRequest(
+        org_id=org_id,
+        kb_slug=kb_slug,
+        path=f"meeting/{meeting_id}",
+        content=full_text,
+        title=meeting.get("meeting_title", "Untitled meeting"),
+        source_type="connector",
+        content_type="meeting_transcript",
+        skip_chunking=True,
+        synthesis_depth=0,
+        extra={
+            "participants": participants,
+            "platform": meeting.get("platform"),
+            "meeting_title": meeting.get("meeting_title"),
+            "meeting_id": meeting_id,
+        },
+    ))
+
+def _chunk_by_speaker_turns(segments: list[dict], max_tokens: int = 400) -> list[str]:
+    """Group consecutive speaker turns into clusters of 3-5 turns.
+    Speaker labels are available from Vexa segments ({speaker: "Name", text: "..."}).
+    Respects max_tokens as a soft ceiling -- never splits mid-turn."""
+    ...
+```
+
+### New: `adapters/scribe.py` -- Scribe audio transcript adapter
 
 ```python
 # knowledge_ingest/adapters/scribe.py
@@ -523,52 +582,53 @@ from knowledge_ingest.models import IngestRequest
 async def ingest_scribe_transcript(
     org_id: str,
     kb_slug: str,
-    transcript: dict,  # Scribe webhook payload or API response
+    transcription_id: int,  # scribe.transcriptions row ID
 ) -> str:
     """
-    Process a Scribe transcript into the knowledge pipeline.
+    Process a Scribe transcription into the knowledge pipeline.
 
     Steps:
-    1. Extract transcript text with speaker labels and timestamps
-    2. Extract participant metadata (names, roles if available)
-    3. Detect content_type by speaker count
-    4. Chunk by speaker-turn clusters (3-5 consecutive turns)
-    5. Call ingest_document with skip_chunking=True
+    1. Read transcription record from scribe.transcriptions (via scribe-api)
+    2. Detect content_type from recording_type field ("meeting" or "recording")
+    3. Chunk by segment clusters using segments_json when available;
+       fall back to paragraph splitting of text when not
+    4. Call ingest_document with skip_chunking=True
+
+    No speaker labels available -- Whisper does not diarize.
+    content_type is authoritative from recording_type, no speaker count heuristic.
     """
-    speakers = _extract_unique_speakers(transcript)
-    content_type = _detect_content_type(speakers, transcript)
-    participants = _extract_participants(transcript)
-    chunks = _chunk_by_speaker_turns(transcript, max_tokens=400)
-    full_text = _extract_full_text(transcript)
+    transcription = await _fetch_scribe_transcription(transcription_id)
+    content_type = _detect_content_type(transcription)
+    chunks = _chunk_by_segments(transcription, max_tokens=400)
+    full_text = transcription["text"]
 
     return await ingest_document(IngestRequest(
         org_id=org_id,
         kb_slug=kb_slug,
-        path=f"scribe/{transcript['id']}",
+        path=f"scribe/{transcription_id}",
         content=full_text,
-        title=transcript.get("title", "Untitled recording"),
+        title=transcription.get("title", "Untitled recording"),
         source_type="connector",
         content_type=content_type,
         skip_chunking=True,
         synthesis_depth=0,
         extra={
-            "participants": [{"name": p.name, "role": p.role} for p in participants],
-            "recording_duration_seconds": transcript.get("duration"),
-            "scribe_id": transcript["id"],
+            "recording_duration_seconds": transcription.get("duration_seconds"),
+            "scribe_id": transcription_id,
         },
     ))
 
-def _detect_content_type(speakers: list[str], transcript: dict) -> str:
-    if transcript.get("recording_type"):
-        mapping = {"meeting": "meeting_transcript", "recording": "1on1_transcript"}
-        if transcript["recording_type"] in mapping:
-            return mapping[transcript["recording_type"]]
-    return "meeting_transcript" if len(speakers) >= 3 else "1on1_transcript"
+def _detect_content_type(transcription: dict) -> str:
+    """Use recording_type as the authoritative signal -- no speaker count heuristic."""
+    mapping = {"meeting": "meeting_transcript", "recording": "1on1_transcript"}
+    return mapping.get(transcription.get("recording_type", ""), "meeting_transcript")
 
-def _chunk_by_speaker_turns(transcript: dict, max_tokens: int = 400) -> list[str]:
-    """Group consecutive speaker turns into clusters of 3-5 turns.
-    Respects max_tokens as a soft ceiling -- never splits mid-turn."""
-    ...
+def _chunk_by_segments(transcription: dict, max_tokens: int = 400) -> list[str]:
+    """Cluster 3-5 consecutive Whisper segments per chunk (time-based, no speaker labels).
+    Falls back to paragraph splitting when segments_json is absent."""
+    if transcription.get("segments_json"):
+        return _cluster_segments(transcription["segments_json"], max_tokens)
+    return _split_paragraphs(transcription["text"], max_tokens)
 ```
 
 ### New: `adapters/crawler.py` -- web crawler adapter
@@ -751,13 +811,29 @@ Key properties of this approach:
 2. Replace current `qdrant_store.search()` with three-leg `query_points()` call
 3. Reranker pipeline (from KB-005) runs after RRF fusion, unchanged
 
+### D17: Knowledge ingestion is triggered by explicit human action, never automatic
+
+Adding a transcript or meeting to the organizational knowledge layer is a deliberate decision, not an automatic side-effect of recording or summarizing. Users must explicitly choose:
+1. Which knowledge base the content should be added to
+2. When they want to add it (a completed transcript may not always be worth storing)
+
+Two trigger mechanisms are in scope for KB-006:
+
+**Option A -- Manual action per item**: A "Add to Knowledge" button on the meeting detail page and on the Scribe transcript detail page. The user selects the target KB and confirms. This calls a new portal-api endpoint `POST /api/bots/{meeting_id}/ingest` (for meetings) or `POST /v1/transcriptions/{id}/ingest` (for Scribe), which calls the respective adapter.
+
+**Option B -- Org-level default setting**: An org setting `auto_ingest_meetings: bool` and `auto_ingest_scribe: bool` with a default KB slug. When enabled, completed meetings/transcripts are automatically queued for ingestion to the default KB. This is an opt-in per org, not a system default.
+
+Both options call the same adapter code. The trigger mechanism lives in the portal-api, not in knowledge-ingest.
+
+For KB-006 implementation scope: implement **Option A only** (manual action per item). Option B can be added in a later SPEC once the manual flow is validated.
+
 ---
 
 ## What is NOT in scope
 
 | Item | Why not now |
 |---|---|
-| Speaker diarization / speaker identification | Scribe handles this upstream; adapter receives pre-diarized transcripts |
+| Speaker diarization for Scribe (audio uploads) | Whisper does not diarize; diarization for Scribe recordings is a future concern requiring pyannote.audio or equivalent |
 | Pronoun resolution in adapter | Handled by the enrichment LLM prompt (D11); not an adapter concern |
 | Auto-detection of content type for unknown sources | Future SPEC; requires classifier and training data |
 | Calendar integration for meeting metadata | Future SPEC; enriches participant info but not required for MVP |
@@ -775,10 +851,10 @@ Key properties of this approach:
 | AC-2 | **When** a document is ingested with `content_type = "kb_article"` and `synthesis_depth <= 1`, **then** `vector_questions` is populated. **When** `synthesis_depth > 1`, **then** `vector_questions` is NOT populated. | Event-driven |
 | AC-3 | **When** a document is ingested with `content_type = "unknown"`, **then** `vector_questions` is never populated and the `first_n` context strategy is used | Event-driven |
 | AC-4 | The `knowledge.artifacts` table **shall** have a `content_type TEXT NOT NULL DEFAULT 'unknown'` column and an `extra JSONB NOT NULL DEFAULT '{}'` column after migration 005 | Ubiquitous |
-| AC-5 | **When** a Scribe webhook payload with 3+ unique speakers is ingested via the Scribe adapter, **then** the artifact's `content_type` is `meeting_transcript` | Event-driven |
-| AC-6 | **When** a Scribe webhook payload with 2 or fewer unique speakers is ingested, **then** the artifact's `content_type` is `1on1_transcript` | Event-driven |
-| AC-7 | **When** a Scribe transcript is ingested, **then** chunks are created by speaker-turn clusters (3-5 turns), NOT by fixed-token splitting | Event-driven |
-| AC-8 | **When** a Scribe transcript is ingested, **then** participant metadata is stored in `knowledge.artifacts.extra` as `{"participants": [...]}` and propagated to the Qdrant payload | Event-driven |
+| AC-5 | **When** a meeting is ingested via the meeting adapter (Vexa), **then** the artifact's `content_type` is always `meeting_transcript` | Event-driven |
+| AC-6 | **When** a Scribe transcript with `recording_type = "meeting"` is ingested via the Scribe adapter, **then** `content_type = "meeting_transcript"`. **When** `recording_type = "recording"`, **then** `content_type = "1on1_transcript"` | Event-driven |
+| AC-7 | **When** a meeting is ingested via the meeting adapter, **then** chunks are created by speaker-turn clusters (3-5 turns), NOT by fixed-token splitting | Event-driven |
+| AC-8 | **When** a meeting is ingested via the meeting adapter, **then** participant metadata is stored in `knowledge.artifacts.extra` as `{"participants": [...], "platform": "...", "meeting_title": "..."}` and propagated to the Qdrant payload | Event-driven |
 | AC-9 | **When** `POST /knowledge/v1/crawl` is called with a valid configuration, **then** a Procrastinate job is enqueued on `enrich-bulk` and the endpoint returns immediately with a job ID and `status: "pending"` | Event-driven |
 | AC-10 | **When** the crawler processes an HTML page, **then** the artifact's `content_type` is `kb_article` and `synthesis_depth` is `1` | Event-driven |
 | AC-11 | **When** the crawler encounters a PDF (detected via Content-Type header), **then** the artifact's `content_type` is `pdf_document`, text is extracted via pypdf/pdfminer, and front matter (title + TOC) is stored in `extra` | Event-driven |
@@ -805,13 +881,21 @@ Key properties of this approach:
 
 ## Validation approach
 
+### Meeting adapter validation (Vexa)
+
+1. **Unit test with fixture meeting**: Create a test fixture with a VexaMeeting transcript (5 speakers, 45-minute call, diarized segments with `{speaker, text, start, end}`). Verify speaker-turn chunking (3-5 turns per chunk), content_type always set to `meeting_transcript`, and participant metadata extraction.
+
+2. **Integration test**: Send a fixture meeting through the full pipeline (adapter --> ingest --> enrichment --> Qdrant). Verify that enriched chunks use `rolling_window` context strategy and that `vector_questions` is populated.
+
+3. **Participant metadata**: Verify that `extra.participants`, `extra.platform`, and `extra.meeting_title` are stored and propagated to the Qdrant payload.
+
 ### Scribe adapter validation
 
-1. **Unit test with fixture transcript**: Create a test fixture with a Scribe-format transcript (5 speakers, 45 minutes). Verify speaker count detection, content_type assignment, chunk boundaries (speaker-turn clusters), and participant metadata extraction.
+1. **Unit test with fixture transcription**: Create test fixtures with `recording_type = "meeting"` and `recording_type = "recording"`. Verify correct `content_type` assignment for each. Verify segment-cluster chunking when `segments_json` is present and paragraph-split fallback when absent.
 
-2. **Integration test**: Send a fixture transcript through the full pipeline (adapter --> ingest --> enrichment --> Qdrant). Verify that enriched chunks use `rolling_window` context strategy and that `vector_questions` is populated.
+2. **Integration test**: Send a fixture transcription through the full pipeline (adapter --> ingest --> enrichment --> Qdrant). Verify that `content_type = "meeting_transcript"` transcriptions use `rolling_window` context strategy and that `vector_questions` is populated.
 
-3. **2-speaker edge case**: Verify that a 2-speaker transcript is classified as `1on1_transcript` and uses the correct profile parameters.
+3. **recording_type fallback**: Verify that a transcription with missing or unknown `recording_type` defaults gracefully (does not raise, assigns a valid content_type).
 
 ### Crawler adapter validation
 

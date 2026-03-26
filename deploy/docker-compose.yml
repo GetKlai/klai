@@ -561,6 +561,29 @@ services:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
 
+  bge-m3-sparse:
+    build: ./bge-m3-sparse
+    restart: unless-stopped
+    environment:
+      MODEL_NAME: BAAI/bge-m3
+      HF_HOME: /models
+    volumes:
+      - tei-models:/models
+    networks:
+      - klai-net
+    # NOT exposed via Caddy — internal Docker network only
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
@@ -786,6 +809,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       TEI_URL: http://tei:8080
+      SPARSE_EMBED_URL: http://bge-m3-sparse:8001
       GITEA_URL: http://gitea:3000
       GITEA_TOKEN: ${GITEA_ADMIN_TOKEN}
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
@@ -797,6 +821,7 @@ services:
     depends_on:
       - qdrant
       - tei
+      - bge-m3-sparse
       - postgres
 
   # ─── Klai Connector (external source sync to knowledge layer) ───────────────

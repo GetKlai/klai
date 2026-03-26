@@ -22,4 +22,6 @@ class Transcription(Base):
     provider = Column(VARCHAR(64), nullable=False)
     model = Column(VARCHAR(128), nullable=False)
     summary_json = Column(JSON, nullable=True)
+    recording_type = Column(VARCHAR(32), nullable=True)
+    segments_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow)

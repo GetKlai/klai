@@ -8,6 +8,7 @@ Transcription API endpoints:
   PATCH /v1/transcriptions/{id}    - update name
   DELETE /v1/transcriptions/{id}   - delete transcript
   POST /v1/transcriptions/{id}/summarize - AI summarization
+  POST /v1/transcriptions/{id}/ingest    - ingest into knowledge base
 """
 import asyncio
 import logging
@@ -45,6 +46,8 @@ class TranscriptionDraft(BaseModel):
     inference_time_seconds: float | None = None
     provider: str
     model: str
+    segments: list[dict] | None = None  # whisper segment boundaries
+    recording_type: str | None = None  # "meeting" or "recording"
 
 
 class TranscriptionResponse(BaseModel):
@@ -146,6 +149,8 @@ async def save_transcription(
         inference_time_seconds=body.inference_time_seconds or 0,
         provider=body.provider,
         model=body.model,
+        recording_type=body.recording_type,
+        segments_json=body.segments,
         created_at=datetime.utcnow(),
     )
     db.add(record)
@@ -346,3 +351,43 @@ async def summarize_transcription(
     await db.refresh(record)
 
     return SummarizeResponse(summary_json=record.summary_json)
+
+
+# -- POST /v1/transcriptions/{id}/ingest --------------------------------------
+
+class IngestToKBRequest(BaseModel):
+    kb_slug: str
+    org_id: str
+
+
+class IngestToKBResponse(BaseModel):
+    artifact_id: str
+    status: str
+
+
+@router.post("/transcriptions/{txn_id}/ingest", response_model=IngestToKBResponse)
+async def ingest_transcription_to_kb(
+    txn_id: str,
+    body: IngestToKBRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> IngestToKBResponse:
+    """Add a transcription to a knowledge base."""
+    from app.services.knowledge_adapter import ingest_scribe_transcript  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Transcription).where(
+            Transcription.id == txn_id,
+            Transcription.user_id == user_id,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Transcript niet gevonden")
+
+    artifact_id = await ingest_scribe_transcript(
+        org_id=body.org_id,
+        kb_slug=body.kb_slug,
+        transcription=record,
+    )
+    return IngestToKBResponse(artifact_id=artifact_id, status="ok")
