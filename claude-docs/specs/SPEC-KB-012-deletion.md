@@ -1,6 +1,6 @@
 # SPEC-KB-012: Knowledge Base Deletion
 
-> Status: DRAFT — 2026-03-26
+> Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-003-app-layer.md (KB detail page, owner role)
 
@@ -374,3 +374,47 @@ This table is append-only. No rows are ever deleted from it.
 - Restoring / undeleting a KB
 - Bulk deletion of multiple KBs
 - Org-level deletion (which would cascade to all KBs — separate SPEC)
+
+---
+
+## Implementation Notes
+
+Implemented 2026-03-26. Commits on `main`:
+- `feat(knowledge): full KB deletion cascade with tombstone (SPEC-KB-012)`
+- `fix(knowledge): fix floating promises in DeleteKbModal`
+- `fix(knowledge): fix alembic migration merge heads for kb tombstones`
+- `fix(portal-api): regenerate uv.lock to fix duplicate motor package entries`
+- `fix(portal-api): use log.exception in deprovision_kb except blocks (TRY400)`
+- `feat(knowledge): move danger zone to 4th Settings tab (owner-only)`
+- `fix(knowledge): replace "Gitea repository" with user-friendly label in delete modal`
+
+### Deviations from SPEC
+
+**F6.1 — Danger zone placement:** The danger zone was moved from "bottom of the
+page" to a dedicated 4th tab ("Instellingen") visible only to KB owners. This
+improves UX by separating destructive actions from operational content.
+
+**Modal copy — Gitea label:** The modal lists "Docs pagina's en
+versiegeschiedenis" instead of "Gitea repository" (which was not meaningful to
+end users).
+
+**F6.7 — Retry option:** On 502 error the modal stays open and shows the error
+message, but does not show an explicit retry button. The user can re-click the
+confirm button to retry after clearing the error.
+
+**knowledge-ingest (F2.1 / F3.2):** Ingest items live only in Qdrant; there is
+no separate ingest store for KB items. The Qdrant delete in Phase 1 covers them.
+The ingest cleanup step (D5) was confirmed unnecessary and not implemented.
+
+**docs-app DELETE endpoint:** The endpoint `DELETE
+/api/orgs/{org_slug}/kbs/{kb_slug}` already existed in docs-app. No new endpoint
+was needed; `deprovision_kb()` in `docs_client.py` calls it directly.
+
+**org_id type:** The SPEC data model shows `org_id VARCHAR`. The actual
+implementation uses `org_id INTEGER` (matching `portal_orgs.id`) with a proper
+FK constraint.
+
+**Alembic migration:** The migration uses `down_revision` as a tuple of three
+existing heads `("b4c5d6e7f8g9", "b5c6d7e8f9a0", "c4d5e6f7a8b9")` — a merge
+migration. The migration was applied directly via psql due to a pycache
+duplicate-revision issue, then stamped with `alembic stamp a3b4c5d6e7f8`.
