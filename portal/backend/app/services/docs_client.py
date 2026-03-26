@@ -79,7 +79,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            log.error(
+            log.exception(
                 "KB deprovisioning failed for org=%s kb=%s: %s %s",
                 org_slug,
                 kb_slug,
@@ -91,7 +91,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
                 detail="Docs/Gitea cleanup failed",
             ) from exc
         except httpx.ConnectError as exc:
-            log.error("KB deprovisioning connect error for org=%s kb=%s: %s", org_slug, kb_slug, exc)
+            log.exception("KB deprovisioning connect error for org=%s kb=%s", org_slug, kb_slug)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Docs/Gitea cleanup failed",
