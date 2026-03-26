@@ -485,7 +485,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             logger.warning("Could not create system groups for %s: %s", slug, exc)
 
     except Exception as exc:
-        logger.error("Provisioning failed for org_id=%d: %s", org_id, exc, exc_info=True)
+        logger.exception("Provisioning failed for org_id=%d: %s", org_id, exc)
         await _rollback(state)
         try:
             org.provisioning_status = "failed"
