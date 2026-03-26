@@ -30,7 +30,7 @@ jobs:
             git clone --depth=1 --filter=blob:none --sparse \
               https://github.com/GetKlai/klai.git klai-compose-sync
             cd klai-compose-sync
-            git sparse-checkout set deploy/docker-compose.yml
+            git sparse-checkout set --skip-checks deploy/docker-compose.yml
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
             rm -rf /tmp/klai-compose-sync
             echo "docker-compose.yml synced to /opt/klai/"
