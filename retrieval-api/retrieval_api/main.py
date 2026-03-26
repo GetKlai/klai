@@ -19,6 +19,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _warmup_reranker() -> None:
+    """Send a dummy request to load the reranker model before the first real query."""
+    if not settings.tei_reranker_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            await client.post(
+                f"{settings.tei_reranker_url}/v1/rerank",
+                json={
+                    "model": "bge-reranker-v2-m3",
+                    "query": "warmup",
+                    "documents": ["warmup document"],
+                    "top_n": 1,
+                },
+            )
+        logger.info("reranker warmup complete")
+    except Exception as exc:
+        logger.warning("reranker warmup failed (non-fatal): %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
@@ -27,6 +47,7 @@ async def lifespan(app: FastAPI):
         settings.tei_url,
         settings.litellm_url,
     )
+    await _warmup_reranker()
     yield
     logger.info("retrieval-api shutting down")
 
