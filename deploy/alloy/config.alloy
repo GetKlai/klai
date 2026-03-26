@@ -84,6 +84,21 @@ prometheus.scrape "node" {
   job_name        = "node"
 }
 
+// ─── Retrieval-API application metrics ───────────────────────────────────────
+// Scrapes /metrics on retrieval-api for per-step pipeline latency histograms.
+// Metrics: klai_retrieval_step_seconds{step=coref|embed|qdrant|graph|rerank|total}
+//          klai_retrieval_requests_total, klai_retrieval_chunks_returned
+
+prometheus.scrape "retrieval_api" {
+  targets = [{
+    __address__ = "retrieval-api:8040",
+  }]
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  job_name        = "retrieval-api"
+}
+
 // ─── Container metrics from cAdvisor ─────────────────────────────────────────
 
 prometheus.scrape "cadvisor" {
