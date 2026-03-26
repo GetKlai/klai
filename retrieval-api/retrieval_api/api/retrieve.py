@@ -98,7 +98,8 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         # 5. Rerank (skip for notebook scope)
         if req.scope != "notebook" and raw_results:
             t_rerank = time.perf_counter()
-            reranked = await reranker.rerank(query_resolved, raw_results, req.top_k)
+            rerank_input = raw_results[: settings.reranker_candidates]
+            reranked = await reranker.rerank(query_resolved, rerank_input, req.top_k)
             rerank_ms = (time.perf_counter() - t_rerank) * 1000
             reranked_to = len(reranked)
         else:
