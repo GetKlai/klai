@@ -18,6 +18,7 @@
 | [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions, button placement |
 | [patterns/code-quality.md](patterns/code-quality.md) | ruff, pyright, ESLint, pre-commit, CI quality gates |
 | [patterns/testing.md](patterns/testing.md) | Playwright browser testing, permissions, GlitchTip debugging |
+| [patterns/logging.md](patterns/logging.md) | Structured logging with structlog, querying VictoriaLogs, debugging patterns |
 
 ## Project Pattern Files
 
