@@ -61,8 +61,8 @@ export function DeleteKbModal({
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
-      navigate({ to: '/app/knowledge' })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
+      void navigate({ to: '/app/knowledge' })
     },
     onError: (err: Error) => {
       setError(err.message)
