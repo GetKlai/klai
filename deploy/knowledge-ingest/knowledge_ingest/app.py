@@ -31,9 +31,15 @@ async def lifespan(app: FastAPI):
         from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
 
         # procrastinate 2.x uses PsycopgConnector (psycopg3); no asyncpg connector exists.
-        # We create a separate psycopg3 pool — convert the asyncpg DSN format.
+        # We create a separate psycopg3 pool using libpq key=value format to handle
+        # passwords with special chars (base64 '/', '+', '=') that break URL parsing.
+        from urllib.parse import urlparse  # noqa: PLC0415
         from knowledge_ingest.config import settings as _s  # noqa: PLC0415
-        pg_dsn = _s.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://")
+        _u = urlparse(_s.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://"))
+        pg_dsn = (
+            f"host={_u.hostname} port={_u.port or 5432} "
+            f"dbname={_u.path.lstrip('/')} user={_u.username} password={_u.password}"
+        )
         async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn)
         proc_app = enrichment_tasks.init_app(async_connector)
         logger.info("Procrastinate app initialised.")
