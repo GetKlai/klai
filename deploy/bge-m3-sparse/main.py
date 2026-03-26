@@ -48,26 +48,46 @@ class EmbedResponse(BaseModel):
     values: list[float]
 
 
+class EmbedBatchRequest(BaseModel):
+    texts: list[str]
+
+
+class EmbedBatchResponse(BaseModel):
+    results: list[EmbedResponse]
+
+
 @app.post("/embed_sparse", response_model=EmbedResponse)
 async def embed_sparse(req: EmbedRequest) -> EmbedResponse:
     import asyncio
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _compute_sparse, req.text)
-    return EmbedResponse(indices=result["indices"], values=result["values"])
+    results = await loop.run_in_executor(None, _compute_sparse_batch, [req.text])
+    return EmbedResponse(indices=results[0]["indices"], values=results[0]["values"])
 
 
-def _compute_sparse(text: str) -> dict:
+@app.post("/embed_sparse_batch", response_model=EmbedBatchResponse)
+async def embed_sparse_batch(req: EmbedBatchRequest) -> EmbedBatchResponse:
+    import asyncio
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(None, _compute_sparse_batch, req.texts)
+    return EmbedBatchResponse(
+        results=[EmbedResponse(indices=r["indices"], values=r["values"]) for r in results]
+    )
+
+
+def _compute_sparse_batch(texts: list[str]) -> list[dict]:
     output = _model.encode(
-        [text],
+        texts,
         return_dense=False,
         return_sparse=True,
         return_colbert_vecs=False,
     )
-    sparse = output["lexical_weights"][0]
-    # sparse is a dict of {token_id: weight}
-    indices = [int(k) for k in sparse.keys()]
-    values = [float(v) for v in sparse.values()]
-    return {"indices": indices, "values": values}
+    results = []
+    for sparse in output["lexical_weights"]:
+        # sparse is a dict of {token_id: weight}
+        indices = [int(k) for k in sparse.keys()]
+        values = [float(v) for v in sparse.values()]
+        results.append({"indices": indices, "values": values})
+    return results
 
 
 @app.get("/health")

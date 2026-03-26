@@ -2,12 +2,13 @@
 Retrieve route:
   POST /knowledge/v1/retrieve — hybrid semantic search for LiteLLM hook
 """
+import asyncio
 import logging
 
 import httpx
 from fastapi import APIRouter
 
-from knowledge_ingest import embedder, qdrant_store
+from knowledge_ingest import embedder, qdrant_store, sparse_embedder
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import ChunkResult, RetrieveRequest, RetrieveResponse
@@ -54,16 +55,23 @@ async def _rerank(query: str, results: list[dict], top_k: int) -> list[dict]:
 
 @router.post("/knowledge/v1/retrieve", response_model=RetrieveResponse)
 async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
-    query_vector = await embedder.embed_one(req.query)
+    dense_vec, sparse_vec = await asyncio.gather(
+        embedder.embed_one(req.query),
+        sparse_embedder.embed_sparse(req.query),
+    )
+    if sparse_vec is None:
+        logger.warning("sparse_sidecar_unavailable_at_query, query_prefix=%s", req.query[:50])
 
     # Fetch more candidates when reranker is enabled so it has a meaningful pool
     candidate_k = max(req.top_k * 4, 20) if settings.reranker_url else req.top_k
     results = await qdrant_store.search(
         org_id=req.org_id,
-        query_vector=query_vector,
+        query_vector=dense_vec,
         top_k=candidate_k,
         kb_slugs=req.kb_slugs,
         user_id=req.user_id,
+        sparse_vector=sparse_vec,
+        sparse_weight=req.sparse_weight,
     )
 
     # Rerank if configured; otherwise trim to top_k

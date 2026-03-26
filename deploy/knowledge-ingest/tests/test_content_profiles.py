@@ -68,3 +68,11 @@ def test_all_six_content_types_defined():
         "unknown",
     }
     assert set(PROFILES.keys()) == expected
+
+
+def test_all_profiles_have_valid_context_strategy():
+    from knowledge_ingest.context_strategies import STRATEGIES
+    for name, profile in PROFILES.items():
+        assert profile.context_strategy in STRATEGIES, (
+            f"{name} has unknown strategy: {profile.context_strategy}"
+        )

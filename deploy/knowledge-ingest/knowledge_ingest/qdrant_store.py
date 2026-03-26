@@ -272,6 +272,7 @@ async def search(
     user_id: str | None = None,
     sparse_vector: SparseVector | None = None,
     content_type_filter: str | None = None,
+    sparse_weight: float | None = None,  # AC-7: reserved for weighted convex combination; no behavioral effect yet
 ) -> list[dict]:
     """Search for chunks matching the query vector.
 

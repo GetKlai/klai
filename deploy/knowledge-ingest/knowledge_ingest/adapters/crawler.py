@@ -100,8 +100,11 @@ async def _crawl_and_ingest_page(
     if not result.success:
         raise ValueError(f"Crawl failed: {result.error_message}")
 
-    # Detect PDF via URL extension
-    is_pdf = url.lower().endswith(".pdf")
+    # Detect PDF: check Content-Type header first, fall back to URL extension
+    content_type_header = ""
+    if result.response_headers:
+        content_type_header = result.response_headers.get("content-type", "")
+    is_pdf = "application/pdf" in content_type_header or url.lower().endswith(".pdf")
     content_type = "pdf_document" if is_pdf else "kb_article"
     text = result.markdown or result.cleaned_html or ""
     front_matter = result.metadata.get("description", "") if result.metadata else ""

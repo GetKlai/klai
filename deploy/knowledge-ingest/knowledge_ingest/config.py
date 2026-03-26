@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     enrichment_max_document_tokens: int = 2000
     # Sparse embedding sidecar (BGE-M3 FlagEmbedding)
     sparse_sidecar_url: str = "http://bge-m3-sparse:8001"
+    sparse_sidecar_timeout: float = 5.0
+    sparse_sidecar_batch_size: int = 64
+    sparse_index_on_disk: bool = False  # AC-10: set True to move sparse index to disk
     # Qdrant collection name — single collection with named + sparse vectors
     qdrant_collection: str = "klai_knowledge"
 
