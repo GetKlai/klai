@@ -8,7 +8,9 @@ import hmac
 import json
 import logging
 import re
+import time
 import unicodedata
+from datetime import datetime, timezone
 
 import httpx
 import yaml
@@ -21,6 +23,8 @@ from knowledge_ingest.models import (
     IngestRequest,
     UpdateKBVisibilityRequest,
 )
+
+_SENTINEL = 253402300800  # 9999-12-31
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,6 +76,49 @@ def _extract_frontmatter_metadata(content: str) -> dict:
         return {}
 
 
+def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
+    """Extract knowledge model fields from YAML frontmatter. Returns defaults if absent."""
+    defaults: dict = {
+        "provenance_type": "observed",
+        "assertion_mode": "factual",
+        "synthesis_depth": 4 if source_type == "docs" else 0,
+        "confidence": None,
+        "belief_time_start": int(time.time()),
+        "belief_time_end": _SENTINEL,
+    }
+    if not content.startswith("---"):
+        return defaults
+    end = content.find("\n---", 3)
+    if end == -1:
+        return defaults
+    try:
+        fm = yaml.safe_load(content[3:end])
+        if not isinstance(fm, dict):
+            return defaults
+    except Exception:
+        return defaults
+
+    result = dict(defaults)
+    if fm.get("provenance_type") in ("observed", "extracted", "synthesized", "revised"):
+        result["provenance_type"] = fm["provenance_type"]
+    if fm.get("assertion_mode") in ("factual", "procedural", "quoted", "belief", "hypothesis"):
+        result["assertion_mode"] = fm["assertion_mode"]
+    if isinstance(fm.get("synthesis_depth"), int) and 0 <= fm["synthesis_depth"] <= 4:
+        result["synthesis_depth"] = fm["synthesis_depth"]
+    if fm.get("confidence") in ("high", "medium", "low"):
+        result["confidence"] = fm["confidence"]
+    if isinstance(fm.get("belief_time_start"), str):
+        try:
+            result["belief_time_start"] = int(
+                datetime.fromisoformat(fm["belief_time_start"])
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+        except Exception:
+            pass
+    return result
+
+
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk → embed → upsert."""
     chunks = chunker.chunk_markdown(
@@ -86,8 +133,25 @@ async def ingest_document(req: IngestRequest) -> dict:
     vectors = await embedder.embed(texts)
 
     title = _extract_title(req.content, req.path)
+    kf = _parse_knowledge_fields(req.content, req.source_type)
 
-    extra_payload: dict = {"title": title}
+    # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
+    await pg_store.soft_delete_artifact(req.org_id, req.kb_slug, req.path)
+
+    artifact_id = await pg_store.create_artifact(
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        path=req.path,
+        provenance_type=kf["provenance_type"],
+        assertion_mode=kf["assertion_mode"],
+        synthesis_depth=kf["synthesis_depth"],
+        confidence=kf["confidence"],
+        belief_time_start=kf["belief_time_start"],
+        belief_time_end=kf["belief_time_end"],
+        user_id=req.user_id,
+    )
+
+    extra_payload: dict = {"title": title, "artifact_id": artifact_id}
     if req.source_type:
         extra_payload["source_type"] = req.source_type
     extra_payload.update(_extract_frontmatter_metadata(req.content))
@@ -98,13 +162,13 @@ async def ingest_document(req: IngestRequest) -> dict:
         path=req.path,
         chunks=texts,
         vectors=vectors,
+        artifact_id=artifact_id,
         extra_payload=extra_payload,
         user_id=req.user_id,
     )
-    await pg_store.record_ingest(req.org_id, req.kb_slug, req.path, len(chunks))
 
-    logger.info("Ingested %s/%s for org %s (%d chunks)", req.kb_slug, req.path, req.org_id, len(chunks))
-    return {"status": "ok", "chunks": len(chunks), "title": title}
+    logger.info("Ingested %s/%s for org %s (%d chunks, artifact %s)", req.kb_slug, req.path, req.org_id, len(chunks), artifact_id)
+    return {"status": "ok", "chunks": len(chunks), "title": title, "artifact_id": artifact_id}
 
 
 @router.post("/ingest/v1/document")
@@ -192,9 +256,10 @@ async def gitea_webhook(request: Request) -> dict:
     for path in removed:
         try:
             await qdrant_store.delete_document(org_id, kb_slug, path)
+            await pg_store.soft_delete_artifact(org_id, kb_slug, path)
             deleted += 1
         except Exception as exc:
-            logger.warning("Failed to delete %s from Qdrant: %s", path, exc)
+            logger.warning("Failed to delete %s: %s", path, exc)
 
     return {"status": "ok", "ingested": ingested, "deleted": deleted, "org_slug": org_slug}
 

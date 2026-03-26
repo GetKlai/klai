@@ -23,6 +23,11 @@ class ChunkResult(BaseModel):
     source: str          # "{kb_slug}/{path}"
     score: float
     metadata: dict = {}
+    artifact_id: str | None = None
+    provenance_type: str | None = None
+    assertion_mode: str | None = None
+    synthesis_depth: int | None = None
+    confidence: str | None = None
 
 
 class RetrieveResponse(BaseModel):
