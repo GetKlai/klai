@@ -1,6 +1,6 @@
 # SPEC-KB-008: De Retrieval API
 
-> Status: DRAFT (2026-03-26)
+> Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-005 (contextual retrieval), SPEC-KB-006 (content-type adapters), SPEC-KB-007 (sparse vectors + hybrid search)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`
@@ -515,3 +515,24 @@ Streaming beïnvloedt het eindresultaat niet. Consistent met research-api. (Zie 
 
 **B6: Coreferentie meertalig — geen NL-specifieke heuristiek. ✓ BESLOTEN**
 Altijd LLM-call wanneer history aanwezig is. Taal-agnostisch by design. Toekomstige overweging genoteerd in D4.
+
+---
+
+## Implementation Notes (sync 2026-03-26)
+
+**Implemented as specified with two caveats documented in SPEC:**
+
+### Vector names (actual vs SPEC)
+SPEC described `dense`/`sparse`/`questions` but `klai_knowledge` collection uses `vector_chunk`/`vector_questions`/`vector_sparse`. Implemented with actual names.
+
+### klai_focus single-vector fallback
+SPEC described RRF for notebook scope, but `klai_focus` only has an unnamed single dense vector. Implemented simple cosine search fallback. Full RRF requires named vector migration (follow-up SPEC).
+
+### Sparse vector integration deferred
+`vector_sparse` not accessible from retrieval-api (no BGE-M3 sparse sidecar). Search uses `vector_chunk` + `vector_questions` RRF only.
+
+### Commits
+- `0c4bf0b` — feat(retrieval): standalone retrieval-api service (KB-008)
+- `a077e98` — feat(infra): CI workflow + docker-compose entry
+- `499ea03` — test(retrieval): synthesis/tei/chat coverage (90%)
+- Merged to main via PR #33
