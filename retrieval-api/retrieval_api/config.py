@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     retrieval_gate_threshold: float = 0.1
     retrieval_candidates: int = 60
 
+    sparse_sidecar_url: str = ""
+    sparse_sidecar_timeout: float = 5.0
+
     coreference_timeout: float = 3.0
     reranker_timeout: float = 2.0
     # Graphiti / FalkorDB knowledge graph

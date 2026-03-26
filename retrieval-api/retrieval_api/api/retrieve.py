@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from retrieval_api.config import settings
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.services import coreference, gate, graph_search, reranker, search
-from retrieval_api.services.tei import embed_single
+from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,11 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     # 1. Coreference resolution
     query_resolved = await coreference.resolve(req.query, req.conversation_history)
 
-    # 2. Embed resolved query
-    query_vector = await embed_single(query_resolved)
+    # 2. Embed resolved query (dense + sparse in parallel)
+    query_vector, sparse_vector = await asyncio.gather(
+        embed_single(query_resolved),
+        embed_sparse(query_resolved),
+    )
 
     # 3. Gate check
     bypassed, gate_margin = await gate.should_bypass(query_vector)
@@ -68,7 +71,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
-        qdrant_coro = search.hybrid_search(query_vector, req, settings.retrieval_candidates)
+        qdrant_coro = search.hybrid_search(query_vector, req, settings.retrieval_candidates, sparse_vector)
 
         graph_task: asyncio.Task[list[dict]] | None = None
         t_graph: float | None = None

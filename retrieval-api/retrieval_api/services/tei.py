@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import httpx
+from qdrant_client.models import SparseVector
 
 from retrieval_api.config import settings
 
@@ -38,3 +39,21 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def embed_sparse(text: str) -> SparseVector | None:
+    """Embed text via the BGE-M3 sparse sidecar. Returns None if unavailable."""
+    if not settings.sparse_sidecar_url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=settings.sparse_sidecar_timeout) as client:
+            resp = await client.post(
+                f"{settings.sparse_sidecar_url}/embed_sparse_batch",
+                json={"texts": [text]},
+            )
+            resp.raise_for_status()
+            item = resp.json()["results"][0]
+            return SparseVector(indices=item["indices"], values=item["values"])
+    except Exception as exc:
+        logger.warning("sparse_sidecar_unavailable: %s", exc)
+        return None

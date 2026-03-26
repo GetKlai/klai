@@ -1,8 +1,8 @@
-"""Qdrant search: dense cosine search across klai_knowledge and klai_focus.
+"""Qdrant search across klai_knowledge and klai_focus.
 
-NOTE: klai_knowledge currently uses a single unnamed dense vector (1024-dim cosine).
-Named vectors (vector_chunk, vector_questions, vector_sparse) and RRF hybrid search
-will be enabled after collection migration. See SPEC-KB-007 follow-up.
+klai_knowledge uses named vectors (vector_chunk, vector_questions, vector_sparse)
+with 3-leg RRF fusion. Falls back to 2-leg RRF when sparse vector is unavailable.
+klai_focus uses a single unnamed dense vector.
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     FieldCondition,
     Filter,
+    Fusion,
+    FusionQuery,
     MatchValue,
+    Prefetch,
+    SparseVector,
 )
 
 from retrieval_api.config import settings
@@ -117,23 +121,49 @@ async def _search_knowledge(
     query_vector: list[float],
     request: RetrieveRequest,
     candidates: int,
+    sparse_vector: SparseVector | None = None,
 ) -> list[dict]:
-    """Dense cosine search on klai_knowledge (single unnamed vector).
+    """3-leg RRF hybrid search on klai_knowledge (named vectors).
 
-    TODO: Upgrade to RRF hybrid search once klai_knowledge is migrated
-    to named vectors (vector_chunk, vector_questions, vector_sparse).
+    Prefetch legs: vector_chunk + vector_questions (always) + vector_sparse (when available).
+    Falls back to 2-leg RRF when sparse_vector is None.
     """
     client = _get_client()
 
     scope_conditions = _scope_filter(request)
-    combined_filter = Filter(must=[*scope_conditions])
+    query_filter = Filter(must=[*scope_conditions])
+
+    prefetch_limit = max(candidates * 4, 20)
+    prefetch = [
+        Prefetch(
+            query=query_vector,
+            using="vector_chunk",
+            limit=prefetch_limit,
+            filter=query_filter,
+        ),
+        Prefetch(
+            query=query_vector,
+            using="vector_questions",
+            limit=prefetch_limit,
+            filter=query_filter,
+        ),
+    ]
+    if sparse_vector is not None:
+        prefetch.append(
+            Prefetch(
+                query=sparse_vector,
+                using="vector_sparse",
+                limit=prefetch_limit,
+                filter=query_filter,
+            )
+        )
 
     try:
         result = await asyncio.wait_for(
             client.query_points(
                 collection_name=settings.qdrant_collection,
-                query=query_vector,
-                query_filter=combined_filter,
+                prefetch=prefetch,
+                query=FusionQuery(fusion=Fusion.RRF),
                 limit=candidates,
                 with_payload=True,
             ),
@@ -163,17 +193,19 @@ async def hybrid_search(
     query_vector: list[float],
     request: RetrieveRequest,
     candidates: int,
+    sparse_vector: SparseVector | None = None,
 ) -> list[dict]:
     """Run Qdrant search appropriate for the request scope.
 
     Returns raw result dicts with text, score, and payload fields.
+    sparse_vector is forwarded to _search_knowledge for 3-leg RRF.
     """
     if request.scope == "notebook":
         return await _search_notebook(query_vector, request, candidates)
 
     if request.scope == "broad":
         # Parallel queries on both collections, merge by score
-        knowledge_task = _search_knowledge(query_vector, request, candidates)
+        knowledge_task = _search_knowledge(query_vector, request, candidates, sparse_vector)
         notebook_task = _search_notebook(query_vector, request, candidates)
 
         knowledge_results, notebook_results = await asyncio.gather(
@@ -196,4 +228,4 @@ async def hybrid_search(
         return merged[:candidates]
 
     # org, personal, both
-    return await _search_knowledge(query_vector, request, candidates)
+    return await _search_knowledge(query_vector, request, candidates, sparse_vector)
