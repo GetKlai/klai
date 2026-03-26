@@ -1,6 +1,6 @@
 # SPEC-KB-003: Knowledge Base App Layer
 
-> Status: DRAFT — 2026-03-25
+> Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Supersedes: SPEC-KB-001-unification.md (remaining open items)
 > Builds on: SPEC-KB-002-integration.md (already implemented)
@@ -268,3 +268,37 @@ No other schema changes — all other required columns are already in place from
 | Q7 | Admin connectors route: redirect or 404? | Remove — no redirect needed once connectors are in app |
 | Q8 | Multiple KB Owners allowed? | Yes |
 | Q9 | KB role access via Zitadel or portal DB? | Portal DB for KB-specific roles; Zitadel for group memberships |
+
+---
+
+## Implementation Notes
+
+> Added: 2026-03-26
+
+### What was built
+
+All seven implementation phases were completed as specified. Key commits:
+
+- `feat(portal): SPEC-KB-003 knowledge base app layer` — main implementation commit covering Phases 1-7 (Gitea provisioning, portal_user_kb_access, KB detail page, connectors UI, role management, personal KBs, /app/docs portal coupling)
+- `fix(lint): ruff format app_knowledge_bases and access` — lint cleanup pass after main implementation
+- `fix(admin): remove broken tiles (knowledge-bases, docs-libraries, connectors)` — AC-8 cleanup, admin connectors route removed
+- `feat(security): harden knowledge base against 9 audit vulnerabilities` — security hardening applied to the KB surface area
+- `feat(groups): group-admin rol + knowledge bases en docs libraries toegangsbeheer` — group-admin role + group-level KB and docs library access management (related prerequisite work)
+
+### Deviations from SPEC
+
+None recorded. All acceptance criteria (AC-1 through AC-9) were implemented as specified.
+
+### Parked items (as designed)
+
+- **Access request notification flow** (D2 / AC-6): The "Request access" button is present on locked KB cards in `/app/docs` as UI only. The notification backend is a separate future sub-task requiring research into in-app vs email vs admin queue patterns.
+- **Non-GitHub connector types**: Google Drive, Notion remain "coming soon" as specified.
+- **Focus multi-KB read scope**: Out of scope, not implemented.
+- **Re-indexing on visibility change**: Async task, separate backlog item.
+
+### Key decisions confirmed during implementation
+
+- `portal_user_kb_access` table created exactly as modelled in the SPEC (no schema deviations).
+- Access check queries both `portal_group_kb_access` (via Zitadel group memberships) and `portal_user_kb_access` (direct assignments); highest role wins.
+- Admin connectors routes removed entirely (no redirect) per D4 / AC-8.
+- Personal KBs (`owner_type = 'user'`) are not shareable; membership management section is hidden for personal KBs.
