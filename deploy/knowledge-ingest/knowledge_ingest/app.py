@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
         import procrastinate  # noqa: PLC0415
         from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
 
-        # procrastinate 2.x uses PsycopgConnector (psycopg3); no asyncpg connector exists.
+        # PsycopgConnector uses psycopg3 (libpq-based); no asyncpg connector exists.
         # Use SQLAlchemy make_url to safely parse the DSN (handles base64 passwords with
         # '/', '+', '=' that break stdlib urlparse), then build a libpq key=value string.
         from sqlalchemy.engine import make_url  # noqa: PLC0415
@@ -49,7 +49,6 @@ async def lifespan(app: FastAPI):
         proc_app = enrichment_tasks.init_app(async_connector)
         logger.info("Procrastinate app initialised.")
 
-        # procrastinate 2.x: open_async() opens the connector; run_worker_async() is the worker coroutine.
         async with proc_app.open_async():
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(

@@ -34,11 +34,6 @@ updates:
     directory: /deploy/knowledge-ingest
     schedule:
       interval: weekly
-    ignore:
-      # procrastinate 3.x requires code migration (PsycopgConnector API changed)
-      # See deploy/VERSIONS.md before upgrading
-      - dependency-name: "procrastinate"
-        versions: [">=3"]
 
   - package-ecosystem: pip
     directory: /deploy/klai-knowledge-mcp
