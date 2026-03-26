@@ -606,7 +606,7 @@ services:
       VECTOR_BACKEND: qdrant
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
-      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
+      RETRIEVAL_API_URL: http://retrieval-api:8000
       DOCLING_URL: http://docling-serve:5001
       TEI_URL: http://tei:8080
       LITELLM_URL: http://litellm:4000
@@ -622,6 +622,24 @@ services:
       - searxng
       - postgres
       - qdrant
+      - retrieval-api
+
+  retrieval-api:
+    image: ghcr.io/getklai/retrieval-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      TEI_URL: http://tei:8080
+      TEI_RERANKER_URL: http://tei-reranker:8080
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
+    networks:
+      - klai-net
+    depends_on:
+      - qdrant
+      - tei
 
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
