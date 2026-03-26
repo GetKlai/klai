@@ -22,7 +22,7 @@ function ChatPage() {
         src={chatUrl}
         className="h-full w-full border-none"
         title="Chat"
-        allow="clipboard-write; microphone"
+        allow="clipboard-write; microphone; screen-wake-lock"
       />
     </div>
   )
