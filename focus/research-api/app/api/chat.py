@@ -22,11 +22,10 @@ from app.services.retrieval import (
     NARROW_SYSTEM_PROMPT,
     build_context,
     extract_citations,
-    retrieve_broad_chunks,
-    retrieve_chunks,
     retrieve_web_chunks,
     stream_llm,
 )
+from app.services.retrieval_client import retrieve_broad, retrieve_narrow
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["chat"])
@@ -90,13 +89,13 @@ async def _generate(
     try:
         # 1. Retrieve chunks based on mode
         if mode == "broad":
-            doc_chunks = await retrieve_broad_chunks(db, question, notebook_id, tenant_id)
+            doc_chunks = await retrieve_broad(question, notebook_id, tenant_id)
             web_chunks: list[dict] = []
         elif mode == "web":
-            doc_chunks = await retrieve_chunks(db, question, notebook_id, tenant_id)
+            doc_chunks = await retrieve_narrow(question, notebook_id, tenant_id)
             web_chunks = await retrieve_web_chunks(question)
         else:  # narrow
-            doc_chunks = await retrieve_chunks(db, question, notebook_id, tenant_id)
+            doc_chunks = await retrieve_narrow(question, notebook_id, tenant_id)
             web_chunks = []
 
         all_chunks = doc_chunks + web_chunks

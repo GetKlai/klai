@@ -1,6 +1,9 @@
 """
 Retrieve route:
   POST /knowledge/v1/retrieve — hybrid semantic search for LiteLLM hook
+
+DEPRECATED: This endpoint is superseded by retrieval-api POST /retrieve (SPEC-KB-008).
+Will be removed in KB-010 or later. New consumers should use retrieval-api directly.
 """
 import asyncio
 import logging
@@ -53,7 +56,12 @@ async def _rerank(query: str, results: list[dict], top_k: int) -> list[dict]:
     return [results[item["index"]] for item in reranked[:top_k]]
 
 
-@router.post("/knowledge/v1/retrieve", response_model=RetrieveResponse)
+@router.post(
+    "/knowledge/v1/retrieve",
+    response_model=RetrieveResponse,
+    deprecated=True,
+    summary="[DEPRECATED] Use retrieval-api POST /retrieve instead (SPEC-KB-008)",
+)
 async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     dense_vec, sparse_vec = await asyncio.gather(
         embedder.embed_one(req.query),
