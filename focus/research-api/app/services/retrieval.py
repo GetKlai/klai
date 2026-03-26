@@ -2,16 +2,17 @@
 Retrieval pipeline for chat endpoint.
 Supports narrow, broad, and web modes.
 """
+import asyncio
 import json
 import logging
 from typing import AsyncIterator
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.chunk import Chunk
+from app.models.source import Source
 from app.services import docling, tei
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,13 @@ If the answer is not found in the provided sources, respond with:
 Do not use any knowledge beyond what is explicitly present in the sources.
 Always cite which source and page your answer is based on."""
 
-BROAD_SYSTEM_PROMPT = """You are a research assistant. Use the provided source excerpts as your primary reference,
-and supplement with your general knowledge where helpful.
-Always indicate which parts of your answer come from the provided sources
-and which parts are from your general knowledge."""
+BROAD_SYSTEM_PROMPT = """You are a research assistant. Use the provided source excerpts as your primary reference.
+You have access to two types of sources:
+- Focus documents: uploaded documents specific to this notebook
+- Knowledge base: organizational knowledge from the Klai Knowledge system
+Supplement with your general knowledge where helpful.
+Always indicate which parts of your answer come from Focus documents, the Knowledge base,
+or your general knowledge."""
 
 
 async def retrieve_chunks(
@@ -41,46 +45,82 @@ async def retrieve_chunks(
     top_k: int = _TOP_K,
 ) -> list[dict]:
     """
-    Embed question and retrieve top-k similar chunks from pgvector.
-    Returns list of dicts: {source_id, source_name, content, page, score}.
+    Embed question and retrieve top-k similar chunks from Qdrant.
+    Returns list of dicts: {chunk_id, source_id, source_name, content, metadata, score}.
     """
-    query_embedding = await tei.embed_single(question)
-    embedding_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+    from app.services import qdrant_store
 
-    # pgvector cosine distance — lower is better; convert to score = 1 - distance
+    query_vector = await tei.embed_single(question)
+
+    # Get source_ids with status='ready' for this notebook+tenant
     result = await db.execute(
-        text("""
-            SELECT c.id, c.source_id, c.content, c.metadata,
-                   1 - (c.embedding <=> CAST(:embedding AS vector)) AS score,
-                   s.name AS source_name
-            FROM research.chunks c
-            JOIN research.sources s ON s.id = c.source_id
-            WHERE c.tenant_id = :tenant_id
-              AND c.notebook_id = :notebook_id
-              AND s.status = 'ready'
-            ORDER BY c.embedding <=> CAST(:embedding AS vector)
-            LIMIT :top_k
-        """),
-        {
-            "embedding": embedding_str,
-            "tenant_id": tenant_id,
-            "notebook_id": notebook_id,
-            "top_k": top_k,
-        },
+        select(Source.id, Source.name).where(
+            Source.notebook_id == notebook_id,
+            Source.tenant_id == tenant_id,
+            Source.status == "ready",
+        )
     )
-    rows = result.fetchall()
+    sources = result.fetchall()
+    if not sources:
+        return []
+
+    source_id_to_name = {row[0]: row[1] for row in sources}
+    source_ids = list(source_id_to_name.keys())
+
+    hits = qdrant_store.search_chunks(query_vector, tenant_id, notebook_id, source_ids, top_k)
 
     return [
         {
-            "chunk_id": row[0],
-            "source_id": row[1],
-            "content": row[2],
-            "metadata": row[3] or {},
-            "score": float(row[4]),
-            "source_name": row[5],
+            "chunk_id": hit["chunk_id"],
+            "source_id": hit["source_id"],
+            "content": hit["content"],
+            "metadata": hit["metadata"],
+            "score": hit["score"],
+            "source_name": source_id_to_name.get(hit["source_id"], ""),
         }
-        for row in rows
+        for hit in hits
     ]
+
+
+async def retrieve_broad_chunks(
+    db: AsyncSession,
+    question: str,
+    notebook_id: str,
+    tenant_id: str,
+    top_k: int = _TOP_K,
+) -> list[dict]:
+    """
+    Parallel retrieval from Focus (Qdrant) + Knowledge base (knowledge-ingest).
+    Merges by normalized score, returns top_k results.
+    """
+    from app.services import knowledge_client
+
+    focus_task = retrieve_chunks(db, question, notebook_id, tenant_id, top_k=5)
+    kb_task = knowledge_client.retrieve_knowledge(question, org_id=tenant_id, top_k=5)
+    focus_results, kb_results = await asyncio.gather(focus_task, kb_task)
+
+    # Tag source origin
+    for r in focus_results:
+        r["origin"] = "focus"
+    # kb_results already have origin="kb" set by knowledge_client
+
+    # Normalize scores within each source (min-max)
+    def _normalize(items: list[dict]) -> list[dict]:
+        if not items:
+            return items
+        scores = [x["score"] for x in items]
+        mn, mx = min(scores), max(scores)
+        if mx == mn:
+            for x in items:
+                x["score"] = 1.0
+        else:
+            for x in items:
+                x["score"] = (x["score"] - mn) / (mx - mn)
+        return items
+
+    all_results = _normalize(focus_results) + _normalize(kb_results)
+    all_results.sort(key=lambda x: x["score"], reverse=True)
+    return all_results[:top_k]
 
 
 async def retrieve_web_chunks(question: str) -> list[dict]:
@@ -153,9 +193,17 @@ def build_context(chunks: list[dict], max_tokens: int = _MAX_CONTEXT_TOKENS) -> 
     used_tokens = 0
 
     for chunk in chunks:
+        origin = chunk.get("origin", "focus")
         source_name = chunk.get("source_name") or chunk.get("url", "web")
         page = chunk.get("metadata", {}).get("page")
-        citation = f"[{source_name}{f', p.{page}' if page else ''}]"
+
+        if origin == "kb":
+            citation = f"[KB: {source_name}]"
+        elif origin == "web":
+            citation = f"[Web: {source_name}]"
+        else:
+            citation = f"[Bron: {source_name}{f', p.{page}' if page else ''}]"
+
         part = f"{citation}\n{chunk['content']}\n"
         part_tokens = len(enc.encode(part))
         if used_tokens + part_tokens > max_tokens:

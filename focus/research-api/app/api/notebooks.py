@@ -259,9 +259,10 @@ async def delete_notebook(
     if nb.scope == "org" and nb.owner_user_id != user.user_id and not user.is_org_admin():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Geen toegang")
 
-    # Delete chunks first
+    # Delete chunks from DB and Qdrant
     from app.models.chunk import Chunk
     from app.models.source import Source
+    from app.services import qdrant_store
 
     source_ids_result = await db.execute(
         select(Source.id).where(Source.notebook_id == nb_id)
@@ -270,6 +271,9 @@ async def delete_notebook(
 
     if source_ids:
         await db.execute(delete(Chunk).where(Chunk.source_id.in_(source_ids)))
+
+    # Delete all vectors for this notebook from Qdrant
+    qdrant_store.delete_by_notebook(nb_id, user.tenant_id)
 
     await db.execute(delete(Source).where(Source.notebook_id == nb_id))
     await db.execute(delete(Notebook).where(Notebook.id == nb_id))

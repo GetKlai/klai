@@ -18,12 +18,14 @@ class Settings(BaseSettings):
     postgres_dsn: str  # postgresql+asyncpg://...
 
     # Vector backend
-    vector_backend: str = "pgvector"  # "pgvector" | "qdrant"
+    vector_backend: str = "qdrant"
     qdrant_url: str = ""
-    qdrant_collection: str = "research"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "klai_focus"
 
     # Internal service URLs
     docling_url: str = "http://docling-serve:5001"
+    knowledge_ingest_url: str = ""
     tei_url: str = "http://tei:8080"
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
