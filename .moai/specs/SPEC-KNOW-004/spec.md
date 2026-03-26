@@ -2,7 +2,7 @@
 id: SPEC-KNOW-004
 title: "Knowledge Management - Save Confirmation & Personal Items Browser"
 version: 1.0.0
-status: draft
+status: completed
 created: 2026-03-26
 updated: 2026-03-26
 author: MoAI
