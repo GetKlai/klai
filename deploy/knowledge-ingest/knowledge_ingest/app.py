@@ -40,7 +40,8 @@ async def lifespan(app: FastAPI):
             f"host={_u.host} port={_u.port or 5432} "
             f"dbname={_u.database} user={_u.username} password={_u.password}"
         )
-        async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn)
+        # Pass kwargs={} to avoid psycopg-pool 3.x bug: default kwargs=None → **None TypeError.
+        async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn, kwargs={})
         proc_app = enrichment_tasks.init_app(async_connector)
         logger.info("Procrastinate app initialised.")
 
