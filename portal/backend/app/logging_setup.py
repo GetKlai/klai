@@ -1,4 +1,4 @@
-"""Structured logging setup using structlog."""
+"""Structured logging setup for portal-api using structlog."""
 
 import logging
 import os
@@ -7,11 +7,10 @@ import sys
 import structlog
 
 
-def setup_logging(level: str = "INFO", service_name: str = "klai-connector") -> None:
+def setup_logging(service_name: str = "portal-api") -> None:
     """Configure structlog with stdlib integration.
 
     Args:
-        level: Log level string (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         service_name: The Docker service name, bound as a context variable.
     """
     log_format = os.environ.get("LOG_FORMAT", "json").lower()
@@ -31,33 +30,24 @@ def setup_logging(level: str = "INFO", service_name: str = "klai-connector") -> 
         renderer = structlog.processors.JSONRenderer()
 
     structlog.configure(
-        processors=shared_processors + [renderer],
+        processors=[*shared_processors, renderer],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
+    # Configure stdlib root logger to use structlog
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=getattr(logging, level.upper(), logging.INFO),
+        level=logging.INFO,
     )
 
+    # Suppress noisy third-party loggers
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
+    # Bind service context variable for all logs
     structlog.contextvars.bind_contextvars(service=service_name)
-
-
-def get_logger(name: str) -> logging.Logger:
-    """Get a named logger instance.
-
-    Args:
-        name: Logger name, typically ``__name__``.
-
-    Returns:
-        Configured logger instance.
-    """
-    return logging.getLogger(name)

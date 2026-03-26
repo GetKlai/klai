@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "httpx>=0.27",
+    "structlog>=25.0",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +24,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "S", "RUF"]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
 ignore = [
     "S101",  # assert is fine in tests
     "S105",  # hardcoded passwords — too many false positives on config defaults

@@ -23,7 +23,7 @@ from app.services import docs_client
 from app.services.access import get_user_role_for_kb
 from app.services.zitadel import zitadel
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 _QDRANT_COLLECTION = "klai_knowledge"
 
 
@@ -48,11 +48,11 @@ async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
         if resp.status_code == 404:
             return 0
         if not resp.is_success:
-            log.debug("Qdrant count failed for KB %s: HTTP %s", kb_slug, resp.status_code)
+            logger.debug("Qdrant count failed for KB %s: HTTP %s", kb_slug, resp.status_code)
             return None
         return resp.json().get("result", {}).get("count", 0) or 0
     except Exception as exc:
-        log.debug("Could not reach Qdrant for KB %s: %s", kb_slug, exc)
+        logger.debug("Could not reach Qdrant for KB %s: %s", kb_slug, exc)
         return None
 
 
@@ -414,7 +414,7 @@ async def get_kb_stats(
         try:
             docs_count = await docs_client.get_page_count(org.slug, kb_slug)
         except Exception:
-            log.debug("Could not fetch docs page count for KB %s", kb_slug)
+            logger.debug("Could not fetch docs page count for KB %s", kb_slug)
 
     # Qdrant vector count for this KB
     volume = await _qdrant_count_for_kb(org.zitadel_org_id, kb.slug)
@@ -435,7 +435,7 @@ async def get_kb_stats(
         )
         usage_last_30d = usage_result.scalar_one()
     except Exception:
-        log.debug("Could not fetch KB usage stats for %s", kb_slug)
+        logger.debug("Could not fetch KB usage stats for %s", kb_slug)
 
     return KBStatsOut(
         docs_count=docs_count,

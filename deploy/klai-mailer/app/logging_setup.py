@@ -7,11 +7,10 @@ import sys
 import structlog
 
 
-def setup_logging(level: str = "INFO", service_name: str = "klai-connector") -> None:
+def setup_logging(service_name: str = "klai-mailer") -> None:
     """Configure structlog with stdlib integration.
 
     Args:
-        level: Log level string (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         service_name: The Docker service name, bound as a context variable.
     """
     log_format = os.environ.get("LOG_FORMAT", "json").lower()
@@ -41,7 +40,7 @@ def setup_logging(level: str = "INFO", service_name: str = "klai-connector") -> 
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=getattr(logging, level.upper(), logging.INFO),
+        level=logging.INFO,
     )
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
@@ -49,15 +48,3 @@ def setup_logging(level: str = "INFO", service_name: str = "klai-connector") -> 
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     structlog.contextvars.bind_contextvars(service=service_name)
-
-
-def get_logger(name: str) -> logging.Logger:
-    """Get a named logger instance.
-
-    Args:
-        name: Logger name, typically ``__name__``.
-
-    Returns:
-        Configured logger instance.
-    """
-    return logging.getLogger(name)

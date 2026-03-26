@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -13,8 +12,9 @@ from app.api.history import router as history_router
 from app.api.notebooks import router as notebooks_router
 from app.api.sources import router as sources_router
 from app.core.config import settings
+from app.logging_setup import setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

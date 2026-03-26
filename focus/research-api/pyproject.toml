@@ -18,6 +18,7 @@ dependencies = [
     "tiktoken>=0.8",
     "youtube-transcript-api>=0.6",
     "sse-starlette>=2.1",
+    "structlog>=25.0",
 ]
 
 [project.optional-dependencies]
@@ -31,3 +32,10 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+ignore = [
+    "S101",  # assert is fine in tests
+    "S105",  # hardcoded passwords — too many false positives on config defaults
+]
