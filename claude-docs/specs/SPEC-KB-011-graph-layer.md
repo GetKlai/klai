@@ -1,6 +1,6 @@
 # SPEC-KB-011: Graphiti + FalkorDB Knowledge Graph Layer
 
-> Status: PLANNED
+> Status: completed
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-005 (contextual retrieval), SPEC-KB-008 (retrieval-api), SPEC-KB-009 (docs-sync via Gitea webhooks)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`
@@ -379,3 +379,18 @@ Bij start van `/run`:
 5. Compatibiliteit controleren met huidige service-stack (asyncpg, FastAPI, pydantic-settings)
 
 Dan pas pinnen in requirements.txt.
+
+---
+
+## Implementation Notes
+
+**Completion date:** 2026-03-26
+
+**All 14 acceptance criteria confirmed met** (AC-1 through AC-14). See progress.md for full verification log.
+
+**Key deployment fix — FalkorDriver import and constructor:**
+- Correct import path: `from graphiti_core.driver.falkordb_driver import FalkorDriver` (not `graphiti_core.driver.falkordb`)
+- Correct constructor: `Graphiti(graph_driver=FalkorDriver(...))` — uses `graph_driver=` keyword argument; no positional uri/user/password arguments
+- `graph.py` imports wrapped in `try/except` with `_GRAPHITI_AVAILABLE` flag for graceful degradation when `graphiti-core` is not installed
+
+**Live on core-01 since 2026-03-26.**

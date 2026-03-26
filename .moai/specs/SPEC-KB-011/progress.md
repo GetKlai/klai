@@ -35,3 +35,12 @@
 - `add_episode()` return type: uses `result.uuid` — verify field name
 - `graphiti.search()` result type: uses `.fact`, `.uuid`, `.score` — verify field names
 - `OpenAIGenericClient` must accept `LLMConfig(base_url, model, api_key)` — verify compatibility with LiteLLM proxy
+
+## Phase 3 (sync) — 2026-03-26
+
+- Phase 3 complete: all 14 ACs verified in production on core-01
+- SPEC marked `completed`
+- Deployment fixes documented in SPEC Implementation Notes section:
+  - FalkorDriver import path: `graphiti_core.driver.falkordb_driver`
+  - Constructor uses `graph_driver=` keyword argument
+  - `_GRAPHITI_AVAILABLE` guard added for graceful degradation

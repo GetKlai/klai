@@ -86,9 +86,17 @@ deploy/
 ├── caddy/                     # Caddy reverse proxy configuration
 ├── litellm/                   # LiteLLM model proxy configuration
 ├── knowledge-ingest/          # Document ingestion pipeline (Focus)
+│   └── knowledge_ingest/
+│       └── graph.py           # Graphiti episode ingest (fire-and-forget, 3-retry backoff) (KB-011)
 ├── klai-knowledge-mcp/        # Knowledge MCP server
 └── *.yml                      # Per-service compose overrides
 ```
+
+**retrieval-api services (KB-011):**
+- `retrieval-api/retrieval_api/services/graph_search.py` — Graphiti search service, RRF merge support for parallel vector+graph retrieval
+
+**GitHub Actions workflows:**
+- `.github/workflows/deploy-compose.yml` — sync docker-compose.yml to core-01 when changed
 
 **Server Layout:**
 - `public-01` (Hetzner CX42, €17/mo): Coolify, website, Twenty CRM, Fider, Uptime Kuma
