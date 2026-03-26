@@ -3,6 +3,7 @@ Knowledge adapter for Vexa meetings.
 Ingests a VexaMeeting transcript into the klai knowledge pipeline
 by calling knowledge-ingest POST /ingest/v1/document.
 """
+
 from __future__ import annotations
 
 import logging
