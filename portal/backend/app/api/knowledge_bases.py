@@ -153,7 +153,6 @@ async def create_knowledge_base(
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
 
     await db.commit()
-    await db.refresh(kb)
     return KBOut(
         id=kb.id,
         name=kb.name,
@@ -185,7 +184,6 @@ async def update_knowledge_base(
     if body.visibility is not None:
         kb.visibility = body.visibility
     await db.commit()
-    await db.refresh(kb)
     return KBOut(
         id=kb.id,
         name=kb.name,
