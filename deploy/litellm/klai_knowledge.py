@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
@@ -95,11 +96,6 @@ async def _retrieve(client: httpx.AsyncClient, payload: dict) -> list[dict] | Ba
 
 
 class KlaiKnowledgeHook(CustomLogger):
-    # Shared client — reuses the connection pool across all hook invocations.
-    # Safe because klai_knowledge_hook is a module-level singleton and
-    # httpx.AsyncClient is coroutine-safe.
-    _client: httpx.AsyncClient = httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT)
-
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
             return data
@@ -127,23 +123,28 @@ class KlaiKnowledgeHook(CustomLogger):
             "kb_slugs": ["personal"],
         } if user_id else None
 
-        # Fire both retrieves concurrently when a user_id is present.
-        if personal_payload is not None:
-            org_result, personal_result = await asyncio.gather(
-                _retrieve(self._client, org_payload),
-                _retrieve(self._client, personal_payload),
-                return_exceptions=True,
-            )
-        else:
-            org_result = await _retrieve(self._client, org_payload)
-            personal_result = []
+        # Per-request client — avoids event loop issues with class-level singletons.
+        t_retrieve = time.perf_counter()
+        async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
+            # Fire both retrieves concurrently when a user_id is present.
+            if personal_payload is not None:
+                org_result, personal_result = await asyncio.gather(
+                    _retrieve(client, org_payload),
+                    _retrieve(client, personal_payload),
+                    return_exceptions=True,
+                )
+            else:
+                org_result = await _retrieve(client, org_payload)
+                personal_result = []
+        retrieve_ms = (time.perf_counter() - t_retrieve) * 1000
 
         # Handle per-scope failures independently — degrade gracefully.
         if isinstance(org_result, BaseException):
             logger.warning(
-                "KlaiKnowledgeHook: org retrieval failed (%s: %s) — degrading",
+                "KlaiKnowledgeHook: org retrieval failed (%s: %s) after %.0fms — degrading",
                 type(org_result).__name__,
                 org_result,
+                retrieve_ms,
             )
             return data
         if isinstance(personal_result, BaseException):
@@ -186,6 +187,10 @@ class KlaiKnowledgeHook(CustomLogger):
             messages.insert(0, {"role": "system", "content": context_block})
 
         data["messages"] = messages
+        logger.info(
+            "KlaiKnowledgeHook: injected %d org + %d personal chunks for org=%s in %.0fms",
+            len(org_chunks), len(personal_chunks), org_id, retrieve_ms,
+        )
         return data
 
     async def async_post_call_success_hook(self, *args, **kwargs):

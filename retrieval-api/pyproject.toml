@@ -12,6 +12,7 @@ dependencies = [
     "sse-starlette>=2.1",
     "graphiti-core[falkordb]>=0.28,<0.30",
     "structlog>=25.0",
+    "prometheus-client>=0.21",
 ]
 
 [project.optional-dependencies]
