@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     litellm_master_key: str = ""
     summarize_model: str = "klai-primary"
 
+    # Knowledge-ingest service (for KB ingestion)
+    knowledge_ingest_url: str = "http://knowledge-ingest:8000"
+    knowledge_ingest_secret: str = ""
+
     log_level: str = "INFO"
 
     @property

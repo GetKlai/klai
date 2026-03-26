@@ -381,6 +381,54 @@ async def summarize_meeting_endpoint(
     return {"summary": summary}
 
 
+# -- Knowledge ingest --------------------------------------------------------
+
+
+class IngestMeetingRequest(BaseModel):
+    kb_slug: str
+    org_id: str
+
+
+class IngestMeetingResponse(BaseModel):
+    artifact_id: str
+    status: str
+
+
+@router.post("/{meeting_id}/ingest", response_model=IngestMeetingResponse)
+async def ingest_meeting_to_kb(
+    meeting_id: UUID,
+    body: IngestMeetingRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestMeetingResponse:
+    """Add a meeting transcript to a knowledge base."""
+    from app.services.knowledge_adapter import ingest_vexa_meeting  # noqa: PLC0415
+
+    user_id, org_id = await _get_user_and_org(credentials, db)
+
+    meeting = await db.scalar(
+        select(VexaMeeting).where(
+            VexaMeeting.id == meeting_id,
+            VexaMeeting.zitadel_user_id == user_id,
+        )
+    )
+    if meeting is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting niet gevonden")
+
+    if not meeting.transcript_segments:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Geen transcript beschikbaar voor dit meeting",
+        )
+
+    artifact_id = await ingest_vexa_meeting(
+        org_id=body.org_id,
+        kb_slug=body.kb_slug,
+        meeting=meeting,
+    )
+    return IngestMeetingResponse(artifact_id=artifact_id, status="ok")
+
+
 # -- Webhook from Vexa -------------------------------------------------------
 
 
