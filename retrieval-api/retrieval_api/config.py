@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     sparse_sidecar_url: str = ""
     sparse_sidecar_timeout: float = 5.0
 
+    reranker_enabled: bool = False  # CPU reranker too slow (~83s/20 docs); enable when GPU available
     coreference_timeout: float = 3.0
     reranker_timeout: float = 30.0
     # Graphiti / FalkorDB knowledge graph
