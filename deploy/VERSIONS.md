@@ -10,29 +10,27 @@ Dependabot ignores the constraints listed here via its `ignore` rules.
 
 ## Docker images
 
-### `pgvector/pgvector:pg17` (main postgres)
+### `pgvector/pgvector:pg18` (main postgres)
 
-**Current:** pg17 (PostgreSQL 17.x with pgvector 0.8.2)
-**Latest available:** pg18
+**Current:** pg18 (PostgreSQL 18.x with pgvector 0.8.2)
+**Latest available:** pg18 ✅ up to date
 
-**Why pinned:** PostgreSQL major version upgrades require running `pg_upgrade` — you cannot simply change the image tag. pg17 is supported until November 2029.
+**Why pinned:** PostgreSQL major version upgrades require dump/restore. pg18 is the current major version (stable since Sept 2025). Upgraded from pg17 on 2026-03-26 via dump/restore.
 
-**Upgrade path:**
-1. Spin up a pg18 instance alongside pg17
-2. Run `pg_upgrade --old-datadir ... --new-datadir ...`
-3. Verify all data, run migrations, then cut over
-4. Update tag to `pgvector/pgvector:pg18`
+**Next upgrade path (to pg19 when released):**
+1. `pg_dumpall -U klai` → save to /opt/klai/backups/
+2. Stop all services, change image, delete postgres-data volume
+3. Start fresh pg18→pg19, restore dump
+4. Start all services
 
 ---
 
-### `postgres:16-alpine` (firecrawl-postgres)
+### `postgres:18-alpine` (firecrawl-postgres)
 
-**Current:** PostgreSQL 16
-**Latest available:** PostgreSQL 18
+**Current:** PostgreSQL 18
+**Latest available:** PostgreSQL 18 ✅ up to date
 
-**Why pinned:** This is the Firecrawl-internal database, separate from the main klai postgres. Firecrawl was configured against pg16. pg16 is supported until November 2028.
-
-**Upgrade path:** Check Firecrawl release notes for pg17/pg18 support, then apply the same pg_upgrade procedure as above (smaller dataset, lower risk).
+**Note:** Firecrawl-internal queue database (NUQ schema). Data is transient (queue state). Upgraded from pg16 on 2026-03-26 — data volume deleted and recreated clean.
 
 ---
 
