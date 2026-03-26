@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, requireAuthOrService } from "@/lib/auth";
+import { requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import * as ki from "@/lib/knowledge_ingest";
