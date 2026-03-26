@@ -36,9 +36,12 @@ async def lifespan(app: FastAPI):
         from sqlalchemy.engine import make_url  # noqa: PLC0415
         from knowledge_ingest.config import settings as _s  # noqa: PLC0415
         _u = make_url(_s.postgres_dsn)
+        # Wrap password in single quotes: base64 passwords end with '=' which
+        # libpq key=value format interprets as a new separator without quoting.
+        _pw = (_u.password or "").replace("\\", "\\\\").replace("'", "\\'")
         pg_dsn = (
             f"host={_u.host} port={_u.port or 5432} "
-            f"dbname={_u.database} user={_u.username} password={_u.password}"
+            f"dbname={_u.database} user={_u.username} password='{_pw}'"
         )
         # Pass kwargs={} to avoid psycopg-pool 3.x bug: default kwargs=None → **None TypeError.
         async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn, kwargs={})
