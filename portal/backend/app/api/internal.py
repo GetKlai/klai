@@ -215,14 +215,16 @@ async def get_knowledge_feature(
             logger.warning("KB authz: invalid ObjectId %s — fail-closed", librechat_user_id)
             return KnowledgeFeatureResponse(enabled=False)
 
+        mongo_client: AsyncIOMotorClient | None = None
         try:
-            mongo_client: AsyncIOMotorClient = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
+            mongo_client = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
             mongo_user = await mongo_client[org.librechat_container]["users"].find_one({"_id": oid})
         except Exception as exc:
             logger.warning("KB authz: MongoDB lookup failed for %s — fail-closed: %s", librechat_user_id, exc)
             return KnowledgeFeatureResponse(enabled=False)
         finally:
-            mongo_client.close()
+            if mongo_client is not None:
+                mongo_client.close()
 
         if mongo_user is None:
             logger.warning("KB authz: no LibreChat user found for ObjectId %s — fail-closed", librechat_user_id)
