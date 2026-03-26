@@ -580,7 +580,10 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_ISSUER: https://auth.${DOMAIN}
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
-      VECTOR_BACKEND: pgvector
+      VECTOR_BACKEND: qdrant
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       DOCLING_URL: http://docling-serve:5001
       TEI_URL: http://tei:8080
       LITELLM_URL: http://litellm:4000
@@ -595,6 +598,7 @@ services:
       - tei
       - searxng
       - postgres
+      - qdrant
 
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 

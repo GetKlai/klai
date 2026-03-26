@@ -1,7 +1,7 @@
 """
 Document ingestion pipeline — runs as FastAPI BackgroundTask.
 
-Flow: route source -> docling/youtube/text -> chunk -> embed -> pgvector INSERT
+Flow: route source -> docling/youtube/text -> chunk -> embed -> Qdrant upsert + PG metadata
 """
 import logging
 import uuid
@@ -90,20 +90,25 @@ async def _store_chunks(
     embeddings: list[list[float]],
 ) -> None:
     from app.models.chunk import Chunk
+    from app.services import qdrant_store
 
-    for chunk_data, embedding in zip(chunks, embeddings):
+    for chunk_data in chunks:
+        chunk_id = "chk_" + uuid.uuid4().hex[:24]
+        chunk_data["chunk_id"] = chunk_id
         chunk = Chunk(
-            id="chk_" + uuid.uuid4().hex[:24],
+            id=chunk_id,
             source_id=chunk_data["source_id"],
             notebook_id=chunk_data["notebook_id"],
             tenant_id=chunk_data["tenant_id"],
             content=chunk_data["content"],
             metadata_=chunk_data.get("metadata"),
-            embedding=embedding,
         )
         db.add(chunk)
 
     await db.commit()
+
+    # Store vectors in Qdrant
+    qdrant_store.upsert_chunks(chunks, embeddings)
 
 
 async def _set_status(

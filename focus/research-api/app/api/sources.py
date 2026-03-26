@@ -315,10 +315,12 @@ async def delete_source(
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bron niet gevonden")
 
-    # Delete chunks first, then source (within transaction for pgvector)
+    # Delete chunks from DB and Qdrant
     from app.models.chunk import Chunk
+    from app.services import qdrant_store
 
     await db.execute(delete(Chunk).where(Chunk.source_id == src_id))
+    qdrant_store.delete_by_source(src_id)
 
     # Delete file if present
     if source.file_path:

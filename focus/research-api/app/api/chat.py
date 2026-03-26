@@ -21,6 +21,7 @@ from app.services.retrieval import (
     NARROW_SYSTEM_PROMPT,
     build_context,
     extract_citations,
+    retrieve_broad_chunks,
     retrieve_chunks,
     retrieve_web_chunks,
     stream_llm,
@@ -86,17 +87,20 @@ async def _generate(
     """Async generator that yields SSE lines."""
     full_response = ""
     try:
-        # 1. Retrieve document chunks
-        doc_chunks = await retrieve_chunks(db, question, notebook_id, tenant_id)
-
-        # 2. Optionally retrieve web chunks
-        web_chunks: list[dict] = []
-        if mode == "web":
+        # 1. Retrieve chunks based on mode
+        if mode == "broad":
+            doc_chunks = await retrieve_broad_chunks(db, question, notebook_id, tenant_id)
+            web_chunks: list[dict] = []
+        elif mode == "web":
+            doc_chunks = await retrieve_chunks(db, question, notebook_id, tenant_id)
             web_chunks = await retrieve_web_chunks(question)
+        else:  # narrow
+            doc_chunks = await retrieve_chunks(db, question, notebook_id, tenant_id)
+            web_chunks = []
 
         all_chunks = doc_chunks + web_chunks
 
-        # 3. Build context and select system prompt
+        # 2. Build context and select system prompt
         context = build_context(all_chunks)
         system_prompt = NARROW_SYSTEM_PROMPT if mode == "narrow" else BROAD_SYSTEM_PROMPT
 
