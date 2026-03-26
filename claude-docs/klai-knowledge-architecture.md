@@ -738,7 +738,7 @@ Query
   ├── BGE-M3 sparse retrieval (top-50)    ← exact keywords, error codes, product names
   ├── BGE-M3 dense retrieval (top-50)     ← semantic meaning
   └── RRF fusion (k=60)
-       └── bge-reranker-v2-m3 (top-5 to top-10)
+       └── [reranker disabled on CPU — see §7.3]
             └── LLM with retrieved context + metadata
 ```
 
@@ -759,6 +759,8 @@ Bi-encoder retrieval (top-20) → Cross-encoder reranking (top-5) → LLM classi
 ```
 
 The cross-encoder reads query + document together and assesses relevance at claim level, not topic level. This is what distinguishes "Windows vs. Mac" when the topic is the same but the coverage is not.
+
+**Production status (March 2026):** Reranking is deployed (`infinity-reranker`, bge-reranker-v2-m3) but **disabled** in the retrieval-api (`RERANKER_ENABLED=false`). Benchmark on 20 real documents (avg 692 chars): **~83 seconds on CPU** — unusable for online queries. The RRF hybrid search (vector_chunk + vector_questions + vector_sparse) compensates for most of the quality gain reranking would provide. Enable when GPU inference is available; expected latency ~200ms/20 docs on GPU.
 
 ---
 
@@ -1521,7 +1523,7 @@ Requires its own SPEC before any design decisions. Do not anticipate this in V1 
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
 | **Taxonomy discovery** | BERTopic + HDBSCAN | Starting point; human approval gate required |
 | **Retrieval orchestration** | Direct Qdrant client (V1) | Haystack removed from V1 scope — direct Qdrant client used to avoid service boundary overhead. Revisit if orchestration complexity grows. |
-| **Reranking** | bge-reranker-v2-m3 via Infinity server (self-hosted, CPU) | **Deployed** (March 2026) as `infinity-reranker` on core-01. Jina-compatible `/v1/rerank` endpoint. Currently serves LibreChat webSearch; will also serve Knowledge retrieval pipeline. |
+| **Reranking** | bge-reranker-v2-m3 via Infinity server (self-hosted, CPU) | **Deployed** as `infinity-reranker` on core-01. Serves LibreChat webSearch. **Disabled** in retrieval-api (`RERANKER_ENABLED=false`) — CPU too slow (~83s/20 docs). Enable when GPU available. |
 | **LLM interface** | Claude via LiteLLM | Grounded responses with source citations |
 | **PII detection** | Presidio + GLiNER (gliner_multi-v2.1) | For Dutch transcripts; pseudonymization, not anonymization |
 | **Knowledge storage** | Gitea (self-hosted) | Git-backed, org-per-tenant, webhook → ingest pipeline |
