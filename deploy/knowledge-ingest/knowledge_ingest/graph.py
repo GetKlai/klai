@@ -14,11 +14,15 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from graphiti_core import Graphiti
-from graphiti_core.driver.falkordb import FalkorDriver
-from graphiti_core.llm_client.config import LLMConfig
-from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
-from graphiti_core.nodes import EpisodeType
+try:
+    from graphiti_core import Graphiti
+    from graphiti_core.driver.falkordb import FalkorDriver
+    from graphiti_core.llm_client.config import LLMConfig
+    from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+    from graphiti_core.nodes import EpisodeType
+    _GRAPHITI_AVAILABLE = True
+except ImportError:
+    _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
 
 from knowledge_ingest.config import settings
 
@@ -27,8 +31,10 @@ logger = logging.getLogger(__name__)
 _graphiti_client: Graphiti | None = None
 
 
-def _get_graphiti() -> Graphiti:
+def _get_graphiti() -> "Graphiti":
     """Return the shared Graphiti client (lazy init, process-singleton)."""
+    if not _GRAPHITI_AVAILABLE:
+        raise RuntimeError("graphiti-core is not installed — add it in /run SPEC-KB-011")
     global _graphiti_client
     if _graphiti_client is None:
         llm_client = OpenAIGenericClient(

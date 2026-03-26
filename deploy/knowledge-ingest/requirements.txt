@@ -10,4 +10,4 @@ PyYAML==6.0.2
 html2text==2024.2.26
 procrastinate[asyncpg]==2.15.0
 cachetools==5.5.2
-graphiti-core[falkordb]>=0.28,<0.30
+# graphiti-core[falkordb]>=0.28,<0.30  # Added in /run SPEC-KB-011 (requires pydantic>=2.11.5)
