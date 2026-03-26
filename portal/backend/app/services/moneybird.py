@@ -23,7 +23,10 @@ class MoneybirdService:
         if resp.is_error:
             logger.error(
                 "Moneybird API %s %s failed: status=%d, body=%s",
-                resp.request.method, resp.request.url.path, resp.status_code, resp.text[:200],
+                resp.request.method,
+                resp.request.url.path,
+                resp.status_code,
+                resp.text[:200],
             )
             raise RuntimeError(resp.text)
 
