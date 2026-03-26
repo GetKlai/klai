@@ -27,10 +27,14 @@ async def lifespan(app: FastAPI):
         # Lazy import: procrastinate pulls in psycopg which requires libpq.
         # Guarded by enrichment_enabled so test environments (ENRICHMENT_ENABLED=false)
         # skip this block entirely without needing psycopg installed.
-        import procrastinate.contrib.asyncpg as _asyncpg_contrib  # noqa: PLC0415
+        import procrastinate  # noqa: PLC0415
         from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
 
-        async_connector = _asyncpg_contrib.AsyncpgConnector.from_pool(pool)
+        # procrastinate 2.x uses PsycopgConnector (psycopg3); no asyncpg connector exists.
+        # We create a separate psycopg3 pool — convert the asyncpg DSN format.
+        from knowledge_ingest.config import settings as _s  # noqa: PLC0415
+        pg_dsn = _s.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://")
+        async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn)
         proc_app = enrichment_tasks.init_app(async_connector)
         logger.info("Procrastinate app initialised.")
 
