@@ -71,7 +71,7 @@ async def _search_notebook(
     request: RetrieveRequest,
     candidates: int,
 ) -> list[dict]:
-    """Simple dense cosine search on klai_focus collection."""
+    """Dense cosine search on klai_focus collection (single unnamed vector)."""
     client = _get_client()
 
     must_conditions = [
@@ -83,10 +83,10 @@ async def _search_notebook(
         )
 
     try:
-        results = await asyncio.wait_for(
-            client.search(
+        result = await asyncio.wait_for(
+            client.query_points(
                 collection_name=settings.qdrant_focus_collection,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=Filter(must=must_conditions),
                 limit=candidates,
                 with_payload=True,
@@ -109,7 +109,7 @@ async def _search_notebook(
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
         }
-        for r in results
+        for r in result.points
     ]
 
 
@@ -129,10 +129,10 @@ async def _search_knowledge(
     combined_filter = Filter(must=[*scope_conditions])
 
     try:
-        results = await asyncio.wait_for(
-            client.search(
+        result = await asyncio.wait_for(
+            client.query_points(
                 collection_name=settings.qdrant_collection,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=combined_filter,
                 limit=candidates,
                 with_payload=True,
@@ -155,7 +155,7 @@ async def _search_knowledge(
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
         }
-        for r in results
+        for r in result.points
     ]
 
 
