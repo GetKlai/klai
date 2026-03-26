@@ -7,6 +7,7 @@ Protected by a shared Bearer secret (INTERNAL_SECRET env var).
 Used by klai-mailer to look up a user's preferred language so it can append
 ?lang= to email action URLs (verify, password-reset, etc.).
 """
+
 import logging
 from datetime import datetime
 

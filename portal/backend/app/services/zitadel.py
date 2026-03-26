@@ -2,6 +2,7 @@
 Zitadel management API client.
 All calls use the portal-api service account PAT — never exposed to the browser.
 """
+
 import logging
 
 import httpx
@@ -19,8 +20,10 @@ class ZitadelClient:
             await response.aread()
             logger.error(
                 "Zitadel API %s %s failed: status=%d, body=%s",
-                response.request.method, response.url.path,
-                response.status_code, response.text[:200],
+                response.request.method,
+                response.url.path,
+                response.status_code,
+                response.text[:200],
             )
 
     def __init__(self) -> None:
