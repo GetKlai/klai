@@ -217,6 +217,7 @@ ALLOW_SOCIAL_REGISTRATION=false
 DOMAIN_CLIENT=https://chat-{slug}.{domain}
 DOMAIN_SERVER=https://chat-{slug}.{domain}
 APP_TITLE=Klai Chat
+ALLOW_IFRAME=true
 
 # Session secrets
 JWT_SECRET={jwt_secret}

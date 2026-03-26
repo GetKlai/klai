@@ -58,6 +58,21 @@ class UpdateKBVisibilityRequest(BaseModel):
     visibility: str  # "public" | "private"
 
 
+class ArtifactSummary(BaseModel):
+    id: str  # UUID
+    path: str
+    assertion_mode: str | None = None
+    tags: list[str] = []
+    created_at: str  # ISO 8601
+
+
+class PersonalItemsResponse(BaseModel):
+    items: list[ArtifactSummary]
+    total: int
+    limit: int
+    offset: int
+
+
 class GiteaPusher(BaseModel):
     name: str | None = None
     login: str | None = None
