@@ -3,7 +3,7 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
-  Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus,
+  Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, Settings,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -55,6 +55,9 @@ interface ConnectorSummary {
   id: string
   name: string
   connector_type: string
+  config: Record<string, unknown>
+  schedule: string | null
+  is_enabled: boolean
   last_sync_status: string | null
   last_sync_at: string | null
 }
@@ -154,6 +157,13 @@ function ConnectorsSection({
     base_url: '', path_prefix: '', max_pages: '200',
   })
 
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editSchedule, setEditSchedule] = useState('')
+  const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200' })
+  const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
+
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
     queryFn: async () => {
@@ -217,6 +227,60 @@ function ConnectorsSection({
       setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200' })
     },
   })
+
+  const updateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const connector = connectors.find((c) => c.id === id)
+      if (!connector) return
+      const config: Record<string, unknown> = {}
+      if (connector.connector_type === 'github') {
+        config.installation_id = Number(editGithubConfig.installation_id)
+        config.repo_owner = editGithubConfig.repo_owner
+        config.repo_name = editGithubConfig.repo_name
+        config.branch = editGithubConfig.branch
+        if (editGithubConfig.path_filter) config.path_filter = editGithubConfig.path_filter
+      }
+      if (connector.connector_type === 'web_crawler') {
+        config.base_url = editWebcrawlerConfig.base_url
+        if (editWebcrawlerConfig.path_prefix) config.path_prefix = editWebcrawlerConfig.path_prefix
+        if (editWebcrawlerConfig.max_pages && editWebcrawlerConfig.max_pages !== '200') config.max_pages = Number(editWebcrawlerConfig.max_pages)
+      }
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName, config, schedule: editSchedule || null }),
+      })
+      if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      setEditingId(null)
+    },
+  })
+
+  function startEdit(c: ConnectorSummary) {
+    setEditingId(c.id)
+    setEditName(c.name)
+    setEditSchedule(c.schedule ?? '')
+    if (c.connector_type === 'web_crawler') {
+      const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number }
+      setEditWebcrawlerConfig({
+        base_url: String(cfg.base_url ?? ''),
+        path_prefix: String(cfg.path_prefix ?? ''),
+        max_pages: String(cfg.max_pages ?? '200'),
+      })
+    }
+    if (c.connector_type === 'github') {
+      const cfg = c.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
+      setEditGithubConfig({
+        installation_id: String(cfg.installation_id ?? ''),
+        repo_owner: String(cfg.repo_owner ?? ''),
+        repo_name: String(cfg.repo_name ?? ''),
+        branch: String(cfg.branch ?? 'main'),
+        path_filter: String(cfg.path_filter ?? ''),
+      })
+    }
+  }
 
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
@@ -283,6 +347,15 @@ function ConnectorsSection({
                                 {isSyncing || isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                               </button>
                             </Tooltip>
+                            <Tooltip label={m.admin_connectors_action_edit()}>
+                              <button
+                                onClick={() => startEdit(c)}
+                                aria-label={m.admin_connectors_action_edit()}
+                                className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] hover:opacity-70"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
                             <Tooltip label={m.admin_connectors_action_delete()}>
                               <button
                                 onClick={() => setConfirmingDeleteId(c.id)}
@@ -307,6 +380,91 @@ function ConnectorsSection({
       {connectors.length === 0 && !showAdd && (
         <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_connectors_empty()}</p>
       )}
+
+      {editingId !== null && (() => {
+        const connector = connectors.find((c) => c.id === editingId)
+        if (!connector) return null
+        return (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-4">
+                {connector.connector_type === 'web_crawler' && (
+                  <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate(editingId) }} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                      <Input id="edit-conn-name" required value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
+                      <Input id="edit-conn-base-url" type="url" required value={editWebcrawlerConfig.base_url} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                      <Input id="edit-conn-path-prefix" value={editWebcrawlerConfig.path_prefix} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                      <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={editWebcrawlerConfig.max_pages} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
+                      <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
+                    </div>
+                    {updateMutation.error && (
+                      <p className="text-sm text-[var(--color-destructive)]">
+                        {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>{m.admin_connectors_cancel()}</Button>
+                    </div>
+                  </form>
+                )}
+                {connector.connector_type === 'github' && (
+                  <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate(editingId) }} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                      <Input id="edit-conn-name" required value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-install">{m.admin_connectors_github_installation_id()}</Label>
+                      <Input id="edit-conn-install" type="number" required value={editGithubConfig.installation_id} onChange={(e) => setEditGithubConfig((p) => ({ ...p, installation_id: e.target.value }))} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="edit-conn-owner">{m.admin_connectors_github_repo_owner()}</Label>
+                        <Input id="edit-conn-owner" required value={editGithubConfig.repo_owner} onChange={(e) => setEditGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="edit-conn-repo">{m.admin_connectors_github_repo_name()}</Label>
+                        <Input id="edit-conn-repo" required value={editGithubConfig.repo_name} onChange={(e) => setEditGithubConfig((p) => ({ ...p, repo_name: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-branch">{m.admin_connectors_github_branch()}</Label>
+                      <Input id="edit-conn-branch" required value={editGithubConfig.branch} onChange={(e) => setEditGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
+                      <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
+                    </div>
+                    {updateMutation.error && (
+                      <p className="text-sm text-[var(--color-destructive)]">
+                        {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>{m.admin_connectors_cancel()}</Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {isOwner && !showAdd && (
         <Button size="sm" variant="outline" onClick={() => setShowAdd(true)}>
