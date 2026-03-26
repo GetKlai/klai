@@ -42,6 +42,42 @@ class _ProvisionState:
     mongo_user_slug: str = ""
 
 
+def _sync_remove_container(name: str) -> None:
+    """Remove a Docker container by name (sync, for use with run_in_executor)."""
+    client = docker.from_env()
+    try:
+        c = client.containers.get(name)
+        c.remove(force=True)
+    except docker.errors.NotFound:  # type: ignore[attr-defined]
+        pass
+
+
+def _sync_drop_mongodb_tenant_user(slug: str) -> None:
+    """Drop the MongoDB user for a tenant (sync, for use with run_in_executor)."""
+    c = docker.from_env()
+    db_name = f"librechat-{slug}"
+    user = f"librechat-{slug}"
+    script = f'db.getSiblingDB("{db_name}").dropUser("{user}")'
+    mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
+    container = c.containers.get(mongodb_container)
+    container.exec_run(
+        [
+            "mongosh",
+            "--quiet",
+            "-u",
+            "root",
+            "-p",
+            settings.mongo_root_password,
+            "--authenticationDatabase",
+            "admin",
+            "--eval",
+            script,
+        ],
+        stdout=True,
+        stderr=True,
+    )
+
+
 async def _rollback(state: _ProvisionState) -> None:
     """Best-effort cleanup of partial provisioning state."""
     loop = asyncio.get_running_loop()
@@ -57,16 +93,7 @@ async def _rollback(state: _ProvisionState) -> None:
 
     if state.container_started:
         try:
-
-            def _remove_container(name: str) -> None:
-                client = docker.from_env()
-                try:
-                    c = client.containers.get(name)
-                    c.remove(force=True)
-                except docker.errors.NotFound:  # type: ignore[attr-defined]
-                    pass
-
-            await loop.run_in_executor(None, _remove_container, f"librechat-{state.slug}")
+            await loop.run_in_executor(None, _sync_remove_container, f"librechat-{state.slug}")
         except Exception as exc:
             logger.warning("Rollback: container removal failed for %s: %s", state.slug, exc)
 
@@ -79,32 +106,7 @@ async def _rollback(state: _ProvisionState) -> None:
 
     if state.mongo_user_created and state.mongo_user_slug:
         try:
-
-            def _drop_mongodb_tenant_user(slug: str) -> None:
-                c = docker.from_env()
-                db_name = f"librechat-{slug}"
-                user = f"librechat-{slug}"
-                script = f'db.getSiblingDB("{db_name}").dropUser("{user}")'
-                mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
-                container = c.containers.get(mongodb_container)
-                container.exec_run(
-                    [
-                        "mongosh",
-                        "--quiet",
-                        "-u",
-                        "root",
-                        "-p",
-                        settings.mongo_root_password,
-                        "--authenticationDatabase",
-                        "admin",
-                        "--eval",
-                        script,
-                    ],
-                    stdout=True,
-                    stderr=True,
-                )
-
-            await loop.run_in_executor(None, _drop_mongodb_tenant_user, state.mongo_user_slug)
+            await loop.run_in_executor(None, _sync_drop_mongodb_tenant_user, state.mongo_user_slug)
         except Exception as exc:
             logger.warning("Rollback: MongoDB user deletion failed for %s: %s", state.mongo_user_slug, exc)
 

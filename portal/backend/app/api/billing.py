@@ -137,7 +137,7 @@ async def create_mandate(
                 send_invoices_to_email=body.billing_email,
             )
         except RuntimeError as exc:
-            logger.error("Moneybird contact creation failed for org %d: %s", org.id, exc)
+            logger.exception("Moneybird contact creation failed for org %d: %s", org.id, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to create Moneybird contact: {exc}",
@@ -245,7 +245,7 @@ async def cancel_subscription(
     try:
         await moneybird.cancel_subscription(org.moneybird_subscription_id)
     except RuntimeError as exc:
-        logger.error("Subscription cancellation failed for org %d: %s", org.id, exc)
+        logger.exception("Subscription cancellation failed for org %d: %s", org.id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to cancel subscription: {exc}",

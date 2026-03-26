@@ -75,7 +75,7 @@ async def provision_and_store(
     try:
         return await provision_gitea_repo(org_slug, kb_name, kb_slug, visibility)
     except httpx.HTTPStatusError as exc:
-        log.error(
+        log.exception(
             "Gitea provisioning failed for KB slug=%s: %s %s",
             kb_slug,
             exc.response.status_code,
@@ -87,7 +87,7 @@ async def provision_and_store(
             detail="Gitea provisioning mislukt",
         ) from exc
     except httpx.ConnectError as exc:
-        log.error("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
+        log.exception("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
