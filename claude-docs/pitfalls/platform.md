@@ -906,6 +906,51 @@ HippoRAG2 and Graphiti operate at different layers of the retrieval stack. Treat
 
 ---
 
+## platform-tei-embedding-timeout
+
+**Severity:** HIGH
+
+**Trigger:** knowledge-ingest returns 500 errors during large document batches sent to the TEI embedder
+
+Large document batches legitimately take up to 35 seconds on TEI (up to 24s queue time + 11s inference time). With the default `timeout=30.0` in `httpx`, the client times out before TEI finishes. The `httpx.ReadTimeout` propagates unhandled and the connector receives a 500.
+
+**Symptom:**
+```
+# Connector log:
+Failed to process X.md: Server error '500 Internal Server Error'
+
+# knowledge-ingest log:
+httpx.ReadTimeout: timed out while reading response from http://tei:8080/embed
+```
+
+**Why it happens:**
+The httpx client in `knowledge_ingest/embedder.py` had a hardcoded `timeout=30.0`. TEI processes batches sequentially and queues incoming requests; under load, total round-trip time exceeds 30s.
+
+**Prevention:**
+1. Set TEI client timeout to at least 120s (configurable via `TEI_TIMEOUT` env var)
+2. Add retry with exponential backoff: 3 attempts, 1s/2s/4s waits on timeout and 5xx responses
+3. Split large inputs into batches of 32 before sending to reduce TEI queue pressure
+
+```python
+# embedder.py — correct pattern
+timeout = float(os.getenv("TEI_TIMEOUT", "120"))
+client = httpx.AsyncClient(timeout=timeout)
+
+for attempt in range(3):
+    try:
+        response = await client.post(url, json={"inputs": batch})
+        response.raise_for_status()
+        break
+    except (httpx.ReadTimeout, httpx.HTTPStatusError) as e:
+        if attempt == 2:
+            raise
+        await asyncio.sleep(2 ** attempt)
+```
+
+**Source:** commit `2ae26bd` — knowledge-ingest TEI timeout + retry + batching fix
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
