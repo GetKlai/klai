@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 from datetime import datetime, timedelta
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, bearer
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
@@ -22,6 +24,38 @@ from app.services.access import get_user_role_for_kb
 from app.services.zitadel import zitadel
 
 log = logging.getLogger(__name__)
+_QDRANT_COLLECTION = "klai_knowledge"
+
+
+async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
+    """Count Qdrant vectors for a specific org + kb_slug. Returns None on failure."""
+    try:
+        headers = {"api-key": settings.qdrant_api_key} if settings.qdrant_api_key else {}
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{settings.qdrant_url}/collections/{_QDRANT_COLLECTION}/points/count",
+                headers=headers,
+                json={
+                    "filter": {
+                        "must": [
+                            {"key": "org_id", "match": {"value": zitadel_org_id}},
+                            {"key": "kb_slug", "match": {"value": kb_slug}},
+                        ]
+                    },
+                    "exact": True,
+                },
+            )
+        if resp.status_code == 404:
+            return 0
+        if not resp.is_success:
+            log.debug("Qdrant count failed for KB %s: HTTP %s", kb_slug, resp.status_code)
+            return None
+        return resp.json().get("result", {}).get("count", 0) or 0
+    except Exception as exc:
+        log.debug("Could not reach Qdrant for KB %s: %s", kb_slug, exc)
+        return None
+
+
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
 
 
@@ -306,8 +340,8 @@ async def get_kb_stats(
         except Exception:
             log.debug("Could not fetch docs page count for KB %s", kb_slug)
 
-    # Qdrant volume — not yet integrated; placeholder
-    volume: int | None = None
+    # Qdrant vector count for this KB
+    volume = await _qdrant_count_for_kb(org.zitadel_org_id, kb.slug)
 
     # Audit log query usage (last 30 days) — placeholder until KB query events are logged
     usage_last_30d: int | None = None
