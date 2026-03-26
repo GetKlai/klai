@@ -41,7 +41,7 @@ def _split_by_headings(text: str) -> list[tuple[str, str]]:
         level = len(match.group(1))
         title = match.group(2).strip()
         # Trim stack to current level
-        heading_stack = [(l, t) for l, t in heading_stack if l < level]
+        heading_stack = [(lvl, t) for lvl, t in heading_stack if lvl < level]
         heading_stack.append((level, title))
         last_heading_path = " > ".join(t for _, t in heading_stack)
         last_pos = match.end() + 1

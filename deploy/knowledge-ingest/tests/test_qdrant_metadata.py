@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from knowledge_ingest.qdrant_store import _ALLOWED_METADATA_FIELDS, search
+from knowledge_ingest.qdrant_store import search
 
 
 def _make_search_result(payload: dict, score: float = 0.9):
