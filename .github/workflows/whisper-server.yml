@@ -47,5 +47,8 @@ jobs:
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
+            set -e
+            source /opt/klai/.env
+            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/whisper-server:latest
             cd /opt/klai && docker compose up -d whisper-server
