@@ -1,4 +1,9 @@
-"""Qdrant search: hybrid and dense search across klai_knowledge and klai_focus."""
+"""Qdrant search: dense cosine search across klai_knowledge and klai_focus.
+
+NOTE: klai_knowledge currently uses a single unnamed dense vector (1024-dim cosine).
+Named vectors (vector_chunk, vector_questions, vector_sparse) and RRF hybrid search
+will be enabled after collection migration. See SPEC-KB-007 follow-up.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +15,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     FieldCondition,
     Filter,
-    Fusion,
-    FusionQuery,
     MatchValue,
-    Prefetch,
 )
 
 from retrieval_api.config import settings
@@ -116,24 +118,21 @@ async def _search_knowledge(
     request: RetrieveRequest,
     candidates: int,
 ) -> list[dict]:
-    """RRF hybrid search on klai_knowledge using dense vectors (chunk + questions)."""
+    """Dense cosine search on klai_knowledge (single unnamed vector).
+
+    TODO: Upgrade to RRF hybrid search once klai_knowledge is migrated
+    to named vectors (vector_chunk, vector_questions, vector_sparse).
+    """
     client = _get_client()
 
     scope_conditions = _scope_filter(request)
-
-    # Combine scope filter with invalid_at filter
-    must_conditions = [*scope_conditions]
-    combined_filter = Filter(must=must_conditions)
+    combined_filter = Filter(must=[*scope_conditions])
 
     try:
         results = await asyncio.wait_for(
-            client.query_points(
+            client.search(
                 collection_name=settings.qdrant_collection,
-                prefetch=[
-                    Prefetch(query=query_vector, using="vector_chunk", limit=candidates),
-                    Prefetch(query=query_vector, using="vector_questions", limit=candidates),
-                ],
-                query=FusionQuery(fusion=Fusion.RRF),
+                query_vector=query_vector,
                 query_filter=combined_filter,
                 limit=candidates,
                 with_payload=True,
@@ -156,7 +155,7 @@ async def _search_knowledge(
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
         }
-        for r in results.points
+        for r in results
     ]
 
 
@@ -173,7 +172,7 @@ async def hybrid_search(
         return await _search_notebook(query_vector, request, candidates)
 
     if request.scope == "broad":
-        # Parallel queries on both collections, merge by normalized score
+        # Parallel queries on both collections, merge by score
         knowledge_task = _search_knowledge(query_vector, request, candidates)
         notebook_task = _search_notebook(query_vector, request, candidates)
 

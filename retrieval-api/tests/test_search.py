@@ -17,11 +17,6 @@ def _make_search_result(id_: str, text: str, score: float, **extra_payload):
     return SimpleNamespace(id=id_, score=score, payload=payload)
 
 
-def _make_query_result(points: list):
-    """Create a mock Qdrant query_points result."""
-    return SimpleNamespace(points=points)
-
-
 class TestSearch:
     @pytest.fixture(autouse=True)
     def reset_client(self):
@@ -58,11 +53,11 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_org_search(self):
-        """Org scope uses hybrid RRF search on klai_knowledge."""
+        """Org scope uses dense cosine search on klai_knowledge (single unnamed vector)."""
         mock_client = AsyncMock()
-        mock_client.query_points.return_value = _make_query_result([
+        mock_client.search.return_value = [
             _make_search_result("c1", "knowledge chunk", 0.8, org_id="org-1"),
-        ])
+        ]
 
         with patch.object(search, "_get_client", return_value=mock_client):
             req = RetrieveRequest(query="test", org_id="org-1", scope="org")
@@ -70,21 +65,23 @@ class TestSearch:
 
         assert len(results) == 1
         assert results[0]["text"] == "knowledge chunk"
-        mock_client.query_points.assert_called_once()
+        mock_client.search.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_broad_search_merges(self):
         """Broad scope merges results from both collections."""
         mock_client = AsyncMock()
-        mock_client.query_points.return_value = _make_query_result([
-            _make_search_result("k1", "knowledge", 0.8),
-        ])
-        mock_client.search.return_value = [
-            SimpleNamespace(
-                id="f1",
-                score=0.9,
-                payload={"content": "focus", "tenant_id": "org-1"},
-            ),
+        # Both notebook and knowledge use client.search
+        knowledge_result = _make_search_result("k1", "knowledge", 0.8)
+        focus_result = SimpleNamespace(
+            id="f1",
+            score=0.9,
+            payload={"content": "focus", "tenant_id": "org-1"},
+        )
+        # search is called twice: once for knowledge, once for notebook
+        mock_client.search.side_effect = [
+            [knowledge_result],
+            [focus_result],
         ]
 
         with patch.object(search, "_get_client", return_value=mock_client):

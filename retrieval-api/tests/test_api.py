@@ -5,8 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 
-
-
 class TestRetrieveEndpoint:
     def test_retrieve_scope_personal_without_user_id(self, client):
         """scope=personal without user_id returns 400."""
@@ -182,3 +180,143 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
+
+
+class TestChatEndpoint:
+    def test_chat_scope_personal_without_user_id(self, client):
+        """scope=personal without user_id returns 400."""
+        resp = client.post("/chat", json={"query": "test", "org_id": "org-1", "scope": "personal"})
+        assert resp.status_code == 400
+        assert "user_id" in resp.json()["detail"]
+
+    def test_chat_scope_notebook_without_notebook_id(self, client):
+        """scope=notebook without notebook_id returns 400."""
+        resp = client.post("/chat", json={"query": "test", "org_id": "org-1", "scope": "notebook"})
+        assert resp.status_code == 400
+        assert "notebook_id" in resp.json()["detail"]
+
+    @patch(
+        "retrieval_api.api.chat.coreference.resolve",
+        new_callable=AsyncMock,
+        return_value="resolved query",
+    )
+    @patch("retrieval_api.api.chat.embed_single", new_callable=AsyncMock, return_value=[0.1, 0.2])
+    @patch(
+        "retrieval_api.api.chat.gate.should_bypass",
+        new_callable=AsyncMock,
+        return_value=(True, 0.5),
+    )
+    def test_chat_bypass_path(self, mock_gate, mock_embed, mock_coref, client):
+        """Gate bypass returns done event with retrieval_bypassed=True."""
+        import json as _json
+
+        with client.stream(
+            "POST",
+            "/chat",
+            json={
+                "query": "hello",
+                "org_id": "org-1",
+                "scope": "org",
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            events = []
+            for line in resp.iter_lines():
+                if line.startswith("data: "):
+                    events.append(_json.loads(line[6:]))
+
+        assert len(events) >= 1
+        done = events[-1]
+        assert done["type"] == "done"
+        assert done["retrieval_bypassed"] is True
+        assert done["citations"] == []
+        assert done["query_resolved"] == "resolved query"
+
+    @patch(
+        "retrieval_api.api.chat.coreference.resolve",
+        new_callable=AsyncMock,
+        return_value="resolved query",
+    )
+    @patch("retrieval_api.api.chat.embed_single", new_callable=AsyncMock, return_value=[0.1, 0.2])
+    @patch(
+        "retrieval_api.api.chat.gate.should_bypass",
+        new_callable=AsyncMock,
+        return_value=(False, 0.05),
+    )
+    @patch("retrieval_api.api.chat.search.hybrid_search", new_callable=AsyncMock)
+    @patch("retrieval_api.api.chat.reranker.rerank", new_callable=AsyncMock)
+    @patch("retrieval_api.api.chat.synthesis.synthesize")
+    def test_chat_happy_path(
+        self, mock_synth, mock_rerank, mock_search, mock_gate, mock_embed, mock_coref, client
+    ):
+        """Full pipeline: search, rerank, synthesize -- verify token + done events."""
+        import json as _json
+
+        mock_search.return_value = [
+            {
+                "chunk_id": "c1",
+                "text": "policy text",
+                "score": 0.85,
+                "artifact_id": "a1",
+                "content_type": "policy",
+                "context_prefix": "P: ",
+                "scope": "org",
+                "valid_at": None,
+                "invalid_at": None,
+            },
+        ]
+        mock_rerank.return_value = [
+            {
+                "chunk_id": "c1",
+                "text": "policy text",
+                "score": 0.85,
+                "artifact_id": "a1",
+                "content_type": "policy",
+                "context_prefix": "P: ",
+                "scope": "org",
+                "valid_at": None,
+                "invalid_at": None,
+                "reranker_score": 0.92,
+            },
+        ]
+
+        async def fake_synthesize(query, chunks, history):
+            yield "Hello"
+            yield " world"
+            yield {
+                "citations": [
+                    {
+                        "index": 1,
+                        "artifact_id": "a1",
+                        "title": "P: policy text",
+                        "chunk_ids": ["c1"],
+                        "relevance_score": 0.92,
+                    }
+                ],
+                "retrieval_bypassed": False,
+                "query_resolved": query,
+            }
+
+        mock_synth.return_value = fake_synthesize("resolved query", [], [])
+
+        with client.stream(
+            "POST",
+            "/chat",
+            json={
+                "query": "What is the refund policy?",
+                "org_id": "org-1",
+                "scope": "org",
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            events = []
+            for line in resp.iter_lines():
+                if line.startswith("data: "):
+                    events.append(_json.loads(line[6:]))
+
+        token_events = [e for e in events if e.get("type") == "token"]
+        done_events = [e for e in events if e.get("type") == "done"]
+        assert len(token_events) >= 1
+        assert len(done_events) == 1
+        assert done_events[0]["retrieval_bypassed"] is False
+        assert len(done_events[0]["citations"]) >= 1
