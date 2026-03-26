@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from knowledge_ingest import db, org_config, qdrant_store
+from knowledge_ingest.config import settings
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
 from knowledge_ingest.routes import crawl, ingest, knowledge, personal, retrieve
 
