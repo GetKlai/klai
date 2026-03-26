@@ -9,18 +9,22 @@ TEST_SECRET = "test-secret-value-123"
 @pytest.fixture
 def secured_client():
     """Client with knowledge_ingest_secret configured."""
-    with patch("knowledge_ingest.config.settings.knowledge_ingest_secret", TEST_SECRET):
-        with patch("knowledge_ingest.middleware.auth.settings") as mock_settings:
-            mock_settings.knowledge_ingest_secret = TEST_SECRET
-            with patch(
-                "knowledge_ingest.qdrant_store.ensure_collection",
-                new_callable=AsyncMock,
-            ):
-                from knowledge_ingest.app import app
-                from fastapi.testclient import TestClient
+    from unittest.mock import MagicMock
+    mock_pool = MagicMock()
+    mock_pool.close = AsyncMock(return_value=None)
 
-                with TestClient(app, raise_server_exceptions=False) as c:
-                    yield c
+    with patch("knowledge_ingest.config.settings.knowledge_ingest_secret", TEST_SECRET), \
+         patch("knowledge_ingest.middleware.auth.settings") as mock_settings, \
+         patch("knowledge_ingest.qdrant_store.ensure_collection", new_callable=AsyncMock), \
+         patch("knowledge_ingest.db.get_pool", new_callable=AsyncMock, return_value=mock_pool), \
+         patch("knowledge_ingest.db.close_pool", new_callable=AsyncMock), \
+         patch("knowledge_ingest.config.settings.enrichment_enabled", False):
+        mock_settings.knowledge_ingest_secret = TEST_SECRET
+        from knowledge_ingest.app import app
+        from fastapi.testclient import TestClient
+
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c
 
 
 def test_health_without_secret(secured_client):

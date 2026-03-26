@@ -23,7 +23,8 @@ def client(mock_pool):
     """Test client with auth middleware. Patches qdrant and db pool to skip startup."""
     with patch("knowledge_ingest.qdrant_store.ensure_collection", new_callable=AsyncMock), \
          patch("knowledge_ingest.db.get_pool", new_callable=AsyncMock, return_value=mock_pool), \
-         patch("knowledge_ingest.db.close_pool", new_callable=AsyncMock):
+         patch("knowledge_ingest.db.close_pool", new_callable=AsyncMock), \
+         patch("knowledge_ingest.config.settings.enrichment_enabled", False):
         from knowledge_ingest.app import app
 
         with TestClient(app, raise_server_exceptions=False) as c:
