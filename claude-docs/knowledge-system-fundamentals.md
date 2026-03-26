@@ -23,6 +23,10 @@
 | 10 | [Intentionele laag](#bevinding-10-de-intentionele-laag--het-waarom-vastleggen) | Decision als zesde entiteitstype; waarom automatische extractie niet werkt |
 | 11 | [Omgaan met onzekerheid](#bevinding-11-hoe-het-systeem-omgaat-met-onzekerheid) | OWA vs. CWA spanning; confidence-scored provenance; rol van assertion_mode en confidence |
 | 12 | [Communicatie als kennisbron](#bevinding-12-communicatie-als-kennisbron) | E-mail, chat, calls, vergaderingen, 1-op-1; per type de extractie-aanpak |
+| 13 | [Retrieval-verrijking: empirische bevindingen](#bevinding-13-retrieval-verrijking--wat-het-onderzoek-zegt) | Contextual Retrieval vs. HyPE; Dual-Index Fusion in Qdrant; selectieve toepassing; bulk LLM-architectuur |
+| 14 | [Retrieval-strategie: wat het onderzoek zegt](#bevinding-14-retrieval-strategie--wat-het-onderzoek-zegt) | Sparse embeddings voor jargon; hybrid search fusion; reranking tradeoffs; heterogene content; temporele retrieval |
+| 15 | [Query routing en interface-architectuur](#bevinding-15-query-routing-en-interface-architectuur) | Gemeten routing-accuraatheid per methode; pre-retrieval gate; multi-turn coreference; twee-endpoint architectuur |
+| 16 | [Content-type parameter profielen voor verrijking](#bevinding-16-content-type-parameter-profielen-voor-verrijking) | HyPE-toepassing per content-type; chunking-strategie per type; vocabulaire-gap als primaire predictor |
 | — | [Volledige architectuur in één overzicht](#de-volledige-architectuur-in-één-overzicht) | Alle zes entiteitstypen, technische lagen en de ingest-pipeline op één plek |
 
 ---
@@ -824,3 +828,443 @@ Dat zijn drie LLM-calls in plaats van twee — maar valse attributie (de meest s
 6. Opslaan in alle drie lagen: PostgreSQL + Qdrant + FalkorDB
 
 **De rode draad:** automatische extractie haalt 60-80%. Menselijke mini-validatie direct na afloop maakt het compleet. De kwaliteit wordt bepaald bij opslag — niet bij zoeken.
+
+---
+
+## Bevinding 13: Retrieval-verrijking — wat het onderzoek zegt
+
+Deze sectie behandelt technieken die de retrieval-kwaliteit verbeteren door chunks bij opslag te verrijken: Contextual Retrieval (Anthropic), HyPE (Hypothetical Prompt Embeddings), en de architectuurkeuzes voor bulk-verwerking met LLMs.
+
+### Contextual Retrieval versus HyPE: twee problemen, niet één
+
+Contextual Retrieval (Anthropic) en HyPE lossen **verschillende problemen** op. Ze zijn niet uitwisselbaar.
+
+**Contextual Retrieval** pakt *context loss* aan: een chunk verliest na het splitsen de omringende context die hem begrijpelijk maakt. "Hij besloot het budget te halveren" is waardeloos zonder te weten wie, wanneer en in welk project. Door bij elke chunk een korte contextuele prefix op te slaan ("Dit fragment is uit een vergadernotitie van 15 december, over het Q1-budget van het marketingteam...") worden retrieval-fouten met 49% gereduceerd (Anthropic). De implementatie is eenvoudig: één LLM-call per chunk, geen extra vectoren, geen opslagoverhead.
+
+**HyPE** pakt *vocabulary gap* aan: query-taal en antwoord-taal komen niet overeen. Een medewerker vraagt "hoe starten we een nieuwe klant op?" maar het relevante document beschrijft "het onboarding-proces voor nieuwe accounts". Door bij elk chunk hypothetische vragen te genereren die het chunk beantwoordt, en die vragen apart te embedden, wordt het vocabulairegat overbrugd. Gemeten verbeteringen: +42 procentpunten precisie, +45 procentpunten recall in één benchmark (Vake et al. 2025 — valideer op eigen corpus voor productiegebruik).
+
+**Beide problemen kunnen tegelijkertijd aanwezig zijn in hetzelfde chunk.** De aanbevolen volgorde: begin met Contextual Retrieval (eenvoudiger, bewezen, geen opslagoverhead), meet de resterende retrieval-fouten, voeg HyPE toe als vocabulairegat nog steeds meetbaar is.
+
+### Hoe HyPE correct in Qdrant wordt opgeslagen
+
+Er zijn drie manieren om de gegenereerde vragen op te slaan. Twee werken. Eén schaadt de kwaliteit.
+
+**Aanpak 1 — Concatenatie (niet doen):** de gegenereerde vragen worden aan de chunktekst geplakt en samen als één vector opgeslagen. Dit degradeert de dense retrieval-kwaliteit consequent met 9-12% nDCG@10 over BEIR-datasets (Doc2Query++, arXiv:2510.09557, oktober 2025). Het mechanisme: CLS-pooling produceert een hybride embedding die minder dicht bij een schone query-vector ligt dan een dedicated question-embedding. Dit is de intuïtief voor de hand liggende aanpak — en precies de verkeerde.
+
+**Aanpak 2 — Vijf losse punten per chunk:** elke gegenereerde vraag wordt als afzonderlijk Qdrant-punt opgeslagen. Dit werkt kwalitatief, maar is inferieur aan Dual-Index Fusion: individuele vraagvectoren zijn ruis-gevoeliger dan een geaggregeerde representatie, en de `group_by`-deduplicatie bij retrieval introduceert extra complexiteit. Dual-Index Fusion presteert beter én is eenvoudiger.
+
+**Aanpak 3 — Dual-Index Fusion met named vectors (aanbevolen):** de gegenereerde vragen worden samengevoegd tot één aggregated questions-embedding, opgeslagen als tweede named vector naast de chunk-embedding op hetzelfde punt. Qdrant v1.2.0+ ondersteunt partial population van named vectors: punten zonder de vragen-vector worden automatisch uit die HNSW-graaf uitgesloten, zonder opslagboete voor de lege positie. Bij query-tijd worden beide vectoren parallel bevraagd via `prefetch` + fusion in één round-trip. Opslagfactor: 2x in plaats van 5x. Resultaat: consistent beter dan concatenatie op alle geteste datasets (Doc2Query++, arXiv:2510.09557).
+
+### Selectieve toepassing: niet elk document profiteert van HyPE
+
+HyPE overbrugt een vocabulairegat. Als dat gat er al nauwelijks is, voegt het ruis toe in plaats van signaal.
+
+Onderzoek (EACL 2024 Findings) toonde dat "hoog-kwaliteit documenten slechter presteren met expansie. Documenten die al uitgebreide, goed gestructureerde informatie bevatten ondervinden degradatie bij expansie." Het mechanisme: vocabulaire-expansie heeft alleen waarde als er een kloof is tussen query-taal en document-taal. Gecureerde kennisbankartikelen in FAQ- of procedurestijl hebben die kloof al grotendeels gedicht.
+
+**Implicatie voor de ingest-pipeline:** pas HyPE alleen toe op lage synthesis_depth content (ruwe transcripten, ongestructureerde imports, synthesis_depth 0-1). Sla het over voor gecureerde KB-artikelen (synthesis_depth 3-4).
+
+**Dit is primair een kwaliteitsbeslissing, niet een opslagbeslissing.** HyPE toepassen op content waar het vocabulairegat al klein is introduceert aantoonbaar ruis en verslechtert retrieval (EACL 2024). Weglaten bij curated content is de kwalitatief betere keuze — de lagere opslagfactor (1.2x in plaats van 5x) is een bijkomend voordeel, niet de reden.
+
+### Per-tenant configuratie bij schaal
+
+Welk verrijkingsniveau past bij welke kennisbank is *entitlement data* — het hoort in de applicatiedatabase, niet in een feature flag-dienst.
+
+De industriestandaard voor per-tenant configuratie in een single-service deployment:
+
+- **PostgreSQL-tabel** met sparse override-model: alleen organisaties met niet-standaard configuratie hebben een rij
+- **In-process TTL-cache** (60 seconden, cachetools.TTLCache) — elimineert databasetoegang voor de veelgebruikte leesoperaties
+- **PostgreSQL LISTEN/NOTIFY** voor directe cache-invalidatie bij configuratiewijziging
+
+Dit patroon geeft nagenoeg realtime propagatie (LISTEN/NOTIFY) met 60 seconden TTL als veilige fallback, zonder extra infrastructuur.
+
+### Bulk LLM-verrijking: architectuurkeuzes
+
+`asyncio.create_task()` is onvoldoende voor bulk-ingests: geen prioriteitsdifferentiatie, geheugendruk bij duizenden wachtende taken.
+
+**Queue-architectuur:** twee named queues — `enrich-interactive` (uploads van één document, heeft altijd prioriteit) en `enrich-bulk` (crawls en bulk-imports). Implementatie via Procrastinate (PostgreSQL-backed task queue): geen nieuwe infrastructuur, transactionele job-enqueue, native prioriteitsondersteuning.
+
+**LLM-aanroepen combineren:** één gecombineerde LLM-call voor zowel de contextual prefix als de hypothetische vragen (structured JSON output) halveert het aantal API-calls ten opzichte van twee aparte calls, zonder meetbare kwaliteitsdegradatie.
+
+**Token-budget voor de verrijkingscall:** ~2.000 tokens documentcontext is voldoende (eerste ~3 pagina's). 12.000 tokens voegt kosten toe zonder kwaliteitswinst voor deze taak.
+
+**Doorvoer en kosten:**
+- RTX 4090 (lokaal): ~600 chunks/min (7B model), ~1.200 chunks/min (3B model) in background queue
+- Mistral Nemo API met gecombineerde call: ~€0,53 per 10.000 chunks
+
+**Wanneer toepassen:** direct bij nieuwe ingests. Retroactief toepassen op bestaande chunks is mogelijk via de bulk-queue — dezelfde pipeline, lagere prioriteit.
+
+*Bronnen: Anthropic Contextual Retrieval, Doc2Query++ (arXiv:2510.09557, oktober 2025), Vake et al. 2025 (HyPE), EACL 2024 Findings (document-expansie selectiviteit), Procrastinate (PostgreSQL task queue).*
+
+---
+
+## Bevinding 14: Retrieval-strategie — wat het onderzoek zegt
+
+> Geschreven op basis van een research-sessie op 2026-03-26.
+> Scope: de retrieval-kant van een breed organisatiekennissysteem. Hoe haal je effectief informatie terug uit een corpus met interne jargon, heterogene content en tijdsgevoelige kennis?
+
+Deze sectie behandelt zes retrieval-vraagstukken: sparse embeddings voor jargon, hybride fusiemethoden, reranking, heterogene content, en temporele retrieval.
+
+### 1. Sparse embeddings — wanneer ze meetbare waarde toevoegen
+
+Dense embeddings begrijpen betekenis maar falen bij exacte termen. Voor een organisatiegeheugen — met productnamen, foutcodes, persoonsnamen en ticketnummers — is dit het fundamentele zwakke punt van pure dense retrieval.
+
+| Content-kenmerk | Effect op dense | Effect op sparse |
+|---|---|---|
+| Interne productnamen ("VoIP Pro v3") | Slecht — valt samen met andere productnamen | Goed — exacte term matcht |
+| Persoonsnamen ("Lieke van den Broek") | Onbetrouwbaar | Betrouwbaar |
+| Foutcodes, ticketnummers | Matig tot slecht | Sterk |
+| Semantische parafrase ("hoe starten we een klant op") | Sterk | Zwak |
+
+**Gemeten: hybride dense+sparse op BEIR**
+
+Hybride dense+sparse verbetert nDCG@10 van 43.4 (BM25-only) naar >52.6 — een verbetering van ~9 procentpunten (21% relatief). Domeinspecifieke winst loopt van +5% op vakgebieden met laag vocabulaireverschil tot +24% op niche-domeinen. Voor lange documenten (>2048 tokens) presteert BGE-M3 sparse ~10 punten beter dan dense op recall@100.
+
+**BGE-M3** berekent de sparse vector als bijproduct van de dense forward pass — geen aparte modelaanroep. Doorvoer op A100: ~10⁶ documenten/sec/GPU voor dense+sparse gecombineerd. Elk Qdrant-punt krijgt twee named vectors: `dense` en `sparse`. (BAAI/BGE-M3 modelkaart, Hugging Face, 2024)
+
+**Praktische drempel:** sparse embeddings voegen meetbare waarde toe zodra de corpus organisatiespecifieke termen bevat die niet of nauwelijks in generieke trainingsdata voorkomen. Voor een typisch organisatiegeheugen is dat vrijwel altijd het geval.
+
+### 2. Hybrid search en fusiemethoden
+
+**RRF (Reciprocal Rank Fusion)** is de standaard fusie zonder labeled trainingsdata. Het normaliseert via rangpositie: `score = Σ 1/(k + rank_i)`, k=60. Voordeel: vereist geen gemeenschappelijke scoreschaal — dense en sparse scores zijn incompatibel, RRF abstraheert dat weg.
+
+Recenter onderzoek corrigeert de aanname dat RRF parameteronafhankelijk is: RRF is gevoelig voor de k-parameter, en **convex combination** (gewogen som van genormaliseerde scores) presteert beter dan RRF zowel in-domain als out-of-domain — mits je gelabelde evaluatiedata hebt voor gewichtstuning. (ACM TOIS 2023, doi:10.1145/3596512)
+
+**Aanbevolen volgorde:** start met plain RRF → meet of sparse bijdraagt → schakel over op weighted RRF zodra je voldoende query-feedback hebt.
+
+### 3. Reranking — latency-kwaliteit tradeoff
+
+| Bron | Gemeten verbetering |
+|---|---|
+| Databricks | Tot 48% betere retrieval-kwaliteit |
+| ZeroEntropy zerank-1 | +28% NDCG@10 over baseline |
+| Productiesystemen (breed) | 25–40% verbetering in Precision@5 |
+
+Cross-encoder reranking voegt 200–500ms per query toe. Praktische sweet spot: 50–75 kandidaten reranken naar 3–10 voor de generator. Boven 75 kandidaten zijn marginale kwaliteitswinsten verwaarloosbaar.
+
+Voor Nederlands + Engels gemengde content: BGE-Reranker-v2-m3 (BAAI) en Jina Reranker v2 Multilingual ondersteunen beide 100+ talen inclusief cross-lingual. Jina v2 is 15× sneller in doorvoer dan BGE-reranker-v2-m3. (Reranker Leaderboard, Agentset 2025)
+
+### 4. Retrieval over heterogene content
+
+Chunk-grootte is tegengesteld optimaal voor verschillende query-typen:
+
+| Query-type | Optimale chunk-grootte |
+|---|---|
+| Factoid ("wie is verantwoordelijk voor X?") | 256–512 tokens |
+| Analytisch ("wat zijn de hoofdpunten?") | 1024+ tokens |
+
+NVIDIA testte zeven chunk-strategieën: page-level chunking scoorde consistent het best (0.648 gemiddelde accuraatheid). LLMSemanticChunker bereikte 0.919 recall. (NVIDIA Technical Blog, 2024)
+
+Korte berichten (chat, e-mail) mogen nooit individueel geïndexeerd worden — een bericht van 6 woorden produceert een onbruikbare "noisy averaged" embedding. Thread-aggregatie is verplicht (zie Bevinding 12).
+
+**Content-type als Qdrant payload-filter** geeft significante precisieverbetering — hetzelfde mechanisme als taxonomie-filtering (Bevinding 5, +9 tot +40% precisie) maar op content-type in plaats van topic.
+
+### 5. Temporele retrieval
+
+Standaard cosine-similarity maakt geen onderscheid tussen "huidig" en "historisch".
+
+**Recency prior:** fuse semantische score met temporele decay:
+```
+score = α × semantic_similarity + (1-α) × recency_prior
+```
+Waarbij `recency_prior` een half-life decay is op documentdatum. Gemeten: accuraatheid 1.00 op temporal freshness benchmarks. Tegelijkertijd faalden heuristische trend-detectiemethoden op hetzelfde benchmark (F1=0.08). (arXiv:2509.19376, september 2025)
+
+**Bi-temporele filter** voor historische vragen: filter op `valid_at <= T AND (invalid_at IS NULL OR invalid_at > T)` in Qdrant payload. Sluit aan op het temporele model van Graphiti (Bevinding 6).
+
+**LLM-rerankers hebben een intrinsieke recency bias** — ze geven voorkeur aan recentere documenten ook als dat inhoudelijk niet klopt. (arXiv:2509.11353) Tijdsfilters moeten expliciet in de retrieval-laag zitten, niet overgelaten worden aan de generator.
+
+### Samenvatting: zes patronen gecombineerd
+
+| Probleem | Aanpak | Gemeten effect |
+|---|---|---|
+| Interne jargon, foutcodes, namen | Dense + sparse (BGE-M3) | +5% tot +24% op niche-domeinen |
+| Fusie dense+sparse | RRF (geen data) / convex combination (met data) | +9 punten nDCG@10 gemiddeld |
+| Slechte ranking na retrieval | Cross-encoder reranker, 50–75 kandidaten | 25–48% precisieverbetering, +200–500ms |
+| Korte content (chat, e-mail) | Thread-aggregatie, content-type filter | Structureel hogere precisie |
+| Verouderde vs. actuele kennis | Recency prior + bi-temporele tijdsfilters | Accuraatheid 1.00 op freshness tasks |
+
+*Bronnen: BAAI/BGE-M3 modelkaart, SPLADE++ (ACM TOIS, doi:10.1145/3634912), Fusiefuncties hybride retrieval (ACM TOIS, doi:10.1145/3596512), NVIDIA chunking benchmark 2024, arXiv:2509.19376 (Solving Freshness in RAG), arXiv:2510.13590 (Temporal GraphRAG), arXiv:2509.11353 (Recency Bias in LLM Reranking), Reranker Leaderboard Agentset 2025, Vectara Multilingual Reranker v1.*
+
+---
+
+## Bevinding 15: Query routing en interface-architectuur
+
+> Geschreven op basis van een research-sessie op 2026-03-26.
+> Scope: hoe bepaal je op query-tijd welke retrieval-methode je activeert, wanneer je retrieval overslaat, hoe multi-turn gesprekken werken, en hoe je de interface architectureert voor zowel menselijke gebruikers als AI-agents.
+
+---
+
+### De vijf query-intenties die elk organisatiegeheugen ontvangt
+
+Voordat routing zinvol is, moet je weten wat je routed. Uit de literatuur en productiesystemen komen vijf structureel verschillende intenties:
+
+| Intentie | Signaalwoorden | Voorbeeld | Optimale methode |
+|---|---|---|---|
+| **Procedureel** | "hoe doe ik", "wat zijn de stappen", "hoe werkt" | "Hoe onboard ik een nieuwe klant?" | Vector → procedures |
+| **Feitelijk / lookup** | "wat is", "wie is", "wat betekent" | "Wie is verantwoordelijk voor Billing?" | Vector → hoge precisie |
+| **Analytisch** | "hoeveel", "totaal", "gemiddeld", "per kwartaal", "vergelijk" | "Hoeveel klachten over Billing in 2025?" | SQL op PostgreSQL |
+| **Exploratief** | "wat weten we over", "geef me een overzicht", "vertel me over" | "Wat weten we over ons retentiebeleid?" | Vector + graph |
+| **Relationeel** | "wie besloot", "wat hing samen met", "waarom", "welke besluiten" | "Welke besluiten hingen samen met de tariefwijziging?" | Graph traversal |
+
+Aanvullend: **temporele intentie** als modifier boven elk van deze vijf — queries die "huidig", "nu", "vóór", "in Q3 2024" bevatten wijzigen de retrieval-methode maar vervangen hem niet.
+
+---
+
+### 1. Routing-accuraatheid per methode — gemeten
+
+**Embedding-based routing (Semantic Router)**
+
+In-distribution accuraatheid: ~90%. Zodra een query een intentie heeft die niet in de referentieset zit: **val naar ~53%** — en het systeem geeft dan wél een zelfverzekerde beslissing zonder degradatiesignaal. Dit is de meest gedocumenteerde zwakte van embedding routing. (Routing strategies survey, arXiv:2502.00409)
+
+Productie: in een gedocumenteerde car-sales chatbot bereikte precision 92–96% na threshold-tuning. Kosten: sub-penny per query versus ~$0.0065 voor een LLM-classifier.
+
+**Small LLM classifier (T5-Large, Phi-2-schaal)**
+
+Adaptive-RAG (NAACL 2024, arXiv:2403.14403) mat de werkelijke TPR per klasse:
+
+| Klasse | Gemeten TPR |
+|---|---|
+| Geen retrieval nodig | **30.5%** |
+| Single-step retrieval | **66.3%** |
+| Multi-step retrieval | **65.5%** |
+
+De classifier maakt de meeste fouten op de klasse "geen retrieval nodig" — die wordt 47% van de tijd onjuist als "single-step" geclassificeerd. Het gevolg voor kwaliteit: oracle F1 is 56.28; werkelijke F1 met de classifier is 46.94 — **~10 punten verlies** puur door routeringsfouten.
+
+**Belangrijk: het getal "85-92% accuraatheid voor small LLM routing" dat in secundaire bronnen circuleert heeft geen primaire benchmark.** Het is een aggregaat-schatting. Niet gebruiken als ontwerpaanname.
+
+**RAGRouter (arXiv:2505.23052)**
+
+Routing naar de beste LLM binnen een pool van RAG-systemen: RAGRouter behaalt 64.46% gemiddelde accuraatheid versus 60.85% voor de beste vaste LLM-keuze (+3.61%). Retrieval blijkt in 31.46% van de gevallen de prestatie te verslechteren ten opzichte van geen retrieval — één op drie retrievals is netto-negatief.
+
+---
+
+### 2. De pre-retrieval gate — wanneer retrieval overslaan
+
+Routing welke methode je gebruikt is de tweede vraag. De eerste vraag is: heb je überhaupt retrieval nodig?
+
+**TARG: Training-Free Adaptive Retrieval Gating (arXiv:2511.09803)**
+
+TARG genereert een korte prefix (k=20 tokens) zonder retrieval en meet de onzekerheid van het model. Drie gate-varianten:
+
+- **Entropy gate**: gemiddelde token-entropie — werkt niet meer goed op moderne instruction-tuned modellen (entropie comprimeert)
+- **Margin gate** (aanbevolen default): gemiddeld verschil tussen top-1 en top-2 logit — robuust voor instruction-tuned modellen
+- **Variance gate**: 3 stochastische prefixes bij temperature 0.7, meningsverschil als onzekerheidsmaat — meest conservatief
+
+Gemeten resultaten:
+
+| Model | Gate | Retrieval-rate | Prestatie |
+|---|---|---|---|
+| Llama-3.1-8B | Margin | 0.8% | 57.6% EM op NQ-Open |
+| Llama-3.1-8B | Variance | 0.1% op TriviaQA | 83.6% F1 |
+| Qwen2.5-7B | Margin | 30.4% | 39.6% EM op NQ-Open |
+
+**70–99% minder retrieval-calls** met gelijke of betere nauwkeurigheid. De drempelwaarde kalibreer je op je eigen domeindata via retrieval budget ρ: stel τ = F⁻¹(1-ρ) via empirische CDF-matching op development data. Dit geeft directe budgetcontrole.
+
+**Waarom dit ertoe doet:** 31.46% van retrievals verslechtert het antwoord (RAGRouter). Een goede gate elimineert niet alleen latency en kosten — hij verbetert actief de kwaliteit door verstorende retrievals te voorkomen.
+
+**Self-RAG (ICLR 2024 Oral)** kwantificeert de asymmetrie:
+- Over-retrieval op entity-zware queries (PopQA): **40% relatieve prestatiedaling**
+- Over-retrieval op fact-checking (PubHealth): **2% daling**
+
+De juiste gate-instelling hangt af van het query-type — één universele drempel is suboptimaal.
+
+---
+
+### 3. Routing voor organisatiespecifieke query-typen
+
+**Signalen die SQL-routing aanwijzen**
+
+- Aggregatietermen: "hoeveel", "totaal", "gemiddeld", "per maand", "vergelijk [metric] over [dimensie]"
+- Query refereert aan specifieke entiteitsattributen die op databasekolommen mappen
+- Het antwoord vereist exacte match, niet best-match semantiek
+- Query impliceert filter of join: "medewerkers die na datum X zijn ingestroomd", "deals in Q3"
+- Realtime data: huidige inventaris, live-prijzen
+
+**Signalen die vector-routing aanwijzen**
+
+- Query vraagt om uitleg, achtergrond, beleid of narratieve inhoud
+- Antwoord bestaat in lopende tekst, niet in een tabelcel
+- Semantische gelijkenis is relevant: "wat zeggen we over X" in plaats van "wat is de waarde van X"
+- Open samenvatting of synthese
+
+**Signalen die graph-routing aanwijzen**
+
+- Multi-hop relaties: "wie rapporteert aan wie", "welke documenten zijn gemaakt door mensen die aanwezig waren bij vergadering X"
+- Expliciete relatietraversal: "alle afhankelijkheden van component Y"
+- Gemeenschaps- of clusterpatronen: "welke onderwerpen clusteren rondom dit thema"
+
+Deze signalen zijn kwalitatief beschreven in productiesystemen maar niet afzonderlijk gebenchmarkt op precisie/recall. Er bestaat geen gepubliceerde head-to-head vergelijking van SQL vs. vector routing accuraatheid specifiek voor organisatiegeheugen-queries.
+
+**Productiesysteem met domein-routing**
+
+Een gedocumenteerde aanpak (applied-ai.com practitioners guide) routeert naar gespecialiseerde RAG-applicaties per domein (finance, HR, engineering, legal) via een domeinclassifier. Gemeten effect: 30–40% precisie-verbetering ten opzichte van monolithische search.
+
+RAGRouter-Bench (arXiv:2602.00296) classificeerde 7.727 queries in drie typen: 52.9% redenering, 30.0% feitelijk, 17.1% samenvatting. GraphRAG haalt 90.2% accuraatheid op feitelijke multi-hop queries; NaiveRAG leidt op eenvoudige feitelijke vragen (83.7%). De conclusie: geen enkel RAG-paradigma is universeel optimaal — de juiste routing vereist zowel query-kenmerken als corpus-kenmerken.
+
+---
+
+### 4. Multi-turn routing — coreference eerst, dan pas routen
+
+**Het prestatieverlies bij follow-up queries**
+
+Zonder history-integratie daalt retrieval-prestatie al bij de tweede beurt: Turn 1 baseline 0.32 nDCG@10 → Turn 2 baseline **0.22 nDCG@10** (31% daling). Met history+reasoning-integratie: Turn 2 stijgt naar 0.487, Turn 4 naar 0.532 — beter dan Turn 1. (RECOR benchmark, arXiv:2601.05461)
+
+**Coreference-oplossing is verplicht vóór routing**
+
+Een follow-up query als "wie besloot dat?" is onrouteerbaar zonder referentieoplossing. "Dat" moet worden opgelost naar een specifiek besluit voordat de query betekenis heeft voor de retrieval-pipeline. Coreference-ambiguïteit is de primair gedocumenteerde faalmode in multi-turn RAG (arXiv:2507.07847).
+
+**Het productiepatroon:**
+
+```
+Follow-up binnenkomt: "wie besloot dat?"
+    │
+    ▼
+Stap 1: Coreference oplossen
+  → Kleine LLM combineert query + gespreksgeschiedenis
+  → "wie besloot dat?" → "wie besloot het retentiebeleid te herzien in Q3 2024?"
+    │
+    ▼
+Stap 2: Routeer de zelfstandige query opnieuw
+  → Normale routing-pipeline, alsof het een eerste query is
+    │
+    ▼
+Stap 3: Retrieval + antwoord
+```
+
+**Routes worden nooit geërfd van de vorige beurt.** Elk productiesysteem dat hierover publiceert (Amazon EMNLP 2025, RECOR) evalueert de routeringsbehoefte per beurt opnieuw. Een vraag "en wanneer is dat besloten?" in een gesprek over retentiebeleid kan zowel een SQL-route (analytisch) als een vector-route (zoek het besluitdocument) vereisen — dat is niet afleidbaar uit de vorige beurt.
+
+**Contextvenster-management:** bewaar de laatste 3–5 beurten plus de retrieval-output van de vorige beurt. Oudere beurten worden samengevat. Volledige gespreksgeschiedenis meesturen schaalt niet en vervuilt de retrieval-context.
+
+---
+
+### 5. Twee-endpoint architectuur: mens vs. AI-agent
+
+De productiepraktijk is twee aparte endpoints op dezelfde retrieval-backend — niet één unified endpoint. Dit is geen keuze maar een technische noodzaak: citation-output en structured JSON-output zijn architectureel incompatibel (AWS Bedrock en Anthropic documenteren een 400-error bij combinatie).
+
+```
+Retrieval backend (Qdrant + PostgreSQL + FalkorDB)
+         │
+         ├── /chat     → gesynthetiseerde tekst + inline bronnen    → mens
+         └── /retrieve → JSON chunks + scores + metadata            → AI-agent (via MCP)
+```
+
+**Mens-endpoint (`/chat`)**
+
+- Gesynthetiseerd antwoord in lopende tekst
+- Bronnen zichtbaar en klikbaar
+- Streaming response
+- Onzekerheidsboodschap als het systeem de vraag niet goed kan beantwoorden, met herformuleringsadvies
+- Query rewriting voor follow-up vragen (coreference + standalone query)
+
+**AI-agent endpoint (`/retrieve` via MCP)**
+
+- Ruwe chunks met scores, `valid_at`, `content_type`, `source_id`, `confidence`
+- Gestructureerde JSON — de agent trekt zelf conclusies
+- Geen samenvatting, geen streaming
+- De agent beslist of hij de tool een tweede keer aanroept (iteratieve retrieval)
+
+**MCP als standaard interface voor agents**
+
+Het gangbare productiepatroon in 2025: RAG-kennisbank als MCP-tool. De agent registreert `search_knowledge(query: str) -> chunks[]` als tool en roept hem aan wanneer nodig. De iteratieve kracht zit bij de agent, niet in de retrieval-API. De API geeft chunks terug; de agent beslist over de volgende stap. (Ragie agentic retrieval, vLLM Semantic Router v0.1 Iris, januari 2026)
+
+**De onzekerheidsmelding voor mensen**
+
+Als de retrieval-kwaliteit laag is (lage confidence-scores, weinig relevante chunks gevonden), toont de interface:
+1. Wat er wél gevonden is, transparant
+2. Een concrete suggestie om de vraag anders te stellen: specifieker, met tijdsbereik, met andere termen
+3. Geen gefabriceerd antwoord
+
+Dit volgt uit het kwaliteitspatroon van Bevinding 11 (confidence + assertion_mode) maar vertaald naar de gebruikersinterface.
+
+---
+
+### Samenvatting: wat empirisch vastgesteld is vs. wat directional is
+
+**Empirisch vastgesteld (primaire bronnen, gemeten getallen)**
+
+| Bevinding | Bron | Getal |
+|---|---|---|
+| Embedding routing in-distribution | arXiv:2502.00409 | ~90% |
+| Embedding routing out-of-distribution | arXiv:2502.00409 | ~53% |
+| Small LLM classifier TPR "geen retrieval" | arXiv:2403.14403 | 30.5% |
+| Small LLM classifier oracle vs. werkelijk F1 gap | arXiv:2403.14403 | 56.28 vs. 46.94 |
+| TARG: retrieval-reductie met behoud van kwaliteit | arXiv:2511.09803 | 70–99% |
+| TARG: variance gate retrieval-rate TriviaQA | arXiv:2511.09803 | 0.1–0.6% |
+| Self-RAG: forced retrieval cost op PopQA | ICLR 2024 | 40% relatieve daling |
+| Self-RAG: forced retrieval cost op PubHealth | ICLR 2024 | 2% daling |
+| Retrieval netto-negatief in % van gevallen | arXiv:2505.23052 | 31.46% |
+| Turn 2 zonder history: prestatie-daling | arXiv:2601.05461 | 31% (0.32 → 0.22 nDCG@10) |
+| Turn 2 met history+reasoning | arXiv:2601.05461 | 0.487 nDCG@10 |
+| Domeinrouting precisie-verbetering | applied-ai.com | 30–40% |
+
+**Directional — geen primaire benchmark**
+
+- "85-92% accuraatheid voor small LLM routing op enterprise queries" — circuleert in secundaire bronnen, niet gebenchmarkt
+- SQL routing signal-precisie/recall — kwalitatief beschreven, niet gemeten
+- Graph vs. vector routing accuraatheid — geen head-to-head gepubliceerd
+- "30-40% latency-reductie door adaptive routing" — geciteerd zonder primaire paper
+
+---
+
+*Bronnen: Adaptive-RAG (arXiv:2403.14403, NAACL 2024), TARG (arXiv:2511.09803), Self-RAG (ICLR 2024), RAGRouter (arXiv:2505.23052), RAGRouter-Bench (arXiv:2602.00296), Routing strategies survey (arXiv:2502.00409), RECOR multi-turn benchmark (arXiv:2601.05461), MTRAG (arXiv:2501.03468, MIT TACL), Amazon multi-turn adaptive RAG (EMNLP 2025 Industry), Coreference in multi-turn RAG (arXiv:2507.07847), Ragie agentic retrieval, vLLM Semantic Router v0.1 Iris (januari 2026).*
+
+---
+
+## Bevinding 16: Content-type parameter profielen voor verrijking
+
+**Kernbevinding:** Het type content is een betere predictor voor verrijkingsparameters dan `synthesis_depth`. HyPE (Hypothetical Prompt Embeddings) voegt waarde toe wanneer de vocabulaire-gap groot is tussen gebruikersqueries en chunkinhoud. Die gap hangt af van het content-type, niet van de diepte van verwerking.
+
+---
+
+### Vocabulaire-gap als predictor voor HyPE
+
+- **Gesproken taal (transcripts)** grote gap (informeel, elliptisch, voornaamwoorden) HyPE helpt sterk
+- **Domeinspecifieke documenten (PDFs, handleidingen)** grote gap (technisch jargon vs. natural language queries) HyPE helpt sterk
+- **Gecureerde KB-artikelen** kleine gap (al geschreven om vragen te beantwoorden) HyPE is conditioneel (register/formaliteitsverschil blijft)
+- **E-mailthreads** kleine-tot-medium gap (geschreven taal, maar impliciete verwijzingen) HyPE conditioneel
+
+---
+
+### Parameter profielen per content-type
+
+| Content type | HyPE | Vocabulaire gap | Context strategie | Context tokens | Chunk grootte |
+|---|---|---|---|---|---|
+| `kb_article` | Conditioneel | Klein (register) | Eerste N tokens (intro + kopjes) | 800-2000 | 300-500 |
+| `meeting_transcript` | Ja | Groot (gesproken) | Rolling window voorafgaande turns | 600-1200 | 150-400 |
+| `1on1_transcript` | Ja | Groot + persoonlijk | Rolling window + deelnemersmetadata | 400-800 | 100-300 |
+| `email_thread` | Conditioneel | Klein-medium | Meest recente N berichten | 1000-4000 | 200-500 |
+| `pdf_document` | Ja | Groot (domein) | Voorblad + inhoudsopgave | 800-2000 | 400-800 |
+
+---
+
+### Chunking-strategie verschilt fundamenteel per type
+
+- **Documenten (KB, PDF):** sectie/paragraaf-grenzen; 300-800 tokens
+- **Transcripts (meeting, 1-op-1):** sprekerbeurt-clusters (3-5 opeenvolgende turns); geen vaste tokens; voornaamwoorden oplossen in prefix-prompt
+- **E-mail:** per bericht (niet binnen berichten knippen); geciteerde tekst en handtekeningen verwijderen
+
+---
+
+### Kritische correctie op KB-005
+
+`synthesis_depth <= 1` als HyPE-drempel is KB-biased. In de huidige implementatie werkt het (corpus is vrijwel alleen KB-artikelen), maar de correcte primaire driver is `content_type`. Diepte 3-4 KB-artikelen hebben kleine vocabulaire gap (HyPE voegt weinig toe), maar een technisch PDF op diepte 4 kan een grote gap hebben waarbij HyPE juist sterk helpt.
+
+---
+
+### Promptaanpassingen per type
+
+- **Transcripts:** voornaamwoorden altijd resolven naar namen; deelnemersrollen vermelden
+- **E-mail:** expliciet aangeven dat het meest recente bericht het meest relevant is
+- **PDF:** documenttype en sectiepad uit inhoudsopgave meegeven
+- **Taalinstelling:** altijd uitvoer in de taal van het brondocument
+
+---
+
+### Empirische gaten
+
+Wat we nog niet weten:
+- Geen directe A/B-test van HyPE op Nederlandstalige meeting transcripts
+- Geen vergelijking van "eerste N tokens" vs. "rolling window" als contextvenster op transcripts
+- HyPE-voordeel voor Nederlands vs. Engels niet apart gemeten (linguistische variatiestudies tonen ~15% degradatie bij formaliteitsverschillen, maar niet voor NL specifiek)
+- Optimale chunk-grootte voor Nederlandstalige KB-artikelen niet gevalideerd
+
+*Bronnen: EACL 2024 (expansie bij kleine vocabulaire gap voegt ruis toe), RAG linguistic variation arXiv:2504.08231 (formaliteitsverschil ~15% degradatie), VoxRAG arXiv:2505.17326 (gesproken RAG Recall@10 = 0.34 bij geen verrijking), NVIDIA chunking benchmark (512-1024 tokens optimaal voor PDFs), Strathweb HyPE implementatie (3-5 vragen per chunk).*
