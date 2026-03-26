@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
@@ -9,6 +10,19 @@ import {
   serializeSidebar,
   removeSlugFromSidebar,
 } from "@/lib/markdown";
+
+const uuidSchema = z.string().uuid();
+
+const knowledgeFrontmatterSchema = z.object({
+  provenance_type: z.enum(["observed", "extracted", "synthesized", "revised"]).optional(),
+  assertion_mode: z.enum(["factual", "procedural", "quoted", "belief", "hypothesis"]).optional(),
+  synthesis_depth: z.number().int().min(0).max(4).optional(),
+  confidence: z.enum(["high", "medium", "low"]).nullable().optional(),
+  belief_time_start: z.string().optional(),
+  belief_time_end: z.number().nullable().optional(),
+  superseded_by: uuidSchema.nullable().optional(),
+  derived_from: z.array(uuidSchema).optional(),
+}).strict();
 
 type Params = { org: string; kb: string; path: string[] };
 
@@ -60,6 +74,18 @@ export async function PUT(
   }
 
   const { title, content, icon, sha, edit_access, frontmatter: extraFm } = await request.json();
+
+  // Validate knowledge model fields if provided
+  if (extraFm !== undefined && extraFm !== null) {
+    const parsed = knowledgeFrontmatterSchema.safeParse(extraFm);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid frontmatter", details: parsed.error.issues },
+        { status: 422 }
+      );
+    }
+  }
+
   const filePath = `${pagePath}.md`;
 
   const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
