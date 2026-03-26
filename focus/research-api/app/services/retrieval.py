@@ -2,17 +2,13 @@
 Retrieval pipeline for chat endpoint.
 Supports narrow, broad, and web modes.
 """
-import asyncio
 import json
 import logging
 from typing import AsyncIterator
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.source import Source
 from app.services import docling, tei
 
 logger = logging.getLogger(__name__)
@@ -40,92 +36,6 @@ BROAD_FOCUS_ONLY_SYSTEM_PROMPT = """You are a research assistant. Use the provid
 You have access to Focus documents: uploaded documents specific to this notebook.
 Supplement with your general knowledge where helpful.
 Always indicate which parts of your answer come from the Focus documents or your general knowledge."""
-
-
-async def retrieve_chunks(
-    db: AsyncSession,
-    question: str,
-    notebook_id: str,
-    tenant_id: str,
-    top_k: int = _TOP_K,
-) -> list[dict]:
-    """
-    Embed question and retrieve top-k similar chunks from Qdrant.
-    Returns list of dicts: {chunk_id, source_id, source_name, content, metadata, score}.
-    """
-    from app.services import qdrant_store
-
-    query_vector = await tei.embed_single(question)
-
-    # Get source_ids with status='ready' for this notebook+tenant
-    result = await db.execute(
-        select(Source.id, Source.name).where(
-            Source.notebook_id == notebook_id,
-            Source.tenant_id == tenant_id,
-            Source.status == "ready",
-        )
-    )
-    sources = result.fetchall()
-    if not sources:
-        return []
-
-    source_id_to_name = {row[0]: row[1] for row in sources}
-    source_ids = list(source_id_to_name.keys())
-
-    hits = qdrant_store.search_chunks(query_vector, tenant_id, notebook_id, source_ids, top_k)
-
-    return [
-        {
-            "chunk_id": hit["chunk_id"],
-            "source_id": hit["source_id"],
-            "content": hit["content"],
-            "metadata": hit["metadata"],
-            "score": hit["score"],
-            "source_name": source_id_to_name.get(hit["source_id"], ""),
-        }
-        for hit in hits
-    ]
-
-
-async def retrieve_broad_chunks(
-    db: AsyncSession,
-    question: str,
-    notebook_id: str,
-    tenant_id: str,
-    top_k: int = _TOP_K,
-) -> list[dict]:
-    """
-    Parallel retrieval from Focus (Qdrant) + Knowledge base (knowledge-ingest).
-    Merges by normalized score, returns top_k results.
-    """
-    from app.services import knowledge_client
-
-    focus_task = retrieve_chunks(db, question, notebook_id, tenant_id, top_k=5)
-    kb_task = knowledge_client.retrieve_knowledge(question, org_id=tenant_id, top_k=5)
-    focus_results, kb_results = await asyncio.gather(focus_task, kb_task)
-
-    # Tag source origin
-    for r in focus_results:
-        r["origin"] = "focus"
-    # kb_results already have origin="kb" set by knowledge_client
-
-    # Normalize scores within each source (min-max)
-    def _normalize(items: list[dict]) -> list[dict]:
-        if not items:
-            return items
-        scores = [x["score"] for x in items]
-        mn, mx = min(scores), max(scores)
-        if mx == mn:
-            for x in items:
-                x["score"] = 1.0
-        else:
-            for x in items:
-                x["score"] = (x["score"] - mn) / (mx - mn)
-        return items
-
-    all_results = _normalize(focus_results) + _normalize(kb_results)
-    all_results.sort(key=lambda x: x["score"], reverse=True)
-    return all_results[:top_k]
 
 
 async def retrieve_web_chunks(question: str) -> list[dict]:
