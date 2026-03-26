@@ -18,7 +18,9 @@ in test environments where psycopg/libpq is not available.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any
 
 from knowledge_ingest import embedder, enrichment, qdrant_store, sparse_embedder
@@ -147,11 +149,18 @@ async def _enrich_document(
             path=path,
             question_focus=profile.hype_question_focus,
             participant_context=participant_context_str,
+            context_strategy=profile.context_strategy,
+            context_tokens=profile.context_tokens_max,
         )
 
-        # Embed enriched text for all chunks (vector_chunk)
+        # Embed dense + sparse in parallel
         enriched_texts = [ec.enriched_text for ec in enriched_chunks]
-        chunk_vectors = await embedder.embed(enriched_texts)
+        t0 = time.monotonic()
+        chunk_vectors, sparse_vectors = await asyncio.gather(
+            embedder.embed(enriched_texts),
+            sparse_embedder.embed_sparse_batch(enriched_texts),
+        )
+        sparse_embed_ms = int((time.monotonic() - t0) * 1000)
 
         # Embed questions based on profile (vector_questions)
         question_vectors: list[list[float] | None]
@@ -164,12 +173,6 @@ async def _enrich_document(
             question_vectors = list(raw_q_vectors)
         else:
             question_vectors = [None] * len(enriched_chunks)
-
-        # Compute sparse vectors (vector_sparse) -- fallback to None if sidecar unavailable
-        sparse_vectors = []
-        for ec in enriched_chunks:
-            sv = await sparse_embedder.embed_sparse(ec.enriched_text)
-            sparse_vectors.append(sv)
 
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
@@ -188,9 +191,12 @@ async def _enrich_document(
         )
 
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
+        sparse_success_count = sum(1 for sv in sparse_vectors if sv is not None)
         logger.info(
-            "Enrichment complete for %s/%s (org=%s, artifact=%s, chunks=%d, enriched=%d, depth=%d, type=%s)",
-            kb_slug, path, org_id, artifact_id, len(chunks), enriched_count, synthesis_depth, content_type,
+            "Enrichment complete for %s/%s (org=%s, artifact=%s, chunks=%d, enriched=%d, "
+            "depth=%d, type=%s, sparse_ok=%d, sparse_ms=%d)",
+            kb_slug, path, org_id, artifact_id, len(chunks), enriched_count,
+            synthesis_depth, content_type, sparse_success_count, sparse_embed_ms,
         )
 
     except Exception as exc:

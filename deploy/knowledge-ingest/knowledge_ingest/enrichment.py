@@ -15,6 +15,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.context_strategies import STRATEGIES
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +78,21 @@ async def enrich_chunk(
     path: str,
     question_focus: str = "",
     participant_context: str = "",
+    context_window: str | None = None,
 ) -> EnrichmentResult | None:
     """
     Call LiteLLM proxy to generate contextual prefix + HyPE questions for one chunk.
     Returns None on any failure (timeout, HTTP error, parse error).
+    When context_window is provided, it is used as the document context in the prompt
+    instead of truncating the full document_text.
     """
-    doc_context = _truncate_to_tokens(
-        _strip_frontmatter(document_text),
-        settings.enrichment_max_document_tokens,
-    )
+    if context_window is not None:
+        doc_context = context_window
+    else:
+        doc_context = _truncate_to_tokens(
+            _strip_frontmatter(document_text),
+            settings.enrichment_max_document_tokens,
+        )
     # Default question focus if none provided
     effective_focus = question_focus or (
         "De vragen moeten natuurlijke zoekopdrachten zijn die een gebruiker zou typen."
@@ -141,19 +148,28 @@ async def enrich_chunks(
     path: str,
     question_focus: str = "",
     participant_context: str = "",
+    context_strategy: str = "first_n",
+    context_tokens: int = 2000,
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
     Chunks that fail enrichment fall back to their original text.
+
+    context_strategy: name of a strategy in context_strategies.STRATEGIES.
+    context_tokens: max tokens for the extracted context window.
+    The strategy is applied per-chunk (with chunk_index) so rolling_window gets correct positioning.
     """
     semaphore = asyncio.Semaphore(settings.enrichment_max_concurrent)
+    strategy_fn = STRATEGIES.get(context_strategy, STRATEGIES["first_n"])
 
-    async def _enrich_one(chunk_text: str) -> EnrichedChunk:
+    async def _enrich_one(chunk_text: str, chunk_index: int) -> EnrichedChunk:
+        context_window = strategy_fn(document_text, context_tokens, chunk_index=chunk_index)
         async with semaphore:
             result = await enrich_chunk(
                 document_text, chunk_text, title, path,
                 question_focus=question_focus,
                 participant_context=participant_context,
+                context_window=context_window,
             )
         if result is None:
             return EnrichedChunk(
@@ -170,4 +186,4 @@ async def enrich_chunks(
             questions=result.questions,
         )
 
-    return await asyncio.gather(*[_enrich_one(c) for c in chunks])
+    return await asyncio.gather(*[_enrich_one(c, i) for i, c in enumerate(chunks)])

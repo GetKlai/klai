@@ -21,6 +21,7 @@ class RetrieveRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     kb_slugs: list[str] | None = None  # None = all org KBs
     user_id: str | None = None  # For personal-scope filtering
+    sparse_weight: float | None = None  # AC-7: reserved for weighted RRF; None = pure RRF
 
 
 class ChunkResult(BaseModel):
