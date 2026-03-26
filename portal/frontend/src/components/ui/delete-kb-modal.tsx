@@ -101,7 +101,7 @@ export function DeleteKbModal({
                 {connectorCount} connector{connectorCount !== 1 ? 's' : ''}
               </li>
             )}
-            {hasGitea && <li>Gitea repository</li>}
+            {hasGitea && <li>Docs pagina's en versiegeschiedenis</li>}
             {hasDocs && <li>Docs site</li>}
           </ul>
           <p className="text-destructive font-medium">
