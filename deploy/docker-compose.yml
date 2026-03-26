@@ -637,7 +637,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       TEI_URL: http://tei:8080
-      TEI_RERANKER_URL: http://tei-reranker:8080
+      TEI_RERANKER_URL: http://infinity-reranker:7997
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
