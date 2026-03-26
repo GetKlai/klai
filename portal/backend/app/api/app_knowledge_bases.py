@@ -331,7 +331,6 @@ async def create_app_knowledge_base(
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
 
     await db.commit()
-    await db.refresh(kb)
     return _kb_out(kb)
 
 
