@@ -14,7 +14,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "docker>=7.0",
     "cryptography>=43.0",
-    "icalendar>=6.1.0,<7.0",
+    "icalendar>=6.1.0,<8.0",
     "motor>=3.6",
     "structlog>=25.0",
 ]
