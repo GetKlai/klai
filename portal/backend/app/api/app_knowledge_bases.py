@@ -181,6 +181,47 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> PortalK
     return kb
 
 
+async def _get_or_create_personal_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
+    """Return the personal KB row for this org, creating it lazily on first access."""
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == org_id,
+            PortalKnowledgeBase.slug == "personal",
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if kb:
+        return kb
+
+    kb = PortalKnowledgeBase(
+        org_id=org_id,
+        name="Persoonlijk",
+        slug="personal",
+        description=None,
+        created_by=caller_id,
+        visibility="internal",
+        docs_enabled=False,
+        owner_type="user",
+        owner_user_id=caller_id,
+    )
+    db.add(kb)
+    try:
+        await db.flush()
+        await db.commit()
+        await db.refresh(kb)
+    except IntegrityError:
+        await db.rollback()
+        # Another request created it concurrently — fetch the existing row
+        result2 = await db.execute(
+            select(PortalKnowledgeBase).where(
+                PortalKnowledgeBase.org_id == org_id,
+                PortalKnowledgeBase.slug == "personal",
+            )
+        )
+        kb = result2.scalar_one()
+    return kb
+
+
 async def _require_owner(kb: PortalKnowledgeBase, caller_id: str, db: AsyncSession) -> None:
     role = await get_user_role_for_kb(kb.id, caller_id, db)
     if role != "owner":
@@ -229,9 +270,12 @@ async def get_app_knowledge_base(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
-    """Return a single KB by slug for the caller's org."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    """Return a single KB by slug for the caller's org. The personal KB is created lazily."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    if kb_slug == "personal":
+        kb = await _get_or_create_personal_kb(caller_id, org.id, db)
+    else:
+        kb = await _get_kb_or_404(kb_slug, org.id, db)
     return _kb_out(kb)
 
 
@@ -315,8 +359,11 @@ async def get_kb_stats(
     db: AsyncSession = Depends(get_db),
 ) -> KBStatsOut:
     """Return dashboard stats for a KB: connectors, docs count, volume, usage."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    if kb_slug == "personal":
+        kb = await _get_or_create_personal_kb(caller_id, org.id, db)
+    else:
+        kb = await _get_kb_or_404(kb_slug, org.id, db)
 
     # Connectors from portal DB
     conn_result = await db.execute(select(PortalConnector).where(PortalConnector.kb_id == kb.id))
