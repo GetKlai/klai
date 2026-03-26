@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
     # Public-facing base URL used as Gitea webhook callback URL (env: KNOWLEDGE_INGEST_PUBLIC_URL)
     knowledge_ingest_public_url: str = "http://knowledge-ingest:8000"
+    # Graphiti / FalkorDB knowledge graph
+    falkordb_host: str = "falkordb"
+    falkordb_port: int = 6379
+    graphiti_enabled: bool = True
+    graphiti_llm_model: str = "klai-fast"
 
     model_config = {"env_file": ".env"}
 

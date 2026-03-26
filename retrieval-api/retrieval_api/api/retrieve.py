@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -9,12 +10,34 @@ from fastapi import APIRouter, HTTPException
 
 from retrieval_api.config import settings
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
-from retrieval_api.services import coreference, gate, reranker, search
+from retrieval_api.services import coreference, gate, graph_search, reranker, search
 from retrieval_api.services.tei import embed_single
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 60) -> list[dict]:
+    """Reciprocal Rank Fusion merge of two ranked result lists (AC-5)."""
+    scores: dict[str, float] = {}
+    items: dict[str, dict] = {}
+
+    for rank, result in enumerate(qdrant_results):
+        cid = result["chunk_id"]
+        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+        items[cid] = result
+
+    for rank, result in enumerate(graph_results):
+        cid = result["chunk_id"]
+        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+        if cid not in items:
+            items[cid] = result
+
+    merged = sorted(items.values(), key=lambda r: scores[r["chunk_id"]], reverse=True)
+    for result in merged:
+        result["score"] = scores[result["chunk_id"]]
+    return merged
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
@@ -40,12 +63,33 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     candidates_retrieved = 0
     reranked_to = 0
     rerank_ms: float | None = None
+    graph_results_count = 0
+    graph_search_ms: float | None = None
 
     if not bypassed:
-        # 4. Search
-        raw_results = await search.hybrid_search(
-            query_vector, req, settings.retrieval_candidates
-        )
+        # 4. Search — Qdrant + Graphiti in parallel (AC-5)
+        qdrant_coro = search.hybrid_search(query_vector, req, settings.retrieval_candidates)
+
+        graph_task: asyncio.Task[list[dict]] | None = None
+        t_graph: float | None = None
+        if req.scope != "notebook" and settings.graphiti_enabled:  # AC-6: skip notebook
+            t_graph = time.perf_counter()
+            graph_task = asyncio.create_task(
+                graph_search.search(query_resolved, req.org_id, top_k=20)
+            )
+
+        raw_results = await qdrant_coro
+
+        if graph_task is not None and t_graph is not None:
+            try:
+                graph_results = await graph_task
+                graph_search_ms = (time.perf_counter() - t_graph) * 1000
+                graph_results_count = len(graph_results)
+                if graph_results:
+                    raw_results = _rrf_merge(raw_results, graph_results)
+            except Exception as exc:
+                logger.warning("Graph search task failed: %s", exc)
+
         candidates_retrieved = len(raw_results)
 
         # 5. Rerank (skip for notebook scope)
@@ -77,7 +121,6 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
 
-    # Structured logging (AC-11)
     logger.info(
         "retrieve",
         extra={
@@ -85,7 +128,9 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             "scope": req.scope,
             "top_k": req.top_k,
             "candidates_retrieved": candidates_retrieved,
+            "graph_results_count": graph_results_count,
             "retrieval_ms": round(retrieval_ms, 1),
+            "graph_search_ms": round(graph_search_ms, 1) if graph_search_ms is not None else None,
             "rerank_ms": round(rerank_ms, 1) if rerank_ms is not None else None,
             "gate_margin": round(gate_margin, 4) if gate_margin is not None else None,
             "retrieval_bypassed": bypassed,
@@ -102,5 +147,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             retrieval_ms=round(retrieval_ms, 1),
             rerank_ms=round(rerank_ms, 1) if rerank_ms is not None else None,
             gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
+            graph_results_count=graph_results_count,
+            graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
         ),
     )

@@ -193,9 +193,7 @@ async def get_knowledge_feature(
     _require_internal_token(request)
 
     # Step 1: fast path — librechat_user_id already mapped in PostgreSQL
-    result = await db.execute(
-        select(PortalUser).where(PortalUser.librechat_user_id == librechat_user_id)
-    )
+    result = await db.execute(select(PortalUser).where(PortalUser.librechat_user_id == librechat_user_id))
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -236,9 +234,7 @@ async def get_knowledge_feature(
             return KnowledgeFeatureResponse(enabled=False)
 
         # Resolve portal user and cache the mapping
-        portal_result = await db.execute(
-            select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id)
-        )
+        portal_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
         user = portal_result.scalar_one_or_none()
         if user is None:
             logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)

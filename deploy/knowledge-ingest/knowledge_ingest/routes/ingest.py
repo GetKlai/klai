@@ -6,6 +6,7 @@ Ingest routes:
   DELETE /ingest/v1/kb/webhook    — de-register Gitea webhook for a KB
   POST /ingest/v1/kb/sync         — bulk re-index all pages of a KB
 """
+import asyncio
 import hashlib
 import hmac
 import json
@@ -17,7 +18,7 @@ import httpx
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from knowledge_ingest import chunker, embedder, org_config, pg_store, qdrant_store
+from knowledge_ingest import chunker, embedder, graph as graph_module, org_config, pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import (
@@ -123,6 +124,25 @@ def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
     return result
 
 
+async def _graphiti_background(
+    artifact_id: str,
+    document_text: str,
+    org_id: str,
+    content_type: str,
+    belief_time_start: int,
+) -> None:
+    """Background task: ingest document into Graphiti, then store episode_id (AC-1, AC-2)."""
+    episode_id = await graph_module.ingest_episode(
+        artifact_id=artifact_id,
+        document_text=document_text,
+        org_id=org_id,
+        content_type=content_type,
+        belief_time_start=belief_time_start,
+    )
+    if episode_id:
+        await pg_store.update_artifact_extra(artifact_id, {"graphiti_episode_id": episode_id})
+
+
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk -> embed -> upsert."""
 
@@ -218,6 +238,18 @@ async def ingest_document(req: IngestRequest) -> dict:
             extra_payload=extra_payload,
             synthesis_depth=kf["synthesis_depth"],
             content_type=req.content_type,
+        )
+
+    # Graphiti episode ingest — fire-and-forget background task (AC-1, AC-3, AC-8)
+    if settings.graphiti_enabled:
+        asyncio.create_task(
+            _graphiti_background(
+                artifact_id=artifact_id,
+                document_text=req.content,
+                org_id=req.org_id,
+                content_type=req.content_type,
+                belief_time_start=kf["belief_time_start"],
+            )
         )
 
     logger.info(

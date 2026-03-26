@@ -192,3 +192,25 @@ async def test_get_personal_artifact_returns_none_when_not_found():
     with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
         result = await pg_store.get_personal_artifact("nonexistent", "org1", "user1")
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_update_artifact_extra_merges_jsonb(monkeypatch):
+    """update_artifact_extra issues a JSONB merge UPDATE (AC-2)."""
+    import json as json_mod
+
+    pool = _make_pool()
+    with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
+        await pg_store.update_artifact_extra("art-001", {"graphiti_episode_id": "ep-xyz"})
+
+    pool.execute.assert_called_once()
+    call_args = pool.execute.call_args[0]
+    sql = call_args[0]
+    assert "UPDATE knowledge.artifacts" in sql
+    assert "COALESCE" in sql
+    # First positional arg after SQL is the JSON patch
+    patch_arg = call_args[1]
+    patch_dict = json_mod.loads(patch_arg)
+    assert patch_dict["graphiti_episode_id"] == "ep-xyz"
+    # Second positional arg is the artifact_id
+    assert call_args[2] == "art-001"

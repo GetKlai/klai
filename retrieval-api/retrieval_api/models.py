@@ -34,6 +34,8 @@ class RetrieveMetadata(BaseModel):
     retrieval_ms: float
     rerank_ms: float | None = None
     gate_margin: float | None = None
+    graph_results_count: int = 0
+    graph_search_ms: float | None = None
 
 
 class RetrieveResponse(BaseModel):

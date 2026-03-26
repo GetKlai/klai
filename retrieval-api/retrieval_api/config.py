@@ -21,6 +21,12 @@ class Settings(BaseSettings):
 
     coreference_timeout: float = 3.0
     reranker_timeout: float = 2.0
+    # Graphiti / FalkorDB knowledge graph
+    falkordb_host: str = "falkordb"
+    falkordb_port: int = 6379
+    graphiti_enabled: bool = True
+    graph_search_timeout: float = 5.0
+    graphiti_llm_model: str = "klai-fast"
 
 
 settings = Settings()

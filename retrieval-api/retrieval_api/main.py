@@ -74,6 +74,17 @@ async def health():
     except Exception as exc:
         checks["litellm"] = f"error: {exc}"
 
+    # FalkorDB — only checked when Graphiti is enabled (AC-12)
+    if settings.graphiti_enabled:
+        try:
+            from falkordb import FalkorDB  # noqa: PLC0415
+
+            db = FalkorDB(host=settings.falkordb_host, port=settings.falkordb_port)
+            db.connection.ping()
+            checks["falkordb"] = "ok"
+        except Exception as exc:
+            checks["falkordb"] = f"error: {exc}"
+
     all_ok = all(v == "ok" for v in checks.values())
     status_code = 200 if all_ok else 503
 
