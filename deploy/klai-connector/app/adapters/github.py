@@ -37,6 +37,10 @@ class GitHubAdapter(BaseAdapter):
 
     SUPPORTED_TYPES: frozenset[str] = frozenset({".md", ".txt", ".pdf", ".docx", ".rst", ".html", ".csv"})
 
+    # Map file extension → ingest content_type profile key.
+    # All text-based document formats default to kb_article.
+    _EXT_CONTENT_TYPE: dict[str, str] = {".pdf": "pdf_document"}
+
     def __init__(self, settings: Settings) -> None:
         self._app_id = settings.github_app_id
         self._private_key = settings.github_app_private_key
@@ -147,7 +151,7 @@ class GitHubAdapter(BaseAdapter):
                     path=path,
                     ref=item["sha"],
                     size=item.get("size", 0),
-                    content_type=ext,
+                    content_type=self._EXT_CONTENT_TYPE.get(ext, "kb_article"),
                     source_ref=f"{repo_owner}/{repo_name}:{branch}:{path}",
                 )
             )

@@ -181,12 +181,16 @@ class WebCrawlerAdapter(BaseAdapter):
             content_bytes = markdown.encode("utf-8")
             cache[url] = markdown
 
+            ingest_content_type = (
+                "pdf_document" if url.lower().endswith(".pdf") else "kb_article"
+            )
+
             refs.append(
                 DocumentRef(
                     path=path,
                     ref=url,
                     size=len(content_bytes),
-                    content_type=".md",
+                    content_type=ingest_content_type,
                     source_ref=url,
                 )
             )

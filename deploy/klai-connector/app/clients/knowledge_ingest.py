@@ -30,6 +30,7 @@ class KnowledgeIngestClient:
         content: str,
         source_connector_id: str,
         source_ref: str,
+        content_type: str = "unknown",
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -40,6 +41,7 @@ class KnowledgeIngestClient:
             content: Extracted text content.
             source_connector_id: Connector UUID string for deduplication.
             source_ref: Source reference string (e.g. ``owner/repo:branch:path``).
+            content_type: Semantic content type (e.g. ``kb_article``, ``pdf_document``).
 
         Raises:
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
@@ -57,6 +59,7 @@ class KnowledgeIngestClient:
                 "content": content,
                 "source_connector_id": source_connector_id,
                 "source_ref": source_ref,
+                "content_type": content_type,
             },
             headers=headers,
         )

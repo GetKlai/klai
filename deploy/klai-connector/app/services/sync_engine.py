@@ -205,6 +205,7 @@ class SyncEngine:
                             content=text,
                             source_connector_id=str(connector_id),
                             source_ref=ref.source_ref,
+                            content_type=ref.content_type,
                         )
                         documents_ok += 1
                         resume_ingested_refs.add(ref_key)
