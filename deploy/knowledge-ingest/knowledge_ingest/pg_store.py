@@ -1,6 +1,7 @@
 """
 PostgreSQL artifact tracking for knowledge-ingest.
 """
+import json
 import time
 import uuid
 
@@ -20,24 +21,31 @@ async def create_artifact(
     belief_time_start: int,
     belief_time_end: int,
     user_id: str | None = None,
+    content_type: str = "unknown",
+    extra: dict | None = None,
 ) -> str:
     """Create a knowledge artifact record. Returns the artifact UUID."""
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
     pool = await get_pool()
+    extra_json = json.dumps(extra) if extra else None
     await pool.execute(
         """
         INSERT INTO knowledge.artifacts
           (id, org_id, user_id, kb_slug, path,
            provenance_type, assertion_mode,
            synthesis_depth, confidence,
-           belief_time_start, belief_time_end, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           belief_time_start, belief_time_end,
+           content_type, extra,
+           created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         """,
         artifact_id, org_id, user_id, kb_slug, path,
         provenance_type, assertion_mode,
         synthesis_depth, confidence,
-        belief_time_start, belief_time_end, now,
+        belief_time_start, belief_time_end,
+        content_type, extra_json,
+        now,
     )
     return artifact_id
 

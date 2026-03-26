@@ -29,12 +29,12 @@ Pad: {path}
 <chunk>
 {chunk_text}
 </chunk>
-
+{participant_context}
 Genereer een JSON-object met:
 - "context_prefix": een zin van 1-2 regels die deze chunk plaatst binnen het document \
 (welk document, welk onderwerp, welke sectie).
-- "questions": 3-5 vragen die deze chunk beantwoordt. De vragen moeten natuurlijke \
-zoekopdrachten zijn die een gebruiker zou typen.
+- "questions": 3-5 vragen die deze chunk beantwoordt. \
+{question_focus}
 
 Antwoord ALLEEN met geldig JSON."""
 
@@ -75,6 +75,8 @@ async def enrich_chunk(
     chunk_text: str,
     title: str,
     path: str,
+    question_focus: str = "",
+    participant_context: str = "",
 ) -> EnrichmentResult | None:
     """
     Call LiteLLM proxy to generate contextual prefix + HyPE questions for one chunk.
@@ -84,11 +86,17 @@ async def enrich_chunk(
         _strip_frontmatter(document_text),
         settings.enrichment_max_document_tokens,
     )
+    # Default question focus if none provided
+    effective_focus = question_focus or (
+        "De vragen moeten natuurlijke zoekopdrachten zijn die een gebruiker zou typen."
+    )
     prompt = ENRICHMENT_PROMPT.format(
         title=title,
         path=path,
         document_text=doc_context,
         chunk_text=chunk_text,
+        question_focus=effective_focus,
+        participant_context=participant_context,
     )
 
     payload = {
@@ -131,6 +139,8 @@ async def enrich_chunks(
     chunks: list[str],
     title: str,
     path: str,
+    question_focus: str = "",
+    participant_context: str = "",
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
@@ -140,7 +150,11 @@ async def enrich_chunks(
 
     async def _enrich_one(chunk_text: str) -> EnrichedChunk:
         async with semaphore:
-            result = await enrich_chunk(document_text, chunk_text, title, path)
+            result = await enrich_chunk(
+                document_text, chunk_text, title, path,
+                question_focus=question_focus,
+                participant_context=participant_context,
+            )
         if result is None:
             return EnrichedChunk(
                 original_text=chunk_text,

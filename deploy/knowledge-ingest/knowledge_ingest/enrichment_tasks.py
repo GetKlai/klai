@@ -2,14 +2,16 @@
 Procrastinate task definitions for async chunk enrichment.
 
 Two queues:
-  enrich-interactive  — single-doc uploads, drains first (higher priority)
-  enrich-bulk         — crawl/import jobs
+  enrich-interactive  -- single-doc uploads, drains first (higher priority)
+  enrich-bulk         -- crawl/import jobs
 
 Both tasks call _enrich_document() which:
-1. Calls enrichment.enrich_chunks() with semaphore (max ENRICHMENT_MAX_CONCURRENT concurrent LLM calls)
-2. Embeds enriched_text as vector_chunk for all chunks
-3. If synthesis_depth <= 1: concatenates all questions and embeds as vector_questions
-4. Upserts enriched vectors + payload to Qdrant (overwrites raw chunk points)
+1. Loads a ContentTypeProfile for content-type-aware enrichment
+2. Calls enrichment.enrich_chunks() with profile-specific question_focus and participant_context
+3. Embeds enriched_text as vector_chunk (dense) for all chunks
+4. Embeds questions as vector_questions (dense) when profile.hype_enabled(depth) is True
+5. Embeds enriched_text as vector_sparse via BGE-M3 sidecar (falls back gracefully)
+6. Upserts all vectors + payload to Qdrant (overwrites raw chunk points)
 
 Procrastinate is imported lazily (inside init_app) so this module can be imported
 in test environments where psycopg/libpq is not available.
@@ -19,7 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from knowledge_ingest import embedder, enrichment, qdrant_store
+from knowledge_ingest import embedder, enrichment, qdrant_store, sparse_embedder
+from knowledge_ingest.content_profiles import get_profile
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,10 @@ def init_app(connector: Any) -> Any:
 
     _procrastinate_app = procrastinate.App(connector=connector)
     _register_tasks(_procrastinate_app)
+
+    from knowledge_ingest.crawl_tasks import register_crawl_tasks  # noqa: PLC0415
+    register_crawl_tasks(_procrastinate_app)
+
     return _procrastinate_app
 
 
@@ -62,11 +69,13 @@ def _register_tasks(procrastinate_app: Any) -> None:
         user_id: str | None,
         extra_payload: dict,
         synthesis_depth: int,
+        content_type: str = "unknown",
     ) -> None:
         """Enrich chunks for a single-doc upload (high priority)."""
         await _enrich_document(
             org_id, kb_slug, path, document_text, chunks, title,
             artifact_id, user_id, extra_payload, synthesis_depth,
+            content_type=content_type,
         )
 
     @procrastinate_app.task(queue="enrich-bulk", retry=procrastinate.RetryStrategy(max_attempts=2))
@@ -81,11 +90,13 @@ def _register_tasks(procrastinate_app: Any) -> None:
         user_id: str | None,
         extra_payload: dict,
         synthesis_depth: int,
+        content_type: str = "unknown",
     ) -> None:
         """Enrich chunks for crawl/import jobs (lower priority)."""
         await _enrich_document(
             org_id, kb_slug, path, document_text, chunks, title,
             artifact_id, user_id, extra_payload, synthesis_depth,
+            content_type=content_type,
         )
 
     # Expose task functions via app attributes for use in ingest.py
@@ -104,33 +115,61 @@ async def _enrich_document(
     user_id: str | None,
     extra_payload: dict,
     synthesis_depth: int,
+    content_type: str = "unknown",
 ) -> None:
     """
     Core enrichment logic shared by both task variants.
-    Errors are logged but do not raise — raw vectors remain in Qdrant.
+    Uses content-type profiles for HyPE decisions and context strategy.
+    Errors are logged but do not raise -- raw vectors remain in Qdrant.
     """
     try:
+        profile = get_profile(content_type)
+
+        # Build participant context string if available
+        participants = extra_payload.get("participants") if extra_payload else None
+        participant_context_str = ""
+        if participants:
+            names = ", ".join(
+                f"{p.get('name', '?')} ({p.get('role', '')})"
+                for p in participants
+                if p.get("name")
+            )
+            if names:
+                participant_context_str = (
+                    f"\nDeelnemers: {names}. "
+                    "Gebruik de deelnemerslijst om voornaamwoorden op te lossen waar mogelijk.\n"
+                )
+
         enriched_chunks = await enrichment.enrich_chunks(
             document_text=document_text,
             chunks=chunks,
             title=title,
             path=path,
+            question_focus=profile.hype_question_focus,
+            participant_context=participant_context_str,
         )
 
         # Embed enriched text for all chunks (vector_chunk)
         enriched_texts = [ec.enriched_text for ec in enriched_chunks]
         chunk_vectors = await embedder.embed(enriched_texts)
 
-        # Embed aggregated questions for depth 0-1 chunks (vector_questions)
+        # Embed questions based on profile (vector_questions)
         question_vectors: list[list[float] | None]
-        if synthesis_depth <= 1:
+        if profile.hype_enabled(synthesis_depth):
             question_strings = [
                 " ".join(ec.questions) if ec.questions else ec.original_text
                 for ec in enriched_chunks
             ]
-            question_vectors = await embedder.embed(question_strings)
+            raw_q_vectors = await embedder.embed(question_strings)
+            question_vectors = list(raw_q_vectors)
         else:
             question_vectors = [None] * len(enriched_chunks)
+
+        # Compute sparse vectors (vector_sparse) -- fallback to None if sidecar unavailable
+        sparse_vectors = []
+        for ec in enriched_chunks:
+            sv = await sparse_embedder.embed_sparse(ec.enriched_text)
+            sparse_vectors.append(sv)
 
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
@@ -139,15 +178,19 @@ async def _enrich_document(
             enriched_chunks=enriched_chunks,
             chunk_vectors=chunk_vectors,
             question_vectors=question_vectors,
+            sparse_vectors=sparse_vectors,
             artifact_id=artifact_id,
             extra_payload=extra_payload,
             user_id=user_id,
+            content_type=content_type,
+            belief_time_start=extra_payload.get("belief_time_start") if extra_payload else None,
+            belief_time_end=extra_payload.get("belief_time_end") if extra_payload else None,
         )
 
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
         logger.info(
-            "Enrichment complete for %s/%s (org=%s, artifact=%s, chunks=%d, enriched=%d, depth=%d)",
-            kb_slug, path, org_id, artifact_id, len(chunks), enriched_count, synthesis_depth,
+            "Enrichment complete for %s/%s (org=%s, artifact=%s, chunks=%d, enriched=%d, depth=%d, type=%s)",
+            kb_slug, path, org_id, artifact_id, len(chunks), enriched_count, synthesis_depth, content_type,
         )
 
     except Exception as exc:
@@ -156,4 +199,4 @@ async def _enrich_document(
             kb_slug, path, org_id, artifact_id, exc,
             exc_info=True,
         )
-        # Raw vectors remain in Qdrant — document is still searchable
+        # Raw vectors remain in Qdrant -- document is still searchable
