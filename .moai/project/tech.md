@@ -106,6 +106,8 @@ All services run on Docker Compose, managed by SOPS-encrypted secrets.
 | **Inference** | vLLM | GPU-accelerated inference (Phase 3, Nebius H100) |
 | **Embeddings** | TEI (Text Embeddings Inference) | Dense embeddings for RAG |
 | **Vector DB** | Qdrant | Semantic search for Focus (RAG) |
+| **Graph DB** | FalkorDB (Redis protocol, port 6380 external / 6379 internal) | Knowledge graph for entity-relation retrieval (KB-011) |
+| **Knowledge Graph** | graphiti-core[falkordb] >=0.28 (Zep) | Entity extraction, bi-temporal facts, contradiction detection; runs alongside Qdrant vector retrieval |
 | **SQL DB** | PostgreSQL | Portal data, Meilisearch metadata, pgvector |
 | **Document DB** | MongoDB | Per-tenant chat history (LibreChat) |
 | **Cache** | Redis | Session caching, rate limiting |
