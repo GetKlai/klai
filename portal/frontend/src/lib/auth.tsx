@@ -45,16 +45,18 @@ const REAUTHENTICATION_ERRORS = new Set(['invalid_grant', 'login_required'])
 
 function AuthSessionMonitor() {
   const auth = useAuth()
+  const { error: authError } = auth
   useEffect(() => {
-    if (!auth.error) return
-    if (auth.error instanceof ErrorResponse && auth.error.error !== null && REAUTHENTICATION_ERRORS.has(auth.error.error)) {
-      authLogger.info('Session ended, signing out', { error: auth.error.error })
+    if (!authError) return
+    if (authError instanceof ErrorResponse && authError.error !== null && REAUTHENTICATION_ERRORS.has(authError.error)) {
+      authLogger.info('Session ended, signing out', { error: authError.error })
       void auth.removeUser()
       return
     }
-    authLogger.error('Unexpected OIDC error during token renewal', auth.error)
-    Sentry.captureException(auth.error)
-  }, [auth.error])
+    authLogger.error('Unexpected OIDC error during token renewal', authError)
+    Sentry.captureException(authError)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.removeUser is stable; adding auth would re-run on every render
+  }, [authError])
   return null
 }
 

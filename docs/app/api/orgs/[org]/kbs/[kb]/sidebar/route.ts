@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
-import { parseSidebar, serializeSidebar, type SidebarEntry } from "@/lib/markdown";
+import { serializeSidebar, type SidebarEntry } from "@/lib/markdown";
 
 type Params = { org: string; kb: string };
 

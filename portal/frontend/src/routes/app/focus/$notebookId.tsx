@@ -224,7 +224,7 @@ function NotebookDetailPage() {
 
   useEffect(() => {
     if (notebook) setChatMode(notebook.default_mode as ChatMode)
-  }, [notebook?.default_mode])
+  }, [notebook])
 
   // Load persisted history into messages state once
   useEffect(() => {
@@ -233,7 +233,7 @@ function NotebookDetailPage() {
         historyData.items.map((msg) => ({ role: msg.role, content: msg.content }))
       )
     }
-  }, [historyData])
+  }, [historyData, messages.length])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
