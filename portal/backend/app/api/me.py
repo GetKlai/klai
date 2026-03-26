@@ -69,7 +69,7 @@ async def me(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
-        logger.error("Userinfo fetch failed: %s", exc)
+        logger.exception("Userinfo fetch failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",

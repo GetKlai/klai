@@ -37,7 +37,7 @@ import time
 from urllib.parse import urlparse
 
 import httpx
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
@@ -106,7 +106,7 @@ def _decrypt_sso(cookie_value: str) -> dict | None:
     try:
         payload = _fernet.decrypt(cookie_value.encode())
         return json.loads(payload)
-    except (InvalidToken, json.JSONDecodeError, Exception):
+    except Exception:
         return None
 
 
@@ -168,7 +168,7 @@ async def _finalize_and_set_cookie(
             session_token=session_token,
         )
     except httpx.HTTPStatusError as exc:
-        log.error("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code == 404:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -265,7 +265,7 @@ async def password_reset(body: PasswordResetRequest) -> None:
     try:
         user_id = await zitadel.find_user_id_by_email(body.email)
     except httpx.HTTPStatusError as exc:
-        log.error("find_user_id_by_email failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("find_user_id_by_email failed %s: %s", exc.response.status_code, exc.response.text)
         return  # fail silently
 
     if not user_id:
@@ -274,7 +274,7 @@ async def password_reset(body: PasswordResetRequest) -> None:
     try:
         await zitadel.send_password_reset(user_id)
     except httpx.HTTPStatusError as exc:
-        log.error("send_password_reset failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("send_password_reset failed %s: %s", exc.response.status_code, exc.response.text)
         return  # fail silently
 
 
@@ -284,7 +284,7 @@ async def password_set(body: PasswordSetRequest) -> None:
     try:
         await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
-        log.error("set_password_with_code failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("set_password_with_code failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 404, 410):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -313,7 +313,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     try:
         session = await zitadel.create_session_with_password(body.email, body.password)
     except httpx.HTTPStatusError as exc:
-        log.error("create_session failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("create_session failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401, 404, 412):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -372,7 +372,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
             code=body.code,
         )
     except httpx.HTTPStatusError as exc:
-        log.error("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):
             pending["failures"] += 1
             if pending["failures"] >= _TOTP_MAX_FAILURES:
@@ -430,7 +430,7 @@ async def sso_complete(
             session_token=session_data["stk"],
         )
     except httpx.HTTPStatusError as exc:
-        log.error("sso finalize failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("sso finalize failed %s: %s", exc.response.status_code, exc.response.text)
         # Session expired in Zitadel -- tell the frontend to show the login form
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -454,7 +454,7 @@ async def totp_setup(
     try:
         result = await zitadel.register_user_totp(user_id)
     except httpx.HTTPStatusError as exc:
-        log.error("register_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("register_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up 2FA, please try again later",
@@ -475,7 +475,7 @@ async def verify_email(body: VerifyEmailRequest) -> None:
     try:
         await zitadel.verify_user_email(body.org_id, body.user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        log.error("verify_user_email failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("verify_user_email failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 404):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -496,7 +496,7 @@ async def totp_confirm(
     try:
         await zitadel.verify_user_totp(user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        log.error("verify_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("verify_user_totp failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -520,7 +520,7 @@ async def passkey_setup(
     try:
         result = await zitadel.start_passkey_registration(user_id, domain)
     except httpx.HTTPStatusError as exc:
-        log.error("start_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("start_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up passkey, please try again later",
@@ -542,7 +542,7 @@ async def passkey_confirm(
             user_id, body.passkey_id, body.public_key_credential, body.passkey_name
         )
     except httpx.HTTPStatusError as exc:
-        log.error("verify_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("verify_passkey_registration failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -562,7 +562,7 @@ async def email_otp_setup(
     try:
         await zitadel.register_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
-        log.error("register_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("register_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to set up email code, please try again later",
@@ -579,7 +579,7 @@ async def email_otp_resend(
     except httpx.HTTPStatusError as exc:
         # If not registered yet, ignore — proceed to register
         if exc.response.status_code != 404:
-            log.error("remove_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+            log.exception("remove_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to resend email code, please try again later",
@@ -587,7 +587,7 @@ async def email_otp_resend(
     try:
         await zitadel.register_email_otp(user_id)
     except httpx.HTTPStatusError as exc:
-        log.error("register_email_otp (resend) failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("register_email_otp (resend) failed %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to resend email code, please try again later",
@@ -603,7 +603,7 @@ async def email_otp_confirm(
     try:
         await zitadel.verify_email_otp(user_id, body.code)
     except httpx.HTTPStatusError as exc:
-        log.error("verify_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
+        log.exception("verify_email_otp failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

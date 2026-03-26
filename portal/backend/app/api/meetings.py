@@ -234,7 +234,7 @@ async def start_meeting(
     except httpx.HTTPStatusError as exc:
         meeting.status = "failed"
         meeting.error_message = f"Bot start failed: {exc.response.status_code}"
-        logger.error("Vexa bot start failed: %s", exc)
+        logger.exception("Vexa bot start failed: %s", exc)
 
     await db.commit()
     await db.refresh(meeting)
@@ -364,7 +364,7 @@ async def summarize_meeting_endpoint(
             language=meeting.language or "en",
         )
     except Exception as exc:
-        logger.error("Summarization failed for meeting %s: %s", meeting_id, exc)
+        logger.exception("Summarization failed for meeting %s: %s", meeting_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Summarization failed: {exc}",

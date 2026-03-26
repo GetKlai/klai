@@ -98,13 +98,13 @@ async def signup(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This company name is already in use. Please try a different name.",
             ) from exc
-        logger.error("Org creation failed for %s: %s", body.company_name, exc)
+        logger.exception("Org creation failed for %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
-        logger.error("Org creation failed for %s: %s", body.company_name, exc)
+        logger.exception("Org creation failed for %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
@@ -129,13 +129,13 @@ async def signup(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This email address is already registered. Please try logging in.",
             ) from exc
-        logger.error("User creation failed during signup for org %s: %s", body.company_name, exc)
+        logger.exception("User creation failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
         ) from exc
     except Exception as exc:
-        logger.error("User creation failed during signup for org %s: %s", body.company_name, exc)
+        logger.exception("User creation failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
@@ -151,7 +151,7 @@ async def signup(
             role="org:owner",
         )
     except Exception as exc:
-        logger.error("Role grant failed during signup for user %s: %s", body.email, exc)
+        logger.exception("Role grant failed during signup for user %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",
@@ -177,7 +177,7 @@ async def signup(
         await db.commit()
     except Exception as exc:
         await db.rollback()
-        logger.error("DB commit failed during signup for org %s: %s", body.company_name, exc)
+        logger.exception("DB commit failed during signup for org %s: %s", body.company_name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Creation failed, please try again later",

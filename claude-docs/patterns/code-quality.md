@@ -45,13 +45,21 @@ ruff check → ruff format --check → pyright → pip-audit → build Docker im
 
 Config: `backend/pyproject.toml` under `[tool.ruff]` and `[tool.ruff.lint]`.
 
-**ruff rules enabled:** E, F, I (imports), UP (pyupgrade), B (bugbear), S (security), RUF (ruff-specific)
+**ruff rules enabled:** E, F, I (imports), UP (pyupgrade), C90 (mccabe complexity), B (bugbear), TRY (tryceratops), S (security), RUF (ruff-specific)
+
+**mccabe max-complexity:** 15
 
 Notable ignores:
+- `E501` — line length handled by formatter
 - `B008` — FastAPI `Depends()` in default args (standard FastAPI pattern)
 - `S101` — assert in tests is fine
 - `S105` — too many false positives on config defaults
+- `TRY003` — long exception messages are fine
+- `TRY300` / `TRY301` — return/raise in try block is common in FastAPI
+- `TRY401` — passing `{exc}` in `logger.exception()` call is intentional (we want that context)
 - `alembic/*` — auto-generated migrations excluded from UP, I, E501
+
+**Error logging rule (TRY400):** In except blocks, always use `logger.exception()` instead of `logger.error()`. This includes the full traceback automatically.
 
 ---
 
@@ -98,7 +106,7 @@ uv run --group dev pyright
 
 Config: `pyproject.toml` under `[tool.ruff]`.
 
-**ruff rules enabled:** E, F, I, UP, B, S, RUF (same as portal-api).
+**ruff rules enabled:** E, F, I, UP, C90, B, TRY, S, RUF (same as portal-api).
 
 ---
 
@@ -116,7 +124,7 @@ uv run --extra dev pyright
 
 Config: `pyproject.toml` under `[tool.ruff]`.
 
-**ruff rules enabled:** E, F, I, UP, B, S, RUF (same as portal-api).
+**ruff rules enabled:** E, F, I, UP, C90, B, TRY, S, RUF (same as portal-api).
 
 **Note:** Production uses `requirements.txt` + Docker. `pyproject.toml` is dev-only tooling.
 

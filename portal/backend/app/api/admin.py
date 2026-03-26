@@ -247,7 +247,7 @@ async def invite_user(
             preferred_language=body.preferred_language,
         )
     except Exception as exc:
-        logger.error("User invite failed for %s: %s", body.email, exc)
+        logger.exception("User invite failed for %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to invite user: {exc}",
@@ -262,7 +262,7 @@ async def invite_user(
             role="org:owner",
         )
     except Exception as exc:
-        logger.error("Role grant failed for invited user %s: %s", body.email, exc)
+        logger.exception("Role grant failed for invited user %s: %s", body.email, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to assign project role: {exc}",
@@ -446,7 +446,7 @@ async def remove_user(
     try:
         await zitadel.remove_user(org_id=settings.zitadel_portal_org_id, zitadel_user_id=zitadel_user_id)
     except Exception as exc:
-        logger.error("User removal failed for user %s: %s", zitadel_user_id, exc)
+        logger.exception("User removal failed for user %s: %s", zitadel_user_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to delete user: {exc}",

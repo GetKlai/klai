@@ -41,12 +41,20 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "S", "RUF"]
+select = ["E", "F", "I", "UP", "C90", "B", "TRY", "S", "RUF"]
 ignore = [
-    "B008",  # Depends() in default args — standard FastAPI pattern, not a bug
-    "S101",  # assert is fine in tests
-    "S105",  # hardcoded passwords — too many false positives on config defaults
+    "E501",    # line length — handled by formatter
+    "B008",    # Depends() in default args — standard FastAPI pattern, not a bug
+    "S101",    # assert is fine in tests
+    "S105",    # hardcoded passwords — too many false positives on config defaults
+    "TRY003",  # long exception messages — perfectly fine
+    "TRY300",  # return in try block — common in FastAPI
+    "TRY301",  # raise in try block — common in FastAPI
+    "TRY401",  # {e} in logger.exception() call — we want that context
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/*" = ["UP", "I", "E501"]  # auto-generated migrations, don't enforce style

@@ -39,7 +39,7 @@ async def moneybird_webhook(
                 try:
                     product_id = settings.moneybird_product_id(org.plan, org.billing_cycle)
                 except ValueError as exc:
-                    logger.error("Moneybird product ID ontbreekt: %s", exc)
+                    logger.exception("Moneybird product ID ontbreekt: %s", exc)
                     return Response(status_code=200)
 
                 frequency_type = "yearly" if org.billing_cycle == "yearly" else "monthly"
@@ -50,7 +50,7 @@ async def moneybird_webhook(
                     )
                     org.moneybird_subscription_id = str(subscription["id"])
                 except RuntimeError as exc:
-                    logger.error("Moneybird create_subscription failed: %s", exc)
+                    logger.exception("Moneybird create_subscription failed: %s", exc)
                 finally:
                     await moneybird.close()
 
