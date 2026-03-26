@@ -18,3 +18,4 @@
 | debug-data-before-theory | HIGH | Investigating unexpected behavior | Examine actual data (logs, DB, API responses) BEFORE forming theories. |
 | verify-full-flow | HIGH | Fixing a bug in a multi-step pipeline | Verify ALL downstream steps still work, not just the step you touched. |
 | check-process-not-curl | HIGH | Checking if a server is running | Use `lsof -nP -iTCP:PORT -sTCP:LISTEN`. Never `curl` without `--connect-timeout 2 --max-time 3`. |
+| spec-stub-deps-premature | HIGH | Spec agent writes stubs with new third-party deps | Comment out new deps in requirements.txt; guard stub imports with `try/except ImportError`. Real dep install happens in `/run`. |
