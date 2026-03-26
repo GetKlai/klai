@@ -1,6 +1,6 @@
 # SPEC-KB-010: LiteLLM Knowledge Hook — always-on KB-integratie
 
-> Status: DRAFT (2026-03-26)
+> Status: DONE (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-008 (retrieval-api), SPEC-KB-009 (docs-sync)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`
@@ -403,3 +403,48 @@ Dit voegt één check toe vóór de token-count logica. `_klai_kb_meta` wordt do
 - Per-KB slug-filtering in de hook — `get_accessible_kb_slugs` logica zit in retrieval-api (toekomstige SPEC)
 - Externe MCP API voor derde-partij koppelingen — aparte SPEC na intern traject
 - LibreChat-patches of sync-webhooks — lazy MongoDB-mapping is de gekozen aanpak
+
+---
+
+## Implementation Notes
+
+**Implemented:** 2026-03-26
+
+**Main commit:** `fe9a423` — `feat(litellm): upgrade knowledge hook — retrieval-api + authz + personal scope (KB-010)`
+
+**Fixup commits:**
+- `3a071e9` — `style(portal): ruff format internal.py (KB-010)`
+- `953f178` — `fix(portal): initialize mongo_client to None before try block (pyright KB-010)`
+- `ba8b9f2` — `fix(portal): rename alembic migration to avoid revision ID collision (KB-010)`
+- `e9fd128` — `fix(portal): resolve alembic revision cycle — rename duplicate a1b2c3d4e5f6 and fix KB-010 chain`
+- `2e48bfb` — `fix(deploy): correct PORTAL_API_URL port for litellm (8000 -> 8010)`
+
+**Divergences from plan:**
+
+1. `PORTAL_API_URL` in SPEC was `http://portal-backend:8000` but actual is `http://portal-api:8010` — service name and port corrected during implementation.
+2. Alembic migration chain required resolving a pre-existing duplicate revision ID (`a1b2c3d4e5f6_add_rls_policies.py` from KB-009) — created new `c5d6e7f8a9b0_add_rls_policies.py` clean RLS migration as prerequisite.
+3. Fixed a `bool("0") == True` bug in cache check (`_check_user_feature`) — cache check must use `== "1"` not `bool()`.
+
+**Acceptance criteria status:**
+
+| AC | Status |
+|----|--------|
+| AC-010-01 | DONE |
+| AC-010-02 | DONE |
+| AC-010-03 | DONE |
+| AC-010-04 | DONE |
+| AC-010-05 | DONE |
+| AC-010-06 | DONE |
+| AC-010-07 | DONE |
+| AC-010-08 | DONE |
+| AC-010-09 | DONE |
+| AC-010-10 | DONE |
+| AC-010-11 | DONE |
+| AC-010-12 | DONE |
+| AC-010-13 | DONE |
+| AC-010-14 | DONE |
+| AC-010-15 | DONE |
+| AC-010-16 | DONE |
+| AC-010-17 | DONE |
+
+All 17 acceptance criteria met. 12/12 tests passing in CI.
