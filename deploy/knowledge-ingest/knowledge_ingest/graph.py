@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 try:
     from graphiti_core import Graphiti
-    from graphiti_core.driver.falkordb import FalkorDriver
+    from graphiti_core.driver.falkordb_driver import FalkorDriver
     from graphiti_core.llm_client.config import LLMConfig
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
     from graphiti_core.nodes import EpisodeType
@@ -49,11 +49,8 @@ def _get_graphiti() -> "Graphiti":
             port=settings.falkordb_port,
         )
         _graphiti_client = Graphiti(
-            uri="",
-            user="",
-            password="",
             llm_client=llm_client,
-            driver=driver,
+            graph_driver=driver,
         )
     return _graphiti_client
 
