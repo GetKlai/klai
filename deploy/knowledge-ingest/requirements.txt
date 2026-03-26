@@ -8,3 +8,5 @@ pydantic==2.10.3
 pydantic-settings==2.7.0
 PyYAML==6.0.2
 html2text==2024.2.26
+procrastinate[asyncpg]==2.15.0
+cachetools==5.5.2

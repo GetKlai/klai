@@ -14,8 +14,9 @@ import httpx
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from knowledge_ingest import chunker, embedder, pg_store, qdrant_store
+from knowledge_ingest import chunker, embedder, org_config, pg_store, qdrant_store
 from knowledge_ingest.config import settings
+from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import (
     GiteaPushEvent,
     IngestRequest,
@@ -164,6 +165,29 @@ async def ingest_document(req: IngestRequest) -> dict:
         extra_payload=extra_payload,
         user_id=req.user_id,
     )
+
+    # Enqueue enrichment as async Procrastinate task (non-blocking)
+    pool = await get_pool()
+    if await org_config.is_enrichment_enabled(req.org_id, pool):
+        from knowledge_ingest import enrichment_tasks
+        proc_app = enrichment_tasks.get_app()
+        task_fn = (
+            proc_app.enrich_document_interactive  # type: ignore[attr-defined]
+            if req.source_type == "upload"
+            else proc_app.enrich_document_bulk  # type: ignore[attr-defined]
+        )
+        await task_fn.defer_async(
+            org_id=req.org_id,
+            kb_slug=req.kb_slug,
+            path=req.path,
+            document_text=req.content,
+            chunks=texts,
+            title=title,
+            artifact_id=artifact_id,
+            user_id=req.user_id,
+            extra_payload=extra_payload,
+            synthesis_depth=kf["synthesis_depth"],
+        )
 
     logger.info("Ingested %s/%s for org %s (%d chunks, artifact %s)", req.kb_slug, req.path, req.org_id, len(chunks), artifact_id)
     return {"status": "ok", "chunks": len(chunks), "title": title, "artifact_id": artifact_id}
