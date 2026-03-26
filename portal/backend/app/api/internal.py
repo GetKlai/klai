@@ -7,6 +7,7 @@ Protected by a shared Bearer secret (INTERNAL_SECRET env var).
 Used by klai-mailer to look up a user's preferred language so it can append
 ?lang= to email action URLs (verify, password-reset, etc.).
 """
+import logging
 
 from datetime import datetime
 
@@ -22,6 +23,8 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -55,6 +58,7 @@ async def get_user_language(
     _require_internal_token(request)
 
     user_id = await zitadel.find_user_id_by_email(email)
+    logger.info("Internal user lookup: email=%s, found=%s", email, user_id is not None)
     if not user_id:
         return UserLanguageResponse(preferred_language="nl")
 

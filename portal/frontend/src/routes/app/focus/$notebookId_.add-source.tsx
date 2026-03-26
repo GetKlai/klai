@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { focusLogger } from '@/lib/logger'
 import { useRef, useState } from 'react'
 import { ArrowLeft, Loader2, Upload } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -65,7 +66,7 @@ function AddSourcePage() {
       void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
       void navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
     },
-    onError: (err: Error) => setAddError(err.message),
+    onError: (err: Error) => { focusLogger.error('File source upload failed', { notebookId, err }); setAddError(err.message) },
   })
 
   const addUrlMutation = useMutation({
@@ -85,7 +86,7 @@ function AddSourcePage() {
       void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
       void navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
     },
-    onError: (err: Error) => setAddError(err.message),
+    onError: (err: Error) => { focusLogger.error('URL source add failed', { notebookId, err }); setAddError(err.message) },
   })
 
   return (

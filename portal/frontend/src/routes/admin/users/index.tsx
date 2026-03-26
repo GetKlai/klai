@@ -34,6 +34,7 @@ import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
 import { API_BASE } from '@/lib/api'
+import { adminLogger } from '@/lib/logger'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 
 export const Route = createFileRoute('/admin/users/')({
@@ -135,7 +136,8 @@ function UsersPage() {
       })
       if (!res.ok) throw new Error(m.admin_users_error_resend_invite({ status: String(res.status) }))
     },
-    onSuccess: () => {
+    onSuccess: (_data, user) => {
+      adminLogger.info('Invite resent', { userId: user.zitadel_user_id, email: user.email })
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     },
   })
@@ -148,7 +150,8 @@ function UsersPage() {
       })
       if (!res.ok) throw new Error(m.admin_users_error_delete({ status: String(res.status) }))
     },
-    onSuccess: () => {
+    onSuccess: (_data, user) => {
+      adminLogger.info('User deleted', { userId: user.zitadel_user_id, email: user.email })
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     },
   })

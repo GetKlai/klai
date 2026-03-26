@@ -69,6 +69,7 @@ async def me(
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
+        logger.error("Userinfo fetch failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -110,8 +111,8 @@ async def me(
     if zitadel_user_id:
         try:
             mfa_enrolled = await zitadel.has_any_mfa(zitadel_user_id)
-        except Exception:  # noqa: S110 — intentional: MFA check must not block login
-            pass
+        except Exception as exc:
+            logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc)
 
     products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
 
