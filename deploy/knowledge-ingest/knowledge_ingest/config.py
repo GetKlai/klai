@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
     tei_url: str = "http://tei:8080"
+    tei_timeout: float = 120.0  # seconds — TEI can take 35s+ on large batches with queue
     gitea_url: str = "http://gitea:3000"
     gitea_token: str = ""
     docs_internal_secret: str = ""
