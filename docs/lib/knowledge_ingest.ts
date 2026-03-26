@@ -1,7 +1,7 @@
 /**
  * Knowledge-ingest service client.
- * Used by Docs for KB lifecycle events (delete, visibility change).
- * Page-level sync is handled automatically via Gitea webhooks.
+ * Used by Docs for KB lifecycle events (delete, visibility change, webhook management, bulk sync).
+ * Page-level sync is handled automatically via Gitea webhooks registered through this client.
  */
 
 const KNOWLEDGE_INGEST_URL =
@@ -29,6 +29,51 @@ async function kiFetch(path: string, init: RequestInit): Promise<void> {
       `[knowledge-ingest] ${init.method} ${path} failed: ${e instanceof Error ? e.message : e}`
     );
   }
+}
+
+/**
+ * Register a Gitea push webhook for a knowledge base.
+ * Call when a KB is created in Docs.
+ */
+export async function registerKBWebhook(
+  orgId: string,
+  kbSlug: string,
+  giteaRepo: string
+): Promise<void> {
+  await kiFetch("/ingest/v1/kb/webhook", {
+    method: "POST",
+    body: JSON.stringify({ org_id: orgId, kb_slug: kbSlug, gitea_repo: giteaRepo }),
+  });
+}
+
+/**
+ * De-register the Gitea push webhook for a knowledge base.
+ * Call when a KB is deleted from Docs.
+ */
+export async function deregisterKBWebhook(
+  orgId: string,
+  kbSlug: string,
+  giteaRepo: string
+): Promise<void> {
+  await kiFetch("/ingest/v1/kb/webhook", {
+    method: "DELETE",
+    body: JSON.stringify({ org_id: orgId, kb_slug: kbSlug, gitea_repo: giteaRepo }),
+  });
+}
+
+/**
+ * Trigger a full re-index of all pages in a knowledge base.
+ * Call on KB creation (if repo has content) or for recovery.
+ */
+export async function bulkSyncKB(
+  orgId: string,
+  kbSlug: string,
+  giteaRepo: string
+): Promise<void> {
+  await kiFetch("/ingest/v1/kb/sync", {
+    method: "POST",
+    body: JSON.stringify({ org_id: orgId, kb_slug: kbSlug, gitea_repo: giteaRepo }),
+  });
 }
 
 /**

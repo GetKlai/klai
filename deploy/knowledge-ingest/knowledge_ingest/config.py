@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     sparse_index_on_disk: bool = False  # AC-10: set True to move sparse index to disk
     # Qdrant collection name — single collection with named + sparse vectors
     qdrant_collection: str = "klai_knowledge"
+    # Public-facing base URL used as Gitea webhook callback URL (env: KNOWLEDGE_INGEST_PUBLIC_URL)
+    knowledge_ingest_public_url: str = "http://knowledge-ingest:8000"
 
     model_config = {"env_file": ".env"}
 

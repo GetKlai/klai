@@ -94,6 +94,18 @@ class BulkCrawlResponse(BaseModel):
     status: str
 
 
+class KBWebhookRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    gitea_repo: str  # e.g. "org-myslug/personal"
+
+
+class BulkSyncRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    gitea_repo: str
+
+
 class GiteaPusher(BaseModel):
     name: str | None = None
     login: str | None = None
