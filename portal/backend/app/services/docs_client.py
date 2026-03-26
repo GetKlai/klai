@@ -59,6 +59,45 @@ async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
         return None
 
 
+async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
+    """Deprovision KB via klai-docs: deletes docs.knowledge_bases row, Gitea repo, and Qdrant vectors.
+
+    Raises HTTPException(502) on failure.
+    """
+    async with httpx.AsyncClient(
+        base_url="http://docs-app:3010/docs",
+        headers={
+            "X-Internal-Secret": settings.docs_internal_secret,
+            "X-User-ID": "system",
+        },
+        timeout=30.0,  # longer timeout: Gitea + Qdrant cleanup
+    ) as client:
+        resp = await client.delete(f"/api/orgs/{org_slug}/kbs/{kb_slug}")
+        if resp.status_code == 404:
+            # Already gone -- treat as success
+            return
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            log.error(
+                "KB deprovisioning failed for org=%s kb=%s: %s %s",
+                org_slug,
+                kb_slug,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Docs/Gitea cleanup failed",
+            ) from exc
+        except httpx.ConnectError as exc:
+            log.error("KB deprovisioning connect error for org=%s kb=%s: %s", org_slug, kb_slug, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Docs/Gitea cleanup failed",
+            ) from exc
+
+
 async def provision_and_store(
     org_slug: str,
     kb_name: str,
