@@ -210,7 +210,7 @@ services:
       KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
       KNOWLEDGE_RETRIEVE_TIMEOUT: "3.0"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
-      PORTAL_API_URL: http://portal-api:8000
+      PORTAL_API_URL: http://portal-api:8010
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     depends_on:
       postgres:
