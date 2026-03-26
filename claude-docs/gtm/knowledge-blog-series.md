@@ -25,7 +25,7 @@ Author voice: Mark Vletter (see `klai-claude/rules/gtm/mark-tone-of-voice.md`)
 
 | # | Working title | Source sections | Status |
 |---|---|---|---|
-| B1 | Evidence vs. claims: the distinction that changes everything | arch 3.1 (source_document vs knowledge_artifact) | planned |
+| B1 | Evidence vs. claims: the distinction that changes everything | arch 3.1 (source_document vs knowledge_artifact) | published |
 | B2 | Three axes, not one label | arch 3.2 (provenance, assertion mode, synthesis depth) | planned |
 | B3 | The self-managing taxonomy is a myth | arch 6.2-6.5 (BERTopic, outlier rates, human gate) | planned |
 | B4 | Quality happens at storage, not at search | arch 4.2, fund 13 (Contextual Retrieval, HyPE) | planned |
