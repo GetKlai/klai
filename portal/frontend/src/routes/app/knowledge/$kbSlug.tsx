@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus,
-  BookOpen, Users, BarChart2, Zap,
+  BookOpen, Users, BarChart2, Zap, List,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
+import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
@@ -449,6 +450,110 @@ function ConnectorsSection({
   )
 }
 
+// -- Items section (personal KB only) ----------------------------------------
+
+interface PersonalItem {
+  id: string
+  path: string
+  assertion_mode: string | null
+  tags: string[]
+  created_at: string
+}
+
+interface PersonalItemsResponse {
+  items: PersonalItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+function ItemsSection({ kbSlug, token }: { kbSlug: string; token: string | undefined }) {
+  const queryClient = useQueryClient()
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const { data, isLoading } = useQuery<PersonalItemsResponse>({
+    queryKey: ['personal-knowledge', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/knowledge/personal/items`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Items laden mislukt')
+      return res.json() as Promise<PersonalItemsResponse>
+    },
+    enabled: !!token,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (artifactId: string) => {
+      setDeletingId(artifactId)
+      const res = await fetch(`${API_BASE}/api/knowledge/personal/items/${artifactId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Verwijderen mislukt')
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['personal-knowledge'] })
+    },
+    onSettled: () => setDeletingId(null),
+  })
+
+  if (isLoading) {
+    return <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+  }
+
+  if (!data?.items?.length) {
+    return (
+      <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
+        <List className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-3" />
+        <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_items_empty_state()}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--color-border)] text-left text-xs uppercase tracking-wide text-[var(--color-muted-foreground)]">
+              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_title()}</th>
+              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_type()}</th>
+              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_saved_at()}</th>
+              <th className="pb-2 font-medium">{m.knowledge_items_column_actions()}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((item) => (
+              <tr key={item.id} className="border-b border-[var(--color-border)] last:border-0">
+                <td className="py-2.5 pr-4 text-[var(--color-foreground)]">
+                  {item.path.replace(/\.md$/, '')}
+                </td>
+                <td className="py-2.5 pr-4">
+                  {item.assertion_mode ? (
+                    <Badge variant="secondary">{item.assertion_mode}</Badge>
+                  ) : (
+                    <span className="text-[var(--color-muted-foreground)]">-</span>
+                  )}
+                </td>
+                <td className="py-2.5 pr-4 text-[var(--color-muted-foreground)]">
+                  {new Date(item.created_at).toLocaleDateString()}
+                </td>
+                <td className="py-2.5">
+                  <DeleteConfirmButton
+                    onConfirm={() => deleteMutation.mutate(item.id)}
+                    isDeleting={deletingId === item.id}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // -- Members section (owner only) --------------------------------------------
 
 function MembersSection({
@@ -785,7 +890,7 @@ function DashboardSection({
 
 // -- Main page ---------------------------------------------------------------
 
-type KBTab = 'overview' | 'connectors' | 'members'
+type KBTab = 'overview' | 'connectors' | 'members' | 'items'
 
 function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
@@ -939,6 +1044,7 @@ function KnowledgeDetailPage() {
         <nav className="-mb-px flex gap-6">
           {([
             { id: 'overview', icon: BarChart2, label: m.knowledge_detail_tab_overview() },
+            ...(isPersonal ? [{ id: 'items' as KBTab, icon: List, label: m.knowledge_detail_tab_items() }] : []),
             { id: 'connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
             { id: 'members', icon: Users, label: m.knowledge_detail_tab_members() },
           ] as { id: KBTab; icon: React.ElementType; label: string }[]).map(({ id, icon: Icon, label }) => (
@@ -1002,6 +1108,10 @@ function KnowledgeDetailPage() {
             </div>
           </DashboardSection>
         </div>
+      )}
+
+      {activeTab === 'items' && isPersonal && (
+        <ItemsSection kbSlug={kbSlug} token={token} />
       )}
 
       {activeTab === 'connectors' && (

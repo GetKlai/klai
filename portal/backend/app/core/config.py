@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
 
+    # Knowledge ingest service (internal)
+    knowledge_ingest_url: str = "http://knowledge-ingest:8000"
+    knowledge_ingest_secret: str = ""  # PORTAL_API_KNOWLEDGE_INGEST_SECRET
+
     # Knowledge / Qdrant
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
