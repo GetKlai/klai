@@ -15,10 +15,10 @@ import {
   ChevronUp,
   X,
   History,
-import { focusLogger } from '@/lib/logger'
   Info,
   RotateCcw,
 } from 'lucide-react'
+import { focusLogger } from '@/lib/logger'
 import { useState, useRef, useEffect } from 'react'
 import * as m from '@/paraglide/messages'
 import { SaveToKnowledgeModal } from '@/components/knowledge/SaveToKnowledgeModal'
