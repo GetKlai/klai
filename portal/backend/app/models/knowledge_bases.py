@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -60,3 +60,14 @@ class PortalGroupKBAccess(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     granted_by: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default="viewer")
+
+
+class PortalKBTombstone(Base):
+    __tablename__ = "portal_kb_tombstones"
+    __table_args__ = (UniqueConstraint("org_id", "slug", name="uq_portal_kb_tombstones_org_slug"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(Integer, ForeignKey("portal_orgs.id"), nullable=False)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_by: Mapped[str] = mapped_column(String, nullable=False)

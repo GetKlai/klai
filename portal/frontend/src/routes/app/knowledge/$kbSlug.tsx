@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
+import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
@@ -896,24 +897,8 @@ function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
   const token = auth.user?.access_token
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<KBTab>('overview')
-
-  const { mutate: deleteKb, isPending: isDeleting } = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
-      void navigate({ to: '/app/knowledge' })
-    },
-  })
 
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -1002,42 +987,11 @@ function KnowledgeDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isOwner && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
-              onClick={() => setShowDeleteDialog(true)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
           <Link to="/app/knowledge">
             <Button variant="ghost" size="sm">{m.knowledge_new_cancel()}</Button>
           </Link>
         </div>
       </div>
-
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.knowledge_detail_delete_confirm_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.knowledge_detail_delete_confirm_body({ name: kb.name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.knowledge_new_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteKb()}
-              disabled={isDeleting}
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-            >
-              {m.knowledge_detail_delete_confirm_action()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Tab bar */}
       <div className="border-b border-[var(--color-border)]">
@@ -1120,6 +1074,36 @@ function KnowledgeDetailPage() {
 
       {activeTab === 'members' && (
         <MembersSection kbSlug={kbSlug} token={token} isOwner={isOwner} isPersonal={isPersonal} />
+      )}
+
+      {/* Danger zone */}
+      {isOwner && (
+        <div className="mt-8 rounded-lg border border-[var(--color-destructive)]/50 p-6">
+          <h3 className="text-sm font-semibold text-[var(--color-destructive)] mb-1">
+            Gevaarlijke zone
+          </h3>
+          <p className="text-sm text-[var(--color-muted-foreground)] mb-4">
+            Het verwijderen van deze knowledge base kan niet ongedaan worden gemaakt.
+          </p>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setDeleteModalOpen(true)}
+          >
+            Verwijder knowledge base
+          </Button>
+          <DeleteKbModal
+            open={deleteModalOpen}
+            onOpenChange={setDeleteModalOpen}
+            kbSlug={kb.slug}
+            kbName={kb.name}
+            itemCount={stats?.docs_count ?? null}
+            connectorCount={stats?.connector_count ?? 0}
+            hasGitea={!!kb.gitea_repo_slug}
+            hasDocs={kb.docs_enabled}
+            token={auth.user?.access_token ?? ''}
+          />
+        </div>
       )}
     </div>
   )

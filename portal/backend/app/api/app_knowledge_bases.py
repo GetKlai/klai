@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
-from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
+from app.models.knowledge_bases import PortalGroupKBAccess, PortalKBTombstone, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
 from app.services import docs_client
 from app.services.access import get_user_role_for_kb
@@ -296,6 +296,19 @@ async def create_app_knowledge_base(
 
     owner_user_id = caller_id if body.owner_type == "user" else None
 
+    # Check tombstone -- slug permanently retired
+    tombstone = await db.scalar(
+        select(PortalKBTombstone).where(
+            PortalKBTombstone.org_id == org.id,
+            PortalKBTombstone.slug == body.slug,
+        )
+    )
+    if tombstone:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This slug was previously used for a deleted knowledge base and cannot be reused.",
+        )
+
     kb = PortalKnowledgeBase(
         org_id=org.id,
         name=body.name,
@@ -340,11 +353,28 @@ async def delete_app_knowledge_base(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a KB. Requires owner access."""
+    """Delete a KB and all associated data. Requires owner access.
+
+    Deletion order: docs-app (handles Qdrant + Gitea + docs DB) -> portal DB + tombstone.
+    Aborts if docs-app cleanup fails.
+    """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_owner(kb, caller_id, db)
+
+    # Step 1: Clean up external systems via docs-app
+    # docs-app DELETE handles: Qdrant vectors, Gitea webhook, Gitea repo, docs.knowledge_bases row
+    if kb.gitea_repo_slug or kb.docs_enabled:
+        await docs_client.deprovision_kb(org.slug, kb.slug)
+
+    # Step 2: Portal DB -- delete KB row (cascades access rows) + insert tombstone atomically
+    tombstone = PortalKBTombstone(
+        org_id=org.id,
+        slug=kb.slug,
+        deleted_by=caller_id,
+    )
     await db.delete(kb)
+    db.add(tombstone)
     await db.commit()
 
 
