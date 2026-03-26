@@ -38,11 +38,14 @@ async def lifespan(app: FastAPI):
         proc_app = enrichment_tasks.init_app(async_connector)
         logger.info("Procrastinate app initialised.")
 
-        async with proc_app.open_async_worker(
-            queues=["enrich-interactive", "enrich-bulk"],
-            install_signal_handlers=False,
-        ) as worker:
-            worker_task = asyncio.create_task(worker.run_async())
+        # procrastinate 2.x: open_async() opens the connector; run_worker_async() is the worker coroutine.
+        async with proc_app.open_async():
+            worker_task = asyncio.create_task(
+                proc_app.run_worker_async(
+                    queues=["enrich-interactive", "enrich-bulk"],
+                    install_signal_handlers=False,
+                )
+            )
             listener_task = asyncio.create_task(org_config.start_listener(pool))
             logger.info("Procrastinate worker and org_config listener started.")
 
