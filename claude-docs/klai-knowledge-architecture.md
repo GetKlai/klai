@@ -59,10 +59,10 @@ This document describes the **target architecture** for Klai Knowledge. Most of 
 
 | Component | Status |
 |---|---|
-| Qdrant | ✅ Deployed — `klai_knowledge` collection, `org_id` + `kb_slug` payload indexes |
-| `knowledge` schema (PostgreSQL) | ✅ Created — migration `001_knowledge_schema.sql`; tables exist, not yet populated (Phase 4+) |
+| Qdrant | ✅ Deployed — `klai_knowledge` collection, `org_id` + `kb_slug` + `artifact_id` payload indexes |
+| `knowledge` schema (PostgreSQL) | ✅ Wired — migrations 001–003 applied; `knowledge.artifacts` populated on every ingest (SPEC-KB-004) |
 | Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/retrieve` |
-| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook`, retrieval verified for `getklai` tenant |
+| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook`, retrieval verified for `getklai` tenant; retrieve response now includes `artifact_id`, `provenance_type`, `assertion_mode`, `synthesis_depth`, `confidence` |
 | Knowledge model fields in frontmatter | ✅ `KnowledgeFrontmatter` in klai-docs; Zod validation deferred |
 | `klai-connector` | ✅ Deployed — connector execution service; handles GitHub, Notion, web_crawler, Google Drive, ms_docs adapters; triggered via portal connector API |
 
@@ -475,16 +475,19 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 
 ```sql
 -- knowledge.artifacts: canonical metadata for every knowledge artifact
+-- org_id and user_id are TEXT (not UUID) — Zitadel org IDs are 18-digit integer strings
 CREATE TABLE knowledge.artifacts (
   id            UUID PRIMARY KEY,
-  org_id        UUID NOT NULL,              -- tenant scope
-  user_id       UUID,                       -- non-null = personal scope
+  org_id        TEXT NOT NULL,              -- Zitadel org ID (e.g. "362757920133283846")
+  user_id       TEXT,                       -- non-null = personal scope
+  kb_slug       TEXT NOT NULL DEFAULT '',   -- knowledge base slug (added migration 003)
+  path          TEXT NOT NULL DEFAULT '',   -- document path within KB (added migration 003)
   provenance_type TEXT NOT NULL,            -- observed | extracted | synthesized | revised
   assertion_mode  TEXT NOT NULL,            -- factual | procedural | quoted | belief | hypothesis
   synthesis_depth SMALLINT NOT NULL,        -- 0–4
-  confidence    REAL,
+  confidence    TEXT,                       -- high | medium | low | NULL
   belief_time_start BIGINT NOT NULL,        -- Unix epoch
-  belief_time_end   BIGINT NOT NULL DEFAULT 253402300800,  -- sentinel = active
+  belief_time_end   BIGINT NOT NULL DEFAULT 253402300800,  -- sentinel = active; set to now() on soft-delete
   superseded_by UUID REFERENCES knowledge.artifacts(id),
   created_at    BIGINT NOT NULL
 );

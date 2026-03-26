@@ -47,6 +47,7 @@ async def ensure_collection() -> None:
         )
         await client.create_payload_index(COLLECTION, field_name="org_id", field_schema="keyword")
         await client.create_payload_index(COLLECTION, field_name="kb_slug", field_schema="keyword")
+        await client.create_payload_index(COLLECTION, field_name="artifact_id", field_schema="keyword")
         logger.info("Created Qdrant collection %s", COLLECTION)
     else:
         logger.info("Qdrant collection %s already exists", COLLECTION)
@@ -58,6 +59,7 @@ async def upsert_chunks(
     path: str,
     chunks: list[str],
     vectors: list[list[float]],
+    artifact_id: str,
     extra_payload: dict | None = None,
     user_id: str | None = None,
 ) -> None:
@@ -79,7 +81,7 @@ async def upsert_chunks(
     if not chunks:
         return
 
-    base_payload = {"org_id": org_id, "kb_slug": kb_slug, "path": path}
+    base_payload = {"org_id": org_id, "kb_slug": kb_slug, "path": path, "artifact_id": artifact_id}
     if user_id:
         base_payload["user_id"] = user_id
     if extra_payload:
@@ -144,6 +146,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
 _ALLOWED_METADATA_FIELDS = frozenset({
     "title", "kb_slug", "chunk_index", "created_at",
     "source_type", "visibility", "tags", "provenance_type", "confidence",
+    "artifact_id",
 })
 
 
