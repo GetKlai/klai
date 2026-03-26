@@ -18,6 +18,9 @@ export async function DELETE(
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // De-register Gitea webhook before deleting the repo
+  await ki.deregisterKBWebhook(org.zitadel_org_id, kbSlug, kb.gitea_repo);
+
   // Delete Gitea repo
   await gitea.deleteRepo(`org-${orgSlug}`, kbSlug);
 
