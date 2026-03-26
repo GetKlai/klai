@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus,
-  BookOpen, Users, BarChart2, Zap, List,
+  BookOpen, Users, BarChart2, Zap, List, Settings,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -891,7 +891,7 @@ function DashboardSection({
 
 // -- Main page ---------------------------------------------------------------
 
-type KBTab = 'overview' | 'connectors' | 'members' | 'items'
+type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'settings'
 
 function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
@@ -1001,6 +1001,7 @@ function KnowledgeDetailPage() {
             ...(isPersonal ? [{ id: 'items' as KBTab, icon: List, label: m.knowledge_detail_tab_items() }] : []),
             { id: 'connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
             { id: 'members', icon: Users, label: m.knowledge_detail_tab_members() },
+            ...(isOwner ? [{ id: 'settings' as KBTab, icon: Settings, label: 'Instellingen' }] : []),
           ] as { id: KBTab; icon: React.ElementType; label: string }[]).map(({ id, icon: Icon, label }) => (
             <button
               key={id}
@@ -1076,33 +1077,34 @@ function KnowledgeDetailPage() {
         <MembersSection kbSlug={kbSlug} token={token} isOwner={isOwner} isPersonal={isPersonal} />
       )}
 
-      {/* Danger zone */}
-      {isOwner && (
-        <div className="mt-8 rounded-lg border border-[var(--color-destructive)]/50 p-6">
-          <h3 className="text-sm font-semibold text-[var(--color-destructive)] mb-1">
-            Gevaarlijke zone
-          </h3>
-          <p className="text-sm text-[var(--color-muted-foreground)] mb-4">
-            Het verwijderen van deze knowledge base kan niet ongedaan worden gemaakt.
-          </p>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setDeleteModalOpen(true)}
-          >
-            Verwijder knowledge base
-          </Button>
-          <DeleteKbModal
-            open={deleteModalOpen}
-            onOpenChange={setDeleteModalOpen}
-            kbSlug={kb.slug}
-            kbName={kb.name}
-            itemCount={stats?.docs_count ?? null}
-            connectorCount={stats?.connector_count ?? 0}
-            hasGitea={!!kb.gitea_repo_slug}
-            hasDocs={kb.docs_enabled}
-            token={auth.user?.access_token ?? ''}
-          />
+      {activeTab === 'settings' && isOwner && (
+        <div className="space-y-6">
+          <div className="rounded-lg border border-[var(--color-destructive)]/50 p-6">
+            <h3 className="text-sm font-semibold text-[var(--color-destructive)] mb-1">
+              Gevaarlijke zone
+            </h3>
+            <p className="text-sm text-[var(--color-muted-foreground)] mb-4">
+              Het verwijderen van deze knowledge base kan niet ongedaan worden gemaakt.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteModalOpen(true)}
+            >
+              Verwijder knowledge base
+            </Button>
+            <DeleteKbModal
+              open={deleteModalOpen}
+              onOpenChange={setDeleteModalOpen}
+              kbSlug={kb.slug}
+              kbName={kb.name}
+              itemCount={stats?.docs_count ?? null}
+              connectorCount={stats?.connector_count ?? 0}
+              hasGitea={!!kb.gitea_repo_slug}
+              hasDocs={kb.docs_enabled}
+              token={auth.user?.access_token ?? ''}
+            />
+          </div>
         </div>
       )}
     </div>
