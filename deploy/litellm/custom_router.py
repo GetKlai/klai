@@ -73,6 +73,12 @@ class TokenRouter(CustomLogger):
                 data["model"] = "klai-fast"
                 return data
 
+            # KB-context present → never downgrade regardless of token count.
+            # KB chunks are compact and pre-ranked; the safety-net is for scraped
+            # web content, not knowledge base context.
+            if data.get("_klai_kb_meta"):
+                return data
+
             # Safety net: very long context without tool calls → nemo
             token_count = litellm.token_counter(
                 model="mistral/mistral-small-latest",

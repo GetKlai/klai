@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""
 
+    # MongoDB root URI for lazy LibreChat user ID mapping (KB-010).
+    # Needs read access to all tenant databases (root user or klai_readonly role).
+    # Required for GET /internal/v1/users/{librechat_user_id}/feature/knowledge.
+    librechat_mongo_root_uri: str = ""
+
     # klai-connector integration (used by portal → klai-connector for sync orchestration)
     klai_connector_url: str = "http://klai-connector:8200"
     klai_connector_secret: str = ""  # Shared internal secret; generate with: openssl rand -hex 32

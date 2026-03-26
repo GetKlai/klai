@@ -207,9 +207,11 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       DISABLE_ADMIN_UI: "True"
-      KNOWLEDGE_RETRIEVE_URL: http://knowledge-ingest:8000/knowledge/v1/retrieve
-      KNOWLEDGE_RETRIEVE_TIMEOUT: "2.0"
+      KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
+      KNOWLEDGE_RETRIEVE_TIMEOUT: "3.0"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      PORTAL_API_URL: http://portal-api:8000
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     depends_on:
       postgres:
         condition: service_healthy
@@ -353,9 +355,11 @@ services:
       IMAP_USERNAME: meet@getklai.com
       IMAP_POLL_INTERVAL_SECONDS: "60"
       IMAP_PASSWORD: ${PORTAL_API_IMAP_PASSWORD}
+      LIBRECHAT_MONGO_ROOT_URI: ${LIBRECHAT_MONGO_ROOT_URI}
     networks:
       - klai-net
       - net-postgres
+      - net-mongodb
       - socket-proxy
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
@@ -635,11 +639,16 @@ services:
       TEI_RERANKER_URL: http://tei-reranker:8080
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      GRAPHITI_ENABLED: "true"
+      GRAPH_SEARCH_TIMEOUT: "5.0"
     networks:
       - klai-net
     depends_on:
       - qdrant
       - tei
+      - falkordb
 
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
@@ -818,6 +827,17 @@ services:
           cpus: '2'
           memory: 4G
 
+  # ─── FalkorDB (knowledge graph for Graphiti) ─────────────────────────────
+  falkordb:
+    image: falkordb/falkordb:latest
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - /opt/klai/falkordb-data:/data
+    networks:
+      - klai-net
+
   # ─── Knowledge Ingest (RAG ingestion + retrieval for LiteLLM hook) ──────────
   knowledge-ingest:
     image: ghcr.io/getklai/knowledge-ingest:latest
@@ -833,6 +853,10 @@ services:
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET}
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      GRAPHITI_ENABLED: "true"
+      GRAPHITI_LLM_MODEL: klai-fast
     networks:
       - klai-net
       - net-postgres
@@ -841,6 +865,7 @@ services:
       - tei
       - bge-m3-sparse
       - postgres
+      - falkordb
 
   # ─── Klai Connector (external source sync to knowledge layer) ───────────────
   klai-connector:
