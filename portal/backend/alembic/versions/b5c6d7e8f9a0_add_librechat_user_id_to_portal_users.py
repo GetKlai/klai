@@ -1,6 +1,6 @@
 """add librechat_user_id to portal_users
 
-Revision ID: a3b4c5d6e7f8
+Revision ID: b5c6d7e8f9a0
 Revises: z2a3b4c5d6e7
 Create Date: 2026-03-26
 """
@@ -8,7 +8,7 @@ Create Date: 2026-03-26
 from alembic import op
 import sqlalchemy as sa
 
-revision = "a3b4c5d6e7f8"
+revision = "b5c6d7e8f9a0"
 down_revision = "z2a3b4c5d6e7"
 branch_labels = None
 depends_on = None
