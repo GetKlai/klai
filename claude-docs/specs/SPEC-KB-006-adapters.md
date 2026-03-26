@@ -1,10 +1,11 @@
 # SPEC-KB-006: Content-Type-Aware Enrichment and Intake Adapters
 
-> Status: DRAFT (2026-03-26)
+> Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-004 (knowledge schema), SPEC-KB-005 (contextual retrieval)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md` SS4.2, SS12
 > Created: 2026-03-26
+> Completed: 2026-03-26 — PR #32 merged (GetKlai/klai)
 
 ---
 
@@ -921,3 +922,57 @@ Reuse the KB-005 validation approach (test set of 50-100 real queries) with the 
 2. Create 20 test queries about meeting decisions, action items, and participants
 3. Compare Recall@5 and MRR@5 between: (a) raw embedding without profiles, (b) profile-based enrichment with rolling window + HyPE
 4. Target: transcript queries should show >15% Recall@5 improvement with profile-based enrichment vs. the KB-005 first-N approach
+
+---
+
+## Implementation notes (2026-03-26)
+
+PR #32 (`feat/kb-006-content-type-adapters`) was merged on 2026-03-26. Implementation is complete and matches the SPEC with a few noteworthy deviations and additions.
+
+### What was built vs. what was specced
+
+**Matches SPEC:**
+- `content_profiles.py` — all 6 `ContentTypeProfile` entries with the exact HYPE, context strategy, and chunk-token parameters from this SPEC
+- `context_strategies.py` — all 4 named strategy functions (`first_n`, `rolling_window`, `most_recent`, `front_matter`)
+- `sparse_embedder.py` — async HTTP client to the BGE-M3 FlagEmbedding sidecar; dense-only fallback on sidecar unavailability
+- DB migrations 005 (`content_type`, `extra` columns on `knowledge.artifacts`) and 006 (`knowledge.crawl_jobs` table)
+- Scribe adapter (`scribe/scribe-api/app/services/knowledge_adapter.py`) — `recording_type`-based content_type detection, segment clustering, paragraph-split fallback
+- Portal meeting adapter (`portal/backend/app/services/knowledge_adapter.py`) — Vexa speaker-turn clustering, participant metadata, `POST /api/bots/{meeting_id}/ingest` trigger endpoint
+- Crawler adapter (`adapters/crawler.py`) using `crawl4ai`, with `crawl_tasks.py` Procrastinate integration and `POST /knowledge/v1/crawl` endpoint
+- Qdrant `upsert` updated for temporal payload fields (`content_type`, `valid_from`, `valid_until`, `ingested_at`) and sparse named vector
+- Whisper-server updated to return `segments` array alongside `text` (D13)
+- Alembic migration `0005_add_segments_and_recording_type.py` for `scribe.transcriptions`
+- BGE-M3 sparse sidecar service added to `deploy/bge-m3-sparse/` and `docker-compose.yml`
+- 52 unit tests; ruff clean
+
+**Deviation: meeting summary schema (D14/AC-22–24)**
+
+The enriched meeting extraction schema (D14 — `commitments`, `key_quotes`, enriched `decisions`, `deadline` on action items) was partially implemented in `summarizer.py`. The structured extraction prompt was updated but `commitments` and `key_quotes` were added as optional fields rather than always-present arrays per AC-24. Frontend backward-compat handling was deferred: the frontend summary renderer still uses the old schema shape. This is noted as a follow-up in `portal/backend` — a separate small PR is expected before the staging deploy.
+
+**Deviation: three-leg RRF retrieval (D16/AC-28–29)**
+
+The Qdrant collection schema and ingest-time sparse upsert were fully implemented. The retrieval side (`retrieve.py`) was updated to call the sparse sidecar for query sparse vectors, but the three-leg prefetch + RRF fusion (D16) was not merged in this PR. The current retrieval still uses the two-leg approach from KB-005 (`vector_chunk` + `vector_questions`). The sparse leg (`vector_sparse`) is indexed and populated but not yet queried. This is intentional: D16 retrieval will be shipped once the sparse index is populated on staging and retrieval quality can be evaluated. Tracked as a follow-up SPEC or addendum to KB-005/KB-006.
+
+**Deviation: Qdrant collection renamed**
+
+The collection was renamed from `klai_kb` (legacy) to `klai_knowledge` (per the SPEC's `klai_knowledge_v2` intent, simplified to `klai_knowledge`). All ingest and retrieve code was updated atomically. The `_v2` suffix from the SPEC code examples was dropped — not needed given the clean rename.
+
+**Addition: whisper-server language detection pass-through**
+
+Beyond what was specced (adding `segments` to the Whisper response), the whisper-server was also updated to pass through the detected language from faster-whisper to the Scribe API response. This was a trivial addition discovered during the implementation of D13 and was included in the same PR.
+
+### Key decisions made during implementation
+
+1. **Scribe adapter lives in `scribe-api`, not `knowledge-ingest`**: The adapter that reads from `scribe.transcriptions` was placed in `scribe/scribe-api/app/services/knowledge_adapter.py` rather than in `knowledge-ingest`. This keeps the data access boundary clean — knowledge-ingest has no DB dependency on the scribe schema. The adapter fetches data internally and calls the knowledge-ingest HTTP endpoint.
+
+2. **Portal meeting adapter follows the same pattern**: `portal/backend/app/services/knowledge_adapter.py` — portal owns the Vexa meeting data and calls knowledge-ingest over HTTP. No cross-service DB access.
+
+3. **`crawl4ai` dependency pinned**: `crawl4ai` was added to `knowledge-ingest` requirements. It brought in several async dependencies that were already in the image; no Dockerfile changes required beyond the `requirements.txt` pin.
+
+4. **BGE-M3 sidecar uses CPU by default**: The `deploy/bge-m3-sparse/Dockerfile` targets CPU inference. The sidecar is separated from the GPU TEI service intentionally — sparse inference at batch ingest rates is feasible on CPU, and this avoids contention on the GPU during enrichment LLM calls.
+
+### Outstanding before staging deploy
+
+- Frontend backward-compat for enriched meeting summary schema (D14)
+- Three-leg RRF retrieval (D16) — separate PR once sparse index is populated
+- Staging smoke test: ingest via crawl job + verify Qdrant sparse vector population
