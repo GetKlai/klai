@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class RetrieveRequest(BaseModel):
+    query: str
+    org_id: str
+    scope: Literal["personal", "org", "both", "notebook", "broad"] = "org"
+    user_id: str | None = None
+    notebook_id: str | None = None
+    top_k: int = 8
+    conversation_history: list[dict] = Field(default_factory=list)
+
+
+class ChunkResult(BaseModel):
+    chunk_id: str
+    artifact_id: str | None = None
+    content_type: str | None = None
+    text: str
+    context_prefix: str | None = None
+    score: float
+    reranker_score: float | None = None
+    scope: str | None = None
+    valid_at: str | None = None
+    invalid_at: str | None = None
+
+
+class RetrieveMetadata(BaseModel):
+    candidates_retrieved: int
+    reranked_to: int
+    retrieval_ms: float
+    rerank_ms: float | None = None
+    gate_margin: float | None = None
+
+
+class RetrieveResponse(BaseModel):
+    query_resolved: str
+    retrieval_bypassed: bool
+    chunks: list[ChunkResult]
+    metadata: RetrieveMetadata
+
+
+class Citation(BaseModel):
+    index: int
+    artifact_id: str | None = None
+    title: str
+    chunk_ids: list[str]
+    relevance_score: float
