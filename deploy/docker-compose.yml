@@ -645,7 +645,9 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
-      GRAPH_SEARCH_TIMEOUT: "2.0"
+      GRAPH_SEARCH_TIMEOUT: "10.0"
+      RERANKER_ENABLED: "true"
+      OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://bge-m3-sparse:8001
     networks:
       - klai-net

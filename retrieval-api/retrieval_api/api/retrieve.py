@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 
+import structlog
 from fastapi import APIRouter, HTTPException
 
 from retrieval_api.config import settings
@@ -14,7 +14,7 @@ from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest,
 from retrieval_api.services import coreference, gate, graph_search, reranker, search
 from retrieval_api.services.tei import embed_single, embed_sparse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -103,7 +103,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 if graph_results:
                     raw_results = _rrf_merge(raw_results, graph_results)
             except Exception as exc:
-                logger.warning("Graph search task failed: %s", exc)
+                logger.warning("Graph search task failed", error=str(exc))
 
         candidates_retrieved = len(raw_results)
 
@@ -143,21 +143,19 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
 
     logger.info(
         "retrieve",
-        extra={
-            "org_id": req.org_id,
-            "scope": req.scope,
-            "top_k": req.top_k,
-            "candidates_retrieved": candidates_retrieved,
-            "graph_results_count": graph_results_count,
-            "coref_ms": round(coref_ms, 1),
-            "embed_ms": round(embed_ms, 1),
-            "qdrant_ms": round(qdrant_ms, 1) if qdrant_ms is not None else None,
-            "retrieval_ms": round(retrieval_ms, 1),
-            "graph_search_ms": round(graph_search_ms, 1) if graph_search_ms is not None else None,
-            "rerank_ms": round(rerank_ms, 1) if rerank_ms is not None else None,
-            "gate_margin": round(gate_margin, 4) if gate_margin is not None else None,
-            "retrieval_bypassed": bypassed,
-        },
+        org_id=req.org_id,
+        scope=req.scope,
+        top_k=req.top_k,
+        candidates_retrieved=candidates_retrieved,
+        graph_results_count=graph_results_count,
+        coref_ms=round(coref_ms, 1),
+        embed_ms=round(embed_ms, 1),
+        qdrant_ms=round(qdrant_ms, 1) if qdrant_ms is not None else None,
+        retrieval_ms=round(retrieval_ms, 1),
+        graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
+        rerank_ms=round(rerank_ms, 1) if rerank_ms is not None else None,
+        gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
+        retrieval_bypassed=bypassed,
     )
 
     return RetrieveResponse(
