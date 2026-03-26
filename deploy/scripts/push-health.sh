@@ -168,3 +168,13 @@ push_exec klai-core-portal-api-1 \
 push_exec klai-core-portal-api-1 \
     "python3 -c \"import socket; s=socket.create_connection(('klai-knowledge-mcp',8080),timeout=5); s.close()\"" \
     "${KUMA_TOKEN_KNOWLEDGE_MCP:-}" "Knowledge MCP"
+
+# FalkorDB: graph database (Knowledge graph store — Graphiti)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import socket; s=socket.create_connection(('falkordb',6379),timeout=5); s.close()\"" \
+    "${KUMA_TOKEN_FALKORDB:-}" "Graph Database"
+
+# Retrieval API: hybrid vector + graph search (Knowledge product)
+push_exec klai-core-portal-api-1 \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://retrieval-api:8040/health')\"" \
+    "${KUMA_TOKEN_RETRIEVAL_API:-}" "Retrieval API"
