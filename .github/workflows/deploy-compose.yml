@@ -1,0 +1,36 @@
+name: Sync docker-compose.yml to core-01
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker-compose.yml'
+      - '.github/workflows/deploy-compose.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-compose:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync docker-compose.yml to core-01
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            cd /tmp && rm -rf klai-compose-sync
+            git clone --depth=1 --filter=blob:none --sparse \
+              https://github.com/GetKlai/klai.git klai-compose-sync
+            cd klai-compose-sync
+            git sparse-checkout set deploy/docker-compose.yml
+            cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
+            rm -rf /tmp/klai-compose-sync
+            echo "docker-compose.yml synced to /opt/klai/"
