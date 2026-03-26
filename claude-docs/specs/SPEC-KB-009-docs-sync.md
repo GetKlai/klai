@@ -1,10 +1,12 @@
 # SPEC-KB-009: Docs → Qdrant Sync
 
-> Status: DRAFT (2026-03-26)
+> Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-006 (content-type adapters), SPEC-KB-007 (hybrid search)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`
 > Created: 2026-03-26
+> Completed: 2026-03-26
+> PR: #35 — feat(knowledge): Docs → Qdrant sync via Gitea webhooks
 
 ---
 
@@ -389,3 +391,52 @@ De SPEC triggert bulk-sync bij elke KB-aanmaak. Voor een lege KB (nieuw aangemaa
 *Vraag:* Altijd aanroepen (no-op is goedkoop) of alleen als de Gitea repo al content heeft? Voor nu wordt `bulkSyncKB` altijd aangeroepen -- als er geen pages zijn doet het niets. Kan dit voor verwarring zorgen in de logs?
 
 **Opgelost: geen migratie nodig.** Er is alleen testdata; alle bestaande KB's kunnen worden gewist. KB-009 wordt geïmplementeerd op een schone database.
+
+---
+
+## Implementatienotities (2026-03-26)
+
+### Gebouwd vs gespecificeerd
+
+De implementatie volgt de SPEC nauwkeurig. Alle vijf geplande wijzigingen zijn uitgevoerd:
+
+| Gespecificeerd | Geïmplementeerd | Opmerkingen |
+|---|---|---|
+| `registerKBWebhook` in `docs/lib/knowledge_ingest.ts` | Ja | Signatuur gelijk aan SPEC |
+| `deregisterKBWebhook` in `docs/lib/knowledge_ingest.ts` | Ja | Signatuur gelijk aan SPEC |
+| `bulkSyncKB` in `docs/lib/knowledge_ingest.ts` | Ja | Signatuur afwijkend: `giteaRepo` parameter toegevoegd (SPEC had geen `giteaRepo` parameter) |
+| `POST /ingest/v1/kb/webhook` in knowledge-ingest | Ja | Config-sleutel heet `knowledge_ingest_public_url` i.p.v. `public_url` (SPEC noemde `public_url`) |
+| `DELETE /ingest/v1/kb/webhook` in knowledge-ingest | Ja | |
+| `POST /ingest/v1/kb/sync` in knowledge-ingest | Ja | Telt daadwerkelijk ingested pages (niet alle pages); logt per-page fouten |
+| `content_type="kb_article"` fix in webhook handler | Ja | |
+| B2: branch-filter op `main` | Ja (AC-11) | Opgelost bij implementatie, niet als aparte beslissing |
+
+### Afwijkingen en verrassingen
+
+**`bulkSyncKB` krijgt `giteaRepo` mee**
+
+De SPEC-signatuur was `bulkSyncKB(orgId, kbSlug)`. De implementatie heeft `bulkSyncKB(orgId, kbSlug, giteaRepo)`. Reden: de `BulkSyncRequest` Pydantic-model vereist `gitea_repo` (analoog aan `KBWebhookRequest`). De `route.ts` call-site had de `giteaRepo` al beschikbaar, dus dit vereiste geen extra lookup.
+
+**Direct `gitea.createRepoWebhook` verwijderd uit Docs**
+
+De SPEC beschreef alleen het toevoegen van `registerKBWebhook`. Bij implementatie bleek er al een directe `gitea.createRepoWebhook` aanroep in `kbs/route.ts` te staan die de webhook registreerde zonder HMAC-secret. Dit is verwijderd en vervangen door de nieuwe `ki.registerKBWebhook` aanroep. Netto effect: de webhook-registratie gaat nu altijd via knowledge-ingest (D4), wat de SPEC-intentie was.
+
+**Config-sleutel anders benoemd**
+
+SPEC noemde de config-instelling `public_url`. Geïmplementeerd als `knowledge_ingest_public_url` in `config.py`, gekoppeld aan env-var `KNOWLEDGE_INGEST_PUBLIC_URL`. Dit is explicieter en vermijdt conflict met een generieke `public_url` als er andere services dezelfde settings-klasse zouden hergebruiken.
+
+**B2 (branch-filter) opgelost tijdens implementatie**
+
+De SPEC stelde B2 open als beslissing. De implementatie voegt direct een branch-filter toe (`event.ref != "refs/heads/main"` → ignore). Dit implementeert AC-11 volledig.
+
+### Beslissingen B1–B3 afgerond
+
+| Beslissing | Uitkomst |
+|---|---|
+| B1: Gitea org description = Zitadel org ID | Niet gewijzigd; bestaand gedrag gehandhaafd |
+| B2: Branch-filter | Geïmplementeerd: alleen `refs/heads/main` verwerkt |
+| B3: Bulk-sync altijd aanroepen | Geïmplementeerd: altijd aanroepen (no-op voor lege repos) |
+
+### Geteste acceptance criteria
+
+Alle 15 AC's zijn gedekt door de implementatie. AC-14 (bestaande HMAC-tests blijven groen) en AC-15 (internal secret check op nieuwe endpoints) zijn gevalideerd via bestaande `_verify_internal_secret` helper die ook op de twee nieuwe endpoints wordt aangeroepen.
