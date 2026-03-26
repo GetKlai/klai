@@ -1,7 +1,10 @@
 """
 Ingest routes:
-  POST /ingest/v1/document     — direct document ingest
-  POST /ingest/v1/webhook/gitea — Gitea push webhook
+  POST /ingest/v1/document        — direct document ingest
+  POST /ingest/v1/webhook/gitea   — Gitea push webhook
+  POST /ingest/v1/kb/webhook      — register Gitea webhook for a KB
+  DELETE /ingest/v1/kb/webhook    — de-register Gitea webhook for a KB
+  POST /ingest/v1/kb/sync         — bulk re-index all pages of a KB
 """
 import hashlib
 import hmac
@@ -18,8 +21,10 @@ from knowledge_ingest import chunker, embedder, org_config, pg_store, qdrant_sto
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import (
+    BulkSyncRequest,
     GiteaPushEvent,
     IngestRequest,
+    KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
 
@@ -256,6 +261,10 @@ async def gitea_webhook(request: Request) -> dict:
 
     event = GiteaPushEvent.model_validate(body)
 
+    # AC-11: Only process pushes to the default branch
+    if event.ref != "refs/heads/main":
+        return {"status": "ignored", "reason": "not main branch"}
+
     # Parse org_slug and kb_slug from repo full_name ("org-{slug}/{kb}")
     full_name = event.repository.full_name
     parts = full_name.split("/")
@@ -296,6 +305,7 @@ async def gitea_webhook(request: Request) -> dict:
         req = IngestRequest(
             org_id=org_id, kb_slug=kb_slug, path=path,
             content=content, source_type="docs",
+            content_type="kb_article",
         )
         try:
             await ingest_document(req)
@@ -368,3 +378,113 @@ async def _fetch_gitea_file(repo_full_name: str, path: str) -> str | None:
     except Exception as exc:
         logger.warning("Failed to fetch %s from %s: %s", path, repo_full_name, exc)
         return None
+
+
+async def _list_gitea_md_files(repo_full_name: str) -> list[str]:
+    """List all .md files in a Gitea repo (excluding _ prefixed files)."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.gitea_url,
+            headers={"Authorization": f"token {settings.gitea_token}"},
+            timeout=10.0,
+        ) as client:
+            resp = await client.get(
+                f"/api/v1/repos/{repo_full_name}/git/trees/HEAD",
+                params={"recursive": "true"},
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            return [
+                item["path"]
+                for item in data.get("tree", [])
+                if item.get("type") == "blob"
+                and item["path"].endswith(".md")
+                and not item["path"].startswith("_")
+            ]
+    except Exception as exc:
+        logger.warning("Failed to list files in %s: %s", repo_full_name, exc)
+        return []
+
+
+async def _register_gitea_webhook(gitea_repo: str, webhook_url: str) -> None:
+    """Register a push webhook on a Gitea repo."""
+    config: dict = {"url": webhook_url, "content_type": "json"}
+    if settings.gitea_webhook_secret:
+        config["secret"] = settings.gitea_webhook_secret
+    async with httpx.AsyncClient(
+        base_url=settings.gitea_url,
+        headers={"Authorization": f"token {settings.gitea_token}"},
+        timeout=10.0,
+    ) as client:
+        resp = await client.post(
+            f"/api/v1/repos/{gitea_repo}/hooks",
+            json={"type": "gitea", "config": config, "events": ["push"], "active": True},
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Gitea returned {resp.status_code}: {resp.text}")
+
+
+async def _deregister_gitea_webhook(gitea_repo: str, webhook_url: str) -> None:
+    """Remove our push webhook from a Gitea repo (matched by callback URL)."""
+    async with httpx.AsyncClient(
+        base_url=settings.gitea_url,
+        headers={"Authorization": f"token {settings.gitea_token}"},
+        timeout=10.0,
+    ) as client:
+        resp = await client.get(f"/api/v1/repos/{gitea_repo}/hooks", params={"limit": 50})
+        if resp.status_code != 200:
+            logger.warning("Could not list hooks for %s: %s", gitea_repo, resp.status_code)
+            return
+        for hook in resp.json():
+            if hook.get("config", {}).get("url") == webhook_url:
+                await client.delete(f"/api/v1/repos/{gitea_repo}/hooks/{hook['id']}")
+                return
+
+
+@router.post("/ingest/v1/kb/webhook")
+async def register_kb_webhook(request: Request, req: KBWebhookRequest) -> dict:
+    """Register a Gitea push webhook for a KB. Called by Docs on KB creation."""
+    _verify_internal_secret(request)
+    webhook_url = f"{settings.knowledge_ingest_public_url}/ingest/v1/webhook/gitea"
+    await _register_gitea_webhook(req.gitea_repo, webhook_url)
+    logger.info("Registered webhook for %s/%s on %s", req.org_id, req.kb_slug, req.gitea_repo)
+    return {"status": "ok"}
+
+
+@router.delete("/ingest/v1/kb/webhook")
+async def deregister_kb_webhook(request: Request, req: KBWebhookRequest) -> dict:
+    """De-register the Gitea push webhook for a KB. Called by Docs on KB deletion."""
+    _verify_internal_secret(request)
+    webhook_url = f"{settings.knowledge_ingest_public_url}/ingest/v1/webhook/gitea"
+    await _deregister_gitea_webhook(req.gitea_repo, webhook_url)
+    logger.info("Deregistered webhook for %s/%s on %s", req.org_id, req.kb_slug, req.gitea_repo)
+    return {"status": "ok"}
+
+
+@router.post("/ingest/v1/kb/sync")
+async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
+    """Re-index all pages of a KB from Gitea. Called by Docs on KB creation or for recovery."""
+    _verify_internal_secret(request)
+    pages = await _list_gitea_md_files(req.gitea_repo)
+    ingested = 0
+    for path in pages:
+        content = await _fetch_gitea_file(req.gitea_repo, path)
+        if content is None:
+            logger.warning("Could not fetch %s from %s during bulk sync", path, req.gitea_repo)
+            continue
+        ingest_req = IngestRequest(
+            org_id=req.org_id,
+            kb_slug=req.kb_slug,
+            path=path,
+            content=content,
+            source_type="docs",
+            content_type="kb_article",
+        )
+        try:
+            await ingest_document(ingest_req)
+            ingested += 1
+        except Exception as exc:
+            logger.warning("Bulk sync failed for %s: %s", path, exc)
+    logger.info("Bulk sync complete for %s/%s: %d pages", req.org_id, req.kb_slug, ingested)
+    return {"status": "ok", "pages": ingested}

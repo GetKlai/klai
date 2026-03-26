@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
+import * as ki from "@/lib/knowledge_ingest";
 import { slugify } from "@/lib/markdown";
 
 // GET /api/orgs/{org}/kbs
@@ -49,11 +50,6 @@ export async function POST(
   const giteaRepo = `${giteaOrg}/${slug}`;
   await gitea.createRepo(giteaOrg, slug, name);
 
-  const webhookUrl =
-    process.env.KNOWLEDGE_INGEST_WEBHOOK_URL ??
-    "http://knowledge-ingest:8000/ingest/v1/webhook/gitea";
-  await gitea.createRepoWebhook(giteaOrg, slug, webhookUrl);
-
   await gitea.putFile(
     giteaRepo,
     "_meta.yaml",
@@ -68,5 +64,11 @@ export async function POST(
   );
 
   const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo);
+
+  // Register Gitea webhook via knowledge-ingest (owns the HMAC secret and webhook lifecycle)
+  await ki.registerKBWebhook(org.id, slug, giteaRepo);
+  // Trigger initial index in case the repo already has content (no-op for empty repos)
+  await ki.bulkSyncKB(org.id, slug, giteaRepo);
+
   return NextResponse.json(kb, { status: 201 });
 }
