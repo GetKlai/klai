@@ -1,6 +1,6 @@
 # SPEC-KB-002: Knowledge Base Integration
 
-> Status: DRAFT — 2026-03-25
+> Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: `claude-docs/specs/SPEC-KB-001-unification.md`
 
@@ -191,3 +191,58 @@ De `connectors` en `sync_runs` tabellen in de klai-connector database worden ver
 - Vraagt gebruiker te kiezen (of kiest automatisch bij één KB)
 - Bevestigt visibility voor opslaan
 - Verwijder `save_org_knowledge` (of laat als fallback naar `"org"` KB)
+
+---
+
+## Implementation Notes
+
+> Added: 2026-03-26
+
+### Scope as executed
+
+SPEC-KB-002 was executed in two phases. Fase 1 en 2 (AC-1 t/m AC-5) zijn volledig geimplementeerd. Fase 3 en 4 (AC-6 t/m AC-8) zijn out of scope verklaard voor dit SPEC en zijn geadresseerd in latere specs (KB-009 voor Gitea→Qdrant sync, KB-010 voor retrieval authz).
+
+### AC-1: KB aanmaken provisioneert Gitea — COMPLETED
+
+Geimplementeerd in `5bfe381` (feat(portal): SPEC-KB-003 knowledge base app layer) als onderdeel van de KB creation flow in `/app/knowledge/new`. De portal backend roept `docs_client.provision_kb()` aan bij `POST /api/app/knowledge-bases`, slaat `gitea_repo_slug` op, en doet rollback bij fout. De docs_client is toegevoegd aan portal/backend/app/services/docs_client.py.
+
+### AC-2 + AC-3: /app/docs zonder eigen aanmaakformulier — COMPLETED
+
+De route `/app/docs/new` is verwijderd in commit `1665bd8` (chore(frontend): update routeTree.gen.ts after removing /app/docs/new route). De "Nieuwe KB" knop in `/app/docs` is verwijderd. `/app/docs` toont alleen KBs met een gevulde `gitea_repo_slug` via het `knowledge-bases-with-access` endpoint (toegevoegd in `5bfe381`).
+
+### AC-4 + AC-5: Connector is child van een KB, klai-connector leest via portal — COMPLETED
+
+Geimplementeerd via een tweedelige aanpak:
+
+1. **`portal_connectors` tabel** (in `7c28b84`, connectors admin UI): nieuwe tabel in de portal database met FK naar `portal_knowledge_bases`. CRUD endpoints op `/api/app/knowledge-bases/{kb_slug}/connectors` valideren Contributor-toegang van de aanmaker.
+
+2. **Control plane / execution plane architectuur** (in `43e5bba`): klai-connector is omgebouwd naar een stateless execution engine. De service heeft geen eigen connector-database meer — configuratie wordt opgehaald via `portal_client.py` (portal API) op sync-time. Portal valideert org/KB-eigendom bij elke config-fetch. De klai-connector database behoudt alleen `sync_runs` voor job tracking (FK naar eigen connector-ID space verwijderd in migration 004).
+
+### AC-6 + AC-7: Qdrant visibility tags en retrieval filtering — PARTIALLY COMPLETED (buiten scope KB-002)
+
+Qdrant-punten worden getagd met `visibility: public | private` bij indexeren (zichtbaar in `knowledge_ingest/models.py` en `qdrant_store.py`). Een `update_kb_visibility` endpoint is beschikbaar op `PATCH /ingest/v1/kb/visibility`. Retrieval-side filtering op basis van auth-context is uitgesteld; zie SPEC-KB-010 voor de LiteLLM hook met personal scope en KB authz.
+
+Afwijking: de SPEC specificeert `internal` als visibility-waarde. De implementatie gebruikt `private` (Next.js docs-app accepteert alleen `public`/`private`; dit is gedocumenteerd in `docs/pitfalls/` als KB-003 learning).
+
+### AC-8: MCP write_to_kb vervangt save_org_knowledge — NOT IMPLEMENTED (buiten scope KB-002)
+
+De klai-knowledge-mcp service heeft `save_org_knowledge` en `save_to_docs` tools, maar de voorgestelde `write_to_kb` tool (met KB-keuze en visibility-bevestiging) is niet gebouwd. De MCP schrijft nog naar een hardcoded slug. Dit is bewust uitgesteld — de MCP-integratie is later opgenomen in de bredere knowledge stack (KB-009, KB-010).
+
+### Key deviations
+
+| Punt | SPEC | Werkelijkheid |
+|------|------|---------------|
+| Visibility waarden | `public` / `internal` | `public` / `private` (docs-app constraint) |
+| klai-connector DB | Volledig verwijderd | `sync_runs` tabel behouden (job tracking) |
+| MCP write_to_kb | Vervangt save_org_knowledge | Niet geimplementeerd in KB-002 scope |
+| Fase 3 (Qdrant) | In KB-002 | Gedeeltelijk in KB-002, authz in KB-010 |
+| Fase 4 (MCP) | In KB-002 | Uitgesteld |
+
+### Commits
+
+| Commit | Inhoud |
+|--------|--------|
+| `1665bd8` | Verwijder /app/docs/new route uit routeTree |
+| `7c28b84` | portal_connectors tabel + admin UI + CRUD endpoints |
+| `43e5bba` | Control plane/execution plane: connector leest config via portal API |
+| `5bfe381` | KB creation provisioneert Gitea + /app/docs toont alleen portal-KBs |
