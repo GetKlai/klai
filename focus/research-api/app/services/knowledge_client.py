@@ -45,5 +45,5 @@ async def retrieve_knowledge(query: str, org_id: str, top_k: int = 5) -> list[di
                 for c in chunks
             ]
     except Exception as exc:
-        logger.warning("knowledge-ingest retrieve failed: %s", exc)
+        logger.error("knowledge-ingest retrieve failed: %s", exc)
         return []
