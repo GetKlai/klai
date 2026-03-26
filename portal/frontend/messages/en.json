@@ -923,7 +923,9 @@
 
   "admin_connectors_action_view": "View details",
   "admin_connectors_action_sync": "Sync now",
+  "admin_connectors_action_edit": "Edit",
   "admin_connectors_action_delete": "Delete",
+  "admin_connectors_save": "Save changes",
   "admin_connectors_syncing": "Syncing...",
   "admin_connectors_sync_error": "Sync failed ({status})",
 
