@@ -83,5 +83,57 @@ app.include_router(knowledge.router)
 
 
 @app.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
+async def health():
+    """Check reachability of Qdrant, TEI, bge-m3-sparse, and FalkorDB."""
+    import httpx
+    from fastapi.responses import JSONResponse
+
+    checks: dict[str, str] = {}
+
+    # Qdrant
+    try:
+        from qdrant_client import AsyncQdrantClient
+
+        qc = AsyncQdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            timeout=3.0,
+        )
+        await qc.get_collections()
+        checks["qdrant"] = "ok"
+    except Exception as exc:
+        checks["qdrant"] = f"error: {exc}"
+
+    # TEI (dense embeddings)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.tei_url}/health")
+            checks["tei"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+    except Exception as exc:
+        checks["tei"] = f"error: {exc}"
+
+    # bge-m3-sparse (sparse embeddings sidecar)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.sparse_sidecar_url}/health")
+            checks["bge_m3_sparse"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+    except Exception as exc:
+        checks["bge_m3_sparse"] = f"error: {exc}"
+
+    # FalkorDB (only when Graphiti is enabled)
+    # Uses TCP check — graphiti-core[falkordb] is deferred in requirements.txt (pydantic constraint)
+    if settings.graphiti_enabled:
+        try:
+            import socket  # noqa: PLC0415
+
+            s = socket.create_connection((settings.falkordb_host, settings.falkordb_port), timeout=3.0)
+            s.close()
+            checks["falkordb"] = "ok"
+        except Exception as exc:
+            checks["falkordb"] = f"error: {exc}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        content={"status": "ok" if all_ok else "degraded", **checks},
+        status_code=200 if all_ok else 503,
+    )
