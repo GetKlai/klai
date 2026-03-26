@@ -7,9 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 import time
-import unicodedata
 from datetime import datetime, timezone
 
 import httpx

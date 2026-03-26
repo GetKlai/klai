@@ -3,7 +3,6 @@ Tests for _parse_knowledge_fields() and db._parse_dsn().
 
 These are pure functions — no mocking needed.
 """
-import pytest
 
 from knowledge_ingest.routes.ingest import _parse_knowledge_fields
 from knowledge_ingest.db import _parse_dsn
