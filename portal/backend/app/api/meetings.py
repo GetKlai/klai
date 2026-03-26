@@ -402,9 +402,9 @@ async def ingest_meeting_to_kb(
     db: AsyncSession = Depends(get_db),
 ) -> IngestMeetingResponse:
     """Add a meeting transcript to a knowledge base."""
-    from app.services.knowledge_adapter import ingest_vexa_meeting  # noqa: PLC0415
+    from app.services.knowledge_adapter import ingest_vexa_meeting
 
-    user_id, org_id = await _get_user_and_org(credentials, db)
+    user_id, _org_id = await _get_user_and_org(credentials, db)
 
     meeting = await db.scalar(
         select(VexaMeeting).where(
