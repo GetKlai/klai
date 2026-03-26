@@ -104,10 +104,10 @@ services:
 
   # ─── PostgreSQL ───────────────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg18
     restart: unless-stopped
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       POSTGRES_USER: klai
@@ -946,7 +946,7 @@ services:
   # Image built from source — ghcr.io/mendableai/firecrawl is a private registry.
   # Build: cd /tmp/firecrawl/apps/api && docker build -t ghcr.io/mendableai/firecrawl:latest .
   firecrawl-postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
