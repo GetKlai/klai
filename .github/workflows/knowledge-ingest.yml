@@ -46,6 +46,11 @@ jobs:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          envs: GHCR_TOKEN
+          script_stop: true
           script: |
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u GetKlai --password-stdin
             docker pull ghcr.io/getklai/knowledge-ingest:latest
             cd /opt/klai && docker compose up -d knowledge-ingest
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
