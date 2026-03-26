@@ -5,7 +5,8 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
-    FlagEmbedding \
+    "FlagEmbedding>=1.3.0" \
+    "transformers<4.52" \
     torch \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
