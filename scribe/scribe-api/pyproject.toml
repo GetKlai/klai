@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "python-magic>=0.4",
     "pydub>=0.25",
+    "structlog>=25.0",
 ]
 
 [project.optional-dependencies]
@@ -28,3 +29,10 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+ignore = [
+    "S101",  # assert is fine in tests
+    "S105",  # hardcoded passwords — too many false positives on config defaults
+]

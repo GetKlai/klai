@@ -18,7 +18,7 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services.access import get_user_role_for_kb
 from app.services.klai_connector_client import SyncRunData, klai_connector_client
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
@@ -252,10 +252,10 @@ async def trigger_sync(
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == status.HTTP_409_CONFLICT:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sync already running") from exc
-        log.exception("klai-connector returned error for connector %s", connector_id)
+        logger.exception("klai-connector returned error for connector %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service error") from exc
     except httpx.HTTPError as exc:
-        log.exception("Failed to reach klai-connector for connector %s", connector_id)
+        logger.exception("Failed to reach klai-connector for connector %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc
 
     # Optimistically mark as running so the UI reflects it immediately.
@@ -290,5 +290,5 @@ async def list_sync_runs(
     try:
         return await klai_connector_client.get_sync_runs(connector_id, limit=limit)
     except httpx.HTTPError as exc:
-        log.exception("Failed to reach klai-connector for sync history of %s", connector_id)
+        logger.exception("Failed to reach klai-connector for sync history of %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc

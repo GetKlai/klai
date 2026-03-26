@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = Settings()  # type: ignore[call-arg]
-    setup_logging(settings.log_level)
+    setup_logging(level=settings.log_level, service_name="klai-connector")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

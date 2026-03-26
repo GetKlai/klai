@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def provision_gitea_repo(
@@ -79,7 +79,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            log.exception(
+            logger.exception(
                 "KB deprovisioning failed for org=%s kb=%s: %s %s",
                 org_slug,
                 kb_slug,
@@ -91,7 +91,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
                 detail="Docs/Gitea cleanup failed",
             ) from exc
         except httpx.ConnectError as exc:
-            log.exception("KB deprovisioning connect error for org=%s kb=%s", org_slug, kb_slug)
+            logger.exception("KB deprovisioning connect error for org=%s kb=%s", org_slug, kb_slug)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Docs/Gitea cleanup failed",
@@ -114,7 +114,7 @@ async def provision_and_store(
     try:
         return await provision_gitea_repo(org_slug, kb_name, kb_slug, visibility)
     except httpx.HTTPStatusError as exc:
-        log.exception(
+        logger.exception(
             "Gitea provisioning failed for KB slug=%s: %s %s",
             kb_slug,
             exc.response.status_code,
@@ -126,7 +126,7 @@ async def provision_and_store(
             detail="Gitea provisioning mislukt",
         ) from exc
     except httpx.ConnectError as exc:
-        log.exception("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
+        logger.exception("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

@@ -11,11 +11,9 @@ from fastapi import FastAPI
 from retrieval_api.api.chat import router as chat_router
 from retrieval_api.api.retrieve import router as retrieve_router
 from retrieval_api.config import settings
+from retrieval_api.logging_setup import setup_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

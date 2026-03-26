@@ -16,6 +16,7 @@ dependencies = [
     "cryptography>=43.0",
     "icalendar>=6.1.0,<7.0",
     "motor>=3.6",
+    "structlog>=25.0",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +42,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "C90", "B", "TRY", "S", "RUF"]
+select = ["E", "F", "I", "UP", "C90", "B", "TRY", "S", "RUF", "G", "LOG"]
 ignore = [
     "E501",    # line length — handled by formatter
     "B008",    # Depends() in default args — standard FastAPI pattern, not a bug

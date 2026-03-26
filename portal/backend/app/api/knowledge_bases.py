@@ -16,7 +16,7 @@ from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
 from app.services import docs_client
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["knowledge-bases"])
 
 

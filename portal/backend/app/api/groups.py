@@ -27,7 +27,7 @@ from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupPro
 from app.models.portal import PortalUser
 from app.services.audit import log_event
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["groups"])
 
