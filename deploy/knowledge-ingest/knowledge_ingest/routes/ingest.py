@@ -119,20 +119,35 @@ def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
 
 
 async def ingest_document(req: IngestRequest) -> dict:
-    """Core ingest pipeline: chunk → embed → upsert."""
-    chunks = chunker.chunk_markdown(
-        req.content,
-        chunk_size=settings.chunk_size,
-        overlap=settings.chunk_overlap,
-    )
-    if not chunks:
+    """Core ingest pipeline: chunk -> embed -> upsert."""
+
+    # Determine chunks: skip_chunking uses pre-provided chunks or content as single chunk
+    if req.skip_chunking:
+        if req.chunks:
+            texts = req.chunks
+        else:
+            texts = [req.content]
+    else:
+        chunks = chunker.chunk_markdown(
+            req.content,
+            chunk_size=settings.chunk_size,
+            overlap=settings.chunk_overlap,
+        )
+        if not chunks:
+            return {"status": "skipped", "reason": "empty document", "chunks": 0}
+        texts = [c.text for c in chunks]
+
+    if not texts:
         return {"status": "skipped", "reason": "empty document", "chunks": 0}
 
-    texts = [c.text for c in chunks]
     vectors = await embedder.embed(texts)
 
     title = _extract_title(req.content, req.path)
     kf = _parse_knowledge_fields(req.content, req.source_type)
+
+    # Apply synthesis_depth override from adapter if provided
+    if req.synthesis_depth is not None:
+        kf["synthesis_depth"] = req.synthesis_depth
 
     # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
     await pg_store.soft_delete_artifact(req.org_id, req.kb_slug, req.path)
@@ -148,11 +163,21 @@ async def ingest_document(req: IngestRequest) -> dict:
         belief_time_start=kf["belief_time_start"],
         belief_time_end=kf["belief_time_end"],
         user_id=req.user_id,
+        content_type=req.content_type,
+        extra=req.extra or None,
     )
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
     if req.source_type:
         extra_payload["source_type"] = req.source_type
+    if req.content_type != "unknown":
+        extra_payload["content_type"] = req.content_type
+    # Merge adapter extra metadata
+    if req.extra:
+        extra_payload.update(req.extra)
+    # Merge temporal fields for Qdrant payload
+    extra_payload["belief_time_start"] = kf["belief_time_start"]
+    extra_payload["belief_time_end"] = kf["belief_time_end"]
     extra_payload.update(_extract_frontmatter_metadata(req.content))
 
     await qdrant_store.upsert_chunks(
@@ -169,7 +194,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     # Enqueue enrichment as async Procrastinate task (non-blocking)
     pool = await get_pool()
     if await org_config.is_enrichment_enabled(req.org_id, pool):
-        from knowledge_ingest import enrichment_tasks
+        from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
         proc_app = enrichment_tasks.get_app()
         task_fn = (
             proc_app.enrich_document_interactive  # type: ignore[attr-defined]
@@ -187,10 +212,14 @@ async def ingest_document(req: IngestRequest) -> dict:
             user_id=req.user_id,
             extra_payload=extra_payload,
             synthesis_depth=kf["synthesis_depth"],
+            content_type=req.content_type,
         )
 
-    logger.info("Ingested %s/%s for org %s (%d chunks, artifact %s)", req.kb_slug, req.path, req.org_id, len(chunks), artifact_id)
-    return {"status": "ok", "chunks": len(chunks), "title": title, "artifact_id": artifact_id}
+    logger.info(
+        "Ingested %s/%s for org %s (%d chunks, artifact %s, type=%s)",
+        req.kb_slug, req.path, req.org_id, len(texts), artifact_id, req.content_type,
+    )
+    return {"status": "ok", "chunks": len(texts), "title": title, "artifact_id": artifact_id}
 
 
 @router.post("/ingest/v1/document")

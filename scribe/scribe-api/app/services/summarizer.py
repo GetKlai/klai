@@ -38,12 +38,22 @@ Return ONLY valid JSON with this exact structure:
 {
   "speakers_present": ["name1", "name2"],
   "topics": ["topic1", "topic2"],
-  "decisions": ["decision1"],
-  "action_items": [{"owner": "name or null", "task": "description"}],
+  "decisions": [
+    {"decision": "...", "rationale": "... or null", "decided_by": "... or null"}
+  ],
+  "action_items": [
+    {"owner": "name or null", "task": "description", "deadline": "... or null"}
+  ],
+  "commitments": [
+    {"speaker": "...", "commitment": "..."}
+  ],
+  "key_quotes": ["verbatim sentence worth preserving"],
   "open_questions": ["question1"],
   "next_steps": ["step1"]
 }
 Do not add commentary. If a field has no data, use an empty array.
+decisions.rationale and decisions.decided_by may be null if not mentioned.
+action_items.deadline may be null if not mentioned.
 """
 
 _MEETING_SYNTHESIS_SYSTEM = """\
@@ -159,6 +169,8 @@ async def summarize_transcription(
                 "topics": facts.get("topics", []),
                 "decisions": facts.get("decisions", []),
                 "action_items": facts.get("action_items", []),
+                "commitments": facts.get("commitments", []),
+                "key_quotes": facts.get("key_quotes", []),
                 "open_questions": facts.get("open_questions", []),
                 "next_steps": facts.get("next_steps", []),
             },

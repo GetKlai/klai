@@ -8,6 +8,11 @@ class IngestRequest(BaseModel):
     content: str = Field(max_length=500_000)  # Full markdown content (with optional frontmatter)
     user_id: str | None = None  # Set for user-scoped personal KB
     source_type: str | None = None  # e.g. "docs", "connector", "crawl"
+    content_type: str = "unknown"  # e.g. "kb_article", "meeting_transcript", "pdf_document"
+    skip_chunking: bool = False  # True when adapter provides pre-chunked text
+    extra: dict = {}  # Adapter-specific metadata (participants, source_url, etc.)
+    chunks: list[str] | None = None  # Pre-computed chunks (used with skip_chunking=True)
+    synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
 
 
 class RetrieveRequest(BaseModel):
@@ -16,6 +21,7 @@ class RetrieveRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     kb_slugs: list[str] | None = None  # None = all org KBs
     user_id: str | None = None  # For personal-scope filtering
+    sparse_weight: float | None = None  # AC-7: reserved for weighted RRF; None = pure RRF
 
 
 class ChunkResult(BaseModel):
@@ -71,6 +77,21 @@ class PersonalItemsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class BulkCrawlRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    start_url: str
+    max_depth: int = 2
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    rate_limit: float = 2.0
+
+
+class BulkCrawlResponse(BaseModel):
+    job_id: str
+    status: str
 
 
 class GiteaPusher(BaseModel):

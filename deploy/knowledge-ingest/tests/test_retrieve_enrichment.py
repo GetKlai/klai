@@ -1,32 +1,32 @@
 """
-Tests for retrieve endpoint — PostgreSQL artifact metadata enrichment and reranker.
+Tests for retrieve endpoint -- PostgreSQL artifact metadata enrichment, reranker, and sparse fallback.
 """
 import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-def _make_qdrant_result(artifact_id: str | None = "abc-123", extra: dict | None = None):
-    r = MagicMock()
-    payload = {
-        "text": "Test chunk text",
-        "kb_slug": "org",
-        "path": "doc.md",
-        "org_id": "org1",
-        "chunk_index": 0,
+def _make_search_result(artifact_id: str | None = "abc-123", extra: dict | None = None):
+    """Return a dict matching the shape returned by qdrant_store.search()."""
+    meta = {
         "title": "Test Doc",
+        "kb_slug": "org",
+        "chunk_index": 0,
     }
     if artifact_id:
-        payload["artifact_id"] = artifact_id
+        meta["artifact_id"] = artifact_id
     if extra:
-        payload.update(extra)
-    r.payload = payload
-    r.score = 0.87
-    return r
+        meta.update(extra)
+    return {
+        "text": "Test chunk text",
+        "source": "org/doc.md",
+        "score": 0.87,
+        "metadata": meta,
+    }
 
 
 def _make_pg_row(artifact_id: str = "abc-123"):
-    row = {
+    return {
         "id": artifact_id,
         "provenance_type": "observed",
         "assertion_mode": "factual",
@@ -35,19 +35,45 @@ def _make_pg_row(artifact_id: str = "abc-123"):
         "belief_time_start": 1705276800,
         "belief_time_end": 253402300800,
     }
-    return row
+
+
+def _common_patches():
+    """Return a dict of common patches for retrieve tests."""
+    return {
+        "qdrant_search": patch(
+            "knowledge_ingest.routes.retrieve.qdrant_store.search",
+            new_callable=AsyncMock,
+        ),
+        "embed_one": patch(
+            "knowledge_ingest.routes.retrieve.embedder.embed_one",
+            new_callable=AsyncMock,
+            return_value=[0.1] * 1024,
+        ),
+        "embed_sparse": patch(
+            "knowledge_ingest.routes.retrieve.sparse_embedder.embed_sparse",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        "get_pool": patch(
+            "knowledge_ingest.routes.retrieve.get_pool",
+            new_callable=AsyncMock,
+        ),
+    }
 
 
 @pytest.mark.asyncio
 async def test_retrieve_enriches_with_pg_metadata():
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=[_make_pg_row("abc-123")])
+    patches = _common_patches()
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
-         patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024):
+    with patches["qdrant_search"] as mock_search, \
+         patches["embed_one"], \
+         patches["embed_sparse"], \
+         patches["get_pool"] as mock_get_pool:
 
-        mock_client.return_value.search = AsyncMock(return_value=[_make_qdrant_result("abc-123")])
+        mock_search.return_value = [_make_search_result("abc-123")]
+        mock_get_pool.return_value = pool
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -68,12 +94,15 @@ async def test_retrieve_enriches_with_pg_metadata():
 async def test_retrieve_without_artifact_id_skips_pg_lookup():
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=[])
+    patches = _common_patches()
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
-         patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024):
+    with patches["qdrant_search"] as mock_search, \
+         patches["embed_one"], \
+         patches["embed_sparse"], \
+         patches["get_pool"] as mock_get_pool:
 
-        mock_client.return_value.search = AsyncMock(return_value=[_make_qdrant_result(None)])
+        mock_search.return_value = [_make_search_result(None)]
+        mock_get_pool.return_value = pool
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -92,14 +121,15 @@ async def test_retrieve_deduplicates_artifact_ids_for_pg_query():
     """Multiple chunks from same document should result in ONE pg fetch, not N."""
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=[_make_pg_row("same-id")])
+    patches = _common_patches()
 
-    qdrant_results = [_make_qdrant_result("same-id") for _ in range(5)]
+    with patches["qdrant_search"] as mock_search, \
+         patches["embed_one"], \
+         patches["embed_sparse"], \
+         patches["get_pool"] as mock_get_pool:
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
-         patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024):
-
-        mock_client.return_value.search = AsyncMock(return_value=qdrant_results)
+        mock_search.return_value = [_make_search_result("same-id") for _ in range(5)]
+        mock_get_pool.return_value = pool
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -116,12 +146,15 @@ async def test_retrieve_deduplicates_artifact_ids_for_pg_query():
 async def test_retrieve_returns_correct_source_and_score():
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=[_make_pg_row("abc-123")])
+    patches = _common_patches()
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
-         patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024):
+    with patches["qdrant_search"] as mock_search, \
+         patches["embed_one"], \
+         patches["embed_sparse"], \
+         patches["get_pool"] as mock_get_pool:
 
-        mock_client.return_value.search = AsyncMock(return_value=[_make_qdrant_result("abc-123")])
+        mock_search.return_value = [_make_search_result("abc-123")]
+        mock_get_pool.return_value = pool
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -136,22 +169,21 @@ async def test_retrieve_returns_correct_source_and_score():
 
 # --- Reranker tests ---
 
-def _make_qdrant_results_for_reranker(n: int = 4):
-    """Return n distinct mock Qdrant results with different texts."""
-    results = []
-    for i in range(n):
-        r = MagicMock()
-        r.payload = {
+def _make_search_results_for_reranker(n: int = 4):
+    """Return n distinct search results with different texts."""
+    return [
+        {
             "text": f"Chunk {i}",
-            "kb_slug": "org",
-            "path": f"doc{i}.md",
-            "org_id": "org1",
-            "chunk_index": i,
-            "title": f"Doc {i}",
+            "source": f"org/doc{i}.md",
+            "score": 0.9 - i * 0.1,
+            "metadata": {
+                "title": f"Doc {i}",
+                "kb_slug": "org",
+                "chunk_index": i,
+            },
         }
-        r.score = 0.9 - i * 0.1
-        results.append(r)
-    return results
+        for i in range(n)
+    ]
 
 
 @pytest.mark.asyncio
@@ -172,9 +204,10 @@ async def test_reranker_reorders_results():
     mock_http_response.json.return_value = reranker_response
     mock_http_response.raise_for_status = MagicMock()
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
+    with patch("knowledge_ingest.routes.retrieve.qdrant_store.search", new_callable=AsyncMock) as mock_search, \
+         patch("knowledge_ingest.routes.retrieve.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024), \
+         patch("knowledge_ingest.routes.retrieve.sparse_embedder.embed_sparse", new_callable=AsyncMock, return_value=None), \
          patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024), \
          patch("knowledge_ingest.routes.retrieve.settings") as mock_settings, \
          patch("httpx.AsyncClient") as mock_httpx:
 
@@ -186,7 +219,7 @@ async def test_reranker_reorders_results():
         ))
         mock_httpx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        mock_client.return_value.search = AsyncMock(return_value=_make_qdrant_results_for_reranker(4))
+        mock_search.return_value = _make_search_results_for_reranker(4)
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -206,9 +239,10 @@ async def test_reranker_fallback_on_error():
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=[])
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
+    with patch("knowledge_ingest.routes.retrieve.qdrant_store.search", new_callable=AsyncMock) as mock_search, \
+         patch("knowledge_ingest.routes.retrieve.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024), \
+         patch("knowledge_ingest.routes.retrieve.sparse_embedder.embed_sparse", new_callable=AsyncMock, return_value=None), \
          patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024), \
          patch("knowledge_ingest.routes.retrieve.settings") as mock_settings, \
          patch("httpx.AsyncClient") as mock_httpx:
 
@@ -220,7 +254,7 @@ async def test_reranker_fallback_on_error():
         ))
         mock_httpx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        mock_client.return_value.search = AsyncMock(return_value=_make_qdrant_results_for_reranker(4))
+        mock_search.return_value = _make_search_results_for_reranker(4)
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -240,15 +274,16 @@ async def test_reranker_disabled_when_url_empty():
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=[])
 
-    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client, \
+    with patch("knowledge_ingest.routes.retrieve.qdrant_store.search", new_callable=AsyncMock) as mock_search, \
+         patch("knowledge_ingest.routes.retrieve.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024), \
+         patch("knowledge_ingest.routes.retrieve.sparse_embedder.embed_sparse", new_callable=AsyncMock, return_value=None), \
          patch("knowledge_ingest.routes.retrieve.get_pool", new_callable=AsyncMock, return_value=pool), \
-         patch("knowledge_ingest.embedder.embed_one", new_callable=AsyncMock, return_value=[0.1] * 1024), \
          patch("knowledge_ingest.routes.retrieve.settings") as mock_settings, \
          patch("httpx.AsyncClient") as mock_httpx:
 
         mock_settings.reranker_url = ""
 
-        mock_client.return_value.search = AsyncMock(return_value=_make_qdrant_results_for_reranker(4))
+        mock_search.return_value = _make_search_results_for_reranker(4)
 
         from knowledge_ingest.routes.retrieve import retrieve
         from knowledge_ingest.models import RetrieveRequest
@@ -259,3 +294,36 @@ async def test_reranker_disabled_when_url_empty():
     mock_httpx.assert_not_called()
     assert len(response.chunks) == 2
     assert response.chunks[0].text == "Chunk 0"
+
+
+# --- AC-11: Sparse sidecar unavailable at query time ---
+
+@pytest.mark.asyncio
+async def test_retrieve_works_when_sparse_sidecar_unreachable():
+    """AC-11: Retrieve must work normally when sparse sidecar is down."""
+    pool = MagicMock()
+    pool.fetch = AsyncMock(return_value=[_make_pg_row("abc-123")])
+    patches = _common_patches()
+
+    with patches["qdrant_search"] as mock_search, \
+         patches["embed_one"], \
+         patches["embed_sparse"] as mock_sparse, \
+         patches["get_pool"] as mock_get_pool:
+
+        mock_sparse.return_value = None  # sidecar unreachable
+        mock_search.return_value = [_make_search_result("abc-123")]
+        mock_get_pool.return_value = pool
+
+        from knowledge_ingest.routes.retrieve import retrieve
+        from knowledge_ingest.models import RetrieveRequest
+
+        req = RetrieveRequest(org_id="org1", query="test", kb_slugs=["org"])
+        response = await retrieve(req)
+
+    # Verify no exception and results returned normally
+    assert len(response.chunks) == 1
+    assert response.chunks[0].text == "Test chunk text"
+
+    # Verify sparse_vector=None was passed to qdrant_store.search()
+    search_kwargs = mock_search.call_args
+    assert search_kwargs.kwargs.get("sparse_vector") is None

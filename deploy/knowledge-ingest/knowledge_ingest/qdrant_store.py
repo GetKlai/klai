@@ -2,9 +2,13 @@
 Qdrant operations for the knowledge graph.
 
 Single collection: klai_knowledge
+  - vector_chunk (dense): enriched chunk text embedding
+  - vector_questions (dense): HyPE question embedding (depth-dependent)
+  - vector_sparse (sparse): BM25-style lexical matching via BGE-M3
 Tenant isolation via org_id payload filter.
 """
 import logging
+import time
 import uuid
 
 from qdrant_client import AsyncQdrantClient
@@ -18,6 +22,9 @@ from qdrant_client.models import (
     MatchValue,
     PointStruct,
     Prefetch,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
@@ -25,10 +32,8 @@ from knowledge_ingest.config import settings
 from knowledge_ingest.embedder import EMBED_DIM
 
 logger = logging.getLogger(__name__)
-# Legacy collection name (single default vector). Kept for backward compatibility.
+
 COLLECTION = "klai_knowledge"
-# v2 collection with named vectors (vector_chunk + vector_questions).
-COLLECTION_V2 = "klai_knowledge_v2"
 
 _client: AsyncQdrantClient | None = None
 
@@ -43,43 +48,31 @@ def get_client() -> AsyncQdrantClient:
     return _client
 
 
-def _active_collection() -> str:
-    """Return the active collection name from config (supports migration switchover)."""
-    return settings.qdrant_collection
-
-
 async def ensure_collection() -> None:
+    """Ensure the klai_knowledge collection exists with named + sparse vectors."""
     client = get_client()
     existing = [c.name for c in (await client.get_collections()).collections]
 
-    # Legacy collection (default vector) — always ensure it exists for backward compat
     if COLLECTION not in existing:
         await client.create_collection(
             COLLECTION,
-            vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
-        )
-        await client.create_payload_index(COLLECTION, field_name="org_id", field_schema="keyword")
-        await client.create_payload_index(COLLECTION, field_name="kb_slug", field_schema="keyword")
-        await client.create_payload_index(COLLECTION, field_name="artifact_id", field_schema="keyword")
-        logger.info("Created Qdrant collection %s", COLLECTION)
-    else:
-        logger.info("Qdrant collection %s already exists", COLLECTION)
-
-    # v2 collection (named vectors: vector_chunk + vector_questions)
-    if COLLECTION_V2 not in existing:
-        await client.create_collection(
-            COLLECTION_V2,
             vectors_config={
                 "vector_chunk": VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
                 "vector_questions": VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
             },
+            sparse_vectors_config={
+                "vector_sparse": SparseVectorParams(
+                    index=SparseIndexParams(on_disk=False),
+                ),
+            },
         )
-        await client.create_payload_index(COLLECTION_V2, field_name="org_id", field_schema="keyword")
-        await client.create_payload_index(COLLECTION_V2, field_name="kb_slug", field_schema="keyword")
-        await client.create_payload_index(COLLECTION_V2, field_name="artifact_id", field_schema="keyword")
-        logger.info("Created Qdrant collection %s with named vectors", COLLECTION_V2)
+        for field in ("org_id", "kb_slug", "artifact_id", "content_type"):
+            await client.create_payload_index(
+                COLLECTION, field_name=field, field_schema="keyword",
+            )
+        logger.info("Created Qdrant collection %s with named + sparse vectors", COLLECTION)
     else:
-        logger.info("Qdrant collection %s already exists", COLLECTION_V2)
+        logger.info("Qdrant collection %s already exists", COLLECTION)
 
 
 async def upsert_chunks(
@@ -92,7 +85,8 @@ async def upsert_chunks(
     extra_payload: dict | None = None,
     user_id: str | None = None,
 ) -> None:
-    """Upsert chunks for a document. Deletes old points for same path first."""
+    """Upsert raw chunks (before enrichment). Uses vector_chunk named vector.
+    Backward compatible: called by the ingest pipeline before enrichment runs."""
     client = get_client()
 
     # Delete existing points for this document
@@ -110,7 +104,12 @@ async def upsert_chunks(
     if not chunks:
         return
 
-    base_payload = {"org_id": org_id, "kb_slug": kb_slug, "path": path, "artifact_id": artifact_id}
+    base_payload = {
+        "org_id": org_id,
+        "kb_slug": kb_slug,
+        "path": path,
+        "artifact_id": artifact_id,
+    }
     if user_id:
         base_payload["user_id"] = user_id
     if extra_payload:
@@ -119,7 +118,7 @@ async def upsert_chunks(
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector=vector,
+            vector={"vector_chunk": vector},
             payload={**base_payload, "text": chunk, "chunk_index": i},
         )
         for i, (chunk, vector) in enumerate(zip(chunks, vectors))
@@ -134,20 +133,24 @@ async def upsert_enriched_chunks(
     enriched_chunks: list,  # list[enrichment.EnrichedChunk]
     chunk_vectors: list[list[float]],
     question_vectors: list[list[float] | None],
-    artifact_id: str,
+    sparse_vectors: list[SparseVector | None] | None = None,
+    artifact_id: str = "",
     extra_payload: dict | None = None,
     user_id: str | None = None,
+    content_type: str = "unknown",
+    belief_time_start: int | None = None,
+    belief_time_end: int | None = None,
 ) -> None:
     """
-    Upsert enriched chunks into the v2 collection with named vectors.
-    Deletes existing points for this path first (same path key as raw upsert).
-    vector_chunk is always populated; vector_questions is populated only for depth 0-1 chunks.
+    Upsert enriched chunks with named + sparse vectors.
+    Deletes existing points for this path first.
+    vector_chunk is always populated; vector_questions is profile-dependent;
+    vector_sparse is populated when the sparse sidecar is available.
     """
     client = get_client()
-    collection = COLLECTION_V2
 
     await client.delete(
-        collection,
+        COLLECTION,
         points_selector=Filter(
             must=[
                 FieldCondition(key="org_id", match=MatchValue(value=org_id)),
@@ -160,17 +163,36 @@ async def upsert_enriched_chunks(
     if not enriched_chunks:
         return
 
-    base_payload = {"org_id": org_id, "kb_slug": kb_slug, "path": path, "artifact_id": artifact_id}
+    base_payload: dict = {
+        "org_id": org_id,
+        "kb_slug": kb_slug,
+        "path": path,
+        "artifact_id": artifact_id,
+        "content_type": content_type,
+        "ingested_at": int(time.time()),
+    }
+    if belief_time_start is not None:
+        base_payload["valid_from"] = belief_time_start
+    if belief_time_end is not None:
+        base_payload["valid_until"] = belief_time_end
     if user_id:
         base_payload["user_id"] = user_id
     if extra_payload:
         base_payload.update(extra_payload)
 
+    # Default sparse_vectors to all None if not provided
+    if sparse_vectors is None:
+        sparse_vectors = [None] * len(enriched_chunks)
+
     points = []
-    for i, (ec, chunk_vec, q_vec) in enumerate(zip(enriched_chunks, chunk_vectors, question_vectors)):
-        vectors: dict[str, list[float]] = {"vector_chunk": chunk_vec}
+    for i, (ec, chunk_vec, q_vec, sparse_vec) in enumerate(
+        zip(enriched_chunks, chunk_vectors, question_vectors, sparse_vectors)
+    ):
+        vectors: dict = {"vector_chunk": chunk_vec}
         if q_vec is not None:
             vectors["vector_questions"] = q_vec
+        if sparse_vec is not None:
+            vectors["vector_sparse"] = sparse_vec
 
         points.append(
             PointStruct(
@@ -187,7 +209,7 @@ async def upsert_enriched_chunks(
             )
         )
 
-    await client.upsert(collection, points=points)
+    await client.upsert(COLLECTION, points=points)
 
 
 async def delete_document(org_id: str, kb_slug: str, path: str) -> None:
@@ -238,7 +260,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
 _ALLOWED_METADATA_FIELDS = frozenset({
     "title", "kb_slug", "chunk_index", "created_at",
     "source_type", "visibility", "tags", "provenance_type", "confidence",
-    "artifact_id",
+    "artifact_id", "content_type", "valid_from", "valid_until", "ingested_at",
 })
 
 
@@ -248,81 +270,72 @@ async def search(
     top_k: int = 5,
     kb_slugs: list[str] | None = None,
     user_id: str | None = None,
+    sparse_vector: SparseVector | None = None,
+    content_type_filter: str | None = None,
+    sparse_weight: float | None = None,  # AC-7: reserved for weighted convex combination; no behavioral effect yet
 ) -> list[dict]:
     """Search for chunks matching the query vector.
 
-    Uses Dual-Index Fusion (RRF) via Qdrant prefetch when the active collection
-    supports named vectors (v2). Falls back to legacy search on the v1 collection.
+    Uses 3-leg RRF fusion (vector_chunk + vector_questions + vector_sparse)
+    when a sparse query vector is provided. Falls back to 2-leg RRF otherwise.
 
     user_id filter is applied only when kb_slugs contains "personal".
     """
     client = get_client()
-    collection = _active_collection()
 
     must = [FieldCondition(key="org_id", match=MatchValue(value=org_id))]
     if kb_slugs:
         must.append(FieldCondition(key="kb_slug", match=MatchAny(any=kb_slugs)))
     if user_id and kb_slugs and "personal" in kb_slugs:
         must.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+    if content_type_filter:
+        must.append(FieldCondition(key="content_type", match=MatchValue(value=content_type_filter)))
 
     query_filter = Filter(must=must)
 
-    if collection == COLLECTION_V2:
-        # Dual-Index Fusion: search both named vectors, fuse with RRF
-        prefetch_limit = max(top_k * 4, 20)
-        results = await client.query_points(
-            collection_name=collection,
-            prefetch=[
-                Prefetch(
-                    query=query_vector,
-                    using="vector_chunk",
-                    limit=prefetch_limit,
-                    filter=query_filter,
-                ),
-                Prefetch(
-                    query=query_vector,
-                    using="vector_questions",
-                    limit=prefetch_limit,
-                    filter=query_filter,
-                ),
-            ],
-            query=FusionQuery(fusion=Fusion.RRF),
-            limit=top_k,
-            with_payload=True,
+    prefetch_limit = max(top_k * 4, 20)
+    prefetch = [
+        Prefetch(
+            query=query_vector,
+            using="vector_chunk",
+            limit=prefetch_limit,
+            filter=query_filter,
+        ),
+        Prefetch(
+            query=query_vector,
+            using="vector_questions",
+            limit=prefetch_limit,
+            filter=query_filter,
+        ),
+    ]
+    if sparse_vector is not None:
+        prefetch.append(
+            Prefetch(
+                query=sparse_vector,
+                using="vector_sparse",
+                limit=prefetch_limit,
+                filter=query_filter,
+            )
         )
-        points = results.points
-        return [
-            {
-                "text": p.payload.get("text", "") if p.payload else "",
-                "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}" if p.payload else "",
-                "score": p.score,
-                "metadata": {
-                    k: v
-                    for k, v in (p.payload or {}).items()
-                    if k in _ALLOWED_METADATA_FIELDS
-                },
-            }
-            for p in points
-        ]
 
-    # Legacy: single default vector search (v1 collection)
-    legacy_results = await client.search(
-        collection,
-        query_vector=query_vector,
-        query_filter=query_filter,
+    results = await client.query_points(
+        collection_name=COLLECTION,
+        prefetch=prefetch,
+        query=FusionQuery(fusion=Fusion.RRF),
         limit=top_k,
         with_payload=True,
     )
+    points = results.points
     return [
         {
-            "text": r.payload.get("text", ""),
-            "source": f"{r.payload.get('kb_slug', '')}/{r.payload.get('path', '')}",
-            "score": r.score,
+            "text": p.payload.get("text", "") if p.payload else "",
+            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}" if p.payload else "",
+            "score": p.score,
             "metadata": {
                 k: v
-                for k, v in r.payload.items()
+                for k, v in (p.payload or {}).items()
                 if k in _ALLOWED_METADATA_FIELDS
             },
         }
-        for r in legacy_results
+        for p in points
     ]
