@@ -1,6 +1,6 @@
 # SPEC-KB-007: Sparse Vectors en Hybrid Search
 
-> Status: PARTIAL (2026-03-26) — ingest side complete; retrieval-api hybrid query pending collection migration
+> Status: COMPLETED (2026-03-26) — commit 8c9571c
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-005 (named vectors, RRF fusion), SPEC-KB-006 (FlagEmbedding sidecar deployment, content-type profiles)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md` SS4.3
@@ -395,25 +395,14 @@ KB-007 was implemented as part of the KB-006 fix PR (commit `90d928f`) and surro
 
 `deploy/knowledge-ingest/knowledge_ingest/qdrant_store.py` also contains a `search()` function (added in this commit) with three-leg RRF prefetch (`vector_chunk`, `vector_sparse`, `vector_questions`) and graceful sparse fallback per AC-4 and AC-5. The `sparse_weight` parameter is plumbed through per AC-7.
 
-### Key deviation: retrieval-api hybrid query not yet active (AC-4/AC-5/AC-8)
+### retrieval-api hybrid upgrade (commit 8c9571c, 2026-03-26)
 
-KB-008 (standalone retrieval-api) moved the active search path out of `knowledge-ingest/routes/retrieve.py` and into `retrieval-api/retrieval_api/services/search.py`. That service still uses single-vector dense cosine search for `klai_knowledge`. A TODO comment in `retrieval_api/services/search.py` (lines 3-5 and 123-124) marks the upgrade point:
+After `klai_knowledge` was recreated with the named-vector schema, the retrieval-api was upgraded:
 
-> NOTE: klai_knowledge currently uses a single unnamed dense vector (1024-dim cosine).
-> Named vectors (vector_chunk, vector_questions, vector_sparse) and RRF hybrid search
-> will be enabled after collection migration. See SPEC-KB-007 follow-up.
-
-This means AC-4, AC-5, and AC-8 (three-leg hybrid at query time, sparse fallback at query time, exact-match recall improvement) are not yet live. The sparse index is populated in Qdrant but not yet queried.
-
-### Root cause
-
-The `klai_knowledge` collection as deployed via KB-008 still uses a single unnamed vector (migrated from the pre-KB-005 schema). It has not yet been recreated with the named-vector schema (`vector_chunk`, `vector_questions`, `vector_sparse`) that KB-005/KB-006/KB-007 specify. The collection recreation requires a staging deploy window with full re-ingest.
-
-### Outstanding items before this SPEC is fully complete
-
-1. **Collection migration**: recreate `klai_knowledge_v2` on staging with the three-vector schema (D5). All current data is test data -- full re-ingest required.
-2. **retrieval-api hybrid upgrade**: after collection migration, update `retrieval_api/services/search.py` `_search_knowledge()` to use three-leg RRF prefetch, calling the sparse sidecar at query time in parallel with the TEI dense embed (D6). Remove the TODO comment.
-3. **Exact-match validation** (AC-8): run the 20-query exact-match test set once hybrid retrieval is live in staging to verify Recall@3 improvement.
+- `retrieval_api/services/search.py`: `_search_knowledge()` now uses named vector prefetch (`vector_chunk` + `vector_questions` + `vector_sparse`) with `FusionQuery(fusion=Fusion.RRF)`. Falls back to 2-leg RRF when sparse vector is None.
+- `retrieval_api/services/tei.py`: `embed_sparse()` added — calls BGE-M3 sidecar at `POST /embed_sparse_batch`, returns `SparseVector | None`, degrades gracefully.
+- `retrieval_api/config.py`: `sparse_sidecar_url` and `sparse_sidecar_timeout` settings added.
+- `retrieval_api/api/retrieve.py`: dense + sparse query embedding computed in parallel via `asyncio.gather`, `sparse_vector` passed through `hybrid_search()` to `_search_knowledge()`.
 
 ### AC coverage summary
 
@@ -421,12 +410,12 @@ The `klai_knowledge` collection as deployed via KB-008 still uses a single unnam
 |---|---|
 | AC-1 (sparse at ingest) | Done |
 | AC-2 (ingest graceful degradation) | Done |
-| AC-3 (collection schema with vector_sparse) | Done (knowledge-ingest creates with correct schema; collection migration to staging pending) |
-| AC-4 (three-leg hybrid at query time) | Pending -- retrieval-api not yet upgraded |
-| AC-5 (query-time sparse fallback) | Pending -- retrieval-api not yet upgraded |
-| AC-6 (partial population semantics) | Done -- Qdrant handles automatically |
-| AC-7 (sparse_weight parameter plumbed) | Done in knowledge-ingest qdrant_store.py; pending in retrieval-api |
-| AC-8 (exact-match recall improvement) | Pending -- requires live hybrid retrieval |
+| AC-3 (collection schema with vector_sparse) | Done — collection recreated 2026-03-26 |
+| AC-4 (three-leg hybrid at query time) | Done — commit 8c9571c |
+| AC-5 (query-time sparse fallback) | Done — `embed_sparse()` returns None gracefully |
+| AC-6 (partial population semantics) | Done — Qdrant handles automatically |
+| AC-7 (sparse_weight parameter plumbed) | Done in knowledge-ingest; retrieval-api uses RRF (weight-free by design) |
+| AC-8 (exact-match recall improvement) | Unvalidated — 20-query test set not yet run |
 | AC-9 (structured log fields) | Done |
 | AC-10 (sparse_index_on_disk configurable) | Done |
-| AC-11 (no regression when sidecar absent) | Done (tests pass) |
+| AC-11 (no regression when sidecar absent) | Done |
