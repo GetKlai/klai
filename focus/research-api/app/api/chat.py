@@ -17,6 +17,7 @@ from app.core.database import AsyncSessionLocal, get_db
 from app.models.chat_message import ChatMessage
 from app.models.notebook import Notebook
 from app.services.retrieval import (
+    BROAD_FOCUS_ONLY_SYSTEM_PROMPT,
     BROAD_SYSTEM_PROMPT,
     NARROW_SYSTEM_PROMPT,
     build_context,
@@ -102,7 +103,13 @@ async def _generate(
 
         # 2. Build context and select system prompt
         context = build_context(all_chunks)
-        system_prompt = NARROW_SYSTEM_PROMPT if mode == "narrow" else BROAD_SYSTEM_PROMPT
+        if mode == "narrow":
+            system_prompt = NARROW_SYSTEM_PROMPT
+        elif mode == "broad":
+            kb_available = any(c.get("origin") == "kb" for c in doc_chunks)
+            system_prompt = BROAD_SYSTEM_PROMPT if kb_available else BROAD_FOCUS_ONLY_SYSTEM_PROMPT
+        else:
+            system_prompt = BROAD_SYSTEM_PROMPT
 
         # 4. Stream LLM tokens
         async for token in stream_llm(system_prompt, context, question, history):

@@ -36,6 +36,11 @@ Supplement with your general knowledge where helpful.
 Always indicate which parts of your answer come from Focus documents, the Knowledge base,
 or your general knowledge."""
 
+BROAD_FOCUS_ONLY_SYSTEM_PROMPT = """You are a research assistant. Use the provided source excerpts as your primary reference.
+You have access to Focus documents: uploaded documents specific to this notebook.
+Supplement with your general knowledge where helpful.
+Always indicate which parts of your answer come from the Focus documents or your general knowledge."""
+
 
 async def retrieve_chunks(
     db: AsyncSession,
