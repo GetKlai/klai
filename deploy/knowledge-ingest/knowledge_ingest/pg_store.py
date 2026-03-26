@@ -28,7 +28,7 @@ async def create_artifact(
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
     pool = await get_pool()
-    extra_json = json.dumps(extra) if extra else None
+    extra_json = json.dumps(extra) if extra else "{}"
     await pool.execute(
         """
         INSERT INTO knowledge.artifacts
