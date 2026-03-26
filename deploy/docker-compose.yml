@@ -644,9 +644,10 @@ services:
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
-      GRAPHITI_ENABLED: "true"
-      GRAPH_SEARCH_TIMEOUT: "10.0"
-      RERANKER_ENABLED: "true"
+      GRAPHITI_ENABLED: "false"
+      GRAPH_SEARCH_TIMEOUT: "60.0"
+      RERANKER_ENABLED: "false"
+      RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://bge-m3-sparse:8001
     networks:
