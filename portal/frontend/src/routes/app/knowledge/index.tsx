@@ -125,7 +125,8 @@ function KnowledgePage() {
 
       <div className="flex flex-col gap-6">
         {/* Personal knowledge base (chat RAG) */}
-        <Card>
+        <Link to="/app/knowledge/$kbSlug" params={{ kbSlug: 'personal' }}>
+        <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
               <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0">
@@ -154,6 +155,7 @@ function KnowledgePage() {
             </div>
           </CardContent>
         </Card>
+        </Link>
 
         {/* Org-wide knowledge */}
         <Card>
