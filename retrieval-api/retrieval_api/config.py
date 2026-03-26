@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     sparse_sidecar_timeout: float = 5.0
 
     coreference_timeout: float = 3.0
-    reranker_timeout: float = 2.0
+    reranker_timeout: float = 15.0
     # Graphiti / FalkorDB knowledge graph
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379
