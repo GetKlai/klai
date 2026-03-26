@@ -122,3 +122,17 @@ async def soft_delete_artifact(org_id: str, kb_slug: str, path: str) -> None:
         """,
         now, org_id, kb_slug, path, _SENTINEL,
     )
+
+
+async def update_artifact_extra(artifact_id: str, extra_patch: dict) -> None:
+    """Merge extra_patch into knowledge.artifacts.extra (JSONB merge, AC-2)."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE knowledge.artifacts
+        SET extra = COALESCE(extra::jsonb, '{}'::jsonb) || $1::jsonb
+        WHERE id = $2
+        """,
+        json.dumps(extra_patch),
+        artifact_id,
+    )

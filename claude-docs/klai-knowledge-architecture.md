@@ -552,26 +552,30 @@ SELECT * FROM lineage;
 
 The `id` is the shared key across both stores. Qdrant point ID = PostgreSQL `artifacts.id`.
 
-### 5.3 Knowledge graph: DEFERRED
+### 5.3 Knowledge graph: Graphiti + FalkorDB
 
-**Decision: do not add a graph layer for V1. The evidence does not support it for B2B knowledge base query patterns.**
+**Decision (2026-03-26): Build the graph layer using Graphiti (Zep) + FalkorDB. SPEC: SPEC-KB-011.**
 
-Research finding (GraphRAG-Bench, ICLR 2026; RAG vs. GraphRAG systematic evaluation, 2025; SAP enterprise study, 2025):
+**Why Graphiti:** End-to-end pipeline — entity extraction via LLM, deduplication, bi-temporal edge tracking, and hybrid retrieval (BM25 + vector + BFS traversal). No custom extraction code needed. Handles daily edits correctly: when a KB article is updated, Graphiti's contradiction detection marks old edges as `expired_at` and creates new edges with the updated `valid_at`. This is the core requirement for a KB with daily edits.
 
-Graph RAG provides measurable benefit **only for multi-hop relational queries** — queries that require traversing entity relationships across multiple documents (e.g., "which features are affected by the vendor who supplies component X?"). For single-hop factual queries ("what is the return policy?") and procedural queries ("how do I reset my password?") — which constitute the majority of B2B knowledge base traffic — graph RAG either matches or underperforms hybrid vector retrieval. MS-GraphRAG in global mode regressed from 60.92% to 36.92% on fact retrieval in one benchmark: a catastrophic result.
+**Why FalkorDB:** The only self-hosted open-source backend (besides Neo4j) supported natively by Graphiti. Runs as a Redis module. SSPLv1 license is fine for internal self-hosted use. Neo4j Community Edition's "non-production" language in license docs creates uncertainty for production — avoid.
 
-**The LightRAG "90% fewer tokens" claim is inverted.** GraphRAG-Bench measured LightRAG at ~100,000 tokens per query prompt vs. ~954 for vanilla RAG — a 100× overhead, not a 90% reduction. The claim was a misreading of a retrieval-phase comparison on a specific large corpus. At GPT-4o pricing, LightRAG at 100K tokens/query costs $0.30–$1.00 per query. This is untenable at volume.
+**Why not:**
+- **HippoRAG2**: Retrieval-only, no temporal model, no incremental update support. Does not solve the daily-edit problem.
+- **LightRAG**: No temporal tracking. 2,000+ open GitHub issues, production stability concerns.
+- **Microsoft GraphRAG**: File-based, expensive reindex on every edit, wrong tool for a live KB.
+- **Kùzu**: Archived October 2025 (Apple acquisition).
+- **Apache AGE (PostgreSQL extension)**: Blocks PostgreSQL major version upgrades.
+- **PostgreSQL recursive CTEs**: Technically sufficient at current scale, but requires building entity extraction + deduplication from scratch — not justified when Graphiti provides it out of the box.
 
-**LightRAG is also pre-production for self-hosted B2B:** 2,000+ open GitHub issues, upgrade breakage in production causing "extremely long downtime" (issue #2255), entity extraction failures with models below 32B parameters, and query latency degrading from 2s to 15s+ at 10,000 documents without tuning.
+**Bi-temporal model in Graphiti** (every `EntityEdge`):
+- `valid_at`: when the fact became true (set to `belief_time_start` from `knowledge.artifacts`)
+- `invalid_at`: when the fact stopped being true
+- `expired_at`: when it was superseded by a newer source
+- `created_at`: when stored in the DB
+- `episodes[]`: source document reference
 
-**Gate condition for adding a graph layer:**
-Before building any graph infrastructure, sample 200 real user queries from the platform and classify them as single-hop factual / procedural / multi-hop relational. If fewer than 20% are multi-hop relational, do not add a graph layer. If multi-hop queries are significant, evaluate **HippoRAG2 + SpaCy-based construction**:
-- SpaCy for entity/relationship extraction at ingest: zero LLM cost, achieves 94% of LLM-based construction quality (SAP study)
-- HippoRAG2 Personalized PageRank traversal at query time: ~1,000 tokens/query (vs. LightRAG's 100,000), documented multi-hop recall improvement of +5–13pp on multi-hop benchmarks, no regression on simple queries
-
-**FastGraphRAG** (circlemind-ai, MIT) is an alternative: ~4,200 tokens/query, incrementally updatable, but no published accuracy benchmarks.
-
-Do not use full Microsoft GraphRAG (community reports too expensive, no benefit for topically narrow corpora) or LightRAG as primary graph system.
+**Integration pattern:** `belief_time_start` → `reference_time`, `org_id` → `group_id`. The `episode_id` returned by Graphiti is stored in `knowledge.artifacts.extra` as `graphiti_episode_id`.
 
 ### 5.4 YAML frontmatter as metadata store
 
@@ -1249,7 +1253,7 @@ This loop also closes the gap between what an organization knows (formal knowled
 |---|---|---|
 | 13.1 | Taxonomy evolution | Researched — findings in §6 |
 | 13.2 | Bi-temporal query infrastructure | Researched — V1 achievable with Qdrant + PostgreSQL simplification |
-| 13.3 | Graph layer decision | Researched — deferred; gate condition defined |
+| 13.3 | Graph layer decision | Resolved 2026-03-26 — Graphiti + FalkorDB, SPEC-KB-011 |
 | 13.4 | Epistemic labeling automation | Researched — 3-way V1 model recommended |
 | 13.5 | Cross-organizational knowledge federation | **Decision needed** |
 | 13.6 | Enrichment and extraction LLM | Decided — Mistral Small 3.2 (128K) + Qwen3-8B (fast extraction) |
@@ -1296,17 +1300,15 @@ Using a sentinel (`"9999-12-31"`) instead of NULL for active items makes every Q
 - [XTDB](https://xtdb.com/) — native bi-temporal SQL (MPL-2.0, self-hostable). Correct long-term answer if regulatory audit trail is required. JVM service, adds operational complexity.
 - [temporal_tables extension](https://github.com/arkhipov/temporal_tables) — adds system-period versioning to PostgreSQL. Defer to V2.
 
-### 13.3 Graph layer decision [RESEARCHED — deferred pending query analysis]
+### 13.3 Graph layer decision [RESOLVED — 2026-03-26]
 
-**The graph layer is removed from the V1 stack.** See §5.3 for full rationale.
+**Decision: Graphiti + FalkorDB. SPEC-KB-011.** See §5.3 for full rationale and technology comparison.
 
-Summary of findings:
-- LightRAG uses ~100,000 tokens per query (measured, not estimated) — the "90% fewer tokens" claim is inverted
-- Graph RAG improves only multi-hop relational queries; B2B knowledge base traffic is predominantly single-hop factual and procedural
-- All tested graph RAG implementations regress on simple fact retrieval to varying degrees
-- No self-hosted graph RAG system is production-hardened for B2B at this time
+The gate condition (200 queries before building) was superseded by two factors:
+1. The first real ingestion batch (200 Voys KB articles) provides sufficient content density for a graph to deliver value.
+2. The KB has daily edits — temporality is a hard requirement. HippoRAG2 + SpaCy (the previously recommended evaluation path) has no temporal model and does not solve this.
 
-**Gate condition:** Sample 200 real queries; if >20% are multi-hop relational, evaluate HippoRAG2 + SpaCy construction before adding any graph infrastructure. Do not build in anticipation of a use case that may not materialize.
+**Previous gate condition is closed.** Do not reopen.
 
 ### 13.4 Epistemic labeling automation [RESEARCHED — simplified model recommended]
 
@@ -1444,15 +1446,14 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 
 Confirmed next build items, in priority order. These are decisions made — they are not open questions.
 
-### Graph layer: FalkorDB + Graphiti (next major milestone)
+### Graph layer: FalkorDB + Graphiti — SPEC written, ready to build
 
-The next architectural milestone after the current PostgreSQL + Qdrant foundation is a knowledge graph layer:
+**SPEC-KB-011** is complete. Build before the first Voys KB ingestion.
 
-- **FalkorDB** as the graph store (open source, Redis-compatible)
-- **Graphiti** (Zep) for temporal knowledge graph management: entity extraction at ingest, invalidation of superseded facts, bi-temporal edge tracking
-- **GLiNER NER** for entity extraction at ingest time (zero LLM cost, 94% of LLM-based construction quality per SAP study)
-
-This is not blocked on anything — it requires planning and a SPEC. The gate condition from §13.3 still applies: sample 200 real user queries first to confirm that multi-hop relational queries are a significant share of traffic before building.
+- **FalkorDB** as the graph store (Redis module, SSPLv1, self-hosted)
+- **Graphiti** (Zep) for temporal knowledge graph management: entity extraction at ingest, contradiction detection, bi-temporal edge tracking
+- Integrates into `knowledge-ingest` as a background step after the existing Qdrant pipeline
+- `belief_time_start` → `reference_time`, `org_id` → `group_id`, `episode_id` → `knowledge.artifacts.extra`
 
 ### O2 — Sparse embeddings: BGE-M3 SPLADE (hybrid search)
 
@@ -1516,7 +1517,7 @@ Requires its own SPEC before any design decisions. Do not anticipate this in V1 
 | **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse. **Today:** TEI already runs BGE-M3 (dense only) for research-api — switching to FlagEmbedding is a new service. |
 | **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. **Today:** ~~not deployed; research-api uses pgvector~~ — zie §0: Qdrant is gedeployed (maart 2026) met `klai_knowledge` collection. Research-api gebruikt nog steeds pgvector. |
 | **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |
-| **Graph layer** | None (V1) | Deferred: evidence does not support graph RAG for B2B single-hop/procedural query patterns. Gate condition: if >20% of real queries are multi-hop relational, evaluate HippoRAG2 + SpaCy. Kùzu (previously suggested) archived Oct 2025 by Apple acquisition. |
+| **Graph layer** | FalkorDB + Graphiti | SPEC-KB-011. FalkorDB as Redis module (SSPLv1). Graphiti (Zep, Apache 2.0) for entity extraction, bi-temporal tracking, contradiction detection. Neo4j excluded (GPL v3 "non-production" language). Kùzu archived Oct 2025. |
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
 | **Taxonomy discovery** | BERTopic + HDBSCAN | Starting point; human approval gate required |
 | **Retrieval orchestration** | Direct Qdrant client (V1) | Haystack removed from V1 scope — direct Qdrant client used to avoid service boundary overhead. Revisit if orchestration complexity grows. |

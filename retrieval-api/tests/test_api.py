@@ -154,6 +154,90 @@ class TestRetrieveEndpoint:
         mock_rerank.assert_not_called()
 
 
+class TestGraphMetadata:
+    def test_retrieve_metadata_includes_graph_fields(self, client, sample_retrieve_request):
+        """Response metadata includes graph_results_count and graph_search_ms (AC-9)."""
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.1),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.settings",
+            ) as mock_settings,
+        ):
+            mock_settings.retrieval_candidates = 60
+            mock_settings.graphiti_enabled = True
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "graph_results_count" in data["metadata"]
+        assert "graph_search_ms" in data["metadata"]
+        assert data["metadata"]["graph_results_count"] == 0
+
+    def test_notebook_scope_skips_graph_search(self, client):
+        """scope=notebook does not execute graph search (AC-6)."""
+        mock_graph_search = AsyncMock(return_value=[])
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="q",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.1),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                mock_graph_search,
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.retrieval_candidates = 60
+            mock_settings.graphiti_enabled = True
+            client.post(
+                "/retrieve",
+                json={"query": "test", "org_id": "org-1", "scope": "notebook",
+                      "notebook_id": "nb-1"},
+            )
+
+        mock_graph_search.assert_not_called()
+
+
 class TestHealthEndpoint:
     def test_health_all_ok(self, client):
         """Health returns 200 when all services are reachable."""
