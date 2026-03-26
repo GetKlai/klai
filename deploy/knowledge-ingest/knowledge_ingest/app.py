@@ -31,14 +31,14 @@ async def lifespan(app: FastAPI):
         from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
 
         # procrastinate 2.x uses PsycopgConnector (psycopg3); no asyncpg connector exists.
-        # We create a separate psycopg3 pool using libpq key=value format to handle
-        # passwords with special chars (base64 '/', '+', '=') that break URL parsing.
-        from urllib.parse import urlparse  # noqa: PLC0415
+        # Use SQLAlchemy make_url to safely parse the DSN (handles base64 passwords with
+        # '/', '+', '=' that break stdlib urlparse), then build a libpq key=value string.
+        from sqlalchemy.engine import make_url  # noqa: PLC0415
         from knowledge_ingest.config import settings as _s  # noqa: PLC0415
-        _u = urlparse(_s.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://"))
+        _u = make_url(_s.postgres_dsn)
         pg_dsn = (
-            f"host={_u.hostname} port={_u.port or 5432} "
-            f"dbname={_u.path.lstrip('/')} user={_u.username} password={_u.password}"
+            f"host={_u.host} port={_u.port or 5432} "
+            f"dbname={_u.database} user={_u.username} password={_u.password}"
         )
         async_connector = procrastinate.PsycopgConnector(conninfo=pg_dsn)
         proc_app = enrichment_tasks.init_app(async_connector)
