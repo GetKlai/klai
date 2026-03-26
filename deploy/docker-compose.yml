@@ -80,8 +80,10 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       GRAFANA_CADDY_USER: ${GRAFANA_CADDY_USER}
       GRAFANA_CADDY_HASH: ${GRAFANA_CADDY_HASH}
+      VICTORIALOGS_INGEST_TOKEN: ${VICTORIALOGS_INGEST_TOKEN}
     networks:
       - klai-net
+      - monitoring
 
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
