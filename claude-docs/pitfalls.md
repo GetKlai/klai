@@ -15,7 +15,7 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
-| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 27 entries |
+| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 28 entries |
 
 ## Project pitfalls
 
@@ -95,6 +95,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-zitadel-pat-invalid-after-upgrade` | **CRIT** | PAT invalid after Zitadel upgrade | Rotate PAT via Zitadel console |
 | `platform-falkordb-sspLv1-license` | **MED** | Evaluating FalkorDB for production | SSPLv1: fine for self-hosted internal use, not for SaaS. Neo4j Community Edition: avoid in production (GPLv3 + vendor ambiguity) |
 | `platform-hipporag2-vs-graphiti-different-layers` | **HIGH** | Comparing HippoRAG2 vs Graphiti as alternatives | They are different layers: HippoRAG2 = retrieval-only (no temporal model); Graphiti = end-to-end ingest + storage + retrieval |
+| `platform-tei-embedding-timeout` | **HIGH** | knowledge-ingest 500s during large document batches | Set `httpx` timeout to ≥120s for TEI embed calls; default 30s is too short |
 
 ---
 

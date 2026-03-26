@@ -63,6 +63,12 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[playwright-permissions](patterns/testing.md#3-grant-browser-permissions-mic-camera-etc)** - Grant mic/camera/etc. programmatically
 - **[glitchtip-debugging](patterns/testing.md#debugging-with-glitchtip)** - Frontend error tracking via errors.getklai.com
 
+### Logging
+
+- **[logging-write](patterns/logging.md#logging-write)** - Configure structlog with ProcessorFormatter for uniform JSON from both structlog and stdlib loggers; bind org_id / request_id via contextvars
+- **[logging-query](patterns/logging.md#logging-query)** - LogsQL query patterns for debugging in VictoriaLogs
+- **[logging-new-service](patterns/logging.md#logging-new-service)** - Copy `logging_setup.py` and wire up a new Python service
+
 ### Platform (AI Stack)
 
 - **[platform-litellm-vllm-config](patterns/platform.md#platform-litellm-vllm-config)** - Full LiteLLM config for Qwen3 dual-model
