@@ -1,6 +1,6 @@
 # SPEC: Web Crawler Connector (Crawl4AI)
 
-> Status: 📋 DRAFT — 2026-03-25
+> Status: COMPLETED — 2026-03-26
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md` §4.1, §14
 > Related: `deploy/docker-compose.yml`
 
@@ -277,3 +277,52 @@ alleen toevoegen dat Firecrawl er apart naast staat voor LibreChat.
    Pagina's die 404, 403 of leeg Markdown retourneren worden overgeslagen.
    De SyncRun krijgt een `warnings` lijst met de gefaalde URLs zodat de gebruiker
    het kan zien in de portal. Harde fout alleen bij volledige crawl-job failure.
+
+---
+
+## Implementation notes (2026-03-26)
+
+### What was built
+
+All 9 implementation tasks from the spec were completed. Key commits:
+
+- `ba45cf5` — `feat(deploy): add klai-connector service (SPEC-CONN-001)` — initial Crawl4AI Docker service + klai-connector deploy wiring
+- `4d98169` — `feat(connector): add web crawler connector via Crawl4AI` — `WebCrawlerAdapter`, `WebCrawlerConfig`, factory pattern in `main.py`
+- `1dda112` — `fix(connector): release crawl cache after sync + clarify Crawl4AI vs Firecrawl in arch doc` — architecture doc update (Phase 5)
+- `43e5bba` — `feat(connector): implement control plane / execution plane architecture` — significant architectural evolution (see Deviations)
+- `dd27f19` / `93ae084` / `b7c9b40` — Crawl4AI API compatibility fixes for v0.8.6 async `/crawl/job` endpoint and dict-format markdown responses
+- `16f4b18` — `feat(knowledge): move connectors to Sources tab` — portal UI integration (Phase 4)
+- `649da13` / `eb9b28d` — portal connector edit UI with max_pages persistence
+
+### Deviations from spec
+
+**Architectural evolution — control plane / execution plane split (`43e5bba`)**
+The spec described a single `klai-connector` service. During implementation this was split into:
+- **Control plane** (portal-api): manages connector config, triggers syncs, tracks status
+- **Execution plane** (klai-connector): performs the actual crawl + ingest, called by portal-api via `X-Internal-Secret`
+
+This required adding `KLAI_CONNECTOR_SECRET` and splitting portal secrets into caller-vs-internal (`801f200`).
+
+**Crawl4AI API version mismatch**
+The spec described the v0.x synchronous `/crawl` endpoint. The deployed image (v0.8.6) uses:
+- Async endpoint: `POST /crawl/job` (not `/crawl`)
+- Response format: markdown returned as a `dict` (not a plain string) — handled in `b7c9b40`
+- The async job tracking described in Open Question 1 was effectively already required by the actual API
+
+**`max_pages` default**
+Open Question 2 resolved default to 200 (not the 500 listed in the schema section). `Field(le=2000)` upper bound applied.
+
+**Scraping strategy**
+Spec specified `LXMLWebScrapingStrategy`. Deployed implementation uses this by default (consistent with Open Question 3 decision — no Playwright).
+
+**`connector_id` in adapter**
+`WebCrawlerAdapter` needed `connector.connector_id` (not `connector.id`) to scope the crawl cache — fixed in `801f200` / `238eba1`.
+
+### Key decisions confirmed
+
+- Firecrawl remains untouched for LibreChat — Crawl4AI is the separate ingest-only scraper
+- Full re-crawl on every sync; Qdrant deduplicates via path upsert
+- No Playwright — LXML only
+- Crawl4AI not exposed via Caddy — internal `klai-net` only
+- Connector edit UI added (Phase 4 extension beyond original spec)
+- Stuck sync runs cleaned up on connector startup (`b7c9b40`)
