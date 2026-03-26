@@ -856,6 +856,56 @@ Also catch `httpx.ConnectError` separately — a connection refused error has no
 
 ---
 
+## platform-falkordb-sspLv1-license
+
+**Severity:** MED
+
+**Trigger:** Evaluating FalkorDB as a graph database for a self-hosted deployment
+
+FalkorDB is licensed under SSPLv1, not Apache 2.0. This surprises people who assume it is permissive open-source like Redis was before its license change.
+
+**What this means in practice:**
+- SSPLv1 requires that if you offer FalkorDB *as a service to others* (SaaS), you must open-source your entire service stack.
+- For **internal self-hosted use** (running it on your own infrastructure for your own users), SSPLv1 imposes no obligations. This is Klai's use case — fine.
+- Decision: FalkorDB is approved for production in the Klai knowledge graph stack (SPEC-KB-011).
+
+**Also watch out for Neo4j Community Edition:**
+Neo4j Community Edition uses GPLv3, and Neo4j's own documentation includes "non-production use" language in places. Avoid Neo4j Community for production deployments — GPLv3 plus ambiguous vendor messaging creates legal risk.
+
+**Prevention:**
+1. When evaluating a new graph/vector/AI database, check its license before writing any SPEC
+2. SSPLv1 = fine for self-hosted internal use, not fine for SaaS offering
+3. Default to checking the GitHub repo license file, not marketing copy
+
+**Source:** SPEC-KB-011 research, 2026-03-26
+
+---
+
+## platform-hipporag2-vs-graphiti-different-layers
+
+**Severity:** HIGH
+
+**Trigger:** Evaluating HippoRAG2 vs Graphiti as "competing alternatives" for a knowledge graph layer
+
+HippoRAG2 and Graphiti operate at different layers of the retrieval stack. Treating them as direct alternatives causes incorrect architecture decisions.
+
+**The distinction:**
+
+| | HippoRAG2 | Graphiti |
+|---|---|---|
+| What it does | Retrieval only (Personalized PageRank traversal over an existing graph) | End-to-end: ingest + entity extraction + bi-temporal graph + retrieval |
+| Temporal model | None — static graph snapshot | Full bi-temporal (fact validity + ingestion time) |
+| Who builds the graph | You — HippoRAG2 assumes a graph already exists | Graphiti — handles entity extraction and edge creation |
+| Integration complexity | Needs a separate graph construction pipeline | Self-contained |
+
+**What went wrong:** The initial architecture docs (klai-knowledge-architecture.md §5.3 and §13.3) listed "HippoRAG2 + SpaCy" as the recommended evaluation path for the graph layer. This was wrong because HippoRAG2 has no temporal model and SpaCy misses contextual entity resolution. The docs were corrected as part of SPEC-KB-011.
+
+**Rule:** Before comparing retrieval frameworks, determine which layer each operates at. A retrieval-only library cannot replace an ingestion + storage + retrieval system.
+
+**Source:** SPEC-KB-011 research, 2026-03-26
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns

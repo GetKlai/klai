@@ -11,11 +11,11 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 | Category | File | Entries |
 |----------|------|---------|
-| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
+| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 15 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
-| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 25 entries |
+| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 27 entries |
 
 ## Project pitfalls
 
@@ -31,7 +31,7 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 ## Quick Reference
 
-### Process (14)
+### Process (15)
 
 See `pitfalls/process-rules.md` (compact table, @imported in CLAUDE.md every session).
 Full descriptions with examples: `pitfalls/process.md`.
@@ -64,7 +64,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `infra-caddy-no-global-csp` | **HIGH** | Adding CSP to Caddy global header | No global CSP -- apps manage their own |
 | `infra-never-modify-env-secrets` | **CRIT** | Modifying secrets in /opt/klai/.env | NEVER modify existing secrets via shell commands |
 
-### Platform (25)
+### Platform (27)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -93,6 +93,8 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-alembic-shared-postgres-schema-conflict` | **CRIT** | Two FastAPI services sharing Postgres | Scope alembic_version to service-specific schema |
 | `platform-zitadel-login-v2-recovery` | **CRIT** | Login V2 breaks all OIDC flows | Delete login_v2 row from projections to recover |
 | `platform-zitadel-pat-invalid-after-upgrade` | **CRIT** | PAT invalid after Zitadel upgrade | Rotate PAT via Zitadel console |
+| `platform-falkordb-sspLv1-license` | **MED** | Evaluating FalkorDB for production | SSPLv1: fine for self-hosted internal use, not for SaaS. Neo4j Community Edition: avoid in production (GPLv3 + vendor ambiguity) |
+| `platform-hipporag2-vs-graphiti-different-layers` | **HIGH** | Comparing HippoRAG2 vs Graphiti as alternatives | They are different layers: HippoRAG2 = retrieval-only (no temporal model); Graphiti = end-to-end ingest + storage + retrieval |
 
 ---
 

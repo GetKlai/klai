@@ -309,6 +309,36 @@ NEVER write prompts or audit instructions to MD files. Always output them direct
 
 ---
 
+## process-spec-stub-deps-premature
+
+**Severity:** HIGH
+
+**Trigger:** A spec agent generates stubs or scaffold code for a SPEC that introduces new third-party dependencies
+
+When a spec agent writes stub files as part of SPEC generation, it may add new third-party packages to `requirements.txt`. This causes CI to fail at build time when the new package has a version conflict with existing pinned dependencies — before any implementation work has even begun.
+
+**What happened:** During SPEC-KB-011, manager-spec added `graphiti-core[falkordb]>=0.28,<0.30` to `requirements.txt`. This caused CI failure because `graphiti-core 0.28` requires `pydantic>=2.11.5` but the service was pinned to `pydantic==2.10.3`.
+
+**Why it happens:**
+Stubs are meant to define the interface, not execute it. The real dependency installation happens in `/run` (the implementation phase), not during SPEC generation. Adding live dependencies at stub-time breaks CI before anyone has reviewed the dependency constraints.
+
+**Prevention:**
+1. Comment out new third-party dependencies in `requirements.txt` when writing stubs: `# graphiti-core[falkordb]>=0.28,<0.30  # TODO: uncomment in /run`
+2. Guard stub imports with `try/except ImportError` so the module loads even without the dependency installed
+3. The implementation agent (`/run`) is responsible for resolving version constraints and enabling the real dependency
+
+```python
+# Correct stub import guard
+try:
+    from graphiti_core import Graphiti
+except ImportError:
+    Graphiti = None  # type: ignore[assignment,misc]
+```
+
+**See also:** `pitfalls/devops.md` — CI verification after push
+
+---
+
 ## See Also
 
 - [pitfalls/platform.md](platform.md) - Platform-specific mistakes (LiteLLM, LibreChat, Caddy)

@@ -363,3 +363,19 @@ GRAPH_SEARCH_TIMEOUT=5.0
 14. Re-ingest van gewijzigde artikelen voor contradiction detection
 15. Vergelijk retrieval-kwaliteit: vector-only vs vector+graph
 16. Tune graph search gewicht in RRF merge
+
+---
+
+## Pre-run checklist
+
+> **[HARD] Verify alle versies via PyPI/GitHub voor je pinned in requirements.txt.**
+> Training cutoff = augustus 2025. Gebruik altijd actuele versies, niet wat het model kent.
+
+Bij start van `/run`:
+1. `graphiti-core` — check https://pypi.org/project/graphiti-core/ voor latest + changelog
+2. `falkordb` Python client — check https://pypi.org/project/falkordb/
+3. Minimale `pydantic` versie voor de gekozen graphiti-core versie
+4. FalkorDB Docker image — check https://hub.docker.com/r/falkordb/falkordb/tags voor latest stable
+5. Compatibiliteit controleren met huidige service-stack (asyncpg, FastAPI, pydantic-settings)
+
+Dan pas pinnen in requirements.txt.
