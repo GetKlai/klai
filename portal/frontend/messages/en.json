@@ -1087,5 +1087,24 @@
   "knowledge_taxonomy_error_delete": "Could not delete category",
   "knowledge_taxonomy_error_rename": "Could not rename category",
   "knowledge_taxonomy_error_approve": "Could not approve proposal",
-  "knowledge_taxonomy_error_reject": "Could not reject proposal"
+  "knowledge_taxonomy_error_reject": "Could not reject proposal",
+
+  "gaps_page_title": "Knowledge Gaps",
+  "gaps_index_card_heading": "Knowledge Gaps",
+  "gaps_index_card_body": "Questions your users asked that the knowledge base could not answer confidently.",
+  "gaps_index_card_link": "View all gaps",
+  "gaps_column_query": "Query",
+  "gaps_column_type": "Type",
+  "gaps_column_nearest_kb": "Nearest KB",
+  "gaps_column_count": "Count",
+  "gaps_column_last": "Last seen",
+  "gaps_type_hard": "Hard",
+  "gaps_type_soft": "Soft",
+  "gaps_action_add": "Add to knowledge base",
+  "gaps_action_pick_kb": "Pick a knowledge base",
+  "gaps_filter_days": "Period",
+  "gaps_filter_type": "Gap type",
+  "gaps_filter_all": "All",
+  "gaps_empty_state": "No knowledge gaps detected in this period.",
+  "gaps_overview_tile": "Gaps (7d)"
 }

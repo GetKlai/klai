@@ -1087,5 +1087,24 @@
   "knowledge_taxonomy_error_delete": "Categorie kon niet worden verwijderd",
   "knowledge_taxonomy_error_rename": "Categorie kon niet worden hernoemd",
   "knowledge_taxonomy_error_approve": "Voorstel kon niet worden goedgekeurd",
-  "knowledge_taxonomy_error_reject": "Voorstel kon niet worden afgewezen"
+  "knowledge_taxonomy_error_reject": "Voorstel kon niet worden afgewezen",
+
+  "gaps_page_title": "Kennishiaten",
+  "gaps_index_card_heading": "Kennishiaten",
+  "gaps_index_card_body": "Vragen van gebruikers die de kennisbank niet met vertrouwen kon beantwoorden.",
+  "gaps_index_card_link": "Bekijk alle hiaten",
+  "gaps_column_query": "Vraag",
+  "gaps_column_type": "Type",
+  "gaps_column_nearest_kb": "Dichtstbijzijnde KB",
+  "gaps_column_count": "Aantal",
+  "gaps_column_last": "Laatst gezien",
+  "gaps_type_hard": "Hard",
+  "gaps_type_soft": "Zacht",
+  "gaps_action_add": "Toevoegen aan kennisbank",
+  "gaps_action_pick_kb": "Kies een kennisbank",
+  "gaps_filter_days": "Periode",
+  "gaps_filter_type": "Hiaattype",
+  "gaps_filter_all": "Alle",
+  "gaps_empty_state": "Geen kennishiaten gedetecteerd in deze periode.",
+  "gaps_overview_tile": "Hiaten (7d)"
 }

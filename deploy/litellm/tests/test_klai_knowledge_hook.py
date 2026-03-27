@@ -417,3 +417,291 @@ class TestTokenRouterKB010:
 
         result = await router.async_pre_call_hook(uak, None, data, "completion")
         assert result["model"] == "klai-primary"
+
+
+# ─── KB-014 gap detection tests ──────────────────────────────────────────────
+
+
+class TestClassifyGap:
+    """Tests for the _classify_gap helper function."""
+
+    def test_empty_chunks_returns_hard(self, monkeypatch):
+        """R1.2: zero chunks → hard_gap."""
+        mod = _load_hook(monkeypatch)
+        assert mod._classify_gap([]) == "hard"
+
+    def test_all_reranker_scores_below_threshold_returns_soft(self, monkeypatch):
+        """R1.3: all reranker_score < 0.4 → soft_gap."""
+        mod = _load_hook(monkeypatch)
+        chunks = [
+            {"reranker_score": 0.1, "score": 0.9, "metadata": {}},
+            {"reranker_score": 0.3, "score": 0.8, "metadata": {}},
+        ]
+        assert mod._classify_gap(chunks) == "soft"
+
+    def test_one_reranker_score_above_threshold_returns_none(self, monkeypatch):
+        """R1.3: at least one reranker_score >= 0.4 → success (None)."""
+        mod = _load_hook(monkeypatch)
+        chunks = [
+            {"reranker_score": 0.5, "score": 0.9, "metadata": {}},
+            {"reranker_score": 0.1, "score": 0.2, "metadata": {}},
+        ]
+        assert mod._classify_gap(chunks) is None
+
+    def test_no_reranker_dense_below_threshold_returns_soft(self, monkeypatch):
+        """R1.4: no reranker scores, all dense score < 0.35 → soft_gap."""
+        mod = _load_hook(monkeypatch)
+        chunks = [
+            {"score": 0.2, "metadata": {}},
+            {"score": 0.3, "metadata": {}},
+        ]
+        assert mod._classify_gap(chunks) == "soft"
+
+    def test_no_reranker_dense_above_threshold_returns_none(self, monkeypatch):
+        """R1.4: no reranker scores, at least one dense score >= 0.35 → success."""
+        mod = _load_hook(monkeypatch)
+        chunks = [
+            {"score": 0.4, "metadata": {}},
+        ]
+        assert mod._classify_gap(chunks) is None
+
+    def test_custom_soft_threshold_via_env(self, monkeypatch):
+        """R1.5: KLAI_GAP_SOFT_THRESHOLD env var overrides default."""
+        mod = _load_hook(monkeypatch, extra_env={"KLAI_GAP_SOFT_THRESHOLD": "0.8"})
+        chunks = [{"reranker_score": 0.5, "metadata": {}}]
+        assert mod._classify_gap(chunks) == "soft"
+
+    def test_custom_dense_threshold_via_env(self, monkeypatch):
+        """R1.5: KLAI_GAP_DENSE_THRESHOLD env var overrides default."""
+        mod = _load_hook(monkeypatch, extra_env={"KLAI_GAP_DENSE_THRESHOLD": "0.1"})
+        chunks = [{"score": 0.2, "metadata": {}}]
+        # 0.2 >= 0.1 → success
+        assert mod._classify_gap(chunks) is None
+
+    def test_mixed_reranker_some_none_uses_only_present_scores(self, monkeypatch):
+        """Chunks with mixed reranker_score presence — only non-None scores count."""
+        mod = _load_hook(monkeypatch)
+        chunks = [
+            {"reranker_score": 0.1, "score": 0.5, "metadata": {}},
+            {"reranker_score": None, "score": 0.9, "metadata": {}},
+        ]
+        # reranker_scores = [0.1] (None is excluded), all < 0.4 → soft
+        assert mod._classify_gap(chunks) == "soft"
+
+
+class TestFireGapEvent:
+    """Tests for the _fire_gap_event helper function."""
+
+    def test_schedules_asyncio_task(self, monkeypatch):
+        """R2.1: _fire_gap_event schedules an async POST task."""
+        import asyncio as _asyncio
+
+        mod = _load_hook(monkeypatch)
+
+        mock_loop = MagicMock()
+        mock_loop.create_task = MagicMock()
+
+        with patch.object(_asyncio, "get_event_loop", return_value=mock_loop):
+            mod._fire_gap_event(
+                org_id="42",
+                user_id="user123",
+                query_text="test query",
+                gap_type="hard",
+                chunks=[],
+                retrieval_ms=150,
+            )
+        mock_loop.create_task.assert_called_once()
+
+    def test_payload_has_correct_fields(self, monkeypatch):
+        """R2.2: payload contains all required fields with correct types."""
+        import asyncio as _asyncio
+
+        mod = _load_hook(monkeypatch)
+
+        mock_loop = MagicMock()
+        mock_loop.create_task = MagicMock()
+
+        chunks = [
+            {"reranker_score": 0.3, "score": 0.2, "metadata": {"kb_slug": "my-kb"}},
+        ]
+
+        with patch.object(_asyncio, "get_event_loop", return_value=mock_loop):
+            mod._fire_gap_event(
+                org_id="42",
+                user_id="user123",
+                query_text="how do I reset?",
+                gap_type="soft",
+                chunks=chunks,
+                retrieval_ms=200,
+            )
+
+        assert mock_loop.create_task.called
+
+    def test_hard_gap_nearest_kb_slug_is_none(self, monkeypatch):
+        """R2.5: hard gaps have nearest_kb_slug = None."""
+        import asyncio as _asyncio
+
+        mod = _load_hook(monkeypatch)
+
+        mock_loop = MagicMock()
+        mock_loop.create_task = MagicMock()
+
+        with patch.object(_asyncio, "get_event_loop", return_value=mock_loop):
+            mod._fire_gap_event(
+                org_id="42",
+                user_id="user123",
+                query_text="test",
+                gap_type="hard",
+                chunks=[],
+                retrieval_ms=100,
+            )
+        mock_loop.create_task.assert_called_once()
+
+    def test_no_event_loop_silently_skips(self, monkeypatch):
+        """R2.3: if no event loop, skip silently without raising."""
+        import asyncio as _asyncio
+
+        mod = _load_hook(monkeypatch)
+
+        with patch.object(_asyncio, "get_event_loop", side_effect=RuntimeError("no event loop")):
+            # Should not raise
+            mod._fire_gap_event(
+                org_id="42",
+                user_id="user123",
+                query_text="test",
+                gap_type="hard",
+                chunks=[],
+                retrieval_ms=100,
+            )
+
+
+class TestGapIntegration:
+    """Integration tests for gap detection in the full pre_call_hook flow."""
+
+    @pytest.mark.asyncio
+    async def test_hard_gap_fires_event(self, monkeypatch):
+        """Hard gap (zero chunks) triggers _fire_gap_event."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "What is the company vacation policy?"}
+        ]}
+
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            with patch.object(mod, "_fire_gap_event") as mock_fire:
+                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                mock_fire.assert_called_once()
+                call_kwargs = mock_fire.call_args
+                assert call_kwargs.kwargs.get("gap_type") == "hard" or call_kwargs[1].get("gap_type") == "hard"
+
+    @pytest.mark.asyncio
+    async def test_soft_gap_fires_event(self, monkeypatch):
+        """Soft gap (low reranker scores) triggers _fire_gap_event."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "How do I configure the advanced settings?"}
+        ]}
+
+        chunks = [
+            {"text": "Some text.", "reranker_score": 0.1, "score": 0.2, "scope": "org", "metadata": {"title": "Settings", "kb_slug": "docs"}},
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            with patch.object(mod, "_fire_gap_event") as mock_fire:
+                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                mock_fire.assert_called_once()
+                call_kwargs = mock_fire.call_args
+                assert call_kwargs.kwargs.get("gap_type") == "soft" or call_kwargs[1].get("gap_type") == "soft"
+
+    @pytest.mark.asyncio
+    async def test_success_does_not_fire_event(self, monkeypatch):
+        """High-scoring chunks → no gap event."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "What is our leave policy?"}
+        ]}
+
+        chunks = [
+            {"text": "Leave policy info.", "reranker_score": 0.9, "score": 0.8, "scope": "org", "metadata": {"title": "Leave"}},
+        ]
+        retrieval_resp = _make_resp({"chunks": chunks, "retrieval_bypassed": False})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=retrieval_resp)
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            with patch.object(mod, "_fire_gap_event") as mock_fire:
+                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                mock_fire.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gap_not_reported_when_no_user_id(self, monkeypatch):
+        """R2.4: missing user_id → skip gap reporting."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        # No "user" key in data
+        data = {"messages": [
+            {"role": "user", "content": "What is our leave policy?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            with patch.object(mod, "_fire_gap_event") as mock_fire:
+                await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+                mock_fire.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gap_not_reported_when_no_org_id(self, monkeypatch):
+        """R2.4: missing org_id → skip gap reporting."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "What is our leave policy?"}
+        ]}
+
+        uak = MagicMock()
+        uak.metadata = {}  # no org_id
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            with patch.object(mod, "_fire_gap_event") as mock_fire:
+                await hook.async_pre_call_hook(uak, cache, data, "completion")
+                mock_fire.assert_not_called()

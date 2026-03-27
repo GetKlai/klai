@@ -5,7 +5,7 @@ import { useState } from 'react'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
-  Check, X, Settings,
+  Check, X, Settings, AlertTriangle,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,7 @@ import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { queryLogger, taxonomyLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   component: () => (
@@ -69,6 +70,7 @@ interface KBStats {
   connectors: ConnectorSummary[]
   volume: number | null
   usage_last_30d: number | null
+  org_gap_count_7d: number | null
 }
 
 interface UserMember {
@@ -1757,6 +1759,19 @@ function KnowledgeDetailPage() {
                     : m.knowledge_detail_usage_unknown()}
                 </p>
               </div>
+              {sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true' && stats?.org_gap_count_7d != null && (
+                <Link to="/app/gaps" className="group">
+                  <div>
+                    <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3" />
+                      {m.gaps_overview_tile()}
+                    </p>
+                    <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-accent)] transition-colors">
+                      {stats.org_gap_count_7d}
+                    </p>
+                  </div>
+                </Link>
+              )}
             </div>
           </DashboardSection>
         </div>
