@@ -423,7 +423,10 @@ class ZitadelClient:
                 ],
                 "appType": "OIDC_APP_TYPE_WEB",
                 "authMethodType": "OIDC_AUTH_METHOD_TYPE_POST",
-                "postLogoutRedirectUris": [f"https://chat-{slug}.{settings.domain}"],
+                "postLogoutRedirectUris": [
+                    f"https://chat-{slug}.{settings.domain}",
+                    f"https://chat-{slug}.{settings.domain}/login",
+                ],
             },
         )
         resp.raise_for_status()
