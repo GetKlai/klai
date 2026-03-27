@@ -18,6 +18,7 @@ _TOP_K = 8
 _MAX_CONTEXT_TOKENS = 6000
 _WEB_TOP_K = 3
 _WEB_RESULTS = 5
+_WEB_URL_TIMEOUT = 15.0  # seconds per URL fetch
 
 NARROW_SYSTEM_PROMPT = """You are a research assistant. Answer the user's question using only the provided source excerpts below.
 If the answer is not found in the provided sources, respond with:
@@ -38,14 +39,25 @@ You have access to Focus documents: uploaded documents specific to this notebook
 Supplement with your general knowledge where helpful.
 Always indicate which parts of your answer come from the Focus documents or your general knowledge."""
 
+WEB_SYSTEM_PROMPT = """You are a research assistant. Use the provided source excerpts as your primary reference.
+You have access to two types of sources:
+- Focus documents: uploaded documents specific to this notebook
+- Web results: live web pages retrieved for this question
+Supplement with your general knowledge where helpful.
+Always indicate which parts of your answer come from Focus documents, web results,
+or your general knowledge."""
+
 
 async def _fetch_web_url(url: str) -> tuple[str, str] | None:
-    """Fetch a single URL via docling. Returns (url, text) or None on failure."""
+    """Fetch a single URL via docling with a per-URL timeout. Returns (url, text) or None."""
     try:
-        doc = await docling.convert_url(url)
+        doc = await asyncio.wait_for(docling.convert_url(url), timeout=_WEB_URL_TIMEOUT)
         if doc.text.strip():
             return url, doc.text
         logger.warning("Empty text for web URL: %s", url)
+        return None
+    except asyncio.TimeoutError:
+        logger.warning("Timeout fetching web URL: %s", url)
         return None
     except Exception:
         logger.warning("Failed to fetch web URL: %s", url)
