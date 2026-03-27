@@ -236,6 +236,13 @@ OPENID_SESSION_SECRET={session_secret}
 CREDS_KEY={creds_key}
 CREDS_IV={creds_iv}
 
+# Session lifetime -- access token: 7 days, refresh token: 30 days.
+# Ensures users stay logged in across weekends and container restarts without
+# needing to re-enter password + 2FA. Zitadel session should be configured
+# to at least 30 days to match (auth.getklai.com → Login Policy → Session Lifetime).
+SESSION_EXPIRY=604800000
+REFRESH_TOKEN_EXPIRY=2592000000
+
 # Search
 MEILI_HOST=http://meilisearch:7700
 MEILI_MASTER_KEY={settings.meili_master_key}
