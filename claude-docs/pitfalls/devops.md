@@ -71,6 +71,55 @@ docker exec librechat-getklai printenv KNOWLEDGE_INGEST_SECRET
 
 ---
 
+## devops-deploy-path-mismatch
+
+**Severity:** CRIT
+
+**Trigger:** Frontend deploy via rsync completes successfully but the site does not update in the browser
+
+A CI job may rsync the build output to one directory while the web server (Caddy, Nginx) serves from a different directory. The deploy reports success, but production stays on the old bundle.
+
+**What happened:** The `portal-frontend` GitHub Action rsynced to `/opt/klai/portal-dist/` but Caddy serves from `/srv/portal/`. The new JS bundle sat in the staging directory for weeks while users saw the old version. The Action exit code was 0.
+
+**How to detect:**
+```bash
+# Check the file timestamps in the directory the web server actually serves
+ssh core-01 "ls -lt /srv/portal/assets/*.js | head -3"
+
+# If the newest file is days/weeks old, the deploy target is wrong
+# Compare with the staging directory
+ssh core-01 "ls -lt /opt/klai/portal-dist/assets/*.js | head -3"
+```
+
+**How to prevent:**
+1. The rsync step in the CI workflow must end at the directory the web server serves — not a staging directory
+2. If a two-step rsync is used (staging → serving), both steps must be in the workflow
+3. After every deploy, verify the bundle timestamp matches the deploy time (see `klai-claude/rules/klai/ci-verify-after-push.md` Step 2)
+
+**Red flags:**
+- User reports a new feature is missing after a green CI run
+- `ls -lt` on the serve directory shows files from days ago
+- The CI logs show a successful rsync but to a different path than the web server's `root` directive
+
+---
+
+## devops-ci-green-not-enough
+
+**Severity:** HIGH
+
+**Trigger:** Declaring a deploy complete after `gh run watch` returns exit code 0
+
+CI passing means the code compiled, linted, and the container was built. It does NOT mean the new code is running in production. Always verify the server rollout after a green CI.
+
+**What to do:**
+1. `gh run watch --exit-status` — wait for green
+2. Check server-side: container age (`docker ps`), health endpoint, log output, or bundle timestamp
+3. Only then declare the deploy complete
+
+Full protocol: `klai-claude/rules/klai/ci-verify-after-push.md`
+
+---
+
 ## See Also
 
 - [patterns/devops.md](../patterns/devops.md) - Proven deployment patterns
