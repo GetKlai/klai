@@ -64,17 +64,9 @@ class PortalUser(Base):
     # KB scope preference — controlled via the KBScopeBar above the LibreChat iframe.
     # kb_pref_version is incremented on every PATCH and used as a cache discriminator
     # in the LiteLLM hook (30s version-pointer TTL → up to 30s propagation lag).
-    kb_retrieval_enabled: Mapped[bool] = mapped_column(
-        nullable=False, default=True, server_default="true"
-    )
-    kb_personal_enabled: Mapped[bool] = mapped_column(
-        nullable=False, default=True, server_default="true"
-    )
-    kb_slugs_filter: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String(128)), nullable=True
-    )
-    kb_pref_version: Mapped[int] = mapped_column(
-        nullable=False, default=0, server_default="0"
-    )
+    kb_retrieval_enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
+    kb_personal_enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
+    kb_slugs_filter: Mapped[list[str] | None] = mapped_column(ARRAY(String(128)), nullable=True)
+    kb_pref_version: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")
