@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     # Knowledge retrieval API (for gap re-scoring)
     knowledge_retrieve_url: str = ""  # e.g. http://retrieval-api:8000
 
+    # GitHub — for org member removal during offboarding (A.6.5)
+    # PAT requires admin:org scope; stored in SOPS as GITHUB_ADMIN_PAT
+    github_admin_pat: str = ""
+    github_org: str = "GetKlai"
+
     # Whisper server (internal -- for direct post-meeting transcription)
     whisper_server_url: str = "http://whisper-server:8000"
 

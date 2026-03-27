@@ -21,6 +21,7 @@ from app.models.groups import PortalGroup, PortalGroupMembership, PortalGroupPro
 from app.models.portal import PortalOrg, PortalUser
 from app.models.products import PortalUserProduct
 from app.services.audit import log_event
+from app.services.github import remove_github_org_member
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -835,6 +836,10 @@ async def offboard_user(
         resource_id=zitadel_user_id,
     )
     await zitadel.deactivate_user(settings.zitadel_portal_org_id, zitadel_user_id)
+    if user.github_username:
+        await remove_github_org_member(user.github_username)
+    else:
+        logger.info("GitHub offboarding skipped for %s: no github_username linked", zitadel_user_id)
     await db.commit()
     return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
 
