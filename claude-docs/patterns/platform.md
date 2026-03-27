@@ -388,3 +388,103 @@ HETZNER_DNS_TOKEN=your_hetzner_dns_api_token
 **Source:** `platform-beslissingen.md` — Per-Tenant Routing: Wildcard TLS
 
 ---
+
+## platform-librechat-config-lifecycle
+
+**When to use:** Changing `librechat.yaml` or understanding why a config change has no effect
+
+LibreChat reads `librechat.yaml` **once at startup**. There is no hot-reload, no `chokidar`, no file-watcher of any kind.
+
+**Load chain:**
+```
+api/server/index.js
+  → getAppConfig()
+    → loadBaseConfig() → loadCustomConfig()  ← one-shot disk read
+    → AppService({ config })
+  → cache.set(BASE_CONFIG_KEY, baseConfig)   // no TTL
+```
+
+**Reload procedure — without Redis:**
+1. Restart the LibreChat container.
+
+**Reload procedure — with Redis (`USE_REDIS=true`, which is Klai's setup):**
+1. `docker exec <redis> redis-cli FLUSHALL` — config is cached in Redis indefinitely with no TTL, a container restart alone leaves the old config in Redis
+2. Restart the LibreChat container
+
+**Programmatic reload (future):** `clearAppConfigCache()` already exists in the source but has no HTTP endpoint. A `POST /api/config/reload` that calls this + re-triggers `getAppConfig()` would be ~20-40 lines and is the correct approach if hot-reload is ever needed.
+
+**See also:** `pitfalls/platform.md#platform-librechat-redis-config-cache`
+
+---
+
+## platform-librechat-mcp-user-header-interpolation
+
+**When to use:** Configuring MCP servers in `librechat.yaml` with per-user context
+
+LibreChat interpolates `{{...}}` template variables in MCP server headers at connection time (when LibreChat connects to the MCP server for a specific user). Missing fields fall back to empty strings.
+
+**Full list of supported user field variables:**
+
+| Variable | Value |
+|---|---|
+| `{{LIBRECHAT_USER_ID}}` | MongoDB ObjectId of the user |
+| `{{LIBRECHAT_USER_EMAIL}}` | Email address |
+| `{{LIBRECHAT_USER_NAME}}` | Display name |
+| `{{LIBRECHAT_USER_USERNAME}}` | Username |
+| `{{LIBRECHAT_USER_ROLE}}` | `user` or `admin` |
+| `{{LIBRECHAT_USER_PROVIDER}}` | Auth provider (openid, google, etc.) |
+| `{{LIBRECHAT_USER_EMAILVERIFIED}}` | Boolean |
+| `{{CUSTOM_VARIABLE_NAME}}` | Per-user credential from user's `customUserVars` settings |
+
+Environment variables use `${ENV_VAR}` syntax and are evaluated at startup (not per-request).
+
+**Example (Klai's current config):**
+```yaml
+mcpServers:
+  klai-knowledge:
+    type: streamable-http
+    url: http://klai-knowledge-mcp:8080/mcp
+    headers:
+      X-User-ID: "{{LIBRECHAT_USER_ID}}"
+      X-Org-ID: "${KLAI_ORG_ID}"
+      X-Internal-Secret: "${KNOWLEDGE_INGEST_SECRET}"
+```
+
+---
+
+## platform-librechat-per-principal-config-overrides
+
+**When to use:** Applying per-user or per-tenant config overrides without restarting containers (requires LibreChat ≥ commit after March 25, 2026 / PR #12354)
+
+PR #12354 (merged March 25, 2026) adds a MongoDB-backed per-principal configuration override system. Overrides are deep-merged with the YAML config at request time with a 60-second TTL cache.
+
+**Admin endpoint:** `POST /api/admin/config` — write per-principal overrides programmatically.
+
+**Principal types:** user, group, role.
+
+**Use case for Klai:** Portal-api could write per-user overrides to MongoDB when a user's KB access changes. LibreChat picks them up within 60 seconds — no container restart needed.
+
+**Caveat:** Which AppConfig fields are overridable (modelSpecs, mcpServers, etc.) needs testing against a running instance. The system was merged very recently.
+
+**See also:** `research/librechat-dynamic-config.md` for full investigation context
+
+---
+
+## platform-librechat-mcp-tiers
+
+**When to use:** Deciding where to define MCP servers (YAML vs MongoDB)
+
+LibreChat has two tiers of MCP servers:
+
+| Tier | Defined in | Storage | Visible to | User can disable |
+|---|---|---|---|---|
+| App-level | `librechat.yaml` | Redis aggregate key | All users | No |
+| User-level (private) | MCPPanel UI | MongoDB per user | That user only | Yes |
+
+**App-level servers** (Klai's `klai-knowledge`) are globally available to all users. There is no supported mechanism for users or admins to disable an individual app-level server per user.
+
+**User-level private servers** (PR #10352, merged November 2025) are stored in MongoDB, support dynamic config sync with Redis distributed locking, and are lazy-loaded with invalidation when `connection.createdAt < config.lastUpdatedAt`.
+
+**Portal-api could programmatically inject user-level MCP servers** into MongoDB using the same document structure as the MCPPanel UI — these would then be available to the user without any UI interaction. Useful for pre-configuring tenant-specific MCP servers at provisioning time.
+
+---
