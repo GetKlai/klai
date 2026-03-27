@@ -98,6 +98,19 @@ export function KBScopeBar() {
     }
   }, [dropdownOpen])
 
+  // Auto-heal stale slug filter: if all stored slugs no longer exist in the org,
+  // reset to null (= all KBs) rather than silently sending a dead filter to the hook.
+  const staleSlugsOnly =
+    pref != null &&
+    pref.kb_slugs_filter !== null &&
+    pref.kb_slugs_filter.length > 0 &&
+    pref.kb_slugs_filter.every((s) => !orgKbs.map((kb) => kb.slug).includes(s))
+  useEffect(() => {
+    if (staleSlugsOnly && !mutation.isPending && !mutation.isError) {
+      mutation.mutate({ kb_slugs_filter: null })
+    }
+  }, [staleSlugsOnly, mutation.isPending, mutation.isError]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Hide bar when no org KBs are configured (KB feature not provisioned)
   if (!pref || orgKbs.length === 0) return null
 

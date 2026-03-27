@@ -303,9 +303,16 @@ User sends message
   → Trivial check: skip if < 8 chars or matches greeting/ack pattern
   → Reads org_id from team-scoped API key metadata (master key → skip silently)
   → Reads user_id from the "user" field (missing → skip)
-  → Portal feature-gate: GET /internal/v1/users/{user_id}/feature/knowledge
-    Result cached in LiteLLM DualCache for 300s (fail-closed on error)
-  → Single POST to retrieval-api with scope="both", conversation_history (last 6 turns)
+  → Portal feature-gate + KB scope: GET /internal/v1/users/{user_id}/feature/knowledge
+    Two-level cache: kb_ver:{org}:{user} pointer (30s TTL) + kb_feature:...:{version} data (300s)
+    Cache invalidates within 30s of any KBScopeBar change (version pointer expires first)
+    Fail-closed on entitlement error; fail-open on preference errors (preserves retrieval)
+  → Pre-step skip: if kb_retrieval_enabled=false → return data unchanged (no retrieval call)
+  → scope = "both" if kb_personal_enabled=true (default), "org" if false
+  → POST to retrieval-api with scope, top_k, conversation_history (last 6 turns)
+    Optional: kb_slugs=[...] if kb_slugs_filter is set (restricts to named org KBs only)
+  → Gap detection (SPEC-KB-014): classify result as hard (no chunks) or soft (all scores < 0.4)
+    If gap detected: fire-and-forget POST to /internal/v1/gap-events
   → If retrieval_bypassed=true: skip injection, set _klai_kb_meta (gate_bypassed=true)
   → Inject chunks as system message prefix with [org] / [persoonlijk] labels
   → Set data["_klai_kb_meta"] for downstream hooks (custom_router uses this)
@@ -369,8 +376,9 @@ filter is always effective.
 
 `RetrieveRequest` also accepts an optional `kb_slugs: list[str]` parameter. When set,
 `_scope_filter()` adds a `MatchAny` condition on the `kb_slug` payload field, restricting
-results to the specified KBs only. The LiteLLM hook does not use this parameter (it
-searches all KBs via `scope=org`), but callers such as the portal or Focus can pass it
+results to the specified KBs only. The LiteLLM hook passes `kb_slugs` when the user has
+an active `kb_slugs_filter` set via the KBScopeBar (SPEC-KB-013). When `kb_slugs_filter`
+is null (the default), all org KBs are searched. Callers such as Focus can also pass it
 to scope retrieval to a specific KB.
 
 **The retrieval pipeline:**
@@ -492,7 +500,5 @@ text from the fetched pages.
 
 | Feature | Why it's deferred |
 |---|---|
-| Per-KB scope selection in the portal UI | `kb_slugs` filtering is live in `RetrieveRequest`; a portal UI that lets users choose which KBs to search is not yet built |
 | MCP read tools (semantic search via tool call) | V1 covers saves only |
 | Helpdesk transcript adapter | Interface with whisper-server not decided |
-| Gap detection | Deferred until corpus is >50 indexed documents |
