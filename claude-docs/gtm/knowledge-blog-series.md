@@ -19,15 +19,15 @@ Author voice: Mark Vletter (see `klai-claude/rules/gtm/mark-tone-of-voice.md`)
 | A2 | The self-improving knowledge base | arch 8, arch 12 (gap detection, self-improving loop) | published |
 | A3 | Five conversations your company has, five pipelines you need | fund 12 (communication as knowledge source) | published |
 | A4 | Decisions deserve their own data model | fund 10 (Decision as 6th entity type) | published |
-| A5 | The 15-minute correction window | fund 12 meetings (FRAME, correction window, kappa=0.36) | planned |
+| A5 | The 15-minute correction window | fund 12 meetings (FRAME, correction window, kappa=0.36) | published |
 
 ### Series B: "Modelling knowledge" (mid: architects, knowledge managers)
 
 | # | Working title | Source sections | Status |
 |---|---|---|---|
-| B1 | Evidence vs. claims: the distinction that changes everything | arch 3.1 (source_document vs knowledge_artifact) | planned |
-| B2 | Three axes, not one label | arch 3.2 (provenance, assertion mode, synthesis depth) | planned |
-| B3 | The self-managing taxonomy is a myth | arch 6.2-6.5 (BERTopic, outlier rates, human gate) | planned |
+| B1 | Evidence vs. claims: the distinction that changes everything | arch 3.1 (source_document vs knowledge_artifact) | published |
+| B2 | Three axes, not one label | arch 3.2 (provenance, assertion mode, synthesis depth) | published |
+| B3 | The self-managing taxonomy is a myth | arch 6.2-6.5 (BERTopic, outlier rates, human gate) | published |
 | B4 | Quality happens at storage, not at search | arch 4.2, fund 13 (Contextual Retrieval, HyPE) | planned |
 | B5 | How a knowledge system handles uncertainty | fund 11 (CWA vs OWA, confidence, assertion_mode) | planned |
 

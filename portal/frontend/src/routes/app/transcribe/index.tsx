@@ -399,7 +399,7 @@ function TranscribePage() {
                 <table className="w-full text-sm table-fixed">
                   <thead>
                     <tr className="border-b border-[var(--color-border)]">
-                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-1/2">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-2/5">
                         {m.app_transcribe_col_text()}
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
