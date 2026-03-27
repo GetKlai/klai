@@ -20,11 +20,7 @@ def classify_gap(chunks: list[dict]) -> str | None:
         return "hard"
     reranker_scores = cast(
         list[float],
-        [
-            c.get("reranker_score")
-            for c in chunks
-            if c.get("reranker_score") is not None
-        ],
+        [c.get("reranker_score") for c in chunks if c.get("reranker_score") is not None],
     )
     if reranker_scores:
         threshold = settings.klai_gap_soft_threshold

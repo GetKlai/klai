@@ -69,8 +69,7 @@ async def rescore_open_gaps(
     )
     if kb_slug is not None:
         stmt = stmt.where(
-            (PortalRetrievalGap.nearest_kb_slug == kb_slug)
-            | PortalRetrievalGap.nearest_kb_slug.is_(None)
+            (PortalRetrievalGap.nearest_kb_slug == kb_slug) | PortalRetrievalGap.nearest_kb_slug.is_(None)
         )
 
     result = await db.execute(stmt)
