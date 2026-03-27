@@ -32,18 +32,10 @@ class GapsResponse(BaseModel):
     total: int
 
 
-class TopQuery(BaseModel):
-    query_text: str
-    gap_type: str
-    count: int
-    last_occurred: datetime
-
-
 class GapSummaryResponse(BaseModel):
     total_7d: int
     hard_7d: int
     soft_7d: int
-    top_queries: list[TopQuery]
 
 
 @router.get("/gaps", response_model=GapsResponse)
@@ -118,34 +110,8 @@ async def get_gap_summary(
     )
     counts = {row.gap_type: row.cnt for row in count_result}
 
-    top_result = await db.execute(
-        select(
-            PortalRetrievalGap.query_text,
-            PortalRetrievalGap.gap_type,
-            func.count().label("cnt"),
-            func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
-        )
-        .where(
-            PortalRetrievalGap.org_id == org.id,
-            PortalRetrievalGap.occurred_at >= cutoff,
-        )
-        .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type)
-        .order_by(func.count().desc())
-        .limit(10)
-    )
-    top_queries = [
-        TopQuery(
-            query_text=r.query_text,
-            gap_type=r.gap_type,
-            count=r.cnt,
-            last_occurred=r.last_occurred,
-        )
-        for r in top_result
-    ]
-
     return GapSummaryResponse(
         total_7d=counts.get("hard", 0) + counts.get("soft", 0),
         hard_7d=counts.get("hard", 0),
         soft_7d=counts.get("soft", 0),
-        top_queries=top_queries,
     )
