@@ -16,6 +16,14 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
 | [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 31 entries |
+| [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 4 entries |
+
+## Runbooks (emergency recovery procedures)
+
+| Runbook | File | Contents |
+|---------|------|---------|
+| [Platform Recovery](runbooks/platform-recovery.md) | Zitadel Login V2 deadlock, PAT rotation, portal-api outage | 3 procedures |
+| [Uptime Kuma](runbooks/uptime-kuma.md) | Adding a new monitor to status.getklai.com | 7-step procedure |
 
 ## Project pitfalls
 
@@ -62,7 +70,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `infra-caddy-no-global-csp` | **HIGH** | Adding CSP to Caddy global header | No global CSP -- apps manage their own |
 | `infra-never-modify-env-secrets` | **CRIT** | Modifying secrets in /opt/klai/.env | NEVER modify existing secrets via shell commands |
 
-### Platform (30)
+### Platform (31)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -73,9 +81,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-vllm-mps-enforce-eager` | **HIGH** | vLLM + MPS | Add --enforce-eager to 8B instance |
 | `platform-librechat-oidc-reuse-tokens` | **CRIT** | LibreChat OIDC config | Never set OPENID_REUSE_TOKENS=true |
 | `platform-librechat-username-claim` | **HIGH** | LibreChat OIDC config | Always set OPENID_USERNAME_CLAIM=preferred_username |
-| `platform-librechat-logout-no-zitadel-session` | **HIGH** | Implementing logout | LibreChat logout doesn't end Zitadel session |
 | `platform-grafana-victorialogs-loki-incompatible` | **HIGH** | Adding VictoriaLogs to Grafana | Use victoriametrics-logs-datasource plugin |
-| `platform-caddy-cloud86-no-plugin` | **HIGH** | Wildcard TLS setup | Cloud86 has no Caddy plugin — use Hetzner DNS |
 | `platform-caddy-not-auto-routing` | **HIGH** | Adding a new tenant | Caddy doesn't auto-discover containers |
 | `platform-rag-api-non-lite-image` | **HIGH** | RAG deployment (Phase 2) | Use non-lite image for TEI embeddings |
 | `platform-caddy-admin-off-reload` | **HIGH** | Reloading Caddy with admin off | Restart container via Docker SDK, not Admin API |
@@ -83,20 +89,31 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-fastapi-background-tasks-db-session` | **CRIT** | Passing db session to BackgroundTasks | Open new session in task, don't pass request-scoped |
 | `caddy-basicauth-monitoring-conflict` | **HIGH** | Adding basic_auth to monitored route | Add health path bypass BEFORE basic_auth |
 | `caddy-log-not-in-handle` | **MED** | Putting log inside handle block | log is site-level, place outside handle |
-| `caddy-basicauth-deprecated` | **LOW** | Using basicauth in Caddyfile | Use basic_auth (underscore) instead |
 | `platform-zitadel-project-grant-vs-user-grant` | **HIGH** | Assigning role to user in Zitadel | Use /users/{id}/grants, not /projects/{id}/grants |
 | `platform-zitadel-resourceowner-claim-unreliable` | **HIGH** | Using resourceowner claim for org lookup | Use sub -> portal_users -> portal_orgs instead |
 | `platform-sso-cache-single-instance` | **HIGH** | Scaling portal-api to multiple instances | In-memory SSO cache not shared across replicas |
 | `caddy-permissions-policy-blocks-mediadevices` | **CRIT** | Browser API silently fails | Use microphone=self, not microphone=() |
 | `platform-alembic-shared-postgres-schema-conflict` | **CRIT** | Two FastAPI services sharing Postgres | Scope alembic_version to service-specific schema |
-| `platform-zitadel-login-v2-recovery` | **CRIT** | Login V2 breaks all OIDC flows | Delete login_v2 row from projections to recover |
-| `platform-zitadel-pat-invalid-after-upgrade` | **CRIT** | PAT invalid after Zitadel upgrade | Rotate PAT via Zitadel console |
+| `platform-zitadel-login-v2-recovery` | **CRIT** | Login V2 breaks all OIDC flows | Delete login_v2 row from projections; full procedure in runbooks/ |
+| `platform-zitadel-pat-invalid-after-upgrade` | **CRIT** | PAT invalid after Zitadel upgrade | Rotate PAT via Zitadel console; full procedure in runbooks/ |
 | `platform-vexa-timeout-looks-like-bug` | **MED** | Meeting stuck in Recording after everyone leaves | 60s everyoneLeftTimeout is intentional — read process.py first |
 | `platform-vexa-guard-breaks-stop-flow` | **HIGH** | Adding status guard to webhook handler mid-debug | Never guard webhook handler — completed webhook IS the transcription trigger |
-| `platform-vexa-debug-wrong-layer` | **HIGH** | Debugging Vexa by starting at application code | Read docker-compose → process.py → logs → code, in that order |
-| `platform-librechat-agents-mistral-null-crash` | **CRIT** | LibreChat agents endpoint crashes on second message with Mistral | Mistral null+tool_calls → sparse array → MongoDB null slots → crash in formatAgentMessages; patch format.cjs or fix upstream in createContentAggregator |
-| `platform-librechat-websearch-rawhtml-reranker-load` | **HIGH** | LibreChat web search takes 3+ minutes | Firecrawl defaults to rawHtml; set firecrawlOptions.formats=[markdown] + onlyMainContent=true in librechat.yaml |
-| `platform-tei-embedding-timeout` | **HIGH** | knowledge-ingest returns 500 on large document batches | TEI batches can exceed 30s; set timeout 120s + retry + batch of 32 |
+| `platform-falkordb-sspLv1-license` | **MED** | Evaluating FalkorDB | SSPLv1 = fine for self-hosted internal use, not for SaaS |
+| `platform-hipporag2-vs-graphiti-different-layers` | **HIGH** | Comparing HippoRAG2 vs Graphiti | Different layers: retrieval-only vs full ingestion+graph+retrieval |
+| `platform-tei-embedding-timeout` | **HIGH** | knowledge-ingest 500 on large batches | Set timeout 120s + retry + batch of 32 |
+| `platform-librechat-redis-config-cache` | **HIGH** | Changing librechat.yaml, restarting container | FLUSHALL Redis first — config is cached with no TTL |
+| `platform-librechat-addparams-no-envvars` | **MED** | Using env vars in addParams | addParams is literal — use LiteLLM hook or MCP headers instead |
+| `platform-librechat-dual-system-message` | **MED** | promptPrefix + LiteLLM hook both inject system messages | Append to existing system message, don't prepend a new one |
+| `platform-portal-api-deploy-env-preflight` | **CRIT** | Deploying portal-api after new required field in config.py | Pre-flight check env vars; add to .env.sops BEFORE pushing config change |
+
+### Docs-app (4)
+
+| ID | Sev | Trigger | Rule |
+|----|-----|---------|------|
+| `platform-docs-app-port` | **HIGH** | Calling docs-app API from portal-api | Port is 3010, not 3000 |
+| `platform-docs-app-basepath` | **HIGH** | Any docs-app API call | basePath `/docs` — all routes are `/docs/api/...` |
+| `platform-docs-app-visibility-values` | **HIGH** | Creating KB with visibility=internal | Map portal `internal` → docs-app `private` |
+| `platform-docs-app-error-logging` | **MED** | Debugging docs-app integration | Log status code + response text, catch ConnectError separately |
 
 ---
 

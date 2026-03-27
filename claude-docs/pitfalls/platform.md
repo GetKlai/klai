@@ -2,6 +2,7 @@
 
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy, Meilisearch — Klai AI stack.
 > Most entries are derived from the compatibility review in `architecture/platform.md`.
+> For step-by-step emergency recovery procedures, see `runbooks/platform-recovery.md`.
 
 ---
 
@@ -145,26 +146,6 @@ OPENID_USERNAME_CLAIM=preferred_username
 
 ---
 
-## platform-librechat-logout-no-zitadel-session
-
-**Severity:** HIGH — **RESOLVED** (2026-03-11)
-
-**Trigger:** Implementing logout in the customer portal
-
-LibreChat logout does NOT call the Zitadel `end_session` endpoint. After LibreChat logout, the Zitadel session remains active. Users can immediately log back in without re-authenticating.
-
-**Resolution (implemented):**
-The portal sidebar logout:
-1. Awaits `POST /api/auth/logout` (clears klai_sso cookie + SSO cache)
-2. Calls `auth.signoutRedirect()` (react-oidc-context) — redirects to Zitadel end-session endpoint
-3. Zitadel redirects to `post_logout_redirect_uri: /logged-out`
-
-**Race condition fix:** The `fetch` to `/api/auth/logout` is awaited before `signoutRedirect()`. Without the await, the browser navigates away before the logout request completes.
-
-**Source:** `architecture/platform.md` — Auth: Zitadel + LibreChat + FastAPI + React SPA
-
----
-
 ## platform-grafana-victorialogs-loki-incompatible
 
 **Severity:** HIGH
@@ -181,26 +162,6 @@ GF_INSTALL_PLUGINS=victoriametrics-logs-datasource
 Configure the datasource using the `victoriametrics-logs-datasource` plugin type, not the Loki plugin.
 
 **Source:** `architecture/platform.md` — Monitoring: Grafana datasource
-
----
-
-## platform-caddy-cloud86-no-plugin
-
-**Severity:** HIGH (historical — DNS has been migrated)
-
-**Trigger:** Setting up wildcard TLS for `*.getklai.com` with Caddy
-
-Cloud86 (former DNS provider for getklai.com) has no Caddy DNS plugin. Caddy requires a DNS-01 ACME challenge to issue wildcard certificates. Without a plugin, wildcard TLS is not possible.
-
-**Resolution (implemented March 2026):** DNS migrated from Cloud86 to Hetzner DNS.
-- Hetzner DNS is free, fully European, GDPR-compliant
-- Caddy plugin in use: `github.com/caddy-dns/hetzner`
-- Custom Caddy image: `caddy-hetzner:latest` (built via `xcaddy build --with github.com/caddy-dns/hetzner`)
-- Wildcard cert `*.getklai.com` is active via Let's Encrypt DNS-01 challenge
-
-**Do not revert DNS to Cloud86 or any provider without a Caddy plugin.**
-
-**Source:** `architecture/platform.md` — Per-Tenant Routing: Caddy + Wildcard DNS
 
 ---
 
@@ -339,14 +300,7 @@ async def provision_tenant(org_id: int) -> None:
 
 **Trigger:** Adding `basic_auth` to a Caddy route that is also monitored by Uptime Kuma or any HTTP health checker
 
-When you add `basic_auth` to a Caddy route, ALL requests to that host get challenged for credentials — including Uptime Kuma's health check. The monitor switches from "up" to "down" immediately after deploy.
-
-**What went wrong:**
-```
-Grafana monitor: https://grafana.getklai.com/api/health
-→ After adding basic_auth: 401 Unauthorized
-→ Uptime Kuma marks service as DOWN
-```
+When you add `basic_auth` to a Caddy route, ALL requests to that host get challenged — including health checks. The monitor switches from "up" to "down" immediately after deploy.
 
 **Fix:**
 Create a named matcher for the health path BEFORE the `basic_auth` handler:
@@ -402,18 +356,6 @@ handle @grafana {
 
 ---
 
-## caddy-basicauth-deprecated
-
-**Severity:** LOW
-
-**Trigger:** Using `basicauth` in a Caddyfile
-
-Caddy v2.6+ deprecated `basicauth` in favour of `basic_auth` (with underscore). Using `basicauth` still works but logs a warning on every startup. Some future Caddy version may remove it.
-
-**Fix:** Replace `basicauth` with `basic_auth` throughout the Caddyfile.
-
----
-
 ## platform-zitadel-project-grant-vs-user-grant
 
 **Severity:** HIGH
@@ -461,13 +403,12 @@ await http.post(
 
 **Trigger:** Using `urn:zitadel:iam:user:resourceowner:id` from userinfo to look up the user's organization in PostgreSQL
 
-The `urn:zitadel:iam:user:resourceowner:id` claim contains the Zitadel org ID of the **org that owns the user** — but this claim is not always present in the userinfo response, and relying on it creates a fragile coupling to Zitadel's internal data model.
+The `urn:zitadel:iam:user:resourceowner:id` claim contains the Zitadel org ID of the org that owns the user — but this claim is not always present in the userinfo response.
 
 **Wrong:**
 ```python
 info = await zitadel.get_userinfo(token)
 zitadel_org_id = info.get("urn:zitadel:iam:user:resourceowner:id")
-# Look up portal_orgs directly by zitadel_org_id
 org = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
 ```
 
@@ -483,7 +424,7 @@ result = await db.execute(
 org = result.scalar_one_or_none()
 ```
 
-**Why:** `sub` is the OIDC subject claim — always present and stable. The `portal_users` table is the authoritative mapping of Zitadel user → portal org. This also means user-org membership is controlled by the portal, not implicitly derived from where a user lives in Zitadel.
+**Why:** `sub` is the OIDC subject claim — always present and stable. `portal_users` is the authoritative mapping of Zitadel user → portal org. This also means user-org membership is controlled by the portal, not implicitly derived from where a user lives in Zitadel.
 
 **Source:** `klai-portal/backend/app/api/billing.py`, `admin.py` — `_get_org()`, `_get_caller_org()`
 
@@ -502,15 +443,11 @@ The `_sso_cache` and `_pending_totp` caches in `portal-api/app/api/auth.py` are 
 - Next request routed to instance B → B has no record of the token → 401 Unauthorized
 - Result: users get logged out randomly under load, or cannot complete TOTP login
 
-**Current state:** Safe because portal-api runs as a single container on core-01. There is no horizontal scaling and no blue/green deployment.
+**Current state:** Safe because portal-api runs as a single container on core-01.
 
-**When this becomes a problem:**
-- Adding a second portal-api replica (load balancing)
-- Blue/green deploy where both containers are briefly live
-- Moving to a multi-instance setup
+**When this becomes a problem:** Adding a second replica, blue/green deploy, or multi-instance setup.
 
 **Resolution when needed:**
-Replace in-memory caches with Redis:
 ```python
 # Replace TTLCache with Redis-backed cache
 # _sso_cache.put(value) → redis.setex(token, ttl, json.dumps(value))
@@ -548,13 +485,10 @@ header Permissions-Policy "geolocation=(), microphone=self, camera=()"
 
 **Diagnosis:**
 ```bash
-# Check what header the server is actually sending:
 curl -sI https://getklai.getklai.com/ | grep -i permissions-policy
 ```
 
-**After fixing the header:**
-Users who previously visited the page may have a cached "denied" permission in their browser. They must manually reset it:
-Chrome/Brave: click the lock icon → Site settings → Microphone → Reset to default.
+**After fixing the header:** Users who previously visited the page may have a cached "denied" permission. They must manually reset it: Chrome/Brave → lock icon → Site settings → Microphone → Reset to default.
 
 **Deploy:**
 ```bash
@@ -587,7 +521,6 @@ In `alembic/env.py`:
 ```python
 import sqlalchemy as sa
 
-# IMPORTANT: run_migrations_offline must also set version_table_schema
 def run_migrations_offline() -> None:
     context.configure(
         url=...,
@@ -635,11 +568,11 @@ Never rely on the default `public.alembic_version`.
 
 **Severity:** CRIT
 
-**Trigger:** Portal login is broken AND Zitadel admin console (`auth.getklai.com/ui/console`) redirects to the broken portal login — creating a chicken-and-egg deadlock
+**Trigger:** Portal login is broken AND Zitadel console (`auth.getklai.com/ui/console`) redirects to the broken portal login — chicken-and-egg deadlock
 
-When Login V2 is active (`required: true`), ALL Zitadel OIDC flows — including the admin console — redirect to the portal's custom login. If that login is broken, you cannot access Zitadel to fix it.
+When Login V2 is active, ALL Zitadel OIDC flows — including the admin console — redirect to the portal login. If that login is broken, you cannot access Zitadel to fix it.
 
-**Break the deadlock: delete the Login V2 projection row directly in PostgreSQL**
+**Immediate fix:** Delete the Login V2 row from PostgreSQL (takes effect immediately, no restart):
 
 ```bash
 POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
@@ -648,57 +581,9 @@ docker exec $POSTGRES psql -U zitadel -d zitadel -c \
    WHERE instance_id = '362757920133218310' AND key = 'login_v2';"
 ```
 
-Takes effect immediately — no Zitadel restart needed. `auth.getklai.com/ui/console` now uses Zitadel's built-in login.
+`auth.getklai.com/ui/console` now uses Zitadel's built-in login.
 
-**Re-enable Login V2 after fixing the underlying issue:**
-
-Write to a file to avoid shell quoting problems:
-
-```bash
-cat > /tmp/fix_login_v2.sql << 'EOF'
-UPDATE projections.instance_features5
-SET value = '{"base_uri": {"Host": "getklai.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
-    change_date = NOW(),
-    sequence = 5
-WHERE instance_id = '362757920133218310' AND key = 'login_v2';
-EOF
-POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
-docker cp /tmp/fix_login_v2.sql $POSTGRES:/tmp/fix_login_v2.sql
-docker exec $POSTGRES psql -U zitadel -d zitadel -f /tmp/fix_login_v2.sql
-```
-
-**Critical: exact JSON format for the `value` column**
-
-The value uses Go's `url.URL` struct serialization. Do not abbreviate or change the structure:
-
-```json
-{
-  "base_uri": {
-    "Host": "getklai.getklai.com",
-    "Path": "",
-    "User": null,
-    "Opaque": "",
-    "Scheme": "https",
-    "RawPath": "",
-    "Fragment": "",
-    "OmitHost": false,
-    "RawQuery": "",
-    "ForceQuery": false,
-    "RawFragment": ""
-  },
-  "required": true
-}
-```
-
-If you get this wrong, the projection row is written with `value = null` and Login V2 has no redirect target.
-
-**Zitadel instance constants (core-01, do not guess):**
-
-| Name | Value |
-|---|---|
-| Instance ID | `362757920133218310` |
-| Feature aggregate creator | `362760545968848902` |
-| portal-api machine user ID | `362780577813757958` |
+**Full recovery procedure** (fix the portal issue, re-enable Login V2, instance constants): `runbooks/platform-recovery.md#zitadel-login-v2-recovery`
 
 ---
 
@@ -706,52 +591,15 @@ If you get this wrong, the projection row is written with `value = null` and Log
 
 **Severity:** CRIT
 
-**Trigger:** `create_session failed 401: Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs after a Zitadel version upgrade or after `portal-api` is restarted
+**Trigger:** `create_session failed 401: Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs after a Zitadel upgrade or portal-api restart
 
-The portal-api uses a Personal Access Token (PAT) to call Zitadel's `/v2/sessions` API as a service account. This PAT can become invalid after major Zitadel upgrades. The failure is masked as long as the portal-api is running — it caches active sessions in memory. After a restart the cache is empty and every login attempt hits the invalid PAT immediately.
+Portal-api uses a PAT to call Zitadel's `/v2/sessions` API. This PAT can become invalid after major Zitadel upgrades. The failure is masked while portal-api is running (session cache). After a restart, every login fails immediately.
 
-**Symptoms:**
-- All users get "E-mailadres of wachtwoord is onjuist" on login
-- `docker logs klai-core-portal-api-1` shows `create_session failed 401: Errors.Token.Invalid`
+**Symptoms:** All users see "E-mailadres of wachtwoord is onjuist" on login.
 
-**Fix: rotate the PAT**
+**Fix:** Rotate the PAT — go to Zitadel console → Users → Service Accounts tab → Portal API → Personal Access Tokens → **+ New**.
 
-1. Go to `https://auth.getklai.com/ui/console` (if Login V2 blocks you, see `platform-zitadel-login-v2-recovery`)
-2. Navigate to **Users** → **Service Accounts** tab → **Portal API**
-3. Go to **Personal Access Tokens** → **+ New** — copy the token value (shown once only)
-4. On core-01:
-   ```bash
-   sed -i 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' /opt/klai/.env
-   cd /opt/klai && docker compose up -d portal-api   # must be up -d, not restart
-   docker exec klai-core-portal-api-1 env | grep PORTAL_API_ZITADEL_PAT  # verify
-   ```
-5. Update `.env.sops` in the repo — do this on the MacBook from `/tmp` (to avoid `.sops.yaml` path mismatch):
-   ```bash
-   cd /tmp
-   SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-     sops --decrypt --input-type dotenv --output-type dotenv \
-     ~/Server/projects/klai/klai-infra/core-01/.env.sops > klai-env-plain
-
-   sed -i '' 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' klai-env-plain
-
-   SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-     sops --encrypt --input-type dotenv --output-type dotenv \
-     --age age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur,age15ztzw9vnngkdnw0pg5tn8upplglvhzkep23sm5zu86res5lcmv7syw5m4v \
-     /tmp/klai-env-plain > ~/Server/projects/klai/klai-infra/core-01/.env.sops
-
-   rm /tmp/klai-env-plain  # never leave plaintext lying around
-
-   cd ~/Server/projects/klai/klai-infra && git add core-01/.env.sops && git commit -m "Rotate PORTAL_API_ZITADEL_PAT"
-   ```
-
-**Verify the new PAT works before committing:**
-```bash
-ssh core-01 "curl -s https://auth.getklai.com/v2/sessions \
-  -H 'Authorization: Bearer <new-token>' \
-  -H 'Content-Type: application/json' \
-  -d '{\"checks\":{\"user\":{\"loginName\":\"test\"},\"password\":{\"password\":\"test\"}}}'"
-# Expected: {"code":5, "message":"User could not be found"} — not 401
-```
+**Full rotation procedure** (apply to container, verify, update .env.sops): `runbooks/platform-recovery.md#zitadel-pat-rotation`
 
 ---
 
@@ -772,7 +620,7 @@ The Vexa bot orchestrator config lives in `/opt/klai/vexa-patches/process.py`, m
    - `everyoneLeftTimeout: 5000` (was 60000)
    - `noOneJoinedTimeout: 30000` (was 120000)
    - `waitingRoomTimeout: 60000` (was 300000)
-3. After any Vexa deployment, verify these values on the server: `ssh core-01 cat /opt/klai/vexa-patches/process.py`
+3. After any Vexa deployment, verify these values: `ssh core-01 cat /opt/klai/vexa-patches/process.py`
 
 **See also:** `patterns/platform.md#platform-vexa-bot-lifecycle`
 
@@ -789,9 +637,6 @@ The normal Stop flow is: user clicks Stop → `status = processing` → Vexa fir
 **What went wrong:**
 A guard was added to prevent a perceived race condition between the bot_poller and the webhook. The guard was correct in intent but wrong in placement — it blocked the primary happy path, not just the race.
 
-**Why it happens:**
-When debugging a multi-path system (webhook + poller + manual stop), partial guards feel safe but break the coordinated flow. The DB showing `status: done` after the fix is also unreliable as a signal — the poller or a late webhook can resolve the meeting independently, masking whether the fix actually worked.
-
 **Prevention:**
 1. Never add status guards inside the webhook handler — the `completed` webhook IS the expected trigger for `run_transcription`
 2. When the DB shows `status: done` after a change, check `docker logs` to confirm which path resolved it (webhook vs poller vs manual)
@@ -801,117 +646,13 @@ When debugging a multi-path system (webhook + poller + manual stop), partial gua
 
 ---
 
-## docs-app (klai-docs / Next.js)
-
----
-
-## platform-docs-app-port
-
-**Severity:** HIGH
-
-**Trigger:** Calling the docs-app internal API from portal-api (`docs_client.py`)
-
-The docs-app (klai-docs) runs on port **3010**, not 3000. Docker service name is `docs-app`.
-
-**Wrong:**
-```python
-base_url="http://docs-app:3000"
-```
-
-**Correct:**
-```python
-base_url="http://docs-app:3010/docs"
-```
-
-**Source:** SPEC-KB-003 integration debugging, 2026-03-25
-
----
-
-## platform-docs-app-basepath
-
-**Severity:** HIGH
-
-**Trigger:** Calling any API endpoint on docs-app
-
-The Next.js app has `basePath: "/docs"` in `next.config.ts`. All routes — including internal API routes — are served under `/docs/api/...`, not `/api/...`.
-
-**Wrong:**
-```
-POST http://docs-app:3010/api/orgs/{slug}/kbs   → 404 Not Found
-```
-
-**Correct:**
-```
-POST http://docs-app:3010/docs/api/orgs/{slug}/kbs
-```
-
-Use `base_url="http://docs-app:3010/docs"` in the httpx client so relative paths resolve correctly.
-
-**Source:** SPEC-KB-003 integration debugging, 2026-03-25
-
----
-
-## platform-docs-app-visibility-values
-
-**Severity:** HIGH
-
-**Trigger:** Creating a KB via the docs-app API when the portal visibility is `internal`
-
-The docs-app DB has a check constraint that only accepts `public` or `private` as visibility values. The portal uses `internal` as its third visibility option. Passing `internal` causes a 500 from docs-app.
-
-**Wrong:**
-```python
-json={"visibility": "internal"}  # → 500 Internal Server Error
-```
-
-**Correct:**
-```python
-docs_visibility = "public" if visibility == "public" else "private"
-json={"visibility": docs_visibility}
-```
-
-Map portal `internal` → docs-app `private` before calling the API.
-
-**Source:** SPEC-KB-003 integration debugging, 2026-03-25
-
----
-
-## platform-docs-app-error-logging
-
-**Severity:** MEDIUM
-
-**Trigger:** Debugging docs-app integration failures from portal-api logs
-
-Without the response body in the log, all failures look the same (`httpx.HTTPStatusError`). Always log status code + response text.
-
-**Wrong:**
-```python
-log.exception("Gitea provisioning failed for KB slug=%s", kb_slug)
-```
-
-**Correct:**
-```python
-log.error(
-    "Gitea provisioning failed for KB slug=%s: %s %s",
-    kb_slug,
-    exc.response.status_code,
-    exc.response.text[:500],
-)
-```
-
-Also catch `httpx.ConnectError` separately — a connection refused error has no `.response` attribute and will itself raise an `AttributeError` if you try to access it.
-
-**Source:** SPEC-KB-003 integration debugging, 2026-03-25
-
----
-
 ## platform-falkordb-sspLv1-license
 
 **Severity:** MED
 
 **Trigger:** Evaluating FalkorDB as a graph database for a self-hosted deployment
 
-FalkorDB is licensed under SSPLv1, not Apache 2.0. This surprises people who assume it is permissive open-source like Redis was before its license change.
+FalkorDB is licensed under SSPLv1, not Apache 2.0.
 
 **What this means in practice:**
 - SSPLv1 requires that if you offer FalkorDB *as a service to others* (SaaS), you must open-source your entire service stack.
@@ -919,12 +660,9 @@ FalkorDB is licensed under SSPLv1, not Apache 2.0. This surprises people who ass
 - Decision: FalkorDB is approved for production in the Klai knowledge graph stack (SPEC-KB-011).
 
 **Also watch out for Neo4j Community Edition:**
-Neo4j Community Edition uses GPLv3, and Neo4j's own documentation includes "non-production use" language in places. Avoid Neo4j Community for production deployments — GPLv3 plus ambiguous vendor messaging creates legal risk.
+Neo4j Community Edition uses GPLv3. Avoid for production — GPLv3 plus ambiguous vendor "non-production use" messaging creates legal risk.
 
-**Prevention:**
-1. When evaluating a new graph/vector/AI database, check its license before writing any SPEC
-2. SSPLv1 = fine for self-hosted internal use, not fine for SaaS offering
-3. Default to checking the GitHub repo license file, not marketing copy
+**Prevention:** When evaluating any graph/vector/AI database, check its license before writing any SPEC. SSPLv1 = fine for self-hosted internal use, not fine for SaaS offering.
 
 **Source:** SPEC-KB-011 research, 2026-03-26
 
@@ -938,16 +676,11 @@ Neo4j Community Edition uses GPLv3, and Neo4j's own documentation includes "non-
 
 HippoRAG2 and Graphiti operate at different layers of the retrieval stack. Treating them as direct alternatives causes incorrect architecture decisions.
 
-**The distinction:**
-
 | | HippoRAG2 | Graphiti |
 |---|---|---|
-| What it does | Retrieval only (Personalized PageRank traversal over an existing graph) | End-to-end: ingest + entity extraction + bi-temporal graph + retrieval |
+| What it does | Retrieval only (Personalized PageRank over an existing graph) | End-to-end: ingest + entity extraction + bi-temporal graph + retrieval |
 | Temporal model | None — static graph snapshot | Full bi-temporal (fact validity + ingestion time) |
-| Who builds the graph | You — HippoRAG2 assumes a graph already exists | Graphiti — handles entity extraction and edge creation |
-| Integration complexity | Needs a separate graph construction pipeline | Self-contained |
-
-**What went wrong:** The initial architecture docs (klai-knowledge-architecture.md §5.3 and §13.3) listed "HippoRAG2 + SpaCy" as the recommended evaluation path for the graph layer. This was wrong because HippoRAG2 has no temporal model and SpaCy misses contextual entity resolution. The docs were corrected as part of SPEC-KB-011.
+| Who builds the graph | You — assumes a graph already exists | Graphiti — handles entity extraction and edge creation |
 
 **Rule:** Before comparing retrieval frameworks, determine which layer each operates at. A retrieval-only library cannot replace an ingestion + storage + retrieval system.
 
@@ -961,7 +694,7 @@ HippoRAG2 and Graphiti operate at different layers of the retrieval stack. Treat
 
 **Trigger:** knowledge-ingest returns 500 errors during large document batches sent to the TEI embedder
 
-Large document batches legitimately take up to 35 seconds on TEI (up to 24s queue time + 11s inference time). With the default `timeout=30.0` in `httpx`, the client times out before TEI finishes. The `httpx.ReadTimeout` propagates unhandled and the connector receives a 500.
+Large document batches legitimately take up to 35 seconds on TEI (up to 24s queue time + 11s inference time). With the default `timeout=30.0` in `httpx`, the client times out before TEI finishes.
 
 **Symptom:**
 ```
@@ -971,9 +704,6 @@ Failed to process X.md: Server error '500 Internal Server Error'
 # knowledge-ingest log:
 httpx.ReadTimeout: timed out while reading response from http://tei:8080/embed
 ```
-
-**Why it happens:**
-The httpx client in `knowledge_ingest/embedder.py` had a hardcoded `timeout=30.0`. TEI processes batches sequentially and queues incoming requests; under load, total round-trip time exceeds 30s.
 
 **Prevention:**
 1. Set TEI client timeout to at least 120s (configurable via `TEI_TIMEOUT` env var)
@@ -1022,8 +752,6 @@ docker restart librechat-{slug}        # now reads fresh from disk
 **Warning:** `FLUSHALL` clears all Redis data including sessions and other caches. If you want to be surgical, find the specific key prefix (`_BASE_`, `STARTUP_CONFIG`) and delete only those — but FLUSHALL is safe during a maintenance window.
 
 **Source:** LibreChat issue #11175 — confirmed, no fix in upstream as of March 2026.
-
-**See also:** `patterns/platform.md#platform-librechat-config-lifecycle`
 
 ---
 
@@ -1074,79 +802,33 @@ Most modern LLMs accept multiple system messages without breaking, but the behav
 
 **Severity:** CRIT
 
-**Trigger:** Running `docker compose pull portal-api && docker compose up -d portal-api` after merging security commits or any code change that adds new required fields to `portal/backend/app/core/config.py`
+**Trigger:** `docker compose up -d portal-api` after a code change that adds new required fields to `portal/backend/app/core/config.py`
 
-Portal-api validates ALL required env vars at startup and performs a live PAT check against Zitadel before accepting any traffic. If a new required field has no value in `.env`, the container crashes immediately with a `ValueError`. Because **all authentication goes through portal-api** (Login V2 routes Zitadel's own login through the portal), a portal-api crash creates a total auth outage — no one can log in, including to the Zitadel console.
+Portal-api validates ALL required env vars at startup. If a new required field has no value in `.env`, the container crashes immediately. Because **all auth goes through portal-api** (Login V2 routes Zitadel's login through the portal), a portal-api crash creates a total auth outage — no one can log in, including to the Zitadel console.
 
-**What happened (2026-03-27):**
-1. Security commits added three new required fields to `config.py`: `zitadel_pat`, `portal_secrets_key`, `sso_cookie_key`
-2. `docker compose up -d portal-api` was run without pre-flight check
-3. Portal-api crashed with `ValueError: AES-256 requires a 32-byte key, got 0 bytes`
-4. All auth broke — Login V2 routes Zitadel's login through the portal, so even the Zitadel console was inaccessible
-5. Recovery required: database fix for Login V2, manual PAT creation from the user, manual secrets generation
-
-**How to check before deploying a new portal-api image:**
+**Pre-flight check — run before every portal-api deploy:**
 
 ```bash
-# 1. Check what changed in config.py (new required fields have no default value)
-cd ~/Server/projects/klai
-git log --oneline portal/backend/app/core/config.py | head -5
-git show HEAD:portal/backend/app/core/config.py | grep -E '^\s+\w+: str\s*$|^\s+\w+: \w+\s*$' | grep -v '='
-
-# 2. Pre-flight: check which env vars the container will receive
 ssh core-01 "cd /opt/klai && docker compose config portal-api | grep -A 80 'environment:'"
-
-# 3. Verify every required field (no default in config.py) has a non-empty value in the output
-#    Required fields in config.py have NO '= ""' or default value — they look like:
-#    zitadel_pat: str
-#    portal_secrets_key: str
-#    sso_cookie_key: str
-
-# 4. Only then deploy
-ssh core-01 "cd /opt/klai && docker compose up -d portal-api"
+# Verify every required field (no default value in config.py) is non-empty before deploying
 ```
 
-**If portal-api is already down and all auth is broken:**
-1. First break the Login V2 deadlock: `platform-zitadel-login-v2-recovery`
-2. Get the missing secrets (PAT from Zitadel console, generate keys locally)
-3. Add to `/opt/klai/.env` with single quotes: `echo 'PORTAL_API_ZITADEL_PAT=...' >> /opt/klai/.env`
-4. Do pre-flight check, then `docker compose up -d portal-api`
-5. Re-enable Login V2: use the INSERT from `platform-zitadel-login-v2-recovery`
-6. Update `.env.sops` from MacBook `/tmp` (see `platform-zitadel-pat-invalid-after-upgrade` step 5)
+Required fields in `config.py` have no `= ""` or default value:
+```python
+zitadel_pat: str
+portal_secrets_key: str
+sso_cookie_key: str
+```
 
-**Required secrets and how to generate them:**
+**Rule:** When adding a new required field to `config.py`: push the value to `core-01/.env.sops` FIRST (auto-sync writes to server via `sync-env.yml`), then push the `config.py` change. The portal-api CI will block the deploy if the var is still missing.
 
-| Env var | Config field | How to generate |
-|---|---|---|
-| `PORTAL_API_ZITADEL_PAT` | `zitadel_pat` | Zitadel console → Users → Service Accounts → Portal API → Personal Access Tokens → + New |
-| `PORTAL_API_PORTAL_SECRETS_KEY` | `portal_secrets_key` | `openssl rand -hex 32` (must be 64 hex chars = 32 bytes) |
-| `PORTAL_API_SSO_COOKIE_KEY` | `sso_cookie_key` | `python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` |
-
-**Automated protection (as of 2026-03-27):**
-
-Two layers now prevent a recurrence:
-
-1. **Claude Code hook** (`.claude/hooks/klai/portal-api-preflight.sh`) — any `docker compose up -d portal-api`
-   command in a Claude session is intercepted; the hook SSHes to core-01 and checks all critical vars
-   are non-empty before allowing the restart.
-
-2. **CI pre-deploy check** (`portal-api.yml`) — the deploy workflow runs the same check on core-01
-   before pulling and starting the new image. If any critical var is empty, the deploy is blocked
-   with a message pointing to `klai-infra`'s `sync-env.yml` workflow.
-
-3. **Auto-sync** (`klai-infra/.github/workflows/sync-env.yml`) — pushing a change to
-   `core-01/.env.sops` automatically decrypts and writes `/opt/klai/.env` on core-01. No manual
-   `deploy.sh` step needed. See `patterns/devops.md#sops-env-sync`.
-
-**Rule:** When adding a new required field to `config.py` (no default value): push the value to
-`core-01/.env.sops` FIRST (auto-sync will update the server), then push the `config.py` change.
-The portal-api CI will block the deploy if the var is still missing.
-
-**Rule:** The PAT and encryption keys are now in `core-01/.env.sops`. Never regenerate them — only rotate the PAT if it becomes invalid (see `platform-zitadel-pat-invalid-after-upgrade`).
+**If portal-api is already down (all auth broken):** See `runbooks/platform-recovery.md#portal-api-deploy-outage-recovery`
 
 ---
 
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
-- [architecture/platform.md](architecture/platform.md) - Full compatibility review
+- [runbooks/platform-recovery.md](../runbooks/platform-recovery.md) - Emergency recovery procedures
+- [pitfalls/docs-app.md](docs-app.md) - klai-docs integration pitfalls
+- [architecture/platform.md](../architecture/platform.md) - Full compatibility review
