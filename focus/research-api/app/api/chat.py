@@ -116,7 +116,7 @@ async def _generate(
             yield _sse({"type": "token", "content": token})
 
         # 5. Emit done event with citations
-        citations = extract_citations(doc_chunks)
+        citations = extract_citations(all_chunks)
         yield _sse({"type": "done", "citations": citations, "mode": mode})
 
         # 6. Persist messages if history is enabled
