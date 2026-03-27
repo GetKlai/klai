@@ -18,6 +18,7 @@
 | [uptime-kuma-add-monitor](#uptime-kuma-add-monitor) | Adding a new service to status monitoring |
 | [umami-access](#umami-access) | Accessing Umami analytics dashboard |
 | [trivy-scan-new-workflow](#trivy-scan-new-workflow) | Adding Trivy container scanning to a new Docker build workflow |
+| [renovate](#renovate) | How Renovate works, automerge rules, and how to run it manually |
 
 ---
 
@@ -295,5 +296,41 @@ image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 **Results location:** GitHub → Security → Code scanning alerts (SARIF results per workflow run)
 
 **See also:** `pitfalls/devops.md#devops-ci-green-not-enough`
+
+---
+
+## renovate
+
+**When to use:** Understanding how Renovate works, automerge rules, or triggering a manual run
+
+Renovate replaced Dependabot as the dependency update bot. It runs as a self-hosted GitHub Action using `GITHUB_ADMIN_PAT`.
+
+**Schedule:** Every Monday at 05:00 Amsterdam time. Manual trigger available via Actions → Renovate → Run workflow.
+
+**Trigger manually:**
+```bash
+gh workflow run renovate.yml --repo GetKlai/klai
+gh run watch --exit-status
+```
+
+**Automerge rules (defined in `renovate.json`):**
+
+| Update type | Dependency type | Action |
+|---|---|---|
+| Patch | Any | Auto-merge (squash) |
+| Minor | Dev dependencies | Auto-merge (squash) |
+| Minor | Prod dependencies | Manual PR |
+| Major | Any | Manual PR |
+| Any | Docker images | Manual PR (grouped) |
+
+**Docker images:** Renovate groups all Docker image updates (`docker-compose.yml`, Dockerfiles) into a single PR labelled "Docker images". Review and merge manually — these affect production services.
+
+**First run after adding a new `:latest` image to `docker-compose.yml`:** Renovate creates a pin PR to replace `:latest` with an explicit version tag. Review and merge it — this is the supply chain improvement.
+
+**Config files:**
+- `renovate.json` — automerge rules and schedule
+- `.github/workflows/renovate.yml` — workflow definition
+
+**Why not Dependabot:** Dependabot has limited Docker Compose support and less flexible grouping. Renovate handles all package managers (npm, pip/uv, GitHub Actions, Docker Compose) in one tool with consistent automerge rules.
 
 ---
