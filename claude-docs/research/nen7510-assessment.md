@@ -1,7 +1,7 @@
 # NEN 7510 Compliance Assessment — Klai AI Platform
 
 > Code-gevalideerde analyse. Elke claim is geverifieerd in de broncode.
-> Datum: 2026-03-27
+> Datum: 2026-03-27 | Bijgewerkt: 2026-03-27 (SPEC-SEC-001 afgerond)
 
 ---
 
@@ -9,10 +9,12 @@
 
 NEN 7510 is de Nederlandse norm voor informatiebeveiliging in de zorg (ISO 27001 + zorgsectorspecifieke aanvullingen). Dit document bevat een code-gevalideerde beoordeling van de Klai compliance-status.
 
-**Totaalplaatje:**
-- Technische fundering (netwerk, auth, crypto): ~60–65% geïmplementeerd
+**Totaalplaatje (na SPEC-SEC-001, 2026-03-27):**
+- Technische fundering (netwerk, auth, crypto, audit): ~80–85% geïmplementeerd _(was ~60–65%)_
 - Documentatie / formeel beleid: ~30%
-- Operationele processen (DR, incident response): ~25%
+- Operationele processen (DR, incident response): ~35% _(was ~25%, door geautomatiseerde backups + monitoring)_
+
+**Afgerond via SPEC-SEC-001:** audit logging voor alle auth-events, MFA backend enforcement, logging middleware volgorde, audit log append-only (DB-niveau), audit log RLS, geautomatiseerde dagelijkse backups met off-site opslag en monitoring.
 
 ---
 
@@ -40,7 +42,9 @@ NEN 7510 is de Nederlandse norm voor informatiebeveiliging in de zorg (ISO 27001
 
 ### Kritieke nuancering
 
-**`mfa_policy = "required"` wordt NIET backend-afgedwongen bij login.** De login-endpoint controleert `has_totp` (heeft de gebruiker TOTP ingesteld?), maar als een gebruiker `mfa_policy="required"` heeft en geen TOTP heeft ingesteld, logt hij alsnog in. Enforcement berust volledig op de frontend UI. Dit is geen NEN 7510-conforme afdwinging van MFA.
+~~**`mfa_policy = "required"` wordt NIET backend-afgedwongen bij login.**~~ **✅ Opgelost (SPEC-SEC-001 Fix 2, 2026-03-27)**
+
+De login-endpoint controleert nu het `mfa_policy` van de organisatie en weigert bij `"required"` als de gebruiker geen TOTP én geen passkey heeft. HTTP 403 met `"MFA required by your organization. Please set up two-factor authentication."` Bij lookup-fout wordt `"optional"` aangenomen (fail-open, logged als warning).
 
 ---
 
@@ -73,12 +77,12 @@ NEN 7510 is de Nederlandse norm voor informatiebeveiliging in de zorg (ISO 27001
 - `log_event()` ([audit.py](../../../portal/backend/app/services/audit.py)) is de enige schrijfweg; faalt non-fataal
 - Aangeroepen bij: gebruikersuitnodiging, gebruikersverwijdering, schorsing, offboarding, groepswijzigingen, vergaderwijzigingen
 
-### Kritieke nuancering
+### Status na SPEC-SEC-001 (2026-03-27)
 
-- **Login events worden NIET geaudit.** `auth.py` roept `emit_event("login", ...)` aan (product analytics), geen `log_event()`. Er is geen audit trail van inlogpogingen, uitloggen, of mislukte auth.
-- **"Append-only" is alleen een conventie.** Geen PostgreSQL-triggers of DDL-constraints die DELETE/UPDATE blokkeren. De code doet het niet, maar de database staat het toe.
-- **Audit log heeft geen RLS.** Een applicatiefout kan in principe org A's logs blootstellen aan org B.
-- **Logretentie: 30 dagen** (VictoriaLogs). NEN 7510 vereist voor zorginstellingen typisch 6–12 maanden.
+- ~~**Login events worden NIET geaudit.**~~ **✅ Opgelost (Fix 1)** — `auth.py` roept nu `log_event()` aan bij: succesvolle password login (`auth.login`), succesvolle TOTP (`auth.login.totp`), logout (`auth.logout`), mislukte password auth (`auth.login.failed`, details `{reason: invalid_credentials}`), mislukte TOTP (`auth.totp.failed`, details `{reason: invalid_code}`). `org_id=0` als sentinel bij onbekend e-mailadres.
+- ~~**"Append-only" is alleen een conventie.**~~ **✅ Opgelost (Fix 4)** — PostgreSQL RULES toegevoegd via Alembic-migratie: `no_update_audit` en `no_delete_audit` op `portal_audit_log`. UPDATE/DELETE worden silently genegeerd zonder fout.
+- ~~**Audit log heeft geen RLS.**~~ **✅ Opgelost (Fix 5)** — RLS ingeschakeld op `portal_audit_log` via dezelfde migration: `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy op `org_id`.
+- **Logretentie: 30 dagen** (VictoriaLogs). NEN 7510 vereist voor zorginstellingen typisch 6–12 maanden. _(Nog openstaand — buiten scope SPEC-SEC-001)_
 
 ---
 
@@ -107,11 +111,11 @@ RLS-mechanisme: `set_tenant()` ([database.py](../../../portal/backend/app/core/d
 
 ## Structlog context: org_id / user_id
 
-### Bevinding (kritiek)
+### ✅ Opgelost (SPEC-SEC-001 Fix 3, 2026-03-27)
 
-De [LoggingContextMiddleware](../../../portal/backend/app/middleware/logging_context.py) leest `request.state.org_id` en `request.state.user_id` **vóór** `call_next()`, dus vóór dat FastAPI route-dependencies draaien. Er is geen auth-middleware in [main.py](../../../portal/backend/app/main.py) die `request.state.org_id` zet.
+~~De `LoggingContextMiddleware` leest `request.state.org_id` en `request.state.user_id` **vóór** `call_next()`, dus vóór dat FastAPI route-dependencies draaien. In de praktijk zijn `org_id` en `user_id` altijd `None`.~~
 
-**In de praktijk zijn `org_id` en `user_id` in de structlog context altijd `None`.** Alleen `request_id` wordt betrouwbaar gebonden. De opmerking in de middleware (*"Auth middleware runs before this"*) is feitelijk onjuist — er is geen auth middleware.
+De [LoggingContextMiddleware](../../../portal/backend/app/middleware/logging_context.py) bindt nu `org_id` en `user_id` **na** `call_next()`, zodat route-dependencies de kans hebben gehad `request.state` te vullen. `request_id` wordt nog steeds **vóór** `call_next()` gebonden (onveranderd). Unauthenticated routes krijgen `None` (geen exception).
 
 ---
 
@@ -129,13 +133,7 @@ De [LoggingContextMiddleware](../../../portal/backend/app/middleware/logging_con
 
 ### Gevonden beveiligingsproblemen (niet in eerdere analyse)
 
-**FalkorDB bindt op `0.0.0.0:6380`:**
-```yaml
-falkordb:
-  ports:
-    - "6380:6379"   # ← niet 127.0.0.1:6380:6379
-```
-Docker bypasses UFW via iptables. FalkorDB (Redis-compatibel, geen auth ingesteld) is waarschijnlijk bereikbaar van buiten. Fix: verander naar `127.0.0.1:6380:6379` of verwijder de port mapping als je het alleen intern gebruikt.
+~~**FalkorDB bindt op `0.0.0.0:6380`**~~ **✅ Opgelost (P0, vóór SPEC-SEC-001)** — Port mapping gewijzigd naar `127.0.0.1:6380:6379` in docker-compose.yml. FalkorDB niet langer extern bereikbaar.
 
 **Hardcoded Firecrawl wachtwoord:**
 ```yaml
@@ -151,17 +149,34 @@ Laag risico (intern netwerk), maar hygiëne-probleem.
 
 ## Backups
 
-### Bevinding
+### ✅ Opgelost (SPEC-SEC-001 Fix 6, 2026-03-27)
 
-[backup.sh](../../../deploy/scripts/backup.sh) bestaat en doet:
-- `pg_dumpall` (PostgreSQL)
-- `mongodump` (MongoDB)
-- `redis-cli BGSAVE` + `rdb` kopiëren
-- Meilisearch snapshot via API
+[backup.sh](../../../deploy/scripts/backup.sh) is uitgebreid en volledig geautomatiseerd:
 
-**Maar:** het script is gedocumenteerd als *"Pre-upgrade backup"* met *"Usage: ./scripts/backup.sh"*. Er is geen cronjob, geen automatische scheduling, en geen off-site opslag. Het is een handmatig hulpmiddel.
+**Wat er nu in zit:**
+- `pg_dumpall` (PostgreSQL, incl. Gitea DB-schema)
+- Gitea git-repositories + config (primaire KB-bron, via `docker run --volumes-from :ro alpine tar`)
+- `mongodump` archive (MongoDB — LibreChat chatgeschiedenis)
+- `redis-cli BGSAVE` + dump.rdb (Redis — sessiedata)
+- Meilisearch snapshot (nice-to-have, derived — herindexeerbaar uit MongoDB)
 
-**NEN 7510 vereist:** geautomatiseerde, regelmatige backups; off-site opslag; geteste restore-procedure; gedocumenteerde RTO/RPO.
+**Automatisering:**
+- Dagelijks om 02:00 via cron op core-01 (`0 2 * * * /opt/klai/scripts/backup.sh`)
+- Lokale retentie: 30 dagen
+
+**Off-site opslag:**
+- Encrypted met `age` (dual-recipient: MacBook + core-01, zelfde sleutels als SOPS)
+- Upload naar Hetzner Storage Box via `rsync -e ssh -p 23` (ipv rclone — equivalent)
+- Geen remote pruning nodig (45 MB/dag, 100 GB capaciteit ≈ 2226 dagen)
+
+**Monitoring:**
+- Uptime Kuma push monitor "Backup core-01" (ID 48) op status.getklai.com
+- `trap 'ERR'` → `_kuma_push down` bij enige fout
+- Succesmelding met totale backup-grootte aan het einde
+
+**FalkorDB en Qdrant zijn bewust uitgesloten** — derived indices, herindexeerbaar via ingest pipeline.
+
+**Nog openstaand:** geteste restore-procedure (RTO/RPO documentatie) — buiten scope SPEC-SEC-001.
 
 ---
 
@@ -171,14 +186,14 @@ Laag risico (intern netwerk), maar hygiëne-probleem.
 |---|---|---|
 | MFA niet geïmplementeerd | ❌ Incorrect | TOTP, passkeys, email OTP zijn volledig uitgewerkt |
 | SSO cookie AES-256-GCM | ❌ Incorrect | Fernet (AES-128-CBC-HMAC-SHA256) |
-| Login events geaudit | ❌ Incorrect | `emit_event()`, geen `log_event()` — niet in audit log |
-| Audit log append-only (DB-niveau) | ❌ Incorrect | Alleen conventie, geen DB-constraint |
-| org_id/user_id in logs per request | ❌ Incorrect | Middleware leest ze vóór auth — altijd None |
-| RLS op alle tenant data | ⚠ Overstated | Alleen 5 tabellen; rest applicatielogica |
-| Geen geautomatiseerde backups | ✓ Correct | Script bestaat maar is handmatig |
+| Login events geaudit | ~~❌ Incorrect~~ **✅ Opgelost** | ~~`emit_event()`, geen `log_event()`~~ `log_event()` aangeroepen voor alle auth-events (SPEC-SEC-001 Fix 1) |
+| Audit log append-only (DB-niveau) | ~~❌ Incorrect~~ **✅ Opgelost** | ~~Alleen conventie~~ PostgreSQL RULES `no_update_audit` + `no_delete_audit` (SPEC-SEC-001 Fix 4) |
+| org_id/user_id in logs per request | ~~❌ Incorrect~~ **✅ Opgelost** | ~~Altijd None~~ Gebonden na `call_next()` — gevuld voor authenticated routes (SPEC-SEC-001 Fix 3) |
+| RLS op alle tenant data | ⚠ Overstated | 5 tabellen + `portal_audit_log` (Fix 5); `portal_connectors` en overige nog applicatielogica |
+| Geen geautomatiseerde backups | ~~✓ Correct~~ **✅ Opgelost** | ~~Handmatig~~ Dagelijks cron + Hetzner Storage Box + Uptime Kuma (SPEC-SEC-001 Fix 6) |
 | Geen rate limiting | ❌ Incorrect | Caddy heeft uitgebreide per-route rate limiting |
-| FalkorDB veilig | ❌ Gemist | 0.0.0.0:6380 waarschijnlijk extern bereikbaar |
-| MFA "required" afgedwongen | ❌ Incorrect | Backend enforces niets bij login |
+| FalkorDB veilig | ~~❌ Gemist~~ **✅ Opgelost** | ~~0.0.0.0:6380~~ `127.0.0.1:6380:6379` (P0, vóór SPEC) |
+| MFA "required" afgedwongen | ~~❌ Incorrect~~ **✅ Opgelost** | ~~Backend enforces niets~~ HTTP 403 bij geen MFA + `mfa_policy="required"` (SPEC-SEC-001 Fix 2) |
 
 ---
 
@@ -186,24 +201,24 @@ Laag risico (intern netwerk), maar hygiëne-probleem.
 
 ### Direct (voor productie met zorginstellingen)
 
-1. **FalkorDB port** — verander `"6380:6379"` naar `"127.0.0.1:6380:6379"` in docker-compose.yml
-2. **LoggingContextMiddleware** — bind `org_id`/`user_id` na `call_next()`, of bind handmatig in route handlers
-3. **Login events in audit log** — `log_event()` aanroepen in `auth.py` bij login, logout, en mislukte auth
-4. **Backup automatisering** — backup.sh dagelijks via cron, output naar off-site locatie (bijv. Hetzner Object Storage)
+1. ~~**FalkorDB port**~~ **✅ Opgelost (P0, vóór SPEC-SEC-001)** — `127.0.0.1:6380:6379` in docker-compose.yml
+2. ~~**LoggingContextMiddleware**~~ **✅ Opgelost (SPEC-SEC-001 Fix 3)** — `org_id`/`user_id` gebonden na `call_next()`
+3. ~~**Login events in audit log**~~ **✅ Opgelost (SPEC-SEC-001 Fix 1)** — alle auth-events geaudit in `portal_audit_log`
+4. ~~**Backup automatisering**~~ **✅ Opgelost (SPEC-SEC-001 Fix 6)** — dagelijks cron + Hetzner Storage Box + Uptime Kuma
 
 ### Kortetermijn
 
-5. **MFA backend enforcement** — bij `mfa_policy="required"`: weiger login als geen MFA-methode ingesteld
-6. **Log retentie verhogen** — VictoriaLogs van 30d naar 90d minimum; overweeg archivering naar cold storage
-7. **Audit log append-only** — voeg PostgreSQL trigger toe die UPDATE/DELETE blokkeert op `portal_audit_log`
-8. **Audit log RLS** — voeg RLS toe op `portal_audit_log`
+5. ~~**MFA backend enforcement**~~ **✅ Opgelost (SPEC-SEC-001 Fix 2)** — HTTP 403 bij `mfa_policy="required"` + geen MFA
+6. **Log retentie verhogen** — VictoriaLogs van 30d naar 90d minimum; overweeg archivering naar cold storage _(open)_
+7. ~~**Audit log append-only**~~ **✅ Opgelost (SPEC-SEC-001 Fix 4)** — PostgreSQL RULES blokkeren UPDATE/DELETE
+8. ~~**Audit log RLS**~~ **✅ Opgelost (SPEC-SEC-001 Fix 5)** — tenant isolation policy op `portal_audit_log`
 
 ### Middellange termijn
 
-9. **Database encryption at rest** — PostgreSQL volume-level encryption of column-level voor PII
-10. **Formeel incident response playbook** — gedocumenteerde procedure voor beveiligingsincidenten
-11. **Geteste disaster recovery** — backup restore testen, RTO/RPO definiëren
-12. **GDPR-inzage en -verwijdering API** — cascading delete over Zitadel + Portal
+9. **Database encryption at rest** — PostgreSQL volume-level encryption of column-level voor PII _(open)_
+10. **Formeel incident response playbook** — gedocumenteerde procedure voor beveiligingsincidenten _(open)_
+11. **Geteste disaster recovery** — backup restore testen, RTO/RPO definiëren _(open)_
+12. **GDPR-inzage en -verwijdering API** — cascading delete over Zitadel + Portal _(open)_
 
 ---
 
