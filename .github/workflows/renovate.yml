@@ -11,6 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: renovatebot/github-action@v46
+      - uses: renovatebot/github-action@v46.1.6
         with:
           token: ${{ secrets.GITHUB_ADMIN_PAT }}
