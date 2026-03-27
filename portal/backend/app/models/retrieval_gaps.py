@@ -27,6 +27,7 @@ class PortalRetrievalGap(Base):
         ),
         Index("ix_retrieval_gaps_org_occurred", "org_id", "occurred_at"),
         Index("ix_retrieval_gaps_org_query", "org_id", "query_text"),
+        Index("ix_retrieval_gaps_open", "org_id", "query_text", postgresql_where=text("resolved_at IS NULL")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -43,3 +44,4 @@ class PortalRetrievalGap(Base):
     chunks_retrieved: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     retrieval_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)

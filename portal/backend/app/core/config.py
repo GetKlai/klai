@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     litellm_base_url: str = "http://litellm:4000"
     summarize_model: str = "klai-primary"
 
+    # Knowledge gap thresholds (mirror of LiteLLM hook env vars for re-scoring)
+    klai_gap_soft_threshold: float = 0.4
+    klai_gap_dense_threshold: float = 0.35
+
+    # Knowledge retrieval API (for gap re-scoring)
+    knowledge_retrieve_url: str = ""  # e.g. http://retrieval-api:8000
+
     # Whisper server (internal -- for direct post-meeting transcription)
     whisper_server_url: str = "http://whisper-server:8000"
 

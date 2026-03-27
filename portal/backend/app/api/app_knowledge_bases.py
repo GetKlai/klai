@@ -453,6 +453,7 @@ async def get_kb_stats(
             select(func.count()).where(
                 PortalRetrievalGap.org_id == org.id,
                 PortalRetrievalGap.occurred_at >= gap_cutoff,
+                PortalRetrievalGap.resolved_at.is_(None),
             )
         )
         org_gap_count_7d = gap_result.scalar_one()
