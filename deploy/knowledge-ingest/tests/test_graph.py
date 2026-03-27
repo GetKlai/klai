@@ -9,6 +9,16 @@ import pytest
 from knowledge_ingest import graph as graph_module
 
 
+class _FakeEpisodeType:
+    text = "text"
+
+
+@pytest.fixture(autouse=True)
+def _patch_episode_type(monkeypatch):
+    """Inject EpisodeType into graph module so tests run without graphiti-core installed."""
+    monkeypatch.setattr(graph_module, "EpisodeType", _FakeEpisodeType, raising=False)
+
+
 def _make_episode_result(uuid: str = "ep-001") -> MagicMock:
     result = MagicMock()
     result.uuid = uuid

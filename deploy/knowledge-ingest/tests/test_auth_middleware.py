@@ -1,6 +1,6 @@
 """Tests for the InternalSecretMiddleware (TASK-002)."""
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 TEST_SECRET = "test-secret-value-123"
@@ -28,10 +28,20 @@ def secured_client():
 
 
 def test_health_without_secret(secured_client):
-    """GET /health should always work without auth."""
-    resp = secured_client.get("/health")
+    """GET /health should always work without auth — middleware must not block it."""
+    mock_resp = MagicMock(status_code=200)
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=MagicMock(get=AsyncMock(return_value=mock_resp)))
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("knowledge_ingest.app.settings.graphiti_enabled", False), \
+         patch("qdrant_client.AsyncQdrantClient") as mock_qc, \
+         patch("httpx.AsyncClient", return_value=mock_ctx):
+        mock_qc.return_value.get_collections = AsyncMock(return_value=[])
+        resp = secured_client.get("/health")
+
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json()["status"] == "ok"
 
 
 def test_request_without_secret_returns_401(secured_client):
