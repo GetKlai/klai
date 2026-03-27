@@ -95,3 +95,43 @@ class TestSearch:
 
         assert len(results) == 2
         assert results[0]["score"] >= results[1]["score"]
+
+    @pytest.mark.asyncio
+    async def test_kb_slugs_filter_excludes_other_kb(self):
+        """kb_slugs restricts search to the specified KBs; chunks from other KBs are not returned."""
+        from qdrant_client.models import MatchAny
+
+        # Mock returns only the chunk that Qdrant would keep after applying the filter.
+        # We verify that the Qdrant call includes the kb_slug MatchAny condition.
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response([
+            _make_point("c1", "intern chunk", 0.8, org_id="org-1", kb_slug="intern"),
+        ])
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(
+                query="test",
+                org_id="org-1",
+                scope="org",
+                kb_slugs=["intern"],
+            )
+            results = await search.hybrid_search([0.1, 0.2], req, 10)
+
+        # Only the "intern" chunk is returned — Qdrant filters out others server-side.
+        assert len(results) == 1
+        assert results[0]["text"] == "intern chunk"
+
+        # Verify the filter sent to Qdrant contains the kb_slug MatchAny condition.
+        call_args = mock_client.query_points.call_args
+        prefetches = call_args.kwargs.get("prefetch") or call_args.args[1]
+        # At least one prefetch must carry a filter with the kb_slug condition.
+        kb_conditions = [
+            cond
+            for pf in prefetches
+            for cond in (pf.filter.must or [])
+            if getattr(cond, "key", None) == "kb_slug"
+        ]
+        # Each prefetch leg carries the condition, so there are >= 1 occurrences.
+        assert len(kb_conditions) >= 1
+        assert isinstance(kb_conditions[0].match, MatchAny)
+        assert kb_conditions[0].match.any == ["intern"]

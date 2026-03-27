@@ -13,6 +13,7 @@ class RetrieveRequest(BaseModel):
     notebook_id: str | None = None
     top_k: int = 8
     conversation_history: list[dict] = Field(default_factory=list)
+    kb_slugs: list[str] | None = None
 
 
 class ChunkResult(BaseModel):
