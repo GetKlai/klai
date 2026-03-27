@@ -138,10 +138,8 @@ async def me(
     )
 
 
-# ---------------------------------------------------------------------------
-# SAR (Subject Access Request) response models
-# @MX:NOTE SPEC-GDPR-001 - AVG Art. 15 Narrow models (no audit details/props)
-# ---------------------------------------------------------------------------
+# SAR response models (SPEC-GDPR-001)
+# @MX:NOTE Narrow scope - excludes audit details and product event properties
 
 
 class SarIdentity(BaseModel):
