@@ -12,6 +12,7 @@ from app.api.app_knowledge_bases import router as app_knowledge_bases_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.connectors import router as connectors_router
+from app.api.taxonomy import router as taxonomy_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
 from app.api.knowledge import router as knowledge_router
@@ -114,6 +115,7 @@ app.include_router(internal_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_knowledge_bases_router)
 app.include_router(connectors_router)
+app.include_router(taxonomy_router)
 
 
 @app.get("/health")
