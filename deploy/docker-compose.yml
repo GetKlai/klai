@@ -934,11 +934,12 @@ services:
     networks:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
+    # Memory: warmup benchmark peaks at ~5GB, runtime settles at ~1.3GB. Minimum 6G.
     deploy:
       resources:
         limits:
           cpus: '4'
-          memory: 3G
+          memory: 8G
 
   # Firecrawl v1.x: self-hosted web scraper for LibreChat full-page content extraction.
   # Requires dedicated Postgres (NUQ job queue) and RabbitMQ (worker coordination).
