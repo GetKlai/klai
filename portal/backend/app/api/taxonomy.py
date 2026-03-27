@@ -155,9 +155,7 @@ async def _check_circular_reference(
     db: AsyncSession,
 ) -> None:
     """Walk up the ancestor chain from new_parent_id. Reject if node_id appears."""
-    result = await db.execute(
-        select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb_id)
-    )
+    result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb_id))
     nodes_by_id = {n.id: n for n in result.scalars().all()}
 
     current = new_parent_id
@@ -332,9 +330,7 @@ async def delete_taxonomy_node(
     # Update parent doc_count if parent exists
     reassigned_docs = node.doc_count
     if node.parent_id is not None and reassigned_docs > 0:
-        parent_result = await db.execute(
-            select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == node.parent_id)
-        )
+        parent_result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == node.parent_id))
         parent = parent_result.scalar_one_or_none()
         if parent:
             parent.doc_count += reassigned_docs
@@ -399,9 +395,7 @@ async def create_proposal(
         )
 
     # Look up KB by slug across all orgs (internal endpoint, no org scoping)
-    result = await db.execute(
-        select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug)
-    )
+    result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug))
     kb = result.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
@@ -497,9 +491,7 @@ async def approve_proposal(
             )
         # Move children from source to target
         await db.execute(
-            update(PortalTaxonomyNode)
-            .where(PortalTaxonomyNode.parent_id == source_id)
-            .values(parent_id=target_id)
+            update(PortalTaxonomyNode).where(PortalTaxonomyNode.parent_id == source_id).values(parent_id=target_id)
         )
         # Transfer doc_count
         target_node.doc_count += source_node.doc_count
