@@ -951,7 +951,78 @@ for attempt in range(3):
 
 ---
 
+## platform-librechat-redis-config-cache
+
+**Severity:** HIGH
+
+**Trigger:** Changing `librechat.yaml` and restarting the LibreChat container, expecting the new config to be active
+
+When `USE_REDIS=true` (Klai's setup), LibreChat caches the parsed `librechat.yaml` in Redis under `CacheKeys.APP_CONFIG` with **no TTL**. A container restart reads from Redis, not from disk — the new YAML is silently ignored.
+
+**Wrong procedure:**
+```bash
+docker restart librechat-{slug}   # ← old config still served from Redis
+```
+
+**Correct procedure:**
+```bash
+docker exec redis redis-cli FLUSHALL   # flush Redis first
+docker restart librechat-{slug}        # now reads fresh from disk
+```
+
+**Warning:** `FLUSHALL` clears all Redis data including sessions and other caches. If you want to be surgical, find the specific key prefix (`_BASE_`, `STARTUP_CONFIG`) and delete only those — but FLUSHALL is safe during a maintenance window.
+
+**Source:** LibreChat issue #11175 — confirmed, no fix in upstream as of March 2026.
+
+**See also:** `patterns/platform.md#platform-librechat-config-lifecycle`
+
+---
+
+## platform-librechat-addparams-no-envvars
+
+**Severity:** MEDIUM
+
+**Trigger:** Trying to use `${ENV_VAR}` or `{{USER_VAR}}` inside `addParams` in `librechat.yaml`
+
+`addParams` values are literal — they do not support environment variable substitution or user template variables. Only `apiKey` and `baseURL` fields in a custom endpoint support `${ENV_VAR}` syntax.
+
+**Wrong:**
+```yaml
+endpoints:
+  custom:
+    - name: "Klai AI"
+      addParams:
+        x-tenant-id: "${KLAI_ORG_SLUG}"   # ← does NOT work
+        x-user-id: "{{LIBRECHAT_USER_ID}}"  # ← does NOT work
+```
+
+**Correct approach:** Inject dynamic per-request context at the LiteLLM layer via a pre-call hook (e.g., `KlaiKnowledgeHook`), or use MCP server headers which do support `{{LIBRECHAT_USER_ID}}` interpolation.
+
+---
+
+## platform-librechat-dual-system-message
+
+**Severity:** MEDIUM
+
+**Trigger:** Using both `modelSpecs[].preset.promptPrefix` in `librechat.yaml` AND injecting a system message via the KlaiKnowledgeHook (or any LiteLLM pre-call hook)
+
+LibreChat applies `promptPrefix` as a system message **before** sending the request to LiteLLM. KlaiKnowledgeHook intercepts **at the LiteLLM layer** — after LibreChat has already built its request. Result: the LLM receives two separate system messages.
+
+**Execution order:**
+1. LibreChat builds messages array → inserts `promptPrefix` as `role: system`
+2. LibreChat POSTs to LiteLLM
+3. KlaiKnowledgeHook injects its own context into `data["messages"]`
+
+Most modern LLMs accept multiple system messages without breaking, but the behavior is model-dependent. To avoid ambiguity:
+- If the hook's context is additive (knowledge chunks), append to the existing system message rather than prepend a new one
+- Check `data["messages"][0]["role"] == "system"` and extend its content rather than inserting a new message
+
+**Note:** The correct field name is `promptPrefix`, not `systemPrompt`. The librechat.yaml `preset` schema does not have a `systemPrompt` key.
+
+---
+
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
 - [platform-beslissingen.md](../../../klai-website/docs/platform-beslissingen.md) - Full compatibility review
+- [research/librechat-dynamic-config.md](../research/librechat-dynamic-config.md) - Full dynamic config investigation (March 2026)
