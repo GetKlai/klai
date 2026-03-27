@@ -72,10 +72,10 @@ class TestSarExport:
         db = AsyncMock()
         db.execute.side_effect = [
             mock_result_org_user,
-            mock_result_empty,   # group memberships
-            mock_result_empty,   # KB access
-            mock_result_empty,   # audit events
-            mock_result_empty,   # usage events
+            mock_result_empty,  # group memberships
+            mock_result_empty,  # KB access
+            mock_result_empty,  # audit events
+            mock_result_empty,  # usage events
             mock_result_meetings,  # meetings
         ]
 
@@ -124,11 +124,11 @@ class TestSarExport:
         db = AsyncMock()
         db.execute.side_effect = [
             mock_result_org_user,
-            mock_result_empty,
-            mock_result_empty,
-            mock_result_empty,
-            mock_result_empty,
-            mock_result_meetings,
+            mock_result_empty,  # group memberships
+            mock_result_empty,  # KB access
+            mock_result_empty,  # audit events
+            mock_result_empty,  # usage events
+            mock_result_meetings,  # meetings
         ]
 
         mock_credentials = MagicMock()
@@ -159,11 +159,11 @@ class TestSarExport:
         db = AsyncMock()
         db.execute.side_effect = [
             mock_result_org_user,
-            mock_result_empty,
-            mock_result_empty,
-            mock_result_empty,
-            mock_result_empty,
-            mock_result_meetings,
+            mock_result_empty,  # group memberships
+            mock_result_empty,  # KB access
+            mock_result_empty,  # audit events
+            mock_result_empty,  # usage events
+            mock_result_meetings,  # meetings
         ]
 
         mock_credentials = MagicMock()
@@ -216,10 +216,10 @@ class TestSarExport:
         db = AsyncMock()
         db.execute.side_effect = [
             mock_result_org_user,
-            mock_result_empty,   # group memberships
-            mock_result_empty,   # KB access
-            mock_result_empty,   # audit events
-            mock_result_empty,   # usage events
+            mock_result_empty,  # group memberships
+            mock_result_empty,  # KB access
+            mock_result_empty,  # audit events
+            mock_result_empty,  # usage events
             mock_result_meetings,  # meetings
         ]
 
