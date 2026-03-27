@@ -14,7 +14,7 @@ from app.api.dependencies import _get_caller_org, _require_admin_or_group_admin_
 from app.core.database import get_db
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
-from app.services import docs_client
+from app.services import docs_client, knowledge_ingest_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["knowledge-bases"])
@@ -181,9 +181,12 @@ async def update_knowledge_base(
         kb.name = body.name
     if body.description is not None:
         kb.description = body.description
+    visibility_changed = body.visibility is not None and body.visibility != kb.visibility
     if body.visibility is not None:
         kb.visibility = body.visibility
     await db.commit()
+    if visibility_changed:
+        await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
     return KBOut(
         id=kb.id,
         name=kb.name,

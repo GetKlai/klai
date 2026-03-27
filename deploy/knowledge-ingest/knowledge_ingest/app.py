@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from knowledge_ingest import db, org_config, qdrant_store
+from knowledge_ingest import db, kb_config, org_config, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
 from knowledge_ingest.routes import crawl, ingest, knowledge, personal
@@ -52,19 +52,21 @@ async def lifespan(app: FastAPI):
         async with proc_app.open_async():
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(
-                    queues=["enrich-interactive", "enrich-bulk"],
+                    queues=["ingest-kb", "enrich-interactive", "enrich-bulk"],
                     install_signal_handlers=False,
                 )
             )
             listener_task = asyncio.create_task(org_config.start_listener(pool))
-            logger.info("Procrastinate worker and org_config listener started.")
+            kb_config_listener_task = asyncio.create_task(kb_config.start_listener(pool))
+            logger.info("Procrastinate worker and config listeners started.")
 
             yield
 
             logger.info("Shutting down knowledge-ingest service.")
             worker_task.cancel()
             listener_task.cancel()
-            await asyncio.gather(worker_task, listener_task, return_exceptions=True)
+            kb_config_listener_task.cancel()
+            await asyncio.gather(worker_task, listener_task, kb_config_listener_task, return_exceptions=True)
     else:
         logger.info("Enrichment disabled — skipping Procrastinate worker.")
         yield

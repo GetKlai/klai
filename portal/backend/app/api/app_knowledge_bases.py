@@ -19,7 +19,7 @@ from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKBTombstone, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
-from app.services import docs_client
+from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.zitadel import zitadel
 
@@ -344,6 +344,11 @@ async def create_app_knowledge_base(
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
 
     await db.commit()
+
+    # Sync initial visibility to knowledge-ingest so new chunks get the correct field.
+    # Uses the Zitadel org_id (org.zitadel_org_id) as the tenant key in Qdrant.
+    await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, body.slug, body.visibility)
+
     return _kb_out(kb)
 
 
