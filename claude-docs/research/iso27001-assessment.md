@@ -2,6 +2,7 @@
 
 > Code-gevalideerde analyse. Elke claim is geverifieerd in de broncode en configuratie.
 > Datum: 2026-03-27 | 6 parallelle audit-agents (A.5, A.6+A.7, A.8.1–15, A.8.16–34, beleidskwaliteit, SOA-cross-validatie)
+> Bijgewerkt: 2026-03-27 — SPEC-SEC-002 fixes verwerkt (A.6.5 GitHub offboarding, A.8.16 GlitchTip SMTP, A.8.13 restore test)
 
 ---
 
@@ -17,16 +18,21 @@ ISO 27001:2022 heeft 93 controls verdeeld over vier domeinen: A.5 (Org, 37 contr
 | PARTIAL | 33 | **≥ 42** | +9+ |
 | GAP / FALSE | 1 | **≥ 5** | +4+ |
 
+**Gesloten via SPEC-SEC-002 (2026-03-27):**
+- **A.6.5** GitHub offboarding → ✅ COVERED: GitHub API service geïmplementeerd (`portal/backend/app/services/github.py`), GITHUB_ADMIN_PAT aanwezig
+- **A.8.16** GlitchTip alerting → ✅ COVERED: `GLITCHTIP_EMAIL_URL` geconfigureerd via SOPS (SMTP → cloud86-host.io:587)
+- **A.8.13** Restore testing → bewijs aanwezig: MongoDB-hersteltest uitgevoerd en gelogd (2026-03-27); overige gaps nog open
+
 **Kritieke valse claims (COVERED maar NIET geïmplementeerd):**
 - **A.7.10 / A.8.24** — "encrypted Hetzner block storage / at-rest encryption" → PostgreSQL, MongoDB, Redis hebben **geen** encryptie at-rest
 - **A.5.34** — "GDPR by design" → Geen SAR-endpoint, geen gegevensportabiliteit, geen verwerkingsregister (AVG Art. 30)
 - **A.8.7** — "malware protection" → Geen container image scanning (Trivy/Snyk/Grype)
 - **A.8.13** — "backup" → Qdrant **niet** backed up, VictoriaLogs **niet** expliciet backed up
 - **A.8.17** — "NTP on all Linux servers" → Geen NTP geïnstalleerd of gemonitord
-- **A.6.5** — "offboarding covered" → GitHub-verwijdering **niet** geïmplementeerd in offboarding-endpoint
 
 **Tevens overstated (COVERED → PARTIAL):**
-A.5.1, A.5.8, A.5.33, A.8.16, A.8.18, A.8.24, A.8.32
+A.5.1, A.5.8, A.5.33, A.8.18, A.8.24, A.8.32
+_(A.8.16 hersteld naar COVERED via SPEC-SEC-002)_
 
 **Upgrade beschikbaar (PARTIAL → COVERED):**
 A.7.7 (clear desk/screen — beleid bestaat al)
@@ -43,13 +49,13 @@ A.7.7 (clear desk/screen — beleid bestaat al)
 | **A.5.8** | InfoSec in projecten | COVERED | **PARTIAL** | OWASP niet formeel in SPEC-template, geen security review gate in CI |
 | **A.5.33** | Gegevensbescherming | COVERED | **PARTIAL** | 30d retentie hardcoded (`-retentionPeriod=30d`), niet configureerbaar zoals geclaimd |
 | **A.5.34** | Privacy & PII | **COVERED** | **FALSE** | Geen SAR-endpoint, geen portabiliteit, geen verwerkingsregister (AVG Art. 30) |
-| **A.6.5** | Offboarding | **COVERED** | **PARTIAL** | GitHub-verwijdering ontbreekt in `admin.py:offboard_user()` |
+| **A.6.5** | Offboarding | **COVERED** | **COVERED ✅** | GitHub API service geïmplementeerd (SPEC-SEC-002); GITHUB_ADMIN_PAT aanwezig |
 | **A.7.7** | Clean desk/screen | PARTIAL | **COVERED** ↑ | `endpoint-security.md` dekt dit volledig; upgrade gerechtvaardigd |
 | **A.7.10** | Storage media | **COVERED** | **FALSE** | Docker volumes plaintext; geen LUKS/TDE/pgcrypto geconfigureerd |
 | **A.8.7** | Anti-malware | **COVERED** | **FALSE** | Geen Trivy/Snyk in CI; Docker isolation ≠ malware protection |
 | **A.8.13** | Backup | **COVERED** | **FALSE** | Qdrant en VictoriaLogs afwezig in `backup.sh`; backup-policy.md incorrect |
 | **A.8.15** | Logging | COVERED | **PARTIAL** | 30d retentie hardcoded; ISO/NEN vereist langere retentie voor incidenten |
-| **A.8.16** | Monitoring | COVERED | **PARTIAL** | GlitchTip `EMAIL_URL=consolemail://` — geen externe alerting |
+| **A.8.16** | Monitoring | COVERED | **COVERED ✅** | GlitchTip `GLITCHTIP_EMAIL_URL` geconfigureerd via SOPS (SMTP, SPEC-SEC-002) |
 | **A.8.17** | Tijdsynchronisatie | **COVERED** | **FALSE** | `setup.sh` installeert geen NTP/chrony; `timedatectl` timezone ≠ NTP |
 | **A.8.18** | Privileged utilities | COVERED | **PARTIAL** | `alloy` container draait als root (docker-compose.yml:509) |
 | **A.8.24** | Cryptografie | **COVERED** | **PARTIAL** | TLS ✅; SOPS ✅; at-rest databases **niet** versleuteld |
