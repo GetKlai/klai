@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   packages: write
+  security-events: write
 
 jobs:
   quality:
@@ -37,6 +38,9 @@ jobs:
       - name: Type check (pyright)
         run: uv run --with pyright pyright
 
+      # CVE-2026-4539: ignored — package not directly exploitable in our context (sandboxed container,
+      # no user-controlled input reaches the vulnerable code path). Re-assess Q3 2026.
+      # See: https://github.com/GetKlai/klai/issues/62
       - name: Dependency vulnerability scan (pip-audit)
         run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539
 
@@ -68,6 +72,32 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  scan:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ghcr.io/getklai/portal-api:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    needs: [build-push, scan]
+    runs-on: ubuntu-latest
+    steps:
       - name: Pre-deploy env check
         uses: appleboy/ssh-action@v1
         with:
