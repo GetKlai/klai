@@ -24,6 +24,13 @@ def _sign(body: bytes, secret: str) -> str:
 @pytest.fixture
 def hmac_client():
     """Client with gitea_webhook_secret configured."""
+    from unittest.mock import MagicMock
+
+    mock_pool = MagicMock()
+    mock_pool.execute = AsyncMock(return_value=None)
+    mock_pool.fetch = AsyncMock(return_value=[])
+    mock_pool.close = AsyncMock(return_value=None)
+
     with patch("knowledge_ingest.config.settings.gitea_webhook_secret", WEBHOOK_SECRET):
         with patch("knowledge_ingest.routes.ingest.settings") as mock_settings:
             mock_settings.gitea_webhook_secret = WEBHOOK_SECRET
@@ -34,6 +41,16 @@ def hmac_client():
             with patch(
                 "knowledge_ingest.qdrant_store.ensure_collection",
                 new_callable=AsyncMock,
+            ), patch(
+                "knowledge_ingest.db.get_pool",
+                new_callable=AsyncMock,
+                return_value=mock_pool,
+            ), patch(
+                "knowledge_ingest.db.close_pool",
+                new_callable=AsyncMock,
+            ), patch(
+                "knowledge_ingest.config.settings.enrichment_enabled",
+                False,
             ):
                 from knowledge_ingest.app import app
                 from fastapi.testclient import TestClient
