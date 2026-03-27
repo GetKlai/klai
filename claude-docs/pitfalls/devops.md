@@ -120,7 +120,82 @@ Full protocol: `klai-claude/rules/klai/ci-verify-after-push.md`
 
 ---
 
+## devops-alembic-multiple-heads
+
+**Severity:** HIGH
+
+**Trigger:** Running `alembic upgrade head` after merging a feature branch that added its own migration while main also had new migrations
+
+When two branches independently add Alembic migrations (each based on the same `down_revision`), merging them creates multiple "heads." Alembic refuses to run `upgrade head` when it detects more than one head because it cannot determine the order.
+
+**What happened:** During SPEC-KB-012, the taxonomy feature branch added a migration while main had accumulated 3 other migrations (settings tab, RLS policies, etc.). After merging, Alembic reported 4 heads and refused to upgrade.
+
+**Symptom:**
+```
+ERROR [alembic.util.messaging] Multiple head revisions are present for given argument 'head'
+```
+
+**Prevention:**
+1. Before merging a feature branch with migrations, check for head conflicts:
+   ```bash
+   alembic heads
+   ```
+2. If multiple heads exist, create a merge migration:
+   ```bash
+   alembic merge heads -m "merge heads"
+   ```
+3. Alternatively, if one branch's migrations are already applied on the server, stamp the server to the correct state and then target the specific migration:
+   ```bash
+   alembic stamp <already-applied-revision>
+   alembic upgrade <target-revision>
+   ```
+
+**Rule:** After any branch merge that involves Alembic migrations, run `alembic heads` to check for multiple heads before deploying. Resolve multi-head situations locally, not on the server.
+
+---
+
+## devops-alembic-duplicate-object-on-rerun
+
+**Severity:** HIGH
+
+**Trigger:** Running an Alembic migration that creates database objects (RLS policies, indexes, constraints) which already exist on the server
+
+When a migration creates objects without `IF NOT EXISTS` guards, and those objects were previously created manually or by a partial migration run, Alembic fails with `DuplicateObject` or `DuplicateTable` errors. The migration is not marked as applied, so retrying hits the same error.
+
+**What happened:** During SPEC-KB-012 deployment, an earlier RLS policies migration (`c5d6e7f8a9b0`) had been partially applied — the policies existed on the server but the migration was not stamped. Running `alembic upgrade` failed with `DuplicateObjectError` on the RLS policy creation.
+
+**Symptom:**
+```
+sqlalchemy.exc.ProgrammingError: (psycopg.errors.DuplicateObject)
+  policy "..." for table "..." already exists
+```
+
+**Fix for an already-applied migration stuck in this state:**
+```bash
+# Skip the problematic migration by stamping it as done
+alembic stamp <problematic-revision>
+
+# Then continue with the remaining migrations
+alembic upgrade head
+```
+
+**Prevention for new migrations:**
+1. Use `IF NOT EXISTS` for policies, indexes, and constraints in migration `upgrade()`:
+   ```python
+   op.execute("CREATE POLICY IF NOT EXISTS ...")
+   op.execute("CREATE INDEX IF NOT EXISTS ...")
+   ```
+2. For objects that don't support `IF NOT EXISTS` (some constraint types), wrap in a try/except in the migration or check existence first
+3. Write idempotent migrations — a migration should be safe to re-run even if partially applied
+
+**Rule:** All Alembic migrations that create policies, indexes, or other named database objects must use `IF NOT EXISTS` guards. Migrations that fail partway through leave the database in an inconsistent state that requires manual intervention.
+
+**See also:** `pitfalls/platform.md#platform-alembic-shared-postgres-schema-conflict`
+
+---
+
 ## See Also
 
 - [patterns/devops.md](../patterns/devops.md) - Proven deployment patterns
 - [pitfalls/infrastructure.md](infrastructure.md) - Infrastructure-level mistakes
+- [pitfalls/code-quality.md](code-quality.md) - Linting and type checking mistakes
