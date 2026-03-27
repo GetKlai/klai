@@ -140,9 +140,7 @@ async def me(
 
 # ---------------------------------------------------------------------------
 # SAR (Subject Access Request) response models
-# @MX:NOTE SPEC-GDPR-001 - AVG Art. 15 compliance. All models are intentionally
-# narrow: audit_log.details and product_events.properties are excluded to prevent
-# org-wide data leakage. External systems documented via notes, not live data.
+# @MX:NOTE SPEC-GDPR-001 - AVG Art. 15 Narrow models (no audit details/props)
 # ---------------------------------------------------------------------------
 
 
