@@ -226,19 +226,28 @@ async def ingest_document(req: IngestRequest) -> dict:
             if req.source_type == "upload"
             else proc_app.enrich_document_bulk  # type: ignore[attr-defined]
         )
-        await task_fn.defer_async(
-            org_id=req.org_id,
-            kb_slug=req.kb_slug,
-            path=req.path,
-            document_text=req.content,
-            chunks=texts,
-            title=title,
-            artifact_id=artifact_id,
-            user_id=req.user_id,
-            extra_payload=extra_payload,
-            synthesis_depth=kf["synthesis_depth"],
-            content_type=req.content_type,
-        )
+        try:
+            from procrastinate.exceptions import AlreadyEnqueued  # noqa: PLC0415
+            await task_fn.configure(
+                queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}",
+            ).defer_async(
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+                path=req.path,
+                document_text=req.content,
+                chunks=texts,
+                title=title,
+                artifact_id=artifact_id,
+                user_id=req.user_id,
+                extra_payload=extra_payload,
+                synthesis_depth=kf["synthesis_depth"],
+                content_type=req.content_type,
+            )
+        except AlreadyEnqueued:
+            logger.info(
+                "enrichment already queued, skipping (%s/%s org=%s)",
+                req.kb_slug, req.path, req.org_id,
+            )
 
     # Graphiti episode ingest — fire-and-forget background task (AC-1, AC-3, AC-8)
     if settings.graphiti_enabled:
@@ -334,10 +343,19 @@ async def gitea_webhook(request: Request) -> dict:
         if content is None:
             logger.warning("Could not fetch %s from %s", path, full_name)
             continue
+
+        # Personal KB: path is "users/{user_uuid}/filename.md" — extract user_id for Qdrant scoping
+        webhook_user_id: str | None = None
+        if kb_slug == "personal" and path.startswith("users/"):
+            path_parts = path.split("/")
+            if len(path_parts) >= 2 and path_parts[1]:
+                webhook_user_id = path_parts[1]
+
         req = IngestRequest(
             org_id=org_id, kb_slug=kb_slug, path=path,
             content=content, source_type="docs",
             content_type="kb_article",
+            user_id=webhook_user_id,
         )
         try:
             await ingest_document(req)
