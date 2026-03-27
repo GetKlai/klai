@@ -23,8 +23,9 @@ import logging
 import time
 from typing import Any
 
-from knowledge_ingest import embedder, enrichment, qdrant_store, sparse_embedder
+from knowledge_ingest import embedder, enrichment, kb_config, qdrant_store, sparse_embedder
 from knowledge_ingest.content_profiles import get_profile
+from knowledge_ingest.db import get_pool
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,11 @@ async def _enrich_document(
             question_vectors = list(raw_q_vectors)
         else:
             question_vectors = [None] * len(enriched_chunks)
+
+        # Refresh visibility from kb_config at write time — catches any visibility
+        # change that happened while this task was queued or running.
+        pool = await get_pool()
+        extra_payload["visibility"] = await kb_config.get_kb_visibility(org_id, kb_slug, pool)
 
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
