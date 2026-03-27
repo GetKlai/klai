@@ -147,6 +147,7 @@ class KBStatsOut(BaseModel):
     connectors: list[ConnectorStatusSummary]
     volume: int | None
     usage_last_30d: int | None
+    org_gap_count_7d: int | None = None
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -442,12 +443,29 @@ async def get_kb_stats(
     except Exception:
         logger.debug("Could not fetch KB usage stats for %s", kb_slug)
 
+    # Org-wide gap count (7 days)
+    org_gap_count_7d: int | None = None
+    try:
+        from app.models.retrieval_gaps import PortalRetrievalGap
+
+        gap_cutoff = datetime.now(tz=dt.UTC) - timedelta(days=7)
+        gap_result = await db.execute(
+            select(func.count()).where(
+                PortalRetrievalGap.org_id == org.id,
+                PortalRetrievalGap.occurred_at >= gap_cutoff,
+            )
+        )
+        org_gap_count_7d = gap_result.scalar_one()
+    except Exception:
+        logger.debug("Could not fetch gap count for KB stats")
+
     return KBStatsOut(
         docs_count=docs_count,
         connector_count=len(connectors),
         connectors=connector_summaries,
         volume=volume,
         usage_last_30d=usage_last_30d,
+        org_gap_count_7d=org_gap_count_7d,
     )
 
 

@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Brain, MessageSquare, Database, Users, BookOpen, Plus, Lock } from 'lucide-react'
+import { Brain, MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTriangle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { STORAGE_KEYS } from '@/lib/storage'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -35,6 +36,12 @@ interface KnowledgeBase {
 
 interface KBsResponse {
   knowledge_bases: KnowledgeBase[]
+}
+
+interface GapSummary {
+  total_7d: number
+  hard_7d: number
+  soft_7d: number
 }
 
 function KBCard({ kb }: { kb: KnowledgeBase }) {
@@ -84,6 +91,24 @@ function KnowledgePage() {
       return res.json() as Promise<KnowledgeStats>
     },
     enabled: !!token,
+    retry: false,
+  })
+
+  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+
+  const { data: gapSummary } = useQuery<GapSummary>({
+    queryKey: ['gap-summary', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/gaps/summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        queryLogger.warn('Gap summary fetch failed', { status: res.status })
+        throw new Error(`${res.status}`)
+      }
+      return res.json() as Promise<GapSummary>
+    },
+    enabled: !!token && isAdmin,
     retry: false,
   })
 
@@ -250,6 +275,44 @@ function KnowledgePage() {
               </div>
             )}
           </div>
+        )}
+
+        {/* Knowledge Gaps (admin only) */}
+        {isAdmin && gapSummary != null && gapSummary.total_7d > 0 && (
+          <Link to="/app/gaps">
+            <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
+              <CardContent className="pt-6">
+                <div className="flex items-start gap-4">
+                  <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0">
+                    <AlertTriangle className="h-5 w-5 text-[var(--color-purple-deep)]" />
+                  </div>
+                  <div className="flex-1">
+                    <h2 className="font-semibold text-[var(--color-purple-deep)] mb-1">
+                      {m.gaps_index_card_heading()}
+                    </h2>
+                    <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed mb-3">
+                      {m.gaps_index_card_body()}
+                    </p>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                        {gapSummary.total_7d} total
+                      </span>
+                      {gapSummary.hard_7d > 0 && (
+                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]">
+                          {gapSummary.hard_7d} {m.gaps_type_hard()}
+                        </span>
+                      )}
+                      {gapSummary.soft_7d > 0 && (
+                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
+                          {gapSummary.soft_7d} {m.gaps_type_soft()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         )}
       </div>
     </div>

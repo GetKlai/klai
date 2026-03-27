@@ -33,6 +33,8 @@ PORTAL_API_URL = os.getenv("PORTAL_API_URL", "http://portal-api:8000")
 PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
+KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
+KLAI_GAP_DENSE_THRESHOLD = float(os.getenv("KLAI_GAP_DENSE_THRESHOLD", "0.35"))
 
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
@@ -115,6 +117,91 @@ async def _check_user_feature(user_id: str, org_id: str, cache) -> bool:
     return enabled
 
 
+# @MX:NOTE: [AUTO] Gap thresholds (0.4 reranker, 0.35 dense) are configurable via
+# @MX:NOTE: KLAI_GAP_SOFT_THRESHOLD / KLAI_GAP_DENSE_THRESHOLD env vars (SPEC-KB-014)
+def _classify_gap(chunks: list[dict]) -> str | None:
+    """Classify retrieval result. Returns 'hard', 'soft', or None (success)."""
+    if not chunks:
+        return "hard"
+    reranker_scores = [
+        c.get("reranker_score")
+        for c in chunks
+        if c.get("reranker_score") is not None
+    ]
+    if reranker_scores:
+        if all(s < KLAI_GAP_SOFT_THRESHOLD for s in reranker_scores):
+            return "soft"
+    else:
+        dense_scores = [c.get("score", 0.0) for c in chunks]
+        if all(s < KLAI_GAP_DENSE_THRESHOLD for s in dense_scores):
+            return "soft"
+    return None
+
+
+# @MX:WARN: [AUTO] Fire-and-forget via create_task — caller must be inside a running event loop.
+# @MX:REASON: Wraps in try/except RuntimeError to handle test environments without a loop.
+def _fire_gap_event(
+    org_id: str,
+    user_id: str,
+    query_text: str,
+    gap_type: str,
+    chunks: list[dict],
+    retrieval_ms: int,
+) -> None:
+    """Schedule an async gap event POST without blocking the pre-call hook."""
+    import asyncio
+
+    top_chunk = (
+        max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0))
+        if chunks
+        else None
+    )
+    top_score = (
+        (top_chunk.get("reranker_score") or top_chunk.get("score"))
+        if top_chunk
+        else None
+    )
+    nearest_kb_slug = (
+        top_chunk.get("metadata", {}).get("kb_slug")
+        if top_chunk and gap_type == "soft"
+        else None
+    )
+
+    try:
+        org_id_int = int(org_id)
+    except (ValueError, TypeError):
+        logger.warning("KlaiKnowledgeHook: non-numeric org_id '%s', skipping gap event", org_id)
+        return
+
+    payload = {
+        "org_id": org_id_int,
+        "user_id": user_id,
+        "query_text": query_text,
+        "gap_type": gap_type,
+        "top_score": top_score,
+        "nearest_kb_slug": nearest_kb_slug,
+        "chunks_retrieved": len(chunks),
+        "retrieval_ms": retrieval_ms,
+    }
+
+    async def _post():
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(
+                    f"{PORTAL_API_URL}/internal/v1/gap-events",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
+                )
+        except Exception as exc:
+            logger.warning("KlaiKnowledgeHook: gap event POST failed (%s)", exc)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_post())
+    except RuntimeError:
+        pass  # No event loop — skip silently
+
+
 class KlaiKnowledgeHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
@@ -178,6 +265,18 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         chunks = result.get("chunks", [])
+
+        # --- Gap detection (KB-014) ---
+        gap_type = _classify_gap(chunks)
+        if gap_type is not None and org_id and user_id:
+            _fire_gap_event(
+                org_id=org_id,
+                user_id=user_id,
+                query_text=query,
+                gap_type=gap_type,
+                chunks=chunks,
+                retrieval_ms=retrieval_ms,
+            )
         if not chunks:
             return data
 

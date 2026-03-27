@@ -256,3 +256,39 @@ async def get_knowledge_feature(
 
     products = await get_effective_products(user.zitadel_user_id, db)
     return KnowledgeFeatureResponse(enabled="knowledge" in products)
+
+
+class GapEventIn(BaseModel):
+    org_id: int
+    user_id: str
+    query_text: str
+    gap_type: str
+    top_score: float | None = None
+    nearest_kb_slug: str | None = None
+    chunks_retrieved: int = 0
+    retrieval_ms: int = 0
+
+
+@router.post("/v1/gap-events", status_code=status.HTTP_201_CREATED)
+async def create_gap_event(
+    payload: GapEventIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Record a knowledge gap event from the LiteLLM hook."""
+    _require_internal_token(request)
+    from app.models.retrieval_gaps import PortalRetrievalGap
+
+    gap = PortalRetrievalGap(
+        org_id=payload.org_id,
+        user_id=payload.user_id,
+        query_text=payload.query_text,
+        gap_type=payload.gap_type,
+        top_score=payload.top_score,
+        nearest_kb_slug=payload.nearest_kb_slug,
+        chunks_retrieved=payload.chunks_retrieved,
+        retrieval_ms=payload.retrieval_ms,
+    )
+    db.add(gap)
+    await db.commit()
+    return {"ok": True}
