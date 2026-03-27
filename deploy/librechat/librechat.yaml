@@ -5,6 +5,9 @@ cache: true
 interface:
   webSearch: true
 
+balance:
+  enabled: false
+
 # ── Web search ────────────────────────────────────────────────────────────────
 # Search:   SearXNG (self-hosted, klai-net) — Startpage + DuckDuckGo engines
 # Scraper:  firecrawl-api (self-hosted, klai-net) — full-page content extraction
