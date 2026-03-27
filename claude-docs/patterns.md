@@ -18,7 +18,6 @@
 | [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions, button placement |
 | [patterns/code-quality.md](patterns/code-quality.md) | ruff, pyright, ESLint, pre-commit, CI quality gates |
 | [patterns/testing.md](patterns/testing.md) | Playwright browser testing, permissions, GlitchTip debugging |
-| [patterns/logging.md](patterns/logging.md) | Structured logging with structlog, querying VictoriaLogs, debugging patterns |
 
 ## Project Pattern Files
 
@@ -63,12 +62,6 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[playwright-permissions](patterns/testing.md#3-grant-browser-permissions-mic-camera-etc)** - Grant mic/camera/etc. programmatically
 - **[glitchtip-debugging](patterns/testing.md#debugging-with-glitchtip)** - Frontend error tracking via errors.getklai.com
 
-### Logging
-
-- **[logging-write](patterns/logging.md#logging-write)** - Configure structlog with ProcessorFormatter for uniform JSON from both structlog and stdlib loggers; bind org_id / request_id via contextvars
-- **[logging-query](patterns/logging.md#logging-query)** - LogsQL query patterns for debugging in VictoriaLogs
-- **[logging-new-service](patterns/logging.md#logging-new-service)** - Copy `logging_setup.py` and wire up a new Python service
-
 ### Platform (AI Stack)
 
 - **[platform-litellm-vllm-config](patterns/platform.md#platform-litellm-vllm-config)** - Full LiteLLM config for Qwen3 dual-model
@@ -80,6 +73,7 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[platform-portal-users-mapping-only](patterns/platform.md#platform-portal-users-mapping-only)** - portal_users as thin mapping table, live Zitadel identity fetch
 - **[platform-librechat-env-template](patterns/platform.md#platform-librechat-env-template)** - Required LibreChat `.env` settings
 - **[platform-hetzner-dns-wildcard-tls](patterns/platform.md#platform-hetzner-dns-wildcard-tls)** - Custom Caddy build for wildcard TLS
+- **[platform-vexa-bot-lifecycle](patterns/platform.md#platform-vexa-bot-lifecycle)** - Vexa meeting bot state machine, lifecycle config location, two resolution paths
 
 ## Anchor format
 

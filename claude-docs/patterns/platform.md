@@ -1,7 +1,7 @@
 # Platform Patterns
 
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy — Klai AI stack configuration.
-> Based on the compatibility review in `klai-website/docs/platform-beslissingen.md`.
+> Based on the compatibility review in `klai-claude/docs/architecture/platform.md`.
 
 ---
 
@@ -359,6 +359,74 @@ await zitadel.grant_user_role(
 
 ---
 
+## platform-vexa-bot-lifecycle
+
+**When to use:** Debugging a meeting stuck in "Recording", "Joining", or "Processing" — or understanding how a meeting transitions to "Done"
+
+The Vexa bot has two resolution paths. Knowing which path applies determines where to look when things go wrong.
+
+**Bot lifecycle (happy path):**
+
+```
+Bot joins meeting
+  → status: joining
+  → status: active (first participant seen)
+
+User leaves / everyone leaves
+  → everyoneLeftTimeout (5s) fires
+  → bot stops itself
+  → Vexa fires `completed` webhook → portal-api run_transcription
+  → status: done
+
+OR: user clicks Stop in portal
+  → portal-api calls stop_bot API
+  → Vexa fires `completed` webhook → portal-api run_transcription
+  → status: done
+
+Fallback: bot_poller polls every 10s
+  → detects bot is gone from Vexa
+  → triggers run_transcription
+  → status: done
+```
+
+**Key lifecycle config (server-side, not in Git):**
+
+File: `/opt/klai/vexa-patches/process.py` on core-01
+Mounted as volume override into `vexa-bot-manager` container.
+
+```python
+# Confirmed working values (March 2026):
+everyoneLeftTimeout = 5000     # ms — was 60000
+noOneJoinedTimeout  = 30000    # ms — was 120000
+waitingRoomTimeout  = 60000    # ms — was 300000
+```
+
+**Always read this file first when debugging:**
+```bash
+ssh core-01 cat /opt/klai/vexa-patches/process.py
+```
+
+**State machine for portal status field:**
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Meeting created, bot not yet dispatched |
+| `joining` | Bot dispatched, waiting to enter meeting |
+| `active` | Bot in meeting, recording |
+| `recording` | everyoneLeft timeout counting down (≤5s) |
+| `processing` | Stop called, waiting for Vexa webhook |
+| `done` | Transcription complete |
+| `failed` | Error in transcription or bot |
+
+**Rule:** The `completed` webhook from Vexa is the primary trigger for `run_transcription`. The bot_poller is a fallback only — do not treat it as equivalent.
+
+**See also:**
+- `pitfalls/platform.md#platform-vexa-timeout-looks-like-bug`
+- `pitfalls/platform.md#platform-vexa-guard-breaks-stop-flow`
+- `pitfalls/platform.md#platform-vexa-debug-wrong-layer`
+
+---
+
 ## platform-hetzner-dns-wildcard-tls
 
 **When to use:** Building Caddy for wildcard TLS on `*.getklai.com`
@@ -385,115 +453,6 @@ HETZNER_DNS_TOKEN=your_hetzner_dns_api_token
 **DNS provider:** Hetzner DNS (free, already a customer, GDPR-compliant, EU).
 **Do not use Cloud86** — no Caddy plugin available.
 
-**Source:** `platform-beslissingen.md` — Per-Tenant Routing: Wildcard TLS
-
----
-
-## platform-librechat-config-lifecycle
-
-**When to use:** Changing `librechat.yaml` or understanding why a config change has no effect
-
-LibreChat reads `librechat.yaml` **once at startup**. There is no hot-reload, no `chokidar`, no file-watcher of any kind.
-
-**Load chain:**
-```
-api/server/index.js
-  → getAppConfig()
-    → loadBaseConfig() → loadCustomConfig()  ← one-shot disk read
-    → AppService({ config })
-  → cache.set(BASE_CONFIG_KEY, baseConfig)   // no TTL
-```
-
-**Reload procedure — without Redis:**
-1. Restart the LibreChat container.
-
-**Reload procedure — with Redis (`USE_REDIS=true`, which is Klai's setup):**
-1. Delete only the config cache key — **never use `FLUSHALL`** (it destroys all user sessions):
-   ```bash
-   docker exec klai-core-redis-1 redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning DEL base_config
-   ```
-   If unsure of the exact key name, scan first:
-   ```bash
-   docker exec klai-core-redis-1 redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning --scan --pattern "*config*"
-   ```
-2. Restart the LibreChat container.
-
-**Why not FLUSHALL:** LibreChat stores all user session tokens in Redis. `FLUSHALL` invalidates every active session, forcing every user to re-authenticate with password + 2FA. Targeted key deletion removes only the config cache.
-
-**Programmatic reload (future):** `clearAppConfigCache()` already exists in the source but has no HTTP endpoint. A `POST /api/config/reload` that calls this + re-triggers `getAppConfig()` would be ~20-40 lines and is the correct approach if hot-reload is ever needed.
-
-**See also:** `pitfalls/platform.md#platform-librechat-redis-config-cache`
-
----
-
-## platform-librechat-mcp-user-header-interpolation
-
-**When to use:** Configuring MCP servers in `librechat.yaml` with per-user context
-
-LibreChat interpolates `{{...}}` template variables in MCP server headers at connection time (when LibreChat connects to the MCP server for a specific user). Missing fields fall back to empty strings.
-
-**Full list of supported user field variables:**
-
-| Variable | Value |
-|---|---|
-| `{{LIBRECHAT_USER_ID}}` | MongoDB ObjectId of the user |
-| `{{LIBRECHAT_USER_EMAIL}}` | Email address |
-| `{{LIBRECHAT_USER_NAME}}` | Display name |
-| `{{LIBRECHAT_USER_USERNAME}}` | Username |
-| `{{LIBRECHAT_USER_ROLE}}` | `user` or `admin` |
-| `{{LIBRECHAT_USER_PROVIDER}}` | Auth provider (openid, google, etc.) |
-| `{{LIBRECHAT_USER_EMAILVERIFIED}}` | Boolean |
-| `{{CUSTOM_VARIABLE_NAME}}` | Per-user credential from user's `customUserVars` settings |
-
-Environment variables use `${ENV_VAR}` syntax and are evaluated at startup (not per-request).
-
-**Example (Klai's current config):**
-```yaml
-mcpServers:
-  klai-knowledge:
-    type: streamable-http
-    url: http://klai-knowledge-mcp:8080/mcp
-    headers:
-      X-User-ID: "{{LIBRECHAT_USER_ID}}"
-      X-Org-ID: "${KLAI_ORG_ID}"
-      X-Internal-Secret: "${KNOWLEDGE_INGEST_SECRET}"
-```
-
----
-
-## platform-librechat-per-principal-config-overrides
-
-**When to use:** Applying per-user or per-tenant config overrides without restarting containers (requires LibreChat ≥ commit after March 25, 2026 / PR #12354)
-
-PR #12354 (merged March 25, 2026) adds a MongoDB-backed per-principal configuration override system. Overrides are deep-merged with the YAML config at request time with a 60-second TTL cache.
-
-**Admin endpoint:** `POST /api/admin/config` — write per-principal overrides programmatically.
-
-**Principal types:** user, group, role.
-
-**Use case for Klai:** Portal-api could write per-user overrides to MongoDB when a user's KB access changes. LibreChat picks them up within 60 seconds — no container restart needed.
-
-**Caveat:** Which AppConfig fields are overridable (modelSpecs, mcpServers, etc.) needs testing against a running instance. The system was merged very recently.
-
-**See also:** `research/librechat-dynamic-config.md` for full investigation context
-
----
-
-## platform-librechat-mcp-tiers
-
-**When to use:** Deciding where to define MCP servers (YAML vs MongoDB)
-
-LibreChat has two tiers of MCP servers:
-
-| Tier | Defined in | Storage | Visible to | User can disable |
-|---|---|---|---|---|
-| App-level | `librechat.yaml` | Redis aggregate key | All users | No |
-| User-level (private) | MCPPanel UI | MongoDB per user | That user only | Yes |
-
-**App-level servers** (Klai's `klai-knowledge`) are globally available to all users. There is no supported mechanism for users or admins to disable an individual app-level server per user.
-
-**User-level private servers** (PR #10352, merged November 2025) are stored in MongoDB, support dynamic config sync with Redis distributed locking, and are lazy-loaded with invalidation when `connection.createdAt < config.lastUpdatedAt`.
-
-**Portal-api could programmatically inject user-level MCP servers** into MongoDB using the same document structure as the MCPPanel UI — these would then be available to the user without any UI interaction. Useful for pre-configuring tenant-specific MCP servers at provisioning time.
+**Source:** `architecture/platform.md` — Per-Tenant Routing: Wildcard TLS
 
 ---

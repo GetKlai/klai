@@ -140,6 +140,39 @@ function switchLocale(l: Locale) {
 | `Button` | `components/ui/button.tsx` | Actions |
 | `Card` + sub-components | `components/ui/card.tsx` | Content sections |
 
+**Button variants** (`variant` prop — defined in `button.tsx`):
+
+| Variant | When to use | Example |
+|---|---|---|
+| `default` (primary) | Primary action on a page (submit, save, invite) | `<Button>Opslaan</Button>` |
+| `outline` | Secondary action alongside a primary | `<Button variant="outline">Bewerken</Button>` |
+| `ghost` | Low-priority action, nav items, icon-only buttons | `<Button variant="ghost"><ArrowLeft /></Button>` |
+| `destructive` | Confirmed destructive action (e.g., AlertDialog confirm) | `<Button variant="destructive">Verwijderen</Button>` |
+| `secondary` | Neutral alternative to outline (less border-heavy) | `<Button variant="secondary">Annuleren</Button>` |
+| `link` | Inline text link styled as button | `<Button variant="link">Meer info</Button>` |
+
+**Button sizes** (`size` prop):
+
+| Size | Height | Use for |
+|---|---|---|
+| `default` | 40px | Standard form actions |
+| `sm` | 32px | Table rows, compact UI, inline confirm |
+| `lg` | 48px | Hero CTAs, onboarding |
+| `icon` | 40×40px | Icon-only buttons (always add `aria-label`) |
+
+**Overriding for semantic states** — when a variant's visual doesn't match the semantic meaning, override with `className`:
+```tsx
+{/* Destructive confirm button in AlertDialog */}
+<AlertDialogAction className="bg-[var(--color-destructive)] text-white hover:opacity-90">
+  Verwijderen
+</AlertDialogAction>
+
+{/* Positive confirm button */}
+<Button className="bg-[var(--color-success)] text-white hover:opacity-90">
+  Bevestigen
+</Button>
+```
+
 **Field pattern** (label + input/select):
 ```tsx
 <div className="space-y-1.5">
@@ -244,6 +277,62 @@ Never use raw Tailwind color classes (`text-red-600`, `bg-green-500`, etc.) for 
 - Back button works naturally
 - Consistent with how the rest of the admin navigation works
 
+**Icon action buttons in tables:**
+
+Always use raw `<button>` — never `<Button variant="ghost">` for icon-only actions in tables.
+
+Two variants:
+
+*Ghost (default — transparent background):*
+```tsx
+<button
+  onClick={...}
+  aria-label="..."
+  className="flex h-7 w-7 items-center justify-center text-[var(--color-X)] transition-opacity hover:opacity-70"
+>
+  <SomeIcon className="h-3.5 w-3.5" />
+</button>
+```
+
+| Action | Token | Icon |
+|---|---|---|
+| Edit / rename | `--color-warning` | `Pencil` |
+| View / detail / copy | `--color-accent` | `Eye`, `Copy`, `CheckCheck` |
+| Delete / remove | `--color-destructive` | `Trash2` |
+| Download / positive | `--color-success` | `Download` |
+| Overflow menu | `--color-muted-foreground` + `hover:bg-[var(--color-secondary)]` | `MoreHorizontal` |
+
+*Filled confirm (shown after first click on inline tier-1 confirmation):*
+```tsx
+// Confirm destructive
+<button className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90">
+  <Check className="h-3.5 w-3.5" />
+</button>
+// Confirm save
+<button className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90">
+  <Check className="h-3.5 w-3.5" />
+</button>
+// Cancel
+<button className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]">
+  <X className="h-3.5 w-3.5" />
+</button>
+```
+
+**Avatar colors** (decorative differentiation — raw Tailwind allowed per "not semantic states" rule):
+```tsx
+const AVATAR_COLORS = [
+  'bg-purple-100 text-purple-700',
+  'bg-blue-100 text-blue-700',
+  'bg-green-100 text-green-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+]
+function avatarColor(uid: string): string {
+  const hash = uid.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length]
+}
+```
+
 **Inline selects in tables** (compact role switcher):
 ```tsx
 <Select
@@ -253,10 +342,157 @@ Never use raw Tailwind color classes (`text-red-600`, `bg-green-500`, etc.) for 
 >
 ```
 
+**Delete confirmation patterns:**
+
+Three tiers — pick based on the severity and reversibility of the action:
+
+| Tier | When | Pattern |
+|---|---|---|
+| **Inline** | Small, reversible (remove row from list, remove group from user) | Red trash icon → click reveals text buttons "Verwijder" + "Annuleren" |
+| **AlertDialog** | Irreversible account actions (suspend, offboard) | Modal with description + destructive button; no typing required |
+| **Modal + type name** | Permanent data destruction (delete knowledge base, delete org) | Modal requiring the user to type the resource name to unlock confirm |
+
+Inline confirm always uses **text buttons** (not icons) for the confirmation step — text is unambiguous.
+The trigger is always a red trash icon: `<Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />`.
+
+Example — inline pattern (table row):
+```tsx
+const [confirmId, setConfirmId] = useState<number | null>(null)
+
+// In the row:
+{confirmId === item.id ? (
+  <div className="flex items-center gap-1">
+    <Button
+      size="sm"
+      className="bg-[var(--color-destructive)] text-white hover:opacity-90"
+      onClick={() => { deleteMutation.mutate(item.id); setConfirmId(null) }}
+    >
+      Verwijderen
+    </Button>
+    <Button size="sm" variant="ghost" onClick={() => setConfirmId(null)}>
+      Annuleren
+    </Button>
+  </div>
+) : (
+  <Button size="sm" variant="ghost" onClick={() => setConfirmId(item.id)}>
+    <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
+  </Button>
+)}
+```
+
 **Rules:**
 - Never duplicate field classes across pages - always import from `components/ui/`
 - Always use `htmlFor` on `<Label>` paired with `id` on the field
 - `max-w-xs` is only for standalone selects (settings, account), not grid-form selects
+
+---
+
+## separation-of-concerns
+
+**Scope:** klai-portal frontend
+
+**Decision:** Four rules covering styling, logic, data fetching, and component size.
+
+### 1. Styling — alleen Tailwind className, nooit inline style
+
+Use Tailwind `className` for all fixed styling. `style={{}}` is only allowed for truly runtime-dynamic values that Tailwind cannot express (e.g. a calculated pixel width from JS state).
+
+```tsx
+// WRONG — vaste waarden horen niet in style={{}}
+<p style={{ fontSize: '0.75rem', color: 'var(--color-muted-foreground)' }}>
+
+// CORRECT
+<p className="text-xs text-[var(--color-muted-foreground)]">
+```
+
+Never use raw Tailwind color classes for **semantic states** — always use CSS tokens. Exception: purely decorative colors (e.g. random avatar background colors for visual differentiation) may use raw Tailwind:
+
+```tsx
+// WRONG
+<p className="text-red-600">Fout</p>
+<div className="bg-green-100 text-green-700">Actief</div>
+
+// CORRECT
+<p className="text-[var(--color-destructive)]">Fout</p>
+```
+
+For status badges with multiple states, define a lookup map with token-based classes:
+```tsx
+const STATUS_CLASSES: Record<string, string> = {
+  pending:   'bg-[var(--color-sand-mid)] text-[var(--color-purple-deep)]',
+  active:    'bg-[var(--color-success)]/10 text-[var(--color-success)]',
+  failed:    'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]',
+}
+```
+
+### 2. Business logica — in hooks, niet in components
+
+Logic unrelated to rendering belongs in custom hooks (`src/hooks/useXxx.ts`). A component's job is: receive data → render UI → forward events.
+
+Extract to a hook when:
+- The logic would be useful in more than one component
+- The component has >~50 lines of JS alongside its JSX
+- The logic involves side effects, timers, or complex state transformations
+
+```
+src/hooks/useUserLifecycle.ts  ✓ al aanwezig
+src/hooks/useUsers.ts          → user CRUD + membership queries
+src/hooks/useGroups.ts         → group queries + mutations
+```
+
+Keep in the component when: the logic is a few lines and clearly component-specific.
+
+### 3. Data fetching — inline in queryFn, geen service-laag
+
+`useQuery` en `useMutation` staan direct in de routecomponent of in een custom hook. De `fetch()` call staat inline in `queryFn` met `API_BASE` en de auth-header. Er is geen aparte service-laag.
+
+**Waarom geen service-laag:** de overhead (extra bestanden, extra abstractie-laag) weegt op deze schaal niet op tegen het voordeel. De fetch-calls zijn volledig transparant en de auth-structuur is stabiel.
+
+```tsx
+// CORRECT — inline in component
+const { data } = useQuery({
+  queryKey: ['admin-users', token],
+  queryFn: async () => {
+    const res = await fetch(`${API_BASE}/api/admin/users`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    return res.json() as Promise<{ users: User[] }>
+  },
+  enabled: !!token,
+})
+```
+
+Extract naar een custom hook alleen als dezelfde query op meerdere pagina's wordt hergebruikt:
+
+```tsx
+// src/hooks/useUsers.ts — alleen als >1 component dezelfde query gebruikt
+export function useUsers(token: string) {
+  return useQuery({
+    queryKey: ['admin-users', token],
+    queryFn: async () => { ... },
+    enabled: !!token,
+  })
+}
+```
+
+### 4. Componentgrootte — één verantwoordelijkheid
+
+A route component owns: data fetching context + page layout. It does not own large blocks of JSX for each visual section.
+
+Split into sub-components when a visual section exceeds ~50 lines of JSX. Sub-components may live in the same file if they are small and not reused elsewhere, or in a `_components/` subfolder next to the route file if larger.
+
+```tsx
+// route file stays thin:
+function UsersPage() {
+  const { data } = useUsers()
+  return (
+    <div className="p-8">
+      <UsersTable users={data?.users ?? []} />
+    </div>
+  )
+}
+```
 
 ---
 
@@ -335,6 +571,39 @@ Add a new `logger.withTag('name')` export for new domains — keep it in `lib/lo
 - `debug` is free to use liberally in dev; it never ships to Sentry
 - `warn`/`error` go to Sentry in production — write them with context objects, not string concatenation
 - When debugging a bug: add `logger.debug(...)` calls first, reproduce, then fix. Remove noisy debug calls before committing if they add no long-term value.
+
+---
+
+---
+
+## playwright-mcp — Browser Automation via MCP
+
+**Scope:** All klai projects (available in every Claude Code session)
+
+The `playwright` MCP server is configured in `.mcp.json` at the monorepo root. It gives Claude direct browser control via Brave (separate profile, so it never interferes with your active Brave session).
+
+**When to use:**
+- Manual E2E spot-checks during development (navigate, click, screenshot)
+- Verify a deployed feature looks and works correctly
+- Debug UI issues that are hard to reproduce from code alone
+- Quick smoke test after a deploy
+
+**How agents use it:**
+
+The MCP exposes tools like `browser_navigate`, `browser_click`, `browser_screenshot`, `browser_type`. Agents invoke these directly — no test file needed.
+
+Example prompt: _"Open https://portal.klai.nl/signup and screenshot the form"_
+
+**Session behavior:**
+- Login state **persists** between Claude sessions (dedicated profile at `~/.claude/mcp-brave-profile`)
+- Browser opens visibly (headless: false) — you can watch what Claude does
+- Each MCP server instance owns one browser; simultaneous Claude sessions each get their own instance
+
+**Not for:**
+- Automated regression suites → use Playwright test files (`npm run test:e2e`)
+- CI pipelines → no display available by default
+
+**Config location:** [.mcp.json](/.mcp.json) — `playwright` server entry
 
 ---
 

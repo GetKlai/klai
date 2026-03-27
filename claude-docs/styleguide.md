@@ -298,6 +298,7 @@ The portal maps Klai brand tokens to shadcn/ui semantic names.
 | `--color-accent` | `#7C6AFF` | Accent (purple-accent) |
 | `--color-accent-foreground` | `#FAFAF8` | Text on accent |
 | `--color-destructive` | `#C0392B` | Error / destructive actions |
+| `--color-success` | `#27AE60` | Save confirm buttons, positive feedback icons |
 | `--color-border` | `rgba(45,27,105,0.1)` | Default border |
 | `--color-input` | `rgba(45,27,105,0.08)` | Input field background |
 | `--color-ring` | `#7C6AFF` | Focus ring |

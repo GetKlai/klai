@@ -11,18 +11,15 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 | Category | File | Entries |
 |----------|------|---------|
-| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 15 entries |
+| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
-| [Code Quality](pitfalls/code-quality.md) | Linting, type checking, CI quality gates | 1 entry |
-| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 6 entries |
+| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
-| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 28 entries |
+| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 31 entries |
 
 ## Project pitfalls
 
-| Project | Category | File |
-|---------|----------|------|
-| klai-website | Frontend | [klai-website/docs/pitfalls/frontend.md](../../klai-website/docs/pitfalls/frontend.md) *(planned)* |
+Elk project kan eigen `docs/pitfalls/` bestanden hebben. Zie het CLAUDE.md van het betreffende project.
 
 ## How to use
 
@@ -32,7 +29,7 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 
 ## Quick Reference
 
-### Process (15)
+### Process (14)
 
 See `pitfalls/process-rules.md` (compact table, @imported in CLAUDE.md every session).
 Full descriptions with examples: `pitfalls/process.md`.
@@ -46,24 +43,14 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `git-commit-specific-files` | **HIGH** | Stage specific files, not git add . |
 | `git-verify-before-commit` | **HIGH** | Always git diff --staged before committing |
 
-### Code Quality (1)
-
-| ID | Sev | Trigger | Rule |
-|----|-----|---------|------|
-| `cq-pyright-noqa-mismatch` | **HIGH** | Using `# noqa: F401` with pyright in CI | `# noqa` is for ruff only; use `__all__` or `# pyright: ignore` for pyright |
-
-### DevOps (6)
+### DevOps (2)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
 | `devops-image-versions-from-training-data` | **HIGH** | Writing compose with pinned versions | Never use version numbers from AI training data |
 | `devops-compose-restart-does-not-reload-env` | **HIGH** | Updating .env then restarting | Use `docker compose up -d`, not `restart` |
-| `devops-deploy-path-mismatch` | **CRIT** | Frontend deploy succeeds but site does not update | Verify rsync target matches web server serve directory |
-| `devops-ci-green-not-enough` | **HIGH** | Declaring deploy complete after green CI | Always verify server rollout after CI passes |
-| `devops-alembic-multiple-heads` | **HIGH** | Merging branch with its own Alembic migration | Run `alembic heads` after merge; resolve with `alembic merge heads` |
-| `devops-alembic-duplicate-object-on-rerun` | **HIGH** | Migration creates objects that already exist | Use `IF NOT EXISTS` in migrations; stamp already-applied revisions |
 
-### Infrastructure (6)
+### Infrastructure (7)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -75,7 +62,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `infra-caddy-no-global-csp` | **HIGH** | Adding CSP to Caddy global header | No global CSP -- apps manage their own |
 | `infra-never-modify-env-secrets` | **CRIT** | Modifying secrets in /opt/klai/.env | NEVER modify existing secrets via shell commands |
 
-### Platform (27)
+### Platform (30)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -104,9 +91,12 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-alembic-shared-postgres-schema-conflict` | **CRIT** | Two FastAPI services sharing Postgres | Scope alembic_version to service-specific schema |
 | `platform-zitadel-login-v2-recovery` | **CRIT** | Login V2 breaks all OIDC flows | Delete login_v2 row from projections to recover |
 | `platform-zitadel-pat-invalid-after-upgrade` | **CRIT** | PAT invalid after Zitadel upgrade | Rotate PAT via Zitadel console |
-| `platform-falkordb-sspLv1-license` | **MED** | Evaluating FalkorDB for production | SSPLv1: fine for self-hosted internal use, not for SaaS. Neo4j Community Edition: avoid in production (GPLv3 + vendor ambiguity) |
-| `platform-hipporag2-vs-graphiti-different-layers` | **HIGH** | Comparing HippoRAG2 vs Graphiti as alternatives | They are different layers: HippoRAG2 = retrieval-only (no temporal model); Graphiti = end-to-end ingest + storage + retrieval |
-| `platform-tei-embedding-timeout` | **HIGH** | knowledge-ingest 500s during large document batches | Set `httpx` timeout to ≥120s for TEI embed calls; default 30s is too short |
+| `platform-vexa-timeout-looks-like-bug` | **MED** | Meeting stuck in Recording after everyone leaves | 60s everyoneLeftTimeout is intentional — read process.py first |
+| `platform-vexa-guard-breaks-stop-flow` | **HIGH** | Adding status guard to webhook handler mid-debug | Never guard webhook handler — completed webhook IS the transcription trigger |
+| `platform-vexa-debug-wrong-layer` | **HIGH** | Debugging Vexa by starting at application code | Read docker-compose → process.py → logs → code, in that order |
+| `platform-librechat-agents-mistral-null-crash` | **CRIT** | LibreChat agents endpoint crashes on second message with Mistral | Mistral null+tool_calls → sparse array → MongoDB null slots → crash in formatAgentMessages; patch format.cjs or fix upstream in createContentAggregator |
+| `platform-librechat-websearch-rawhtml-reranker-load` | **HIGH** | LibreChat web search takes 3+ minutes | Firecrawl defaults to rawHtml; set firecrawlOptions.formats=[markdown] + onlyMainContent=true in librechat.yaml |
+| `platform-tei-embedding-timeout` | **HIGH** | knowledge-ingest returns 500 on large document batches | TEI batches can exceed 30s; set timeout 120s + retry + batch of 32 |
 
 ---
 
