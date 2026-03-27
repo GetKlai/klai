@@ -3,6 +3,14 @@
   "extends": ["config:recommended"],
   "timezone": "Europe/Amsterdam",
   "schedule": ["before 6am on monday"],
+  "enabledManagers": [
+    "docker-compose",
+    "dockerfile",
+    "github-actions",
+    "npm",
+    "pep621",
+    "uv"
+  ],
   "packageRules": [
     {
       "description": "Auto-merge patch updates",
