@@ -1122,7 +1122,25 @@ ssh core-01 "cd /opt/klai && docker compose up -d portal-api"
 | `PORTAL_API_PORTAL_SECRETS_KEY` | `portal_secrets_key` | `openssl rand -hex 32` (must be 64 hex chars = 32 bytes) |
 | `PORTAL_API_SSO_COOKIE_KEY` | `sso_cookie_key` | `python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` |
 
-**Rule:** Before deploying ANY new portal-api image: `git diff HEAD portal/backend/app/core/config.py` to see if new required fields were added. If yes, generate and add the missing vars to `.env` AND `.env.sops` BEFORE deploying.
+**Automated protection (as of 2026-03-27):**
+
+Two layers now prevent a recurrence:
+
+1. **Claude Code hook** (`.claude/hooks/klai/portal-api-preflight.sh`) — any `docker compose up -d portal-api`
+   command in a Claude session is intercepted; the hook SSHes to core-01 and checks all critical vars
+   are non-empty before allowing the restart.
+
+2. **CI pre-deploy check** (`portal-api.yml`) — the deploy workflow runs the same check on core-01
+   before pulling and starting the new image. If any critical var is empty, the deploy is blocked
+   with a message pointing to `klai-infra`'s `sync-env.yml` workflow.
+
+3. **Auto-sync** (`klai-infra/.github/workflows/sync-env.yml`) — pushing a change to
+   `core-01/.env.sops` automatically decrypts and writes `/opt/klai/.env` on core-01. No manual
+   `deploy.sh` step needed. See `patterns/devops.md#sops-env-sync`.
+
+**Rule:** When adding a new required field to `config.py` (no default value): push the value to
+`core-01/.env.sops` FIRST (auto-sync will update the server), then push the `config.py` change.
+The portal-api CI will block the deploy if the var is still missing.
 
 **Rule:** The PAT and encryption keys are now in `core-01/.env.sops`. Never regenerate them — only rotate the PAT if it becomes invalid (see `platform-zitadel-pat-invalid-after-upgrade`).
 

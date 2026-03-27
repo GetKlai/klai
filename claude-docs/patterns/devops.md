@@ -4,6 +4,31 @@
 
 ---
 
+## sops-env-sync
+
+**When to use:** Updating secrets in `klai-infra/core-01/.env.sops`
+
+Pushing a change to `core-01/.env.sops` on main automatically triggers the
+`sync-env.yml` workflow in `klai-infra`. That workflow decrypts the file and
+writes `/opt/klai/.env` on core-01. No manual action required.
+
+**After a SOPS update lands:** services that need the new value must be restarted
+manually (or by their own deploy workflow). Secrets sync does NOT restart containers.
+
+**Manual sync (emergency / new machine / CI unavailable):**
+```bash
+cd klai-infra && ./core-01/deploy.sh main
+```
+
+**Adding a new required field to `config.py`:**
+1. Add the value to `core-01/.env.sops` (push → auto-syncs to server)
+2. Then push the `config.py` change (portal-api workflow will pre-flight check before deploying)
+
+**Rule:** Never manually edit `/opt/klai/.env` for permanent changes — always go via `.env.sops`.
+Manual edits are lost the next time `sync-env.yml` runs.
+
+---
+
 ## docker-compose-sync
 
 **When to use:** Adding or removing a service in `deploy/docker-compose.yml`
