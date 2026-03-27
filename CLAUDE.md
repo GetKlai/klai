@@ -12,6 +12,7 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 | `deploy/` | Self-hosting templates — Docker Compose, Caddy, LiteLLM, Zitadel |
 | `.claude/` | Shared Claude Code tooling — agents, rules, commands, skills |
 | `claude-docs/` | Klai knowledge base — patterns, pitfalls, styleguide |
+| `klai-private/` | Private business docs — research, GTM, pricing (team only, git submodule) |
 | `scripts/` | Repo management utilities |
 
 ## Package instructions

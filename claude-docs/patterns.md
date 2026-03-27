@@ -6,7 +6,7 @@
 
 **When building**: Check if a pattern exists before writing new code
 **After solving**: Add reusable solutions to the appropriate file
-**In code**: Add `# AI-CONTEXT: See klai-claude/docs/patterns/[category].md#[anchor]`
+**In code**: Add `# AI-CONTEXT: See claude-docs/patterns/[category].md#[anchor]`
 
 ## Shared Pattern Files
 
