@@ -1,8 +1,8 @@
 # SPEC: Klai Knowledge — Improvements Backlog
 
 > Status: Backlog — low priority, no active sprint
-> Architecture reference: `klai-claude/docs/klai-knowledge-architecture.md`
-> Parent spec: `klai-claude/docs/specs/klai-knowledge-implementation.md` (complete)
+> Architecture reference: `claude-docs/architecture/klai-knowledge-architecture.md`
+> Parent spec: `claude-docs/specs/klai-knowledge-implementation.md` (complete)
 > Created: 2026-03-22
 
 ---

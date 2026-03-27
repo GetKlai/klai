@@ -6,7 +6,7 @@ Project-specific instructions for the klai-portal monorepo (FastAPI backend + Re
 
 Read these two documents first. They contain the component rules, form page patterns, and button alignment standards for klai-portal:
 
-@../klai-claude/docs/patterns/frontend.md
+@../claude-docs/patterns/frontend.md
 @docs/ui-components.md
 
 The reference implementation is `frontend/src/routes/admin/users/invite.tsx`.
@@ -21,7 +21,7 @@ After every commit to klai-portal:
 
 The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before both CI is green AND the new code is confirmed on the server.
 
-Full verification protocol (CI + server health check, cross-platform): `klai-claude/rules/klai/ci-verify-after-push.md`
+Full verification protocol (CI + server health check, cross-platform): `.claude/rules/klai/ci-verify-after-push.md`
 
 Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
 

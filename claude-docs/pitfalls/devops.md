@@ -197,7 +197,7 @@ ssh core-01 "ls -lt /opt/klai/portal-dist/assets/*.js | head -3"
 **How to prevent:**
 1. The rsync step in the CI workflow must end at the directory the web server serves — not a staging directory
 2. If a two-step rsync is used (staging → serving), both steps must be in the workflow
-3. After every deploy, verify the bundle timestamp matches the deploy time (see `klai-claude/rules/klai/ci-verify-after-push.md` Step 2)
+3. After every deploy, verify the bundle timestamp matches the deploy time (see `.claude/rules/klai/ci-verify-after-push.md` Step 2)
 
 **Red flags:**
 - User reports a new feature is missing after a green CI run
@@ -219,7 +219,7 @@ CI passing means the code compiled, linted, and the container was built. It does
 2. Check server-side: container age (`docker ps`), health endpoint, log output, or bundle timestamp
 3. Only then declare the deploy complete
 
-Full protocol: `klai-claude/rules/klai/ci-verify-after-push.md`
+Full protocol: `.claude/rules/klai/ci-verify-after-push.md`
 
 ---
 

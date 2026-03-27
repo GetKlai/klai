@@ -15,8 +15,10 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
         request_id = str(uuid.uuid4())
         structlog.contextvars.bind_contextvars(request_id=request_id)
 
-        # Extract org_id and user_id from request state if set by auth middleware
-        # Auth middleware runs before this, so state may already have these
+        response = await call_next(request)
+
+        # Extract org_id and user_id from request state AFTER call_next,
+        # because auth middleware sets these during the route handler.
         org_id = getattr(request.state, "org_id", None)
         user_id = getattr(request.state, "user_id", None)
         if org_id:
@@ -24,5 +26,4 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
         if user_id:
             structlog.contextvars.bind_contextvars(user_id=str(user_id))
 
-        response = await call_next(request)
         return response
