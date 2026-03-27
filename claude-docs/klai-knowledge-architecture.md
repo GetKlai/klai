@@ -71,7 +71,7 @@ This document describes the **target architecture** for Klai Knowledge. Most of 
 | Component | Where described | Status |
 |---|---|---|
 | Gap detection | §8 | Not built — deferred pending sufficient query volume |
-| Personal knowledge scopes | §10.2 | Partial — webhook auto-provisioned on KB creation; retrieval not yet personal-scoped |
+| Personal knowledge scopes | §10.2 | Implemented — `save_personal_knowledge` MCP indexes directly to Qdrant with `user_id` in payload; retrieval-api filters by `user_id` on `scope=personal`/`both` |
 | Sparse embeddings (FlagEmbedding) | §4.2 | Deferred — TEI dense-only until >1K docs |
 | Retrieval orchestration (Haystack) | §14 | Removed from V1 scope — direct Qdrant client used |
 
@@ -923,13 +923,11 @@ container is compromised, an attacker can write to any user's personal KB by sup
 auditable). Acceptable for V1 on an internal Docker network; must be addressed before the MCP
 server is exposed to an untrusted network.
 
-*Saves are not semantically searchable in V1* — content written via `save_to_personal_kb` lands
-in Gitea (YAML frontmatter + markdown) but is not indexed in Qdrant. This means:
-- The LiteLLM pre-call hook (§9.5) does NOT retrieve personal saves as context in chat answers
-- The user cannot find their saves via semantic search
-- Personal saves are only accessible by browsing the knowledge base in the portal
-This is the expected V1 behaviour. Full-text + semantic search becomes available when the
-Knowledge Service is built and retroactively indexes the existing frontmatter files.
+*Personal saves are semantically searchable* — content written via `save_personal_knowledge`
+is indexed in Qdrant (knowledge-ingest direct path) with `user_id` in the point payload.
+The LiteLLM pre-call hook (§9.5) retrieves personal saves as chat context using `scope="both"`
+and the caller's `user_id`. Isolation is enforced by the retrieval-api: personal chunks are
+only returned when the requesting `user_id` matches the stored `user_id`.
 
 ### 9.3 Routing: RAG vs. structured queries
 
@@ -1071,8 +1069,6 @@ Each organization occupies an isolated tenant scope in Qdrant (via `tenant_id` p
 **Gitea:** one Git repository per organization for human-authored knowledge. Organization A's repo is not accessible to organization B.
 
 ### 10.2 Personal knowledge: hard isolation within an org
-
-> ⚠️ Mogelijk verouderd: §0 meldt dat personal-scope retrieval nog niet geïmplementeerd is ("webhook auto-provisioned on KB creation; retrieval not yet personal-scoped"). De Gitea storage layout en schrijfpad (via `klai-knowledge-mcp`) zijn wel actief. Retrieval vanuit personal scope werkt nog niet.
 
 Every user in an organization has access to two distinct knowledge scopes:
 
