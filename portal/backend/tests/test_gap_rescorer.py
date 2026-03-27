@@ -43,9 +43,7 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
     # Mock httpx to return good chunks (reranker_score above threshold)
     mock_response = MagicMock()
     mock_response.is_success = True
-    mock_response.json.return_value = {
-        "chunks": [{"reranker_score": 0.8, "score": 0.9}]
-    }
+    mock_response.json.return_value = {"chunks": [{"reranker_score": 0.8, "score": 0.9}]}
 
     with (
         patch("app.services.gap_rescorer.settings") as mock_settings,
@@ -87,9 +85,7 @@ async def test_rescore_keeps_open_when_still_gap() -> None:
     # Return chunks with low scores (still a gap)
     mock_response = MagicMock()
     mock_response.is_success = True
-    mock_response.json.return_value = {
-        "chunks": [{"reranker_score": 0.1}]
-    }
+    mock_response.json.return_value = {"chunks": [{"reranker_score": 0.1}]}
 
     with (
         patch("app.services.gap_rescorer.settings") as mock_settings,
@@ -135,9 +131,7 @@ async def test_rescore_caps_at_50_queries() -> None:
     # All return good chunks (resolved)
     mock_response = MagicMock()
     mock_response.is_success = True
-    mock_response.json.return_value = {
-        "chunks": [{"reranker_score": 0.8}]
-    }
+    mock_response.json.return_value = {"chunks": [{"reranker_score": 0.8}]}
 
     with (
         patch("app.services.gap_rescorer.settings") as mock_settings,
