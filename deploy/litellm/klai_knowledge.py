@@ -20,10 +20,9 @@ from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_RETRIEVE_URL = os.getenv(
-    "KNOWLEDGE_RETRIEVE_URL",
-    "http://knowledge-ingest:8000/knowledge/v1/retrieve",
-)
+KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
+if not KNOWLEDGE_RETRIEVE_URL:
+    raise RuntimeError("KNOWLEDGE_RETRIEVE_URL is not set")
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "2.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
 RETRIEVE_MIN_SCORE = float(os.getenv("KNOWLEDGE_RETRIEVE_MIN_SCORE", "0.4"))

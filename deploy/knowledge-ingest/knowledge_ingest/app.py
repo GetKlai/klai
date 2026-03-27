@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from knowledge_ingest import db, org_config, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
-from knowledge_ingest.routes import crawl, ingest, knowledge, personal, retrieve
+from knowledge_ingest.routes import crawl, ingest, knowledge, personal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,7 +76,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Klai Knowledge Ingest", lifespan=lifespan)
 app.add_middleware(InternalSecretMiddleware)
 app.include_router(ingest.router)
-app.include_router(retrieve.router)
 app.include_router(crawl.router)
 app.include_router(personal.router)
 app.include_router(knowledge.router)
