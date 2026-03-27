@@ -66,12 +66,8 @@ class TestLoggingContextMiddleware:
         await middleware.dispatch(request, mock_call_next)
 
         # org_id and user_id must NOT have been bound during call_next
-        assert org_id_during_call_next is None, (
-            "org_id should not be in context during call_next"
-        )
-        assert user_id_during_call_next is None, (
-            "user_id should not be in context during call_next"
-        )
+        assert org_id_during_call_next is None, "org_id should not be in context during call_next"
+        assert user_id_during_call_next is None, "user_id should not be in context during call_next"
 
         # After call_next, they should be bound in structlog context
         ctx_after = structlog.contextvars.get_contextvars()
