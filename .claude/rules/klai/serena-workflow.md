@@ -44,9 +44,10 @@ After a fresh clone, activate the project and Serena will initialise a fresh mem
 
 ## Session Start
 
+**Note:** With `--project-from-cwd` in `.mcp.json`, Serena auto-activates the project at MCP startup — `activate_project` is NOT needed and will fail if called. Skip straight to reading memories.
+
 At the beginning of each development session:
-1. Activate the project: `mcp__serena__activate_project(project="klai")`
-2. Read relevant memories based on the task domain (not all memories every time):
+1. Read relevant memories based on the task domain (not all memories every time):
    - Architecture questions: `architecture-overview`
    - Backend work: `backend-patterns`, `domain-model`
    - Frontend/website work: `frontend-standards`
