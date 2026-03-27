@@ -5,7 +5,7 @@ import { useState } from 'react'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
-  Check, X, Settings, AlertTriangle,
+  Check, X, Settings, AlertTriangle, ArrowLeft,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -1684,9 +1684,12 @@ function KnowledgeDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/app/knowledge">
-            <Button variant="ghost" size="sm">{m.knowledge_new_cancel()}</Button>
-          </Link>
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/app/knowledge">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              {m.knowledge_page_intro_heading()}
+            </Link>
+          </Button>
         </div>
       </div>
 
