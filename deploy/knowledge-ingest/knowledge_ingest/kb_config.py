@@ -29,12 +29,20 @@ async def get_kb_visibility(org_id: str, kb_slug: str, pool: asyncpg.Pool) -> st
     if key in _cache:
         return str(_cache[key])
 
-    row = await pool.fetchrow(
-        "SELECT visibility FROM knowledge.kb_config WHERE org_id = $1 AND kb_slug = $2",
-        org_id,
-        kb_slug,
-    )
-    visibility = row["visibility"] if row else "internal"
+    try:
+        row = await pool.fetchrow(
+            "SELECT visibility FROM knowledge.kb_config WHERE org_id = $1 AND kb_slug = $2",
+            org_id,
+            kb_slug,
+        )
+        visibility = row["visibility"] if row else "internal"
+    except Exception:
+        logger.exception(
+            "Failed to fetch KB visibility from DB (org=%s kb=%s), defaulting to 'internal'",
+            org_id,
+            kb_slug,
+        )
+        visibility = "internal"
     _cache[key] = visibility
     return visibility
 

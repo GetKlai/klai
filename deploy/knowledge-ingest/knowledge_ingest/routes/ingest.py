@@ -206,7 +206,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     pool = await get_pool()
     visibility = await kb_config.get_kb_visibility(req.org_id, req.kb_slug, pool)
 
-    extra_payload: dict = {"title": title, "artifact_id": artifact_id, "visibility": visibility}
+    extra_payload: dict = {"title": title, "artifact_id": artifact_id}
     if req.source_type:
         extra_payload["source_type"] = req.source_type
     if req.content_type != "unknown":
@@ -218,6 +218,8 @@ async def ingest_document(req: IngestRequest) -> dict:
     extra_payload["belief_time_start"] = kf["belief_time_start"]
     extra_payload["belief_time_end"] = kf["belief_time_end"]
     extra_payload.update(_extract_frontmatter_metadata(req.content))
+    # Visibility is authoritative from kb_config — set last so req.extra cannot override it
+    extra_payload["visibility"] = visibility
 
     await qdrant_store.upsert_chunks(
         org_id=req.org_id,
