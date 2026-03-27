@@ -25,6 +25,7 @@ class GapOut(BaseModel):
     nearest_kb_slug: str | None
     occurrence_count: int
     last_occurred: datetime
+    resolved_at: datetime | None = None
 
 
 class GapsResponse(BaseModel):
@@ -43,6 +44,7 @@ async def list_gaps(
     days: int = Query(default=30, ge=1, le=90),
     gap_type: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    include_resolved: bool = Query(default=False),
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> GapsResponse:
@@ -59,6 +61,7 @@ async def list_gaps(
             func.max(PortalRetrievalGap.nearest_kb_slug).label("nearest_kb_slug"),
             func.count().label("occurrence_count"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
+            func.max(PortalRetrievalGap.resolved_at).label("resolved_at"),
         )
         .where(
             PortalRetrievalGap.org_id == org.id,
@@ -70,6 +73,8 @@ async def list_gaps(
     )
     if gap_type:
         stmt = stmt.where(PortalRetrievalGap.gap_type == gap_type)
+    if not include_resolved:
+        stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -81,6 +86,7 @@ async def list_gaps(
             nearest_kb_slug=r.nearest_kb_slug,
             occurrence_count=r.occurrence_count,
             last_occurred=r.last_occurred,
+            resolved_at=r.resolved_at,
         )
         for r in rows
     ]
@@ -105,6 +111,7 @@ async def get_gap_summary(
         .where(
             PortalRetrievalGap.org_id == org.id,
             PortalRetrievalGap.occurred_at >= cutoff,
+            PortalRetrievalGap.resolved_at.is_(None),  # only open gaps
         )
         .group_by(PortalRetrievalGap.gap_type)
     )

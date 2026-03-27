@@ -28,6 +28,7 @@ from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
+from app.services.gap_rescorer import schedule_rescore
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,19 @@ async def receive_sync_status(
     connector.last_sync_status = body.status
     await db.commit()
 
+    if body.status == "success":
+        # Load org's zitadel_org_id for re-scoring
+        org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == connector.org_id))
+        org = org_result.scalar_one_or_none()
+        if org:
+            await schedule_rescore(
+                org_id=connector.org_id,
+                zitadel_org_id=org.zitadel_org_id,
+                kb_slug=None,  # connector sync covers all KBs
+                db_factory=get_db,
+                delay_seconds=0.0,  # no delay needed -- connector already fully synced
+            )
+
 
 class KnowledgeFeatureResponse(BaseModel):
     enabled: bool
@@ -267,6 +281,33 @@ async def get_knowledge_feature(
         kb_personal_enabled=user.kb_personal_enabled,
         kb_slugs_filter=user.kb_slugs_filter,
         kb_pref_version=user.kb_pref_version,
+    )
+
+
+class PageSavedNotification(BaseModel):
+    kb_slug: str
+    zitadel_org_id: str
+
+
+@router.post("/v1/orgs/{org_id}/page-saved", status_code=status.HTTP_204_NO_CONTENT)
+async def notify_page_saved(
+    org_id: int,
+    body: PageSavedNotification,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Notify portal-api that a page was saved in a Klai-native KB.
+
+    Called by klai-docs after processing a Gitea push webhook. Schedules a
+    gap re-scoring job with a 5-second delay to allow Qdrant indexing to complete.
+    """
+    _require_internal_token(request)
+    await schedule_rescore(
+        org_id=org_id,
+        zitadel_org_id=body.zitadel_org_id,
+        kb_slug=body.kb_slug,
+        db_factory=get_db,
+        delay_seconds=5.0,
     )
 
 
