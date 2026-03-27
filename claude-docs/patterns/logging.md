@@ -2,6 +2,20 @@
 
 > Structured logging with structlog, querying VictoriaLogs via LogsQL, and debugging production issues.
 
+## Index
+> Keep this index in sync — add a row when adding a section below.
+
+| Section | When to use |
+|---|---|
+| [Architecture](#architecture) | Understanding the full log pipeline |
+| [Log fields](#log-fields) | Required structlog fields for Python services |
+| [Writing logs](#writing-logs) | How to write logs with structlog |
+| [Adding logging to a new service](#adding-logging-to-a-new-service) | Setting up logging in a new Python service |
+| [Querying logs (LogsQL)](#querying-logs-logsql) | Querying VictoriaLogs via Grafana |
+| [Accessing logs as an agent](#accessing-logs-as-an-agent) | How Claude agents access production logs |
+
+---
+
 ## Architecture
 
 ```

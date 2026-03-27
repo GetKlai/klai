@@ -3,6 +3,23 @@
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy — Klai AI stack configuration.
 > Based on the compatibility review in `claude-docs/architecture/platform.md`.
 
+## Index
+> Keep this index in sync — add a row when adding a pattern below.
+
+| Pattern | When to use |
+|---|---|
+| [platform-litellm-vllm-config](#platform-litellm-vllm-config) | Configuring LiteLLM to route to vLLM instances |
+| [platform-vllm-startup-sequence](#platform-vllm-startup-sequence) | Starting vLLM services on ai-01 |
+| [platform-mongodb-per-tenant](#platform-mongodb-per-tenant) | Provisioning a new customer tenant |
+| [platform-caddy-tenant-routing](#platform-caddy-tenant-routing) | Per-tenant subdomain routing in Caddy |
+| [platform-docker-socket-proxy](#platform-docker-socket-proxy) | Safe Docker socket access from application containers |
+| [platform-zitadel-org-per-tenant](#platform-zitadel-org-per-tenant) | Creating a Zitadel organization for a new tenant |
+| [platform-librechat-env-template](#platform-librechat-env-template) | Generating a LibreChat container `.env` file |
+| [platform-portal-users-mapping-only](#platform-portal-users-mapping-only) | Storing user membership in the portal database |
+| [platform-zitadel-user-role-assignment](#platform-zitadel-user-role-assignment) | Assigning a Zitadel project role to a user |
+| [platform-vexa-bot-lifecycle](#platform-vexa-bot-lifecycle) | Debugging a meeting stuck in status |
+| [platform-hetzner-dns-wildcard-tls](#platform-hetzner-dns-wildcard-tls) | Building Caddy with wildcard TLS for `*.getklai.com` |
+
 ---
 
 ## platform-litellm-vllm-config

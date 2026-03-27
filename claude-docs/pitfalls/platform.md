@@ -4,6 +4,43 @@
 > Most entries are derived from the compatibility review in `architecture/platform.md`.
 > For step-by-step emergency recovery procedures, see `runbooks/platform-recovery.md`.
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [platform-litellm-vllm-provider-prefix](#platform-litellm-vllm-provider-prefix) | HIGH | Use `hosted_vllm/` prefix, not `openai/` |
+| [platform-litellm-drop-params](#platform-litellm-drop-params) | HIGH | Always set `drop_params: true` in LiteLLM config |
+| [platform-vllm-gpu-memory-utilization](#platform-vllm-gpu-memory-utilization) | CRIT | Split GPU memory between two vLLM instances |
+| [platform-vllm-sequential-startup](#platform-vllm-sequential-startup) | CRIT | Start vLLM instances sequentially, never in parallel |
+| [platform-vllm-mps-enforce-eager](#platform-vllm-mps-enforce-eager) | HIGH | Add `--enforce-eager` when using NVIDIA MPS |
+| [platform-librechat-oidc-reuse-tokens](#platform-librechat-oidc-reuse-tokens) | CRIT | Never set `OPENID_REUSE_TOKENS=true` |
+| [platform-librechat-username-claim](#platform-librechat-username-claim) | HIGH | Set `OPENID_USERNAME_CLAIM=preferred_username` |
+| [platform-grafana-victorialogs-loki-incompatible](#platform-grafana-victorialogs-loki-incompatible) | HIGH | VictoriaLogs uses LogsQL datasource, not Loki |
+| [platform-caddy-not-auto-routing](#platform-caddy-not-auto-routing) | HIGH | Caddy never auto-routes to new containers |
+| [platform-caddy-admin-off-reload](#platform-caddy-admin-off-reload) | HIGH | Reload Caddy by restarting container, not Admin API |
+| [platform-rag-api-non-lite-image](#platform-rag-api-non-lite-image) | HIGH | Use full TEI image for cross-encoder reranker |
+| [platform-whisper-cuda-version](#platform-whisper-cuda-version) | HIGH | Match faster-whisper CUDA version to GPU drivers |
+| [platform-fastapi-background-tasks-db-session](#platform-fastapi-background-tasks-db-session) | CRIT | Never pass request-scoped DB session to BackgroundTasks |
+| [caddy-basicauth-monitoring-conflict](#caddy-basicauth-monitoring-conflict) | HIGH | `basic_auth` blocks Uptime Kuma health checks |
+| [caddy-log-not-in-handle](#caddy-log-not-in-handle) | MED | `log` directive must be at server block level |
+| [platform-zitadel-project-grant-vs-user-grant](#platform-zitadel-project-grant-vs-user-grant) | HIGH | Use user grants, not project grants for roles |
+| [platform-zitadel-resourceowner-claim-unreliable](#platform-zitadel-resourceowner-claim-unreliable) | HIGH | Don't use `resourceowner:id` claim for org lookup |
+| [platform-sso-cache-single-instance](#platform-sso-cache-single-instance) | HIGH | SSO in-memory cache is not shared across instances |
+| [caddy-permissions-policy-blocks-mediadevices](#caddy-permissions-policy-blocks-mediadevices) | CRIT | Set explicit Permissions-Policy for camera/mic |
+| [platform-alembic-shared-postgres-schema-conflict](#platform-alembic-shared-postgres-schema-conflict) | CRIT | Multiple services need separate Alembic version tables |
+| [platform-zitadel-login-v2-recovery](#platform-zitadel-login-v2-recovery) | CRIT | Login v2 breaks portal redirect; see runbooks/ for fix |
+| [platform-zitadel-pat-invalid-after-upgrade](#platform-zitadel-pat-invalid-after-upgrade) | CRIT | Zitadel upgrade invalidates PATs; rotate immediately |
+| [platform-vexa-timeout-looks-like-bug](#platform-vexa-timeout-looks-like-bug) | MED | 60s "Recording" delay is normal bot behavior |
+| [platform-vexa-guard-breaks-stop-flow](#platform-vexa-guard-breaks-stop-flow) | HIGH | Status guard in webhook handler breaks stop flow |
+| [platform-falkordb-sspLv1-license](#platform-falkordb-sspLv1-license) | MED | FalkorDB is NOT open source (SSLV1 license) |
+| [platform-hipporag2-vs-graphiti-different-layers](#platform-hipporag2-vs-graphiti-different-layers) | HIGH | HippoRAG2 and Graphiti are not alternatives |
+| [platform-tei-embedding-timeout](#platform-tei-embedding-timeout) | HIGH | TEI times out on large batches; use smaller batches |
+| [platform-librechat-redis-config-cache](#platform-librechat-redis-config-cache) | HIGH | librechat.yaml cached in Redis; restart container to apply |
+| [platform-librechat-addparams-no-envvars](#platform-librechat-addparams-no-envvars) | MED | `addParams` does not support env var interpolation |
+| [platform-librechat-dual-system-message](#platform-librechat-dual-system-message) | MED | `promptPrefix` + LiteLLM hook = duplicate system messages |
+| [platform-portal-api-deploy-env-preflight](#platform-portal-api-deploy-env-preflight) | CRIT | New config fields need env vars before deploying |
+
 ---
 
 ## platform-litellm-vllm-provider-prefix

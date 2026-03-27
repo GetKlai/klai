@@ -2,6 +2,20 @@
 
 > Hetzner, SOPS secrets, env management, DNS, SSH
 
+## Index
+> Keep this index in sync — add a row when adding a pattern below.
+
+| Pattern | When to use |
+|---|---|
+| [sops-overview](#sops-overview) | Understanding the SOPS secret management setup |
+| [env-modification-rules](#env-modification-rules) | Adding or changing variables in `/opt/klai/.env` |
+| [sops-secret-edit](#sops-secret-edit) | Editing an existing secret in a SOPS file |
+| [sops-secret-add](#sops-secret-add) | Adding a new secret to a SOPS file |
+| [sops-disaster-recovery](#sops-disaster-recovery) | Recovering access after losing the age key |
+| [sops-add-new-server](#sops-add-new-server) | Adding a new server to the SOPS key ring |
+| [ssh-server-access](#ssh-server-access) | SSH access to any Klai server |
+| [dns-propagation-check](#dns-propagation-check) | Checking DNS propagation for new records |
+
 ---
 
 ## sops-overview

@@ -2,6 +2,16 @@
 
 > Standard workflow for browser-based UI testing via the Playwright MCP tool.
 
+## Index
+> Keep this index in sync — add a row when adding a section below.
+
+| Section | When to use |
+|---|---|
+| [Setup](#setup) | Initial Playwright MCP configuration |
+| [Standard workflow](#standard-workflow) | Step-by-step browser testing process |
+| [Checking HTTP headers](#checking-http-headers) | Verifying response headers in tests |
+| [Debugging with GlitchTip](#debugging-with-glitchtip) | Using GlitchTip for error monitoring |
+
 ---
 
 ## Setup

@@ -2,6 +2,29 @@
 
 > AI-assisted development workflow. Universal rules for every session.
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [process-validate-before-code-change](#process-validate-before-code-change) | HIGH | Validate hypothesis with real data before writing code |
+| [process-verify-completion-claims](#process-verify-completion-claims) | CRIT | Verify AI completion claims with `git diff --stat` |
+| [process-server-restart-protocol](#process-server-restart-protocol) | CRIT | Never use `run_in_background` to start servers |
+| [process-test-user-facing-not-imports](#process-test-user-facing-not-imports) | HIGH | Test actual user-facing functionality, not just imports |
+| [process-debug-logging-first](#process-debug-logging-first) | HIGH | Add debug logging before implementing fixes |
+| [process-trust-user-feedback](#process-trust-user-feedback) | CRIT | Reproduce exact user scenario when they say it's broken |
+| [process-read-spec-first](#process-read-spec-first) | CRIT | Read full SPEC document before implementing anything |
+| [process-minimal-changes](#process-minimal-changes) | HIGH | Only make changes explicitly asked for |
+| [process-wait-after-question](#process-wait-after-question) | HIGH | Stop and wait after asking a question |
+| [process-listen-before-acting](#process-listen-before-acting) | CRIT | Read entire message before taking any action |
+| [process-ask-before-retry](#process-ask-before-retry) | HIGH | Ask user after 2 failures; don't auto-retry |
+| [process-debug-data-before-theory](#process-debug-data-before-theory) | HIGH | Check actual data (logs, DB) before forming theories |
+| [process-verify-full-flow](#process-verify-full-flow) | HIGH | Verify all downstream steps after fixing a bug |
+| [process-check-process-not-curl](#process-check-process-not-curl) | HIGH | Use `lsof` to check ports; add timeouts to curl |
+| [process-no-prompt-files](#process-no-prompt-files) | HIGH | Output prompts in chat, never write to markdown files |
+| [process-spec-stub-deps-premature](#process-spec-stub-deps-premature) | HIGH | Comment out new deps at stub time; enable in `/run` |
+| [process-test-cache-two-level-dispatch](#process-test-cache-two-level-dispatch) | MED | Dispatch by key prefix in multi-key cache mocks |
+
 ---
 
 ## process-validate-before-code-change

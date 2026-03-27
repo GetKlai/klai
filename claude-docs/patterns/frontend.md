@@ -2,6 +2,17 @@
 
 > Copy-paste solutions for frontend projects (portal, website).
 
+## Index
+> Keep this index in sync — add a row when adding a pattern below.
+
+| Pattern | When to use |
+|---|---|
+| [i18n-paraglide](#i18n-paraglide) | Setting up or adding translations in React/Vite |
+| [portal-ui-components](#portal-ui-components) | Using `<Button>`, `<Input>`, `<Select>`, `<Card>` components |
+| [separation-of-concerns](#separation-of-concerns) | Deciding where styling, logic, data, and components belong |
+| [logging](#logging) | Setting up structured logging with consola + Sentry |
+| [playwright-mcp](#playwright-mcp) | Browser automation for E2E spot-checks via MCP |
+
 ---
 
 ## i18n-paraglide

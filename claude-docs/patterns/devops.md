@@ -2,6 +2,22 @@
 
 > Coolify deployments, Docker, service management, CI/CD
 
+## Index
+> Keep this index in sync — add a row when adding a pattern below.
+
+| Pattern | When to use |
+|---|---|
+| [sops-env-sync](#sops-env-sync) | Updating secrets in `klai-infra/core-01/.env.sops` |
+| [docker-compose-sync](#docker-compose-sync) | Adding or removing a service in `docker-compose.yml` |
+| [coolify-env-update](#coolify-env-update) | Adding or changing an env var for a Coolify service |
+| [public-01-ssh](#public-01-ssh) | SSH access to public-01 (Coolify, Uptime Kuma) |
+| [core-01-ssh](#core-01-ssh) | SSH access to core-01 (AI stack, portal) |
+| [coolify-redeploy](#coolify-redeploy) | Triggering a redeploy after a config change |
+| [docker-rebuild-no-cache](#docker-rebuild-no-cache) | Force full rebuild after dependency or base image change |
+| [ghcr-ci-deploy-build-on-server](#ghcr-ci-deploy-build-on-server) | Deploy when GHCR registry auth is stale |
+| [uptime-kuma-add-monitor](#uptime-kuma-add-monitor) | Adding a new service to status monitoring |
+| [umami-access](#umami-access) | Accessing Umami analytics dashboard |
+
 ---
 
 ## sops-env-sync

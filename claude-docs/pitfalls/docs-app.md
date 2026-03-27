@@ -3,6 +3,16 @@
 > klai-docs (Next.js) integration from portal-api (`docs_client.py`).
 > Derived from SPEC-KB-003 integration debugging, 2026-03-25.
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [platform-docs-app-port](#platform-docs-app-port) | HIGH | docs-app runs on port **3010**, not 3000 |
+| [platform-docs-app-basepath](#platform-docs-app-basepath) | HIGH | All routes under `/docs/api/...`, not `/api/...` |
+| [platform-docs-app-visibility-values](#platform-docs-app-visibility-values) | HIGH | Map portal `internal` → docs-app `private` |
+| [platform-docs-app-error-logging](#platform-docs-app-error-logging) | MED | Log status code + response text; catch ConnectError |
+
 ---
 
 ## platform-docs-app-port

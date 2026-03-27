@@ -3,6 +3,20 @@
 > Vexa meeting bot — Google Meet leave/end detection via Playwright DOM scraping.
 > All findings confirmed by live testing on a real Google Meet session.
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [vexa-meet-end-browser-crash](#vexa-meet-end-browser-crash) | CRIT | Meeting end = Playwright "Target crashed"; catch separately |
+| [vexa-dom-freeze-on-participant-leave](#vexa-dom-freeze-on-participant-leave) | HIGH | After leave, DOM freezes; use timeout-based detection |
+| [vexa-everyoneLeftTimeout-wrong-field](#vexa-everyoneLeftTimeout-wrong-field) | HIGH | Config field is `everyoneLeftTimeout`, not the class name |
+| [vexa-six-leave-mechanisms-status](#vexa-six-leave-mechanisms-status) | HIGH | Implement all 6 leave/end detection paths |
+| [vexa-upstream-issue-190-fake-participants](#vexa-upstream-issue-190-fake-participants) | MED | Fake participant count bug still open upstream |
+| [vexa-issue-189-video-blocking-regression](#vexa-issue-189-video-blocking-regression) | HIGH | Video track blocking regression in upstream |
+| [vexa-playwright-dom-scraping-fragility](#vexa-playwright-dom-scraping-fragility) | MED | DOM scraping is fragile; prefer event-based detection |
+| [vexa-what-still-needs-fixing](#vexa-what-still-needs-fixing) | HIGH | Known open issues not yet fixed |
+
 ---
 
 ## vexa-meet-end-browser-crash

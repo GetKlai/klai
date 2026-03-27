@@ -42,6 +42,8 @@ Check the project's CLAUDE.md for the full list.
 - After solving a tricky infrastructure problem → run `/retro "what worked"`
 - At the end of a SPEC cycle → the sync command will prompt for learnings
 
+**Index maintenance:** Every pattern and pitfall file has an `## Index` table at the top. When adding a new entry to any of these files, also add a row to that file's index table. Keep the "Rule" or "When to use" column to one line.
+
 ## Index files
 
 - Patterns index: `claude-docs/patterns.md`

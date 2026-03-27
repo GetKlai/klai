@@ -2,6 +2,20 @@
 
 > Hetzner, SOPS, environment variables, DNS, SSH
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [infra-env-not-synced](#infra-env-not-synced) | HIGH | SOPS and Coolify are not auto-synced; update both |
+| [infra-sops-missing-main-env](#infra-sops-missing-main-env) | HIGH | Service-specific SOPS needs local `.sops.yaml` |
+| [infra-sops-dotenv-dollar-sign](#infra-sops-dotenv-dollar-sign) | HIGH | `$` in secrets breaks SOPS dotenv; use YAML format |
+| [infra-docker-user-container-ip-stale](#infra-docker-user-container-ip-stale) | CRIT | Container IPs change on restart; never hardcode in iptables |
+| [infra-zitadel-console-http-api](#infra-zitadel-console-http-api) | CRIT | Zitadel console broken; use Management API directly |
+| [infra-caddy-no-global-csp](#infra-caddy-no-global-csp) | HIGH | Global CSP `header {}` blocks browser APIs silently |
+| [infra-never-modify-env-secrets](#infra-never-modify-env-secrets) | CRIT | Never `sed`/`echo` existing secrets in `.env` |
+| [infra-sops-files-in-subdirs](#infra-sops-files-in-subdirs) | CRIT | SOPS files in subdirs need a local `.sops.yaml` |
+
 ---
 
 ## infra-env-not-synced
