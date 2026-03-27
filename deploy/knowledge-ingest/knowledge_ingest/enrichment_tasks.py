@@ -52,6 +52,9 @@ def init_app(connector: Any) -> Any:
     from knowledge_ingest.crawl_tasks import register_crawl_tasks  # noqa: PLC0415
     register_crawl_tasks(_procrastinate_app)
 
+    from knowledge_ingest.ingest_tasks import register_ingest_tasks  # noqa: PLC0415
+    register_ingest_tasks(_procrastinate_app)
+
     return _procrastinate_app
 
 

@@ -38,6 +38,7 @@ def hmac_client():
             mock_settings.gitea_token = "test-token"
             mock_settings.chunk_size = 1500
             mock_settings.chunk_overlap = 200
+            mock_settings.enrichment_enabled = False  # use immediate ingest path (no Procrastinate)
             with patch(
                 "knowledge_ingest.qdrant_store.ensure_collection",
                 new_callable=AsyncMock,
