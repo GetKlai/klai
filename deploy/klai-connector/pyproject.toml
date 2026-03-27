@@ -18,6 +18,7 @@ dependencies = [
     "cryptography>=44.0.0",
     "gidgethub>=5.3.0",
     "PyJWT[crypto]>=2.9.0",
+    "structlog>=25.0",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +41,7 @@ target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "G", "LOG"]
 ignore = ["B008"]  # Depends() in FastAPI endpoint defaults is standard pattern
 
 [tool.pyright]

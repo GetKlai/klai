@@ -4,10 +4,10 @@
 
 **Klai** is a privacy-first, EU-only AI infrastructure platform for European enterprises. It provides secure, compliant access to Large Language Models (LLMs) with full data residency in the EU, transparent open-source components, and zero vendor lock-in.
 
-**Core Problem Solved:** Enterprises need AI capabilities but face compliance barriers — GDPR, data residency requirements, Cloud Act vulnerability, and opacity around where data actually goes. Klai answers "Where does my data go?" with full auditability, EU-only infrastructure, and open-source components.
+**Core Problem Solved:** Enterprises need AI capabilities but face compliance barriers -- GDPR, data residency requirements, Cloud Act vulnerability, and opacity around where data actually goes. Klai answers "Where does my data go?" with full auditability, EU-only infrastructure, and open-source components.
 
 **Core Value Proposition:**
-- Data stays exclusively in the EU (Hetzner servers in Germany)
+- Data stays exclusively in the EU (Hetzner servers)
 - Only open-source or open-weight models from EU providers (Mistral, Qwen)
 - Full transparency: published finances, roadmap, company documentation
 - Self-hostable for maximum control
@@ -32,21 +32,27 @@
 ## Core Products
 
 ### Chat
-AI chat interface powered by LibreChat. Each customer gets an isolated subdomain (e.g., `acme.getklai.com`) with their own data store. Model routing via LiteLLM Complexity Router: simple queries → Qwen3-8B, complex → Qwen3-32B (< 1ms routing overhead). Automatic fallback from Mistral API to Ollama CPU on failure.
+AI chat interface powered by LibreChat. Each customer gets an isolated subdomain (e.g., `acme.getklai.com`) with their own data store. Model routing via LiteLLM: simple queries routed to fast models, complex queries to large models. Automatic fallback from Mistral API to Ollama CPU on failure. Web search via SearxNG + Firecrawl for full-page content extraction. Reranking via self-hosted Infinity (BGE-reranker-v2-m3).
+
+### Knowledge
+Organization-scoped knowledge bases with document management. Hybrid retrieval pipeline combining vector search (Qdrant) and knowledge graph (FalkorDB/Graphiti) with Reciprocal Rank Fusion. Document ingestion via knowledge-ingest service with dense + sparse embeddings (BGE-M3 via TEI + custom sparse server). External source connectors (klai-connector): GitHub repos, websites via Crawl4AI. Knowledge-augmented chat responses via LiteLLM retrieval hook. MCP server (klai-knowledge-mcp) for LibreChat tool integration.
+
+### Docs
+Per-tenant documentation sites backed by Gitea git storage. Next.js docs-app with Zitadel SSO authentication. Markdown-based content with automatic knowledge base ingestion for RAG.
 
 ### Focus
-RAG-enabled document Q&A. Customers upload company documents; Focus uses them to answer questions with source citations. Built on Qdrant vector database + TEI dense embeddings + pgvector. (Phase 2 — live)
+Deep research workflows with document Q&A. Document processing via Docling. Web search integration via SearxNG. Streaming research output with source citations.
 
 ### Scribe
-Voice-to-text transcription via Whisper Server. CPU-based for current scale, GPU-accelerated coming in Phase 3. Integrated as Scribe API within the platform.
+Voice-to-text transcription via self-hosted Whisper Server (large-v3-turbo model, faster-whisper on CPU). Audio/video file upload with transcription history per organization.
 
 ### Meeting Transcription
-Bot-assisted meeting transcription via Vexa integration (SPEC-SCRIBE-002). A Vexa bot joins Google Meet, Zoom, or Microsoft Teams as a browser participant, records the combined audio stream, and submits it for post-meeting batch transcription via the existing Whisper Server. Key capabilities:
-- Vexa bot joins Google Meet, Zoom, and Microsoft Teams as a browser participant
+Bot-assisted meeting transcription via Vexa integration. A Vexa bot joins Google Meet as a browser participant, records the combined audio stream, and submits it for post-meeting batch transcription via Whisper Server. Key capabilities:
+- Vexa bot joins Google Meet as a browser participant
 - Post-meeting batch transcription via Whisper Server (no real-time overhead)
 - Speaker attribution via Vexa's DOM-based speaking-indicator detection
-- EU-only audio processing on Hetzner core-01 — audio never leaves Klai infrastructure
-- Transcript available in portal under `/app/meetings` with copy and download
+- EU-only audio processing -- audio never leaves Klai infrastructure
+- Calendar invite parsing via IMAP listener (meet@getklai.com)
 - Consent notice displayed and recorded before any bot is dispatched
 
 ---
@@ -55,33 +61,38 @@ Bot-assisted meeting transcription via Vexa integration (SPEC-SCRIBE-002). A Vex
 
 **Customer-Facing**
 - Private chat with Klai LLM models (isolated per tenant)
-- Focus: RAG document Q&A with source citations
-- Scribe: Voice-to-text transcription
+- Knowledge bases: upload documents, connect GitHub/websites, ask questions with cited sources
+- Docs: per-tenant documentation sites with markdown editing
+- Focus: deep research with web search and document analysis
+- Scribe: voice-to-text transcription
+- Meeting bots: automated meeting join, recording, and transcription
 - Usage dashboard (per-user token tracking)
-- Self-service billing (Moneybird — NL-based, EU-only)
-- Invoicing and VAT management
-- Multi-language UI (Dutch + English)
-- Admin panel: invite users, manage roles, organization settings
+- Self-service billing
+- Multi-language UI (Dutch + English via Paraglide/Inlang)
+- Admin panel: invite users, manage groups, organization settings
 - OIDC Single Sign-On via Zitadel
 
 **Platform**
 - Automatic tenant provisioning on signup (Zitadel org + LibreChat container + LiteLLM virtual key)
 - Multi-tenancy: one subdomain per customer, separate MongoDB database per tenant
-- LiteLLM Complexity Router (7-dimension analysis, < 1ms overhead)
 - Per-tenant librechat.yaml with rolling updates without downtime
 - Data isolation: per-user storage in LibreChat, per-tenant databases
-- EU-only data residency (Hetzner Germany)
+- EU-only data residency (Hetzner)
 - Observability: VictoriaMetrics + Grafana dashboards, GlitchTip error tracking, VictoriaLogs
+- Hybrid RAG: vector search (Qdrant) + knowledge graph (FalkorDB/Graphiti) with RRF merging
 
 ---
 
 ## Use Cases
 
-1. **Enterprise Chat** — Employees access private AI chat without sending data to US cloud providers
-2. **Document Q&A (Focus)** — Upload internal policy documents, contracts, or handbooks; ask questions with cited sources
-3. **Meeting Transcription (Scribe)** — Record and transcribe meetings or voice notes in Dutch and English
-4. **Compliance Reporting** — Audit logs, DPA, EU data residency documentation for regulatory requirements
-5. **AI API Access** — Developers use Klai's OpenAI-compatible API for building internal tools
+1. **Enterprise Chat** -- Employees access private AI chat without sending data to US cloud providers
+2. **Knowledge Management** -- Upload documents, connect external sources (GitHub, websites), and get AI-powered answers with citations
+3. **Team Documentation** -- Per-tenant docs sites with version-controlled markdown content
+4. **Deep Research (Focus)** -- Research topics with web search and document analysis, get structured output with sources
+5. **Meeting Transcription** -- Automated meeting bot joins calls, records, and transcribes with speaker attribution
+6. **Voice Transcription (Scribe)** -- Upload audio/video files for transcription
+7. **Compliance Reporting** -- Audit logs, DPA, EU data residency documentation for regulatory requirements
+8. **AI API Access** -- Developers use Klai's OpenAI-compatible API (via LiteLLM) for building internal tools
 
 ---
 
@@ -89,11 +100,11 @@ Bot-assisted meeting transcription via Vexa integration (SPEC-SCRIBE-002). A Vex
 
 | Phase | Status | Key Deliverable |
 |-------|--------|----------------|
-| Phase 1 | ✅ Complete | Portal live, first paying customer, provisioning active |
-| Phase 2 | 🚧 In Progress | Focus (RAG) live, Scribe live, end-to-end verified |
-| Phase 3 | 🚧 Starting | GPU server (ai-01) for vLLM self-hosting, Whisper GPU |
-| Phase 4 | 📋 Planned | Enterprise SAML SSO, SCIM provisioning |
-| Phase 5 | 📋 Planned | LiteLLM Enterprise, advanced audit logs |
+| Phase 1 | Complete | Portal live, first paying customer, provisioning active |
+| Phase 2 | In Progress | Focus (RAG) live, Scribe live, Knowledge bases, Docs, Connectors |
+| Phase 3 | Starting | GPU server (ai-01) for vLLM self-hosting, Whisper GPU |
+| Phase 4 | Planned | Enterprise SAML SSO, SCIM provisioning |
+| Phase 5 | Planned | LiteLLM Enterprise, advanced audit logs |
 
 ---
 
@@ -101,11 +112,11 @@ Bot-assisted meeting transcription via Vexa integration (SPEC-SCRIBE-002). A Vex
 
 | Subproject | Role |
 |-----------|------|
-| **klai-website** | Public marketing site (getklai.com) — Astro + Keystatic CMS |
-| **klai-portal** | Customer SaaS application — FastAPI + React |
-| **klai-infra** | Infrastructure configuration & deployment — Docker, SOPS, Caddy |
-| **klai-docs** | Internal documentation portal — Next.js |
-| **klai-claude** | Canonical Claude Code assets — agents, rules, patterns, knowledge base |
+| **klai-website** | Public marketing site (getklai.com) -- Astro + Keystatic CMS |
+| **klai-portal** | Customer SaaS application -- FastAPI + React |
+| **klai-infra** | Infrastructure configuration and deployment -- Docker, SOPS, Caddy |
+| **klai-docs** | Internal documentation portal -- Next.js |
+| **klai-claude** | Canonical Claude Code assets -- agents, rules, patterns, knowledge base |
 
 ---
 
@@ -113,9 +124,9 @@ Bot-assisted meeting transcription via Vexa integration (SPEC-SCRIBE-002). A Vex
 
 | Feature | Klai | ChatGPT | Azure AI |
 |---------|------|---------|---------|
-| EU data residency | ✅ Guaranteed | ❌ US servers | ⚠️ Opt-in, complex |
-| Open source | ✅ All components | ❌ Proprietary | ⚠️ Partial |
-| Self-hostable | ✅ Optional | ❌ No | ⚠️ Complex enterprise |
-| Cloud Act vulnerability | ✅ None (EU company) | ❌ US company | ❌ US company |
-| Transparent pricing | ✅ Published | ⚠️ Variable | ❌ Complex |
-| Per-tenant isolation | ✅ Complete | ❌ Shared | ⚠️ Enterprise only |
+| EU data residency | Guaranteed | US servers | Opt-in, complex |
+| Open source | All components | Proprietary | Partial |
+| Self-hostable | Optional | No | Complex enterprise |
+| Cloud Act vulnerability | None (EU company) | US company | US company |
+| Transparent pricing | Published | Variable | Complex |
+| Per-tenant isolation | Complete | Shared | Enterprise only |

@@ -1,6 +1,7 @@
 """Web crawler connector adapter using the Crawl4AI REST API."""
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -60,6 +61,24 @@ class WebCrawlerAdapter(BaseAdapter):
             return {"Authorization": f"Bearer {self._api_key}"}
         return {}
 
+    async def _fetch_sitemap_urls(self, base_url: str) -> list[str]:
+        """Fetch URLs from {base_url}/sitemap.xml for use as additional seed URLs.
+
+        Returns only URLs on the same domain as base_url.
+        Returns an empty list on any error (sitemap is optional).
+        """
+        sitemap_url = f"{base_url.rstrip('/')}/sitemap.xml"
+        base_domain = urlparse(base_url).netloc.lower()
+        try:
+            resp = await self._http_client.get(sitemap_url, timeout=10.0)
+            resp.raise_for_status()
+            locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", resp.text)
+            urls = [u for u in locs if urlparse(u).netloc.lower() == base_domain]
+            return urls
+        except Exception:
+            logger.debug("Could not fetch sitemap from %s, continuing without it", sitemap_url)
+            return []
+
     async def _start_crawl(self, config: dict[str, Any]) -> str:
         """Submit a crawl job to Crawl4AI and return the task_id."""
         base_url: str = config["base_url"]
@@ -93,6 +112,14 @@ class WebCrawlerAdapter(BaseAdapter):
                 },
             },
         }
+
+        # Supplement BFS seeds with URLs from sitemap.xml (if available).
+        sitemap_urls = await self._fetch_sitemap_urls(base_url)
+        if sitemap_urls:
+            existing = set(payload["urls"])
+            new_urls = [u for u in sitemap_urls if u not in existing]
+            payload["urls"].extend(new_urls)
+            logger.info("Added %d seed URLs from sitemap.xml", len(new_urls))
 
         response = await self._http_client.post(
             f"{self._api_url}/crawl/job",
@@ -181,12 +208,16 @@ class WebCrawlerAdapter(BaseAdapter):
             content_bytes = markdown.encode("utf-8")
             cache[url] = markdown
 
+            ingest_content_type = (
+                "pdf_document" if url.lower().endswith(".pdf") else "kb_article"
+            )
+
             refs.append(
                 DocumentRef(
                     path=path,
                     ref=url,
                     size=len(content_bytes),
-                    content_type=".md",
+                    content_type=ingest_content_type,
                     source_ref=url,
                 )
             )

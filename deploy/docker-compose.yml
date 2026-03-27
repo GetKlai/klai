@@ -80,8 +80,10 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       GRAFANA_CADDY_USER: ${GRAFANA_CADDY_USER}
       GRAFANA_CADDY_HASH: ${GRAFANA_CADDY_HASH}
+      VICTORIALOGS_INGEST_TOKEN: ${VICTORIALOGS_INGEST_TOKEN}
     networks:
       - klai-net
+      - monitoring
 
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
@@ -102,10 +104,10 @@ services:
 
   # ─── PostgreSQL ───────────────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg18
     restart: unless-stopped
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       POSTGRES_USER: klai
@@ -208,7 +210,7 @@ services:
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       DISABLE_ADMIN_UI: "True"
       KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
-      KNOWLEDGE_RETRIEVE_TIMEOUT: "3.0"
+      KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
@@ -356,6 +358,7 @@ services:
       IMAP_POLL_INTERVAL_SECONDS: "60"
       IMAP_PASSWORD: ${PORTAL_API_IMAP_PASSWORD}
       LIBRECHAT_MONGO_ROOT_URI: ${LIBRECHAT_MONGO_ROOT_URI}
+      KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
     networks:
       - klai-net
       - net-postgres
@@ -636,13 +639,17 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       TEI_URL: http://tei:8080
-      TEI_RERANKER_URL: http://tei-reranker:8080
+      TEI_RERANKER_URL: http://infinity-reranker:7997
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
-      GRAPHITI_ENABLED: "true"
-      GRAPH_SEARCH_TIMEOUT: "5.0"
+      GRAPHITI_ENABLED: "false"
+      GRAPH_SEARCH_TIMEOUT: "60.0"
+      RERANKER_ENABLED: "false"
+      RERANKER_TIMEOUT: "60.0"
+      OPENAI_API_KEY: "dummy"
+      SPARSE_SIDECAR_URL: http://bge-m3-sparse:8001
     networks:
       - klai-net
     depends_on:
@@ -879,6 +886,9 @@ services:
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       CRAWL4AI_API_URL: http://crawl4ai:11235
       CRAWL4AI_INTERNAL_KEY: ${CRAWL4AI_INTERNAL_KEY}
+      PORTAL_API_URL: http://portal-api:8010
+      PORTAL_CALLER_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       LOG_LEVEL: INFO
     networks:
       - klai-net
@@ -924,11 +934,12 @@ services:
     networks:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
+    # Memory: warmup benchmark peaks at ~5GB, runtime settles at ~1.3GB. Minimum 6G.
     deploy:
       resources:
         limits:
           cpus: '4'
-          memory: 3G
+          memory: 8G
 
   # Firecrawl v1.x: self-hosted web scraper for LibreChat full-page content extraction.
   # Requires dedicated Postgres (NUQ job queue) and RabbitMQ (worker coordination).
@@ -937,7 +948,7 @@ services:
   # Image built from source — ghcr.io/mendableai/firecrawl is a private registry.
   # Build: cd /tmp/firecrawl/apps/api && docker build -t ghcr.io/mendableai/firecrawl:latest .
   firecrawl-postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl

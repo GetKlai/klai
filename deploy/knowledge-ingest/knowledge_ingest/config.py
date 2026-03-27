@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
     tei_url: str = "http://tei:8080"
+    tei_timeout: float = 120.0  # seconds — TEI can take 35s+ on large batches with queue
     gitea_url: str = "http://gitea:3000"
     gitea_token: str = ""
     docs_internal_secret: str = ""
@@ -21,6 +22,9 @@ class Settings(BaseSettings):
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
     enrichment_enabled: bool = True  # global kill switch
+    # Seconds to wait after the last Gitea save before ingesting into the knowledge layer.
+    # Prevents LLM enrichment calls on every auto-save during active editing.
+    ingest_debounce_seconds: int = 180
     enrichment_model: str = "klai-fast"
     enrichment_timeout: float = 15.0
     enrichment_max_concurrent: int = 5

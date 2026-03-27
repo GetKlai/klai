@@ -11,7 +11,7 @@ type Props = {
   kbName: string;
 };
 
-export function Sidebar({ tree, orgSlug, kbSlug, kbName }: Props) {
+export function Sidebar({ tree, kbSlug, kbName }: Props) {
   const pathname = usePathname();
 
   return (

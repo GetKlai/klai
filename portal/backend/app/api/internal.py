@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
@@ -112,6 +112,11 @@ async def get_connector_config(
 ) -> ConnectorConfigResponse:
     """Return connector config for klai-connector service."""
     _require_internal_token(request)
+    # portal_connectors has no RLS — use it to resolve org_id for tenant context.
+    connector_stub = await db.get(PortalConnector, connector_id)
+    if not connector_stub:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    await set_tenant(db, connector_stub.org_id)
     result = await db.execute(
         select(PortalConnector, PortalKnowledgeBase, PortalOrg)
         .join(PortalKnowledgeBase, PortalConnector.kb_id == PortalKnowledgeBase.id)

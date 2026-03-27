@@ -34,6 +34,16 @@
     }
     header @not-auth X-Frame-Options "SAMEORIGIN"
 
+    # Logs ingest (VictoriaLogs push endpoint for remote Alloy agents)
+    @logs-ingest host logs-ingest.{$DOMAIN}
+    handle @logs-ingest {
+        @no_token {
+            not header Authorization "Bearer {$VICTORIALOGS_INGEST_TOKEN}"
+        }
+        respond @no_token 401
+        reverse_proxy victorialogs:9428
+    }
+
     # Auth (Zitadel)
     @auth host auth.{$DOMAIN}
     handle @auth {

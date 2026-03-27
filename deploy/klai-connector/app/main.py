@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = Settings()  # type: ignore[call-arg]
-    setup_logging(settings.log_level)
+    setup_logging(level=settings.log_level, service_name="klai-connector")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -47,13 +47,15 @@ def create_app() -> FastAPI:
         # Database
         init_engine(settings.database_url)
 
-        # Mark any sync_runs that were left RUNNING (e.g. from a previous crash/restart) as FAILED.
+        # Mark any sync_runs that were left RUNNING (e.g. from a previous crash/restart) as PENDING.
+        # PENDING preserves the cursor_state (which may contain checkpoint progress) so that
+        # the next sync can resume from where it left off rather than restarting from scratch.
         if _db.session_maker is not None:
             async with _db.session_maker() as session:
                 await session.execute(
                     update(SyncRun)
                     .where(SyncRun.status == SyncStatus.RUNNING)
-                    .values(status=SyncStatus.FAILED, completed_at=datetime.now(UTC))
+                    .values(status=SyncStatus.PENDING, completed_at=datetime.now(UTC))
                 )
                 await session.commit()
             logger.info("Cleaned up stuck RUNNING sync_runs on startup")

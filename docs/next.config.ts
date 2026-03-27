@@ -3,10 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   basePath: "/docs",
-  experimental: {
-    // Required for BlockNote server components
-    serverComponentsExternalPackages: ["pg"],
-  },
+  // Required for BlockNote server components (moved from experimental in Next.js 15)
+  serverExternalPackages: ["pg"],
 };
 
 export default nextConfig;

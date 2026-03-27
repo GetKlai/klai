@@ -1,5 +1,3 @@
-import logging
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -8,8 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.transcribe import router as transcribe_router
+from app.logging_setup import setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+setup_logging()
 
 
 @asynccontextmanager

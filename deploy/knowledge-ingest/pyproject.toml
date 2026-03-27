@@ -1,0 +1,43 @@
+[project]
+name = "knowledge-ingest"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "qdrant-client>=1.12",
+    "pyyaml>=6.0",
+    "html2text>=2024.2",
+    "cachetools>=5.5",
+    # procrastinate 3.x: PsycopgConnector, open_async(), run_worker_async() all unchanged.
+    # DB schema was already 3.x-compatible (queueing_lock + full status enum added in 2.15).
+    "procrastinate>=3.0,<4",
+    "structlog>=25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+ignore = [
+    "S101",  # assert is fine in tests
+    "S105",  # hardcoded passwords — false positives on config defaults
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

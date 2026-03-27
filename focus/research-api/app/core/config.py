@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     tei_url: str = "http://tei:8080"
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
-    searxng_url: str = "http://searxng:8888"
+    searxng_url: str = "http://searxng:8080"
 
     # YouTube — optional residential proxy, used as fallback when YouTube blocks server IP
     # Format: https://user:pass@host:port

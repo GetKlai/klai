@@ -342,6 +342,7 @@ function KBEditorPage() {
       setSaveStatus('error')
       setTimeout(() => setSaveStatus('idle'), 3000)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setSaveStatus is a wrapper around setUiState (stable setter); adding it recreates this callback every render
   }, [orgSlug, kbSlug, refetchTree])
 
   const scheduleSave = useCallback(() => {
@@ -371,6 +372,7 @@ function KBEditorPage() {
       setAccessSaveStatus('error')
       setTimeout(() => setAccessSaveStatus('idle'), 3000)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setAccessSaveStatus is a wrapper around setAccessState (stable setter); adding it recreates this callback every render
   }, [selectedPath, orgSlug, kbSlug, authHeader, accessMode, accessUsers])
 
   // Called by NavTree when the user reorders items via drag-and-drop.

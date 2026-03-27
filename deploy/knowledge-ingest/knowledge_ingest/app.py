@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from knowledge_ingest import db, org_config, qdrant_store
+from knowledge_ingest import db, kb_config, org_config, qdrant_store
+from knowledge_ingest.config import settings
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
-from knowledge_ingest.routes import crawl, ingest, knowledge, personal, retrieve
+from knowledge_ingest.routes import crawl, ingest, knowledge, personal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ async def lifespan(app: FastAPI):
         import procrastinate  # noqa: PLC0415
         from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
 
-        # procrastinate 2.x uses PsycopgConnector (psycopg3); no asyncpg connector exists.
+        # PsycopgConnector uses psycopg3 (libpq-based); no asyncpg connector exists.
         # Use SQLAlchemy make_url to safely parse the DSN (handles base64 passwords with
         # '/', '+', '=' that break stdlib urlparse), then build a libpq key=value string.
         from sqlalchemy.engine import make_url  # noqa: PLC0415
@@ -48,23 +49,24 @@ async def lifespan(app: FastAPI):
         proc_app = enrichment_tasks.init_app(async_connector)
         logger.info("Procrastinate app initialised.")
 
-        # procrastinate 2.x: open_async() opens the connector; run_worker_async() is the worker coroutine.
         async with proc_app.open_async():
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(
-                    queues=["enrich-interactive", "enrich-bulk"],
+                    queues=["ingest-kb", "enrich-interactive", "enrich-bulk"],
                     install_signal_handlers=False,
                 )
             )
             listener_task = asyncio.create_task(org_config.start_listener(pool))
-            logger.info("Procrastinate worker and org_config listener started.")
+            kb_config_listener_task = asyncio.create_task(kb_config.start_listener(pool))
+            logger.info("Procrastinate worker and config listeners started.")
 
             yield
 
             logger.info("Shutting down knowledge-ingest service.")
             worker_task.cancel()
             listener_task.cancel()
-            await asyncio.gather(worker_task, listener_task, return_exceptions=True)
+            kb_config_listener_task.cancel()
+            await asyncio.gather(worker_task, listener_task, kb_config_listener_task, return_exceptions=True)
     else:
         logger.info("Enrichment disabled — skipping Procrastinate worker.")
         yield
@@ -76,12 +78,63 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Klai Knowledge Ingest", lifespan=lifespan)
 app.add_middleware(InternalSecretMiddleware)
 app.include_router(ingest.router)
-app.include_router(retrieve.router)
 app.include_router(crawl.router)
 app.include_router(personal.router)
 app.include_router(knowledge.router)
 
 
 @app.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
+async def health():
+    """Check reachability of Qdrant, TEI, bge-m3-sparse, and FalkorDB."""
+    import httpx
+    from fastapi.responses import JSONResponse
+
+    checks: dict[str, str] = {}
+
+    # Qdrant
+    try:
+        from qdrant_client import AsyncQdrantClient
+
+        qc = AsyncQdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            timeout=3.0,
+        )
+        await qc.get_collections()
+        checks["qdrant"] = "ok"
+    except Exception as exc:
+        checks["qdrant"] = f"error: {exc}"
+
+    # TEI (dense embeddings)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.tei_url}/health")
+            checks["tei"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+    except Exception as exc:
+        checks["tei"] = f"error: {exc}"
+
+    # bge-m3-sparse (sparse embeddings sidecar)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.sparse_sidecar_url}/health")
+            checks["bge_m3_sparse"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+    except Exception as exc:
+        checks["bge_m3_sparse"] = f"error: {exc}"
+
+    # FalkorDB (only when Graphiti is enabled)
+    # Uses TCP check — graphiti-core[falkordb] is deferred in requirements.txt (pydantic constraint)
+    if settings.graphiti_enabled:
+        try:
+            import socket  # noqa: PLC0415
+
+            s = socket.create_connection((settings.falkordb_host, settings.falkordb_port), timeout=3.0)
+            s.close()
+            checks["falkordb"] = "ok"
+        except Exception as exc:
+            checks["falkordb"] = f"error: {exc}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        content={"status": "ok" if all_ok else "degraded", **checks},
+        status_code=200 if all_ok else 503,
+    )

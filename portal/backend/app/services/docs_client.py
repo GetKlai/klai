@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def provision_gitea_repo(
@@ -59,6 +59,45 @@ async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
         return None
 
 
+async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
+    """Deprovision KB via klai-docs: deletes docs.knowledge_bases row, Gitea repo, and Qdrant vectors.
+
+    Raises HTTPException(502) on failure.
+    """
+    async with httpx.AsyncClient(
+        base_url="http://docs-app:3010/docs",
+        headers={
+            "X-Internal-Secret": settings.docs_internal_secret,
+            "X-User-ID": "system",
+        },
+        timeout=30.0,  # longer timeout: Gitea + Qdrant cleanup
+    ) as client:
+        resp = await client.delete(f"/api/orgs/{org_slug}/kbs/{kb_slug}")
+        if resp.status_code == 404:
+            # Already gone -- treat as success
+            return
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.exception(
+                "KB deprovisioning failed for org=%s kb=%s: %s %s",
+                org_slug,
+                kb_slug,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Docs/Gitea cleanup failed",
+            ) from exc
+        except httpx.ConnectError as exc:
+            logger.exception("KB deprovisioning connect error for org=%s kb=%s", org_slug, kb_slug)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Docs/Gitea cleanup failed",
+            ) from exc
+
+
 async def provision_and_store(
     org_slug: str,
     kb_name: str,
@@ -75,7 +114,7 @@ async def provision_and_store(
     try:
         return await provision_gitea_repo(org_slug, kb_name, kb_slug, visibility)
     except httpx.HTTPStatusError as exc:
-        log.exception(
+        logger.exception(
             "Gitea provisioning failed for KB slug=%s: %s %s",
             kb_slug,
             exc.response.status_code,
@@ -87,7 +126,7 @@ async def provision_and_store(
             detail="Gitea provisioning mislukt",
         ) from exc
     except httpx.ConnectError as exc:
-        log.exception("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
+        logger.exception("Gitea provisioning connect error for KB slug=%s: %s", kb_slug, exc)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

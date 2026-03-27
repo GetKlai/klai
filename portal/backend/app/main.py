@@ -12,6 +12,7 @@ from app.api.app_knowledge_bases import router as app_knowledge_bases_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.connectors import router as connectors_router
+from app.api.taxonomy import router as taxonomy_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
 from app.api.knowledge import router as knowledge_router
@@ -19,10 +20,14 @@ from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
+from app.logging_setup import setup_logging
+from app.middleware.logging_context import LoggingContextMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
+
+setup_logging("portal-api")
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +106,8 @@ async def no_cache_authenticated(request: Request, call_next: object) -> Respons
     return response
 
 
+app.add_middleware(LoggingContextMiddleware)
+
 app.include_router(signup.router)
 app.include_router(me.router)
 app.include_router(auth_router)
@@ -114,6 +121,7 @@ app.include_router(internal_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_knowledge_bases_router)
 app.include_router(connectors_router)
+app.include_router(taxonomy_router)
 
 
 @app.get("/health")

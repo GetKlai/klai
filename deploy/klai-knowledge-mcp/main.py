@@ -21,8 +21,11 @@ from dataclasses import dataclass
 from datetime import date
 
 import httpx
+from logging_setup import setup_logging
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+
+setup_logging()
 
 logger = logging.getLogger(__name__)
 

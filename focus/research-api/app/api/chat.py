@@ -20,6 +20,7 @@ from app.services.retrieval import (
     BROAD_FOCUS_ONLY_SYSTEM_PROMPT,
     BROAD_SYSTEM_PROMPT,
     NARROW_SYSTEM_PROMPT,
+    WEB_SYSTEM_PROMPT,
     build_context,
     extract_citations,
     retrieve_web_chunks,
@@ -108,7 +109,7 @@ async def _generate(
             kb_available = any(c.get("origin") == "kb" for c in doc_chunks)
             system_prompt = BROAD_SYSTEM_PROMPT if kb_available else BROAD_FOCUS_ONLY_SYSTEM_PROMPT
         else:
-            system_prompt = BROAD_SYSTEM_PROMPT
+            system_prompt = WEB_SYSTEM_PROMPT
 
         # 4. Stream LLM tokens
         async for token in stream_llm(system_prompt, context, question, history):
@@ -116,7 +117,7 @@ async def _generate(
             yield _sse({"type": "token", "content": token})
 
         # 5. Emit done event with citations
-        citations = extract_citations(doc_chunks)
+        citations = extract_citations(all_chunks)
         yield _sse({"type": "done", "citations": citations, "mode": mode})
 
         # 6. Persist messages if history is enabled

@@ -1,0 +1,69 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Klai public-01 — Grafana Alloy log shipping config
+//
+// Collects:
+//   - Docker container logs → VictoriaLogs on core-01 (via HTTPS ingest)
+//
+// No metrics collection — public-01 does not ship node/container metrics.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Docker container log collection ─────────────────────────────────────────
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Labels must be applied via discovery.relabel BEFORE loki.source.docker.
+// loki.relabel only sees log stream labels, not __meta_docker_* metadata.
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  // Strip leading slash from container name
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  // Add compose service label
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  // Tag all logs with the source host
+  rule {
+    target_label = "host"
+    replacement  = "public-01"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.process.extract_level.receiver]
+}
+
+// ─── Extract log level from JSON ────────────────────────────────────────────
+
+loki.process "extract_level" {
+  // Parse JSON log lines and extract the "level" field
+  stage.json {
+    expressions = { level = "level" }
+  }
+  // Promote extracted level to a label
+  stage.labels {
+    values = { level = "" }
+  }
+
+  forward_to = [loki.write.victorialogs.receiver]
+}
+
+// ─── Forward logs to VictoriaLogs on core-01 ────────────────────────────────
+
+loki.write "victorialogs" {
+  endpoint {
+    // _msg_field=msg: use the "msg" JSON key as the main log message field.
+    // Fixes MongoDB structured logs showing "missing _msg field" in Grafana.
+    url           = "https://logs-ingest." + env("DOMAIN") + "/insert/loki/api/v1/push?_msg_field=msg"
+    bearer_token  = env("VICTORIALOGS_INGEST_TOKEN")
+  }
+}

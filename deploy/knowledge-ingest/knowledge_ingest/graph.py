@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 try:
     from graphiti_core import Graphiti
     from graphiti_core.driver.falkordb_driver import FalkorDriver
+    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
     from graphiti_core.llm_client.config import LLMConfig
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
     from graphiti_core.nodes import EpisodeType
@@ -37,11 +38,21 @@ def _get_graphiti() -> "Graphiti":
         raise RuntimeError("graphiti-core is not installed — add it in /run SPEC-KB-011")
     global _graphiti_client
     if _graphiti_client is None:
+        api_key = settings.litellm_api_key or "dummy"
+        litellm_base_url = f"{settings.litellm_url}/v1"
         llm_client = OpenAIGenericClient(
             config=LLMConfig(
-                base_url=f"{settings.litellm_url}/v1",
+                base_url=litellm_base_url,
                 model=settings.graphiti_llm_model,
-                api_key=settings.litellm_api_key or "dummy",
+                api_key=api_key,
+            )
+        )
+        embedder = OpenAIEmbedder(
+            config=OpenAIEmbedderConfig(
+                base_url=f"{settings.tei_url}/v1",
+                api_key=api_key,
+                embedding_model="bge-m3",
+                embedding_dim=1024,
             )
         )
         driver = FalkorDriver(
@@ -50,6 +61,7 @@ def _get_graphiti() -> "Graphiti":
         )
         _graphiti_client = Graphiti(
             llm_client=llm_client,
+            embedder=embedder,
             graph_driver=driver,
         )
     return _graphiti_client

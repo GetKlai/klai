@@ -1,9 +1,10 @@
 # SPEC-KB-001: Knowledge Base Unification
 
-> Status: DRAFT — 2026-03-24
+> Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`
 > Related: `portal/backend/app/models/knowledge_bases.py`, `portal/backend/app/models/docs.py`
+> Implementation commits: `e56e25c` (Phase 1–3 core), `16f4b18` (Phase 3 admin cleanup + Sources tab)
 
 ---
 
@@ -313,3 +314,56 @@ This pattern should be extended, not replaced. The new `/app/knowledge` page add
 | OQ-2 | Creator of a KB gets which role? | Automatically Owner. |
 | OQ-3 | Can users create personal KBs (not org-scoped)? | Yes. A personal named KB works the same as an org KB but is owned by the user, not the org. It can have its own docs layer, connectors, and visibility setting. |
 | OQ-4 | KB limit per org/user? | Deferred — billing/plan decision for later. |
+
+---
+
+## Implementation Notes
+
+> Added: 2026-03-26 — post-implementation sync
+
+### What was built
+
+Implementation spanned two commits on 2026-03-25:
+
+**`e56e25c` — Core unification (Phases 1, 2, 3 foundations)**
+- Alembic migration `a3b4c5d6e7f8_unify_kb_and_docs.py`: added `visibility`, `docs_enabled`, `gitea_repo_slug`, `owner_type`, `owner_user_id` to `portal_knowledge_bases`; added `role` to `portal_group_kb_access`; migrated data and dropped `portal_docs_libraries` and `portal_group_docs_access` — matching AC-1 exactly.
+- New `portal/backend/app/api/app_knowledge_bases.py`: app-scoped `GET/POST /api/app/knowledge-bases` endpoints (any org member, not admin-only) — matching Phase 2 spec.
+- Removed `portal/backend/app/api/docs_libraries.py` and its admin routes.
+- Updated `portal/backend/app/models/knowledge_bases.py` to reflect new columns.
+- `/app/knowledge/index.tsx`: extended with real named KB cards (icon + name + stat "N items · visibility"), empty state CTA, and kept Personal card unchanged — matching AC-3 and visual design spec exactly.
+- `/app/knowledge/new.tsx`: create KB form (name, slug, visibility) — matching Phase 3.
+- `/app/knowledge/$kbSlug.tsx`: detail page scaffolded with Docs / Sources / Stats tab structure — matching AC-3b.
+- Removed `/admin/docs-libraries/` routes (index + detail).
+- i18n: 24 keys added to both `nl.json` and `en.json`.
+
+**`16f4b18` — Admin cleanup + real Sources tab (Phase 3 completion)**
+- Deleted all 5 admin KB and connector route files: `/admin/knowledge-bases/index`, `/admin/knowledge-bases/$kbId`, `/admin/connectors/index`, `/admin/connectors/new`, `/admin/connectors/$connectorId` — completing AC-3 removal requirement.
+- Removed knowledge-bases and connectors entries from admin nav (`admin/route.tsx`).
+- Built real Sources tab in `/app/knowledge/$kbSlug.tsx`: lists connectors filtered by `config.kb_slug`, inline add-connector form with `kb_slug` pre-filled, sync and delete actions — delivering AC-3b Sources tab.
+
+### AC coverage at completion
+
+| AC | Status | Notes |
+|---|---|---|
+| AC-1: Unified data model | Delivered | Migration exactly matches spec SQL |
+| AC-2: Creating KB provisions docs | Partial | `gitea_repo_slug` column added and linked; actual Gitea provisioning call not yet wired (no Gitea env in dev) |
+| AC-3: KB management in /app | Delivered | All admin routes removed; /app/knowledge shows real cards |
+| AC-3b: KB detail with tabs | Delivered | Docs / Sources / Stats tabs built; Sources tab is functional |
+| AC-4: Admin org-level controls | Partial | Admin can still list all KBs via existing admin API; archive/delete controls not yet added as dedicated admin UI |
+| AC-5: Group-based access | Delivered (model) | `portal_group_kb_access` with role column is in place; enforcement depends on query-layer filtering already present |
+| AC-6: Visibility controls | Delivered (model) | `visibility` column and API field in place; Caddy/klai-docs enforcement is out of scope (separate SPEC) |
+| AC-7: Docs writes back to knowledge | Not in scope | Gitea webhook → Qdrant pipeline is a separate concern |
+| AC-8: MCP write_to_kb | Not started | Phase 4 — separate work item |
+| AC-9: Chat multi-KB read / single write | Not started | Phase 4 / Focus integration |
+
+### Deviations from SPEC
+
+- **Gitea provisioning (AC-2):** The create-KB flow records `gitea_repo_slug` but does not call the Gitea API to provision the repo. The SPEC assumed the existing "klai-docs provisioning" could be called directly; that integration is not yet plumbed in the portal backend. This is a known gap, not a design change.
+- **Admin controls (AC-4):** The SPEC specifies an admin view to archive/delete KBs. This was not built in this iteration. The existing admin API (`GET /api/admin/knowledge-bases`) still returns all org KBs for admin users and can be used as a data source for a future admin KB management page.
+- **MCP write_to_kb (Phase 4):** Explicitly deferred to a follow-up task. No deviation — Phase 4 was always separate.
+
+### Key decisions made during implementation
+
+- The `$kbSlug.tsx` detail route was extended in-place rather than split into nested route files, keeping the tab state in a single component. This was a pragmatic choice to avoid TanStack Router route tree complexity for a UI-only tab switch.
+- Connectors are filtered by `config.kb_slug` on the frontend (not a new backend endpoint). This is sufficient for the current connector volume; a dedicated `GET /api/app/knowledge-bases/{slug}/connectors` endpoint should be added when connectors become a first-class entity.
+- i18n keys were added to both `nl.json` and `en.json` simultaneously, consistent with the internationalization strategy (NL primary, EN ready).

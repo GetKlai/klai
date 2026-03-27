@@ -1,10 +1,11 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
-  Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus,
-  BookOpen, Users, BarChart2, Zap, List,
+  Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
+  BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
+  Check, X, Settings,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -24,9 +25,10 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
+import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
-import { queryLogger } from '@/lib/logger'
+import { queryLogger, taxonomyLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug')({
@@ -54,6 +56,9 @@ interface ConnectorSummary {
   id: string
   name: string
   connector_type: string
+  config: Record<string, unknown>
+  schedule: string | null
+  is_enabled: boolean
   last_sync_status: string | null
   last_sync_at: string | null
 }
@@ -153,6 +158,13 @@ function ConnectorsSection({
     base_url: '', path_prefix: '', max_pages: '200',
   })
 
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editSchedule, setEditSchedule] = useState('')
+  const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200' })
+  const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
+
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
     queryFn: async () => {
@@ -216,6 +228,60 @@ function ConnectorsSection({
       setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200' })
     },
   })
+
+  const updateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const connector = connectors.find((c) => c.id === id)
+      if (!connector) return
+      const config: Record<string, unknown> = {}
+      if (connector.connector_type === 'github') {
+        config.installation_id = Number(editGithubConfig.installation_id)
+        config.repo_owner = editGithubConfig.repo_owner
+        config.repo_name = editGithubConfig.repo_name
+        config.branch = editGithubConfig.branch
+        if (editGithubConfig.path_filter) config.path_filter = editGithubConfig.path_filter
+      }
+      if (connector.connector_type === 'web_crawler') {
+        config.base_url = editWebcrawlerConfig.base_url
+        if (editWebcrawlerConfig.path_prefix) config.path_prefix = editWebcrawlerConfig.path_prefix
+        if (editWebcrawlerConfig.max_pages) config.max_pages = Number(editWebcrawlerConfig.max_pages)
+      }
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName, config, schedule: editSchedule || null }),
+      })
+      if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      setEditingId(null)
+    },
+  })
+
+  function startEdit(c: ConnectorSummary) {
+    setEditingId(c.id)
+    setEditName(c.name)
+    setEditSchedule(c.schedule ?? '')
+    if (c.connector_type === 'web_crawler') {
+      const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number }
+      setEditWebcrawlerConfig({
+        base_url: String(cfg.base_url ?? ''),
+        path_prefix: String(cfg.path_prefix ?? ''),
+        max_pages: String(cfg.max_pages ?? '200'),
+      })
+    }
+    if (c.connector_type === 'github') {
+      const cfg = c.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
+      setEditGithubConfig({
+        installation_id: String(cfg.installation_id ?? ''),
+        repo_owner: String(cfg.repo_owner ?? ''),
+        repo_name: String(cfg.repo_name ?? ''),
+        branch: String(cfg.branch ?? 'main'),
+        path_filter: String(cfg.path_filter ?? ''),
+      })
+    }
+  }
 
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
@@ -282,6 +348,15 @@ function ConnectorsSection({
                                 {isSyncing || isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                               </button>
                             </Tooltip>
+                            <Tooltip label={m.admin_connectors_action_edit()}>
+                              <button
+                                onClick={() => startEdit(c)}
+                                aria-label={m.admin_connectors_action_edit()}
+                                className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] hover:opacity-70"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
                             <Tooltip label={m.admin_connectors_action_delete()}>
                               <button
                                 onClick={() => setConfirmingDeleteId(c.id)}
@@ -306,6 +381,91 @@ function ConnectorsSection({
       {connectors.length === 0 && !showAdd && (
         <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_connectors_empty()}</p>
       )}
+
+      {editingId !== null && (() => {
+        const connector = connectors.find((c) => c.id === editingId)
+        if (!connector) return null
+        return (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-4">
+                {connector.connector_type === 'web_crawler' && (
+                  <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate(editingId) }} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                      <Input id="edit-conn-name" required value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
+                      <Input id="edit-conn-base-url" type="url" required value={editWebcrawlerConfig.base_url} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                      <Input id="edit-conn-path-prefix" value={editWebcrawlerConfig.path_prefix} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                      <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={editWebcrawlerConfig.max_pages} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
+                      <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
+                    </div>
+                    {updateMutation.error && (
+                      <p className="text-sm text-[var(--color-destructive)]">
+                        {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>{m.admin_connectors_cancel()}</Button>
+                    </div>
+                  </form>
+                )}
+                {connector.connector_type === 'github' && (
+                  <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate(editingId) }} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                      <Input id="edit-conn-name" required value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-install">{m.admin_connectors_github_installation_id()}</Label>
+                      <Input id="edit-conn-install" type="number" required value={editGithubConfig.installation_id} onChange={(e) => setEditGithubConfig((p) => ({ ...p, installation_id: e.target.value }))} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="edit-conn-owner">{m.admin_connectors_github_repo_owner()}</Label>
+                        <Input id="edit-conn-owner" required value={editGithubConfig.repo_owner} onChange={(e) => setEditGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="edit-conn-repo">{m.admin_connectors_github_repo_name()}</Label>
+                        <Input id="edit-conn-repo" required value={editGithubConfig.repo_name} onChange={(e) => setEditGithubConfig((p) => ({ ...p, repo_name: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-branch">{m.admin_connectors_github_branch()}</Label>
+                      <Input id="edit-conn-branch" required value={editGithubConfig.branch} onChange={(e) => setEditGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
+                      <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
+                    </div>
+                    {updateMutation.error && (
+                      <p className="text-sm text-[var(--color-destructive)]">
+                        {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>{m.admin_connectors_cancel()}</Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {isOwner && !showAdd && (
         <Button size="sm" variant="outline" onClick={() => setShowAdd(true)}>
@@ -866,6 +1026,528 @@ function MembersSection({
   )
 }
 
+// -- Taxonomy section --------------------------------------------------------
+
+interface TaxonomyNode {
+  id: number
+  kb_id: number
+  parent_id: number | null
+  name: string
+  slug: string
+  doc_count: number
+  sort_order: number
+  created_at: string
+  created_by: string
+}
+
+interface TaxonomyProposal {
+  id: number
+  kb_id: number
+  proposal_type: string
+  status: string
+  title: string
+  payload: Record<string, unknown>
+  confidence_score: number | null
+  created_at: string
+  reviewed_at: string | null
+  reviewed_by: string | null
+  rejection_reason: string | null
+}
+
+function TaxonomyTree({
+  nodes,
+  parentId,
+  depth,
+  canEdit,
+  canDelete,
+  onAddChild,
+  onRename,
+  onDelete,
+}: {
+  nodes: TaxonomyNode[]
+  parentId: number | null
+  depth: number
+  canEdit: boolean
+  canDelete: boolean
+  onAddChild: (parentId: number) => void
+  onRename: (node: TaxonomyNode, newName: string) => void
+  onDelete: (nodeId: number) => void
+}) {
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+
+  const children = nodes.filter((n) => n.parent_id === parentId).sort((a, b) => a.sort_order - b.sort_order)
+  if (children.length === 0) return null
+
+  function toggleExpand(id: number) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function startRename(node: TaxonomyNode) {
+    setEditingId(node.id)
+    setEditName(node.name)
+  }
+
+  function submitRename(node: TaxonomyNode) {
+    if (editName.trim() && editName.trim() !== node.name) {
+      onRename(node, editName.trim())
+    }
+    setEditingId(null)
+  }
+
+  const hasChildren = (id: number) => nodes.some((n) => n.parent_id === id)
+
+  return (
+    <div>
+      {children.map((node) => {
+        const isExpanded = expandedIds.has(node.id)
+        const hasKids = hasChildren(node.id)
+        return (
+          <div key={node.id}>
+            <div
+              className="group flex items-center gap-1 py-1.5 pr-2 rounded hover:bg-[var(--color-secondary)] transition-colors"
+              style={{ paddingLeft: depth * 20 + 4 }}
+            >
+              <button
+                type="button"
+                onClick={() => toggleExpand(node.id)}
+                className="flex h-5 w-5 items-center justify-center shrink-0"
+                aria-label={isExpanded ? 'Collapse' : 'Expand'}
+              >
+                {hasKids ? (
+                  isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" /> : <ChevronRight className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
+                ) : (
+                  <span className="h-3.5 w-3.5" />
+                )}
+              </button>
+
+              {editingId === node.id ? (
+                <form
+                  className="flex items-center gap-1 flex-1"
+                  onSubmit={(e) => { e.preventDefault(); submitRename(node) }}
+                >
+                  <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="h-6 text-sm py-0 px-1.5 flex-1"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null) }}
+                  />
+                  <button type="submit" className="flex h-5 w-5 items-center justify-center rounded bg-[var(--color-success)] text-white hover:opacity-90">
+                    <Check className="h-3 w-3" />
+                  </button>
+                  <button type="button" onClick={() => setEditingId(null)} className="flex h-5 w-5 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)]">
+                    <X className="h-3 w-3" />
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <span className="text-sm text-[var(--color-foreground)] truncate flex-1">{node.name}</span>
+                  <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums shrink-0">
+                    {node.doc_count > 0 && m.knowledge_taxonomy_node_doc_count({ count: String(node.doc_count) })}
+                  </span>
+
+                  {canEdit && (
+                    <div className="hidden group-hover:flex items-center gap-0.5 ml-1">
+                      <button
+                        type="button"
+                        onClick={() => onAddChild(node.id)}
+                        aria-label={m.knowledge_taxonomy_node_add_child()}
+                        className="flex h-5 w-5 items-center justify-center text-[var(--color-accent)] hover:opacity-70"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startRename(node)}
+                        aria-label={m.knowledge_taxonomy_node_rename()}
+                        className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      {canDelete && (confirmDeleteId === node.id ? (
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => { onDelete(node.id); setConfirmDeleteId(null) }}
+                            className="flex h-5 w-5 items-center justify-center rounded bg-[var(--color-destructive)] text-white hover:opacity-90"
+                          >
+                            <Check className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="flex h-5 w-5 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)]"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(node.id)}
+                          aria-label={m.knowledge_taxonomy_node_delete()}
+                          className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {hasKids && isExpanded && (
+              <TaxonomyTree
+                nodes={nodes}
+                parentId={node.id}
+                depth={depth + 1}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                onAddChild={onAddChild}
+                onRename={onRename}
+                onDelete={onDelete}
+              />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function TaxonomySection({
+  kbSlug,
+  token,
+  canEdit,
+  canDelete,
+}: {
+  kbSlug: string
+  token: string | undefined
+  canEdit: boolean
+  canDelete: boolean
+}) {
+  const queryClient = useQueryClient()
+  const [showAddRoot, setShowAddRoot] = useState(false)
+  const [addParentId, setAddParentId] = useState<number | null>(null)
+  const [newNodeName, setNewNodeName] = useState('')
+  const [rejectingProposalId, setRejectingProposalId] = useState<number | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+
+  const nodesQuery = useQuery<{ nodes: TaxonomyNode[] }>({
+    queryKey: ['taxonomy-nodes', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        taxonomyLogger.warn('Taxonomy nodes fetch failed', { slug: kbSlug, status: res.status })
+        throw new Error(m.knowledge_taxonomy_error_fetch())
+      }
+      return res.json() as Promise<{ nodes: TaxonomyNode[] }>
+    },
+    enabled: !!token,
+  })
+
+  const proposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
+    queryKey: ['taxonomy-proposals', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        taxonomyLogger.warn('Taxonomy proposals fetch failed', { slug: kbSlug, status: res.status })
+        throw new Error(m.knowledge_taxonomy_error_fetch())
+      }
+      return res.json() as Promise<{ proposals: TaxonomyProposal[] }>
+    },
+    enabled: !!token,
+  })
+
+  const createNodeMutation = useMutation({
+    mutationFn: async ({ name, parentId }: { name: string; parentId: number | null }) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parent_id: parentId }),
+      })
+      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_create())
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+      setNewNodeName('')
+      setShowAddRoot(false)
+      setAddParentId(null)
+    },
+  })
+
+  const renameNodeMutation = useMutation({
+    mutationFn: async ({ nodeId, name }: { nodeId: number; name: string }) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_rename())
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
+  })
+
+  const deleteNodeMutation = useMutation({
+    mutationFn: async (nodeId: number) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_delete())
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
+  })
+
+  const approveMutation = useMutation({
+    mutationFn: async (proposalId: number) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/approve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_approve())
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+    },
+  })
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ proposalId, reason }: { proposalId: number; reason: string }) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/reject`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      })
+      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_reject())
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+      setRejectingProposalId(null)
+      setRejectReason('')
+    },
+  })
+
+  function handleAddChild(parentId: number) {
+    setAddParentId(parentId)
+    setShowAddRoot(false)
+    setNewNodeName('')
+  }
+
+  function handleRename(node: TaxonomyNode, newName: string) {
+    renameNodeMutation.mutate({ nodeId: node.id, name: newName })
+  }
+
+  const nodes = nodesQuery.data?.nodes ?? []
+  const proposals = proposalsQuery.data?.proposals ?? []
+  const isAddingChild = addParentId !== null
+
+  const proposalTypeBadge: Record<string, { label: () => string; variant: 'accent' | 'success' | 'secondary' | 'destructive' }> = {
+    new_node: { label: m.knowledge_taxonomy_proposals_type_new_node, variant: 'accent' },
+    merge: { label: m.knowledge_taxonomy_proposals_type_merge, variant: 'secondary' },
+    split: { label: m.knowledge_taxonomy_proposals_type_split, variant: 'secondary' },
+    rename: { label: m.knowledge_taxonomy_proposals_type_rename, variant: 'accent' },
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Category tree */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <FolderTree className="h-4 w-4 text-[var(--color-purple-deep)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">{m.knowledge_taxonomy_tree_heading()}</h2>
+          </div>
+          {canEdit && !showAddRoot && !isAddingChild && (
+            <Button size="sm" variant="outline" onClick={() => { setShowAddRoot(true); setAddParentId(null) }}>
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              {m.knowledge_taxonomy_node_add_root()}
+            </Button>
+          )}
+        </div>
+
+        {nodes.length === 0 && !nodesQuery.isLoading && (
+          <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
+            <FolderTree className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-2" />
+            <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_tree_empty()}</p>
+            <p className="text-xs text-[var(--color-muted-foreground)] mt-1">{m.knowledge_taxonomy_tree_empty_hint()}</p>
+          </div>
+        )}
+
+        {nodes.length > 0 && (
+          <Card>
+            <CardContent className="pt-3 pb-3 px-2">
+              <TaxonomyTree
+                nodes={nodes}
+                parentId={null}
+                depth={0}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                onAddChild={handleAddChild}
+                onRename={handleRename}
+                onDelete={(id) => deleteNodeMutation.mutate(id)}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {nodesQuery.isLoading && (
+          <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
+            <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
+            {m.admin_connectors_loading()}
+          </p>
+        )}
+
+        {/* Inline add form (root or child) */}
+        {(showAddRoot || isAddingChild) && (
+          <form
+            className="mt-2 flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (newNodeName.trim()) {
+                createNodeMutation.mutate({ name: newNodeName.trim(), parentId: addParentId })
+              }
+            }}
+          >
+            <Input
+              value={newNodeName}
+              onChange={(e) => setNewNodeName(e.target.value)}
+              placeholder={m.knowledge_taxonomy_node_name_placeholder()}
+              className="h-8 text-sm max-w-xs"
+              autoFocus
+            />
+            <Button type="submit" size="sm" disabled={createNodeMutation.isPending || !newNodeName.trim()}>
+              {m.knowledge_taxonomy_node_add_submit()}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAddRoot(false); setAddParentId(null); setNewNodeName('') }}>
+              {m.knowledge_taxonomy_node_add_cancel()}
+            </Button>
+          </form>
+        )}
+
+        {createNodeMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)] mt-1">
+            {createNodeMutation.error instanceof Error ? createNodeMutation.error.message : m.knowledge_taxonomy_error_create()}
+          </p>
+        )}
+      </div>
+
+      {/* Review queue */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <BarChart2 className="h-4 w-4 text-[var(--color-purple-deep)]" />
+          <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
+          {proposals.length > 0 && (
+            <Badge variant="accent">{String(proposals.length)}</Badge>
+          )}
+        </div>
+
+        {proposalsQuery.isLoading && (
+          <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
+            <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
+            {m.admin_connectors_loading()}
+          </p>
+        )}
+
+        {!proposalsQuery.isLoading && proposals.length === 0 && (
+          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_proposals_empty()}</p>
+        )}
+
+        {proposals.length > 0 && (
+          <div className="space-y-3">
+            {proposals.map((proposal) => {
+              const typeInfo = proposalTypeBadge[proposal.proposal_type] ?? { label: () => proposal.proposal_type, variant: 'secondary' as const }
+              return (
+                <Card key={proposal.id}>
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
+                          {proposal.confidence_score != null && (
+                            <span className="text-xs text-[var(--color-muted-foreground)]">
+                              {m.knowledge_taxonomy_proposals_col_confidence()}: {Math.round(proposal.confidence_score * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
+                        <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                          {new Date(proposal.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+
+                      {canEdit && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {rejectingProposalId === proposal.id ? (
+                            <form
+                              className="flex items-center gap-1.5"
+                              onSubmit={(e) => {
+                                e.preventDefault()
+                                rejectMutation.mutate({ proposalId: proposal.id, reason: rejectReason })
+                              }}
+                            >
+                              <Input
+                                value={rejectReason}
+                                onChange={(e) => setRejectReason(e.target.value)}
+                                placeholder={m.knowledge_taxonomy_proposals_reject_reason_placeholder()}
+                                className="h-7 text-xs w-48"
+                                autoFocus
+                              />
+                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2" disabled={rejectMutation.isPending}>
+                                {m.knowledge_taxonomy_proposals_reject()}
+                              </Button>
+                              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => { setRejectingProposalId(null); setRejectReason('') }}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </form>
+                          ) : (
+                            <>
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
+                                onClick={() => approveMutation.mutate(proposal.id)}
+                                disabled={approveMutation.isPending}
+                              >
+                                {m.knowledge_taxonomy_proposals_approve()}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs px-2.5 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/5"
+                                onClick={() => setRejectingProposalId(proposal.id)}
+                              >
+                                {m.knowledge_taxonomy_proposals_reject()}
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // -- Dashboard section card --------------------------------------------------
 
 function DashboardSection({
@@ -890,30 +1572,14 @@ function DashboardSection({
 
 // -- Main page ---------------------------------------------------------------
 
-type KBTab = 'overview' | 'connectors' | 'members' | 'items'
+type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings'
 
 function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
   const token = auth.user?.access_token
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<KBTab>('overview')
-
-  const { mutate: deleteKb, isPending: isDeleting } = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
-      void navigate({ to: '/app/knowledge' })
-    },
-  })
 
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -958,7 +1624,21 @@ function KnowledgeDetailPage() {
 
   const myUserId = auth.user?.profile?.sub
   const isOwner = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isContributor = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
   const isPersonal = kb?.owner_type === 'user'
+
+  const pendingProposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
+    queryKey: ['taxonomy-proposals-count', kbSlug],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return { proposals: [] }
+      return res.json() as Promise<{ proposals: TaxonomyProposal[] }>
+    },
+    enabled: !!token && !!kb,
+  })
+  const pendingCount = pendingProposalsQuery.data?.proposals.length ?? 0
 
   if (isLoading) {
     return (
@@ -1002,42 +1682,11 @@ function KnowledgeDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isOwner && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
-              onClick={() => setShowDeleteDialog(true)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
           <Link to="/app/knowledge">
             <Button variant="ghost" size="sm">{m.knowledge_new_cancel()}</Button>
           </Link>
         </div>
       </div>
-
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.knowledge_detail_delete_confirm_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.knowledge_detail_delete_confirm_body({ name: kb.name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.knowledge_new_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteKb()}
-              disabled={isDeleting}
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-            >
-              {m.knowledge_detail_delete_confirm_action()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Tab bar */}
       <div className="border-b border-[var(--color-border)]">
@@ -1047,7 +1696,9 @@ function KnowledgeDetailPage() {
             ...(isPersonal ? [{ id: 'items' as KBTab, icon: List, label: m.knowledge_detail_tab_items() }] : []),
             { id: 'connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
             { id: 'members', icon: Users, label: m.knowledge_detail_tab_members() },
-          ] as { id: KBTab; icon: React.ElementType; label: string }[]).map(({ id, icon: Icon, label }) => (
+            { id: 'taxonomy', icon: FolderTree, label: m.knowledge_detail_tab_taxonomy(), badge: pendingCount > 0 ? pendingCount : undefined },
+            ...(isOwner ? [{ id: 'settings' as KBTab, icon: Settings, label: 'Instellingen' }] : []),
+          ] as { id: KBTab; icon: React.ElementType; label: string; badge?: number }[]).map(({ id, icon: Icon, label, badge }) => (
             <button
               key={id}
               type="button"
@@ -1061,6 +1712,7 @@ function KnowledgeDetailPage() {
             >
               <Icon className="h-4 w-4" />
               {label}
+              {badge != null && <Badge variant="accent" className="ml-1 text-[10px] px-1.5 py-0 min-w-[18px]">{String(badge)}</Badge>}
             </button>
           ))}
         </nav>
@@ -1120,6 +1772,46 @@ function KnowledgeDetailPage() {
 
       {activeTab === 'members' && (
         <MembersSection kbSlug={kbSlug} token={token} isOwner={isOwner} isPersonal={isPersonal} />
+      )}
+
+      {activeTab === 'taxonomy' && (
+        <TaxonomySection
+          kbSlug={kbSlug}
+          token={token}
+          canEdit={isContributor}
+          canDelete={isOwner}
+        />
+      )}
+
+      {activeTab === 'settings' && isOwner && (
+        <div className="space-y-6">
+          <div className="rounded-lg border border-[var(--color-destructive)]/50 p-6">
+            <h3 className="text-sm font-semibold text-[var(--color-destructive)] mb-1">
+              Gevaarlijke zone
+            </h3>
+            <p className="text-sm text-[var(--color-muted-foreground)] mb-4">
+              Het verwijderen van deze knowledge base kan niet ongedaan worden gemaakt.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteModalOpen(true)}
+            >
+              Verwijder knowledge base
+            </Button>
+            <DeleteKbModal
+              open={deleteModalOpen}
+              onOpenChange={setDeleteModalOpen}
+              kbSlug={kb.slug}
+              kbName={kb.name}
+              itemCount={stats?.docs_count ?? null}
+              connectorCount={stats?.connector_count ?? 0}
+              hasGitea={!!kb.gitea_repo_slug}
+              hasDocs={kb.docs_enabled}
+              token={auth.user?.access_token ?? ''}
+            />
+          </div>
+        </div>
       )}
     </div>
   )

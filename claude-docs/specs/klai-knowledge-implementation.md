@@ -65,7 +65,7 @@
 | `POST /ingest/v1/webhook/gitea` | ✅ push event → fetch file → ingest |
 | `POST /knowledge/v1/retrieve` | ✅ dense vector search, scoped by org_id |
 | `GET /health` | ✅ |
-| Qdrant collection `klai_knowledge` | ✅ created on startup, indexed on `org_id` + `kb_slug` |
+| Qdrant collection `klai_knowledge` | ✅ created on startup, indexed on `org_id`, `kb_slug`, `artifact_id`, `content_type`, `user_id` (idempotent — missing indexes added on restart) |
 | Gitea webhook on `helpcenter` repo | ✅ configured, tested end-to-end |
 | Gitea `org-getklai` description | ✅ set to Zitadel org ID `362757920133283846` |
 
