@@ -8,18 +8,19 @@
 - **Prioriteit:** High
 - **Aangemaakt:** 2026-03-27
 - **Voorganger:** SPEC-SEC-001 (initieel ISO 27001 beleidskader)
-- **SOA-referenties:** A.8.7, A.8.29, A.8.8, A.8.32, A.8.17, A.8.16, A.6.5, A.8.13, A.5.34, A.6.1, A.5.10/A.8.5, A.8.2, A.7.7
+- **SOA-referenties:** A.8.7, A.8.29, A.8.8, A.8.32, A.8.17, A.8.16, A.6.5, A.8.13, A.5.34, A.6.1, A.5.10/A.8.5, A.8.2, A.7.7, A.8.8 (Dependabot)
 
 ---
 
 ## Scope
 
-Deze SPEC dekt **14 kleine en middelgrote compliance-items** geidentificeerd tijdens een ISO 27001:2022 verdiepingsaudit. De items zijn gegroepeerd in vier categorieen:
+Deze SPEC dekt **15 kleine en middelgrote compliance-items** geidentificeerd tijdens een ISO 27001:2022 verdiepingsaudit. De items zijn gegroepeerd in vijf categorieen:
 
 1. **CI/CD security** (R1-R4): Container scanning, SAST, CVE-documentatie, branch protection
 2. **Infrastructuur** (R5-R6): NTP-synchronisatie, GlitchTip alerting
 3. **Applicatie** (R7): GitHub-verwijdering in offboarding
 4. **Beleidsdocumenten** (R8-R14): Correcties backup-policy, verwerkingsregister, procedures, kleine fixes
+5. **Automatisch dependency-beheer** (R15): Dependabot configuratie + auto-merge voor patch-updates
 
 ### Out of scope
 
@@ -177,6 +178,33 @@ De volgende **grote items** zijn expliciet buiten scope:
 
 **Aanpak:** Eerste hersteltest uitvoeren en documenteren. Dit is een operationele taak, geen code-wijziging.
 
+### R15 — Automatisch dependency-beheer met Dependabot + auto-merge (A.8.8)
+
+**Huidige staat:** Dependencies worden alleen gescand via `pip-audit` in CI (reactief: pas bij een push). Er is geen actieve monitoring van nieuwe CVEs tussen pushes. CVE-uitzonderingen worden als `--ignore-vuln` flags in de CI-workflow gezet, niet in een Dependabot-configuratie.
+
+**Marktstandaard:** Dependabot (GitHub native) is de de-facto standaard voor geautomatiseerd dependency-beheer bij GitHub-hosted repos. Het wordt gebruikt door >70% van de Fortune 500 teams op GitHub. De tool:
+- Scant dagelijks of wekelijks alle dependencies tegen de GitHub Advisory Database (GHSA) + OSV
+- Opent automatisch een PR per kwetsbaar package met de gepatchte versie
+- Ondersteunt pip, npm, Docker images, en GitHub Actions
+- CVE-uitzonderingen beheer je in `dependabot.yml` (traceerbaar), niet als verborgen CLI-flags
+
+**Auto-merge strategie (marktstandaard):**
+- **Patch-updates** (1.0.0 → 1.0.1) + CI groen → automatisch mergen. Risico minimaal; breaking changes zijn per semantic versioning verboden in patches.
+- **Minor/major updates** → PR openen, handmatige review vereist.
+- **Security-PRs** (CVE-gedreven) → labels `dependencies` + `security`, zichtbaar in GitHub Security tab.
+
+**Implementatie bestaat uit twee bestanden:**
+1. `.github/dependabot.yml` — ecosystems, schedule, grouping, ignores
+2. `.github/workflows/dependabot-automerge.yml` — auto-merge logic op basis van `dependabot/fetch-metadata`
+
+**Ecosystems voor Klai:**
+- `pip` → `portal/backend` (requirements.txt / uv)
+- `npm` → `portal/frontend` (package.json)
+- `docker` → `deploy/` (docker-compose.yml images)
+- `github-actions` → `/` (workflow action versies)
+
+**Noot over uv:** Dependabot ondersteunt `uv.lock` nog niet native (valt terug op pip). Dit is voldoende voor dependency-security scanning; lock-file updates voor uv blijven handmatig.
+
 ### R14 — Kleine correcties
 
 1. **backup.sh regel 154:** Commentaar zegt "keep last 7 days" (`Lokale cleanup: backups ouder dan 7 dagen verwijderen...`) maar de code `head -n -30` houdt de laatste 30 directories. Commentaar corrigeren naar "30 dagen".
@@ -293,6 +321,23 @@ Het commentaar in `backup.sh` bij de lokale cleanup-sectie (~regel 154) vermeldt
 
 **REQ-SEC-002-25: SoA A.7.7 statuscorrectie**
 De SoA-entry voor A.7.7 (Clear desk and clear screen) heeft status COVERED met referentie naar `endpoint-security.md` sectie "Clear Desk and Clear Screen".
+
+### Groep 5 — Automatisch dependency-beheer
+
+**REQ-SEC-002-26: Dependabot ecosystems**
+Het repository bevat een `.github/dependabot.yml` dat Dependabot configureert voor de ecosystems `pip` (portal/backend), `npm` (portal/frontend), `docker` (deploy/), en `github-actions` (/), elk met een wekelijks update-schema.
+
+**REQ-SEC-002-27: Dependabot CVE-uitzonderingen in config**
+WHERE een CVE wordt genegeerd in dependency scanning, THEN staat de uitzondering in de `ignore`-sectie van `dependabot.yml` met een commentaar dat verwijst naar het bijbehorende GitHub Issue — niet als `--ignore-vuln` flag in een CI-workflow.
+
+**REQ-SEC-002-28: Auto-merge voor patch-updates**
+WHEN Dependabot een PR opent voor een patch-versie update (semver-patch) EN alle vereiste CI-checks slagen, THEN merged de auto-merge workflow de PR automatisch via squash-strategie.
+
+**REQ-SEC-002-29: Geen auto-merge bij minor/major**
+IF een Dependabot PR een minor- of major-versie update bevat, THEN wordt de PR NIET automatisch gemerged en vereist handmatige review.
+
+**REQ-SEC-002-30: Security-PR labels**
+WHEN Dependabot een PR opent die een CVE adresseert, THEN krijgt de PR het label `security` zodat het zichtbaar is in het GitHub Security-overzicht.
 
 ---
 
@@ -481,6 +526,32 @@ Then is de status COVERED (niet PARTIAL)
 And is er een referentie naar endpoint-security.md sectie "Clear Desk and Clear Screen"
 ```
 
+### REQ-SEC-002-26 t/m 30: Dependabot + auto-merge
+
+```gherkin
+Given het bestand .github/dependabot.yml bestaat
+When een auditor de Dependabot-configuratie controleert
+Then zijn de ecosystems pip, npm, docker en github-actions geconfigureerd
+And is het update-schema wekelijks
+And staan CVE-uitzonderingen in de ignore-sectie met referentie naar een GitHub Issue
+And staan geen --ignore-vuln flags meer in portal-api.yml
+
+Given Dependabot een PR opent voor een patch-versie update
+When alle CI-checks slagen (quality job)
+Then merged de auto-merge workflow de PR automatisch via squash
+And is de commit zichtbaar op main met het bericht van de Dependabot PR
+
+Given Dependabot een PR opent voor een minor-versie update
+When de auto-merge workflow draait
+Then wordt de PR NIET automatisch gemerged
+And blijft de PR open voor handmatige review
+
+Given Dependabot een PR opent die een CVE adresseert
+When de PR wordt aangemaakt
+Then heeft de PR het label "security"
+And is de PR zichtbaar in het GitHub Security-overzicht van het repository
+```
+
 ---
 
 ## Implementatieplan
@@ -519,6 +590,14 @@ And is er een referentie naar endpoint-security.md sectie "Clear Desk and Clear 
 | R11 MFA-beleid | Docs | Laag | `acceptable-use.md` |
 | R12 SOPS revocatie | Docs | Laag | Nieuw sectie of document |
 | R13 Eerste hersteltest | Ops | Medium | Testuitvoering + rapportage |
+
+### Prioriteit 5 — Automatisch dependency-beheer
+
+| Item | Type | Geschatte complexiteit | Betrokken bestanden |
+|---|---|---|---|
+| R15 Dependabot config | Config | Laag | Nieuw: `.github/dependabot.yml` |
+| R15 Auto-merge workflow | CI | Laag | Nieuw: `.github/workflows/dependabot-automerge.yml` |
+| R15 CVE-ignore migratie | Config | Triviaal | `.github/dependabot.yml` + `portal-api.yml` |
 
 ### Technische notities
 
@@ -581,6 +660,80 @@ timedatectl timesync-status
 - `DEFAULT_FROM_EMAIL`: `errors@getklai.com`
 - Na configuratie: test via GlitchTip admin panel -> "Send Test Notification"
 
+**R15 — Dependabot configuratie:**
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/portal/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      python-security:
+        patterns: ["*"]
+        update-types: ["patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/portal/frontend"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-security:
+        patterns: ["*"]
+        update-types: ["patch"]
+
+  - package-ecosystem: "docker"
+    directory: "/deploy"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # CVE-2026-4539: zie GetKlai/klai#XXX — package niet direct
+  # exploiteerbaar in onze context; review Q3 2026
+  ignore:
+    - dependency-name: "PACKAGE_NAME"
+      versions: ["AFFECTED_VERSION"]
+```
+
+**R15 — Auto-merge workflow:**
+```yaml
+# .github/workflows/dependabot-automerge.yml
+name: Dependabot auto-merge
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge patch updates
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Vereiste: branch protection op `main` moet `Allow auto-merge` hebben (REQ-SEC-002-07).
+
 ---
 
 ## Risico's en mitigatie
@@ -592,6 +745,9 @@ timedatectl timesync-status
 | GitHub PAT security | Hoog | PAT in SOPS; minimale scope (`admin:org`); regelmatige rotatie |
 | SMTP-credentials in compose | Medium | Alleen via SOPS `.env.sops`; nooit in cleartext |
 | Hersteltest verstoort productie | Hoog | Test op separaat backup volume; nooit op productie-database |
+| Dependabot patch-auto-merge breekt iets | Medium | CI moet slagen voor merge; uitbreiden van testdekking vermindert risico verder |
+| Dependabot opent te veel PRs tegelijk | Laag | `open-pull-requests-limit: 10` + `groups` per ecosystem; patch-updates worden gebundeld |
+| Dependabot ondersteunt uv.lock niet native | Laag | Valt terug op pip; voldoende voor security scanning; lock-file update blijft handmatig |
 
 ---
 
@@ -613,3 +769,4 @@ timedatectl timesync-status
 | REQ-SEC-002-22 | A.8.2 | PARTIAL (niet gedocumenteerd) | COVERED |
 | REQ-SEC-002-23 | A.8.13 | PARTIAL (geen test) | COVERED |
 | REQ-SEC-002-24..25 | A.8.13/A.7.7 | Incorrecte vermelding | Correcte vermelding |
+| REQ-SEC-002-26..30 | A.8.8 | Reactief (pip-audit bij push) | Proactief (Dependabot wekelijks + auto-merge) |
