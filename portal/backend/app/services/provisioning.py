@@ -215,6 +215,14 @@ ALLOW_REGISTRATION=false
 ALLOW_SOCIAL_LOGIN=true
 ALLOW_SOCIAL_REGISTRATION=false
 
+# Login rate limiting -- raised from the default (7) because LibreChat's
+# loginLimiter counts every OAuth route hit (redirect + callback = 2 per OIDC
+# cycle).  With ALLOW_EMAIL_LOGIN=false there is no brute-force vector at this
+# layer; credential protection is handled by Zitadel's lockout policy and
+# Caddy's per-IP rate_limit block.  250 allows ~125 OIDC cycles per window.
+# NOTE: express-rate-limit v7+ blocks all requests when max=0 (not "unlimited").
+LOGIN_MAX=250
+
 # App settings
 DOMAIN_CLIENT=https://chat-{slug}.{domain}
 DOMAIN_SERVER=https://chat-{slug}.{domain}
