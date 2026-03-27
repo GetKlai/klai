@@ -38,9 +38,22 @@ REDIS_PASSWORD=$(docker inspect klai-core-redis-1 \
   --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | grep '^REDIS_PASSWORD=' | head -1 | cut -d'=' -f2-)
 # Storage Box config from .env
-_env_get() { grep "^${1}=" "$COMPOSE_DIR/.env" | head -1 | cut -d'=' -f2-; }
+_env_get() { grep "^${1}=" "$COMPOSE_DIR/.env" 2>/dev/null | head -1 | cut -d'=' -f2- || true; }
 STORAGEBOX_HOST=${STORAGEBOX_HOST:-$(_env_get STORAGEBOX_HOST)}
 STORAGEBOX_USER=${STORAGEBOX_USER:-$(_env_get STORAGEBOX_USER)}
+KUMA_TOKEN_BACKUP=${KUMA_TOKEN_BACKUP:-$(_env_get KUMA_TOKEN_BACKUP)}
+
+# ─── Uptime Kuma heartbeat ────────────────────────────────────────────────────
+# Push on success (at end of script). Push failure on EXIT with non-zero code.
+_kuma_push() {
+  local status="$1" msg="$2"
+  [ -z "${KUMA_TOKEN_BACKUP:-}" ] && return 0
+  curl -fsS --max-time 10 \
+    "https://status.getklai.com/api/push/${KUMA_TOKEN_BACKUP}?status=${status}&msg=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${msg}")&ping=" \
+    >/dev/null 2>&1 || true
+}
+# On any unhandled error: push failure before exiting
+trap '_kuma_push down "Backup failed at $(date +%H:%M:%S)"' ERR
 
 echo ""
 echo "${LOG_PREFIX} ============================================"
@@ -139,9 +152,12 @@ fi
 # ─── Local retention: keep last 7 days ───────────────────────────────────────
 echo ""
 echo "${LOG_PREFIX} Lokale cleanup: backups ouder dan 7 dagen verwijderen..."
-find /opt/klai/backups/ -maxdepth 1 -type d -name '20*' | sort | head -n -7 | xargs -r rm -rf
+find /opt/klai/backups/ -maxdepth 1 -type d -name '20*' | sort | head -n -30 | xargs -r rm -rf
 REMAINING=$(find /opt/klai/backups/ -maxdepth 1 -type d -name '20*' | wc -l)
 echo "${LOG_PREFIX} Lokale backups bewaard: ${REMAINING}"
+
+# ─── Uptime Kuma: report success ──────────────────────────────────────────────
+_kuma_push up "OK — $(du -sh "$BACKUP_DIR" | cut -f1)"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
