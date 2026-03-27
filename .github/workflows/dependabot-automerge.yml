@@ -21,10 +21,19 @@ jobs:
 
       - name: Auto-merge patch updates
         if: steps.meta.outputs.update-type == 'version-update:semver-patch'
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --squash --admin "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Minor and major updates are NOT auto-merged — they require manual review
+      - name: Auto-merge minor dev-dep updates
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-minor' &&
+          steps.meta.outputs.dependency-type == 'direct:development'
+        run: gh pr merge --squash --admin "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Major updates and minor prod-dep updates require manual review
       # Security PRs get the "security" label from Dependabot automatically
