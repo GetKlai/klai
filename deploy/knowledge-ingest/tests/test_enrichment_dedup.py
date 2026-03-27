@@ -55,6 +55,11 @@ def _base_patches(mock_app):
                 return_value=[[0.1] * 10],
             ),
             patch(
+                "knowledge_ingest.routes.ingest.pg_store.get_active_content_hash",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "knowledge_ingest.routes.ingest.pg_store.soft_delete_artifact",
                 new_callable=AsyncMock,
             ),
@@ -74,10 +79,15 @@ def _base_patches(mock_app):
                 return_value=True,
             ),
             patch(
-                "knowledge_ingest.routes.ingest.enrichment_tasks"
-            ) as mock_et,
+                "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+                new_callable=AsyncMock,
+                return_value="internal",
+            ),
+            patch.dict(
+                sys.modules,
+                {"knowledge_ingest.enrichment_tasks": types.SimpleNamespace(get_app=lambda: mock_app)},
+            ),
         ):
-            mock_et.get_app.return_value = mock_app
             yield
 
     return _stack()

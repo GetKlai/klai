@@ -70,6 +70,7 @@ async def test_proceeds_when_content_changed():
     mock_pool = MagicMock()
     mock_pool.execute = AsyncMock(return_value=None)
     mock_pool.fetchval = AsyncMock(return_value=None)
+    mock_pool.fetchrow = AsyncMock(return_value=None)
 
     with patch(
         "knowledge_ingest.pg_store.get_active_content_hash",
@@ -93,6 +94,10 @@ async def test_proceeds_when_content_changed():
         "knowledge_ingest.org_config.is_enrichment_enabled",
         new_callable=AsyncMock,
         return_value=False,
+    ), patch(
+        "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+        new_callable=AsyncMock,
+        return_value="internal",
     ), patch(
         "knowledge_ingest.routes.ingest.get_pool",
         new_callable=AsyncMock,
@@ -119,6 +124,7 @@ async def test_proceeds_when_no_previous_artifact():
     mock_pool = MagicMock()
     mock_pool.execute = AsyncMock(return_value=None)
     mock_pool.fetchval = AsyncMock(return_value=None)
+    mock_pool.fetchrow = AsyncMock(return_value=None)
 
     with patch(
         "knowledge_ingest.pg_store.get_active_content_hash",
@@ -142,6 +148,10 @@ async def test_proceeds_when_no_previous_artifact():
         "knowledge_ingest.org_config.is_enrichment_enabled",
         new_callable=AsyncMock,
         return_value=False,
+    ), patch(
+        "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+        new_callable=AsyncMock,
+        return_value="internal",
     ), patch(
         "knowledge_ingest.routes.ingest.get_pool",
         new_callable=AsyncMock,
@@ -169,6 +179,7 @@ async def test_content_hash_stored_on_create():
     mock_pool = MagicMock()
     mock_pool.execute = AsyncMock(return_value=None)
     mock_pool.fetchval = AsyncMock(return_value=None)
+    mock_pool.fetchrow = AsyncMock(return_value=None)
 
     mock_create = AsyncMock(return_value="artifact-uuid-3")
 
@@ -193,6 +204,10 @@ async def test_content_hash_stored_on_create():
         "knowledge_ingest.org_config.is_enrichment_enabled",
         new_callable=AsyncMock,
         return_value=False,
+    ), patch(
+        "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+        new_callable=AsyncMock,
+        return_value="internal",
     ), patch(
         "knowledge_ingest.routes.ingest.get_pool",
         new_callable=AsyncMock,
