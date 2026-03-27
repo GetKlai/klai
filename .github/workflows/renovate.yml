@@ -17,3 +17,5 @@ jobs:
       - uses: renovatebot/github-action@v46.1.6
         with:
           token: ${{ github.token }}
+        env:
+          RENOVATE_REPOSITORIES: '["GetKlai/klai"]'
