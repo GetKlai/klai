@@ -58,12 +58,41 @@ def _load_hook(monkeypatch, extra_env=None):
     return klai_knowledge
 
 
-def _make_cache(feature_enabled: bool | None = None):
-    """Build a mock LiteLLM DualCache that returns a cached feature result."""
+def _make_cache(feature_enabled: bool | None = None, feature: dict | None = None):
+    """Build a mock LiteLLM DualCache for the two-level version cache.
+
+    feature_enabled=None, feature=None: cache miss — forces portal HTTP call.
+    feature_enabled=True/False: cache hit with a default feature dict.
+    feature=<dict>: cache hit with the given feature dict (ignores feature_enabled).
+
+    Two-level cache structure:
+    - kb_ver:{org_id}:{user_id}               → version string ("0")
+    - kb_feature:{org_id}:{user_id}:{version} → feature dict
+    """
     cache = MagicMock()
-    cached_value = None if feature_enabled is None else ("1" if feature_enabled else "0")
-    cache.async_get_cache = AsyncMock(return_value=cached_value)
     cache.async_set_cache = AsyncMock()
+
+    if feature is None and feature_enabled is None:
+        # Cache miss — both levels return None, forces portal HTTP call
+        cache.async_get_cache = AsyncMock(return_value=None)
+    else:
+        feat: dict = feature or {
+            "enabled": bool(feature_enabled),
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "version": 0,
+        }
+
+        async def _get(key: str) -> object:
+            if key.startswith("kb_ver:"):
+                return "0"
+            if key.startswith("kb_feature:"):
+                return feat
+            return None
+
+        cache.async_get_cache = AsyncMock(side_effect=_get)
+
     return cache
 
 
@@ -501,7 +530,7 @@ class TestFireGapEvent:
         mock_loop = MagicMock()
         mock_loop.create_task = MagicMock()
 
-        with patch.object(_asyncio, "get_event_loop", return_value=mock_loop):
+        with patch.object(_asyncio, "get_running_loop", return_value=mock_loop):
             mod._fire_gap_event(
                 org_id="42",
                 user_id="user123",
@@ -525,7 +554,7 @@ class TestFireGapEvent:
             {"reranker_score": 0.3, "score": 0.2, "metadata": {"kb_slug": "my-kb"}},
         ]
 
-        with patch.object(_asyncio, "get_event_loop", return_value=mock_loop):
+        with patch.object(_asyncio, "get_running_loop", return_value=mock_loop):
             mod._fire_gap_event(
                 org_id="42",
                 user_id="user123",
@@ -546,7 +575,7 @@ class TestFireGapEvent:
         mock_loop = MagicMock()
         mock_loop.create_task = MagicMock()
 
-        with patch.object(_asyncio, "get_event_loop", return_value=mock_loop):
+        with patch.object(_asyncio, "get_running_loop", return_value=mock_loop):
             mod._fire_gap_event(
                 org_id="42",
                 user_id="user123",
@@ -563,7 +592,7 @@ class TestFireGapEvent:
 
         mod = _load_hook(monkeypatch)
 
-        with patch.object(_asyncio, "get_event_loop", side_effect=RuntimeError("no event loop")):
+        with patch.object(_asyncio, "get_running_loop", side_effect=RuntimeError("no event loop")):
             # Should not raise
             mod._fire_gap_event(
                 org_id="42",
@@ -705,3 +734,236 @@ class TestGapIntegration:
             with patch.object(mod, "_fire_gap_event") as mock_fire:
                 await hook.async_pre_call_hook(uak, cache, data, "completion")
                 mock_fire.assert_not_called()
+
+
+# ─── KB-013 scope preference tests ───────────────────────────────────────────
+
+
+class TestKlaiKnowledgeHookKB013:
+    """Tests for KB-013: per-user KB scope preference controls."""
+
+    @pytest.mark.asyncio
+    async def test_pre_step_skip_when_retrieval_disabled(self, monkeypatch):
+        """REQ-E4: kb_retrieval_enabled=False → no retrieval-api call, no injection."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={
+            "enabled": True,
+            "kb_retrieval_enabled": False,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "version": 0,
+        })
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat is ons personeelsbeleid?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            mc.post.assert_not_called()
+        assert "_klai_kb_meta" not in result
+
+    @pytest.mark.asyncio
+    async def test_scope_org_when_personal_disabled(self, monkeypatch):
+        """REQ-E5: kb_personal_enabled=False → scope='org' in retrieval request."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": False,
+            "kb_slugs_filter": None,
+            "version": 0,
+        })
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Toon me de organisatiestructuur."}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            body = mc.post.call_args.kwargs.get("json") or {}
+            assert body.get("scope") == "org"
+
+    @pytest.mark.asyncio
+    async def test_scope_both_when_personal_enabled(self, monkeypatch):
+        """REQ-E6: kb_personal_enabled=True → scope='both' in retrieval request."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "version": 0,
+        })
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat is het budget voor Q3?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            body = mc.post.call_args.kwargs.get("json") or {}
+            assert body.get("scope") == "both"
+
+    @pytest.mark.asyncio
+    async def test_kb_slugs_passed_when_filter_set(self, monkeypatch):
+        """REQ-E7: kb_slugs_filter set → kb_slugs forwarded to retrieval-api."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": ["engineering", "product"],
+            "version": 0,
+        })
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Hoe werkt de deployment pipeline?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            body = mc.post.call_args.kwargs.get("json") or {}
+            assert body.get("kb_slugs") == ["engineering", "product"]
+
+    @pytest.mark.asyncio
+    async def test_no_kb_slugs_key_when_filter_none(self, monkeypatch):
+        """When kb_slugs_filter=None, kb_slugs key absent from retrieval request."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "version": 0,
+        })
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Geef me een overzicht van de roadmap."}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            body = mc.post.call_args.kwargs.get("json") or {}
+            assert "kb_slugs" not in body
+
+    @pytest.mark.asyncio
+    async def test_version_cache_hit_skips_portal_call(self, monkeypatch):
+        """Two-level cache hit: version pointer + feature dict both warm → no portal GET."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={
+            "enabled": True,
+            "kb_retrieval_enabled": True,
+            "kb_personal_enabled": True,
+            "kb_slugs_filter": None,
+            "version": 5,
+        })
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat zijn de KPIs voor dit kwartaal?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            mc.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_old_portal_format_preserves_retrieval(self, monkeypatch):
+        """REQ-N1: old portal response {enabled:True} without new fields → retrieval proceeds with defaults."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        # Cache miss — forces live portal call
+        cache = _make_cache(feature_enabled=None)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat is de winstmarge van Q2?"}
+        ]}
+
+        # Old-format portal response: just {enabled: True}, missing new KB pref fields
+        portal_resp = _make_resp({"enabled": True})
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=portal_resp)
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            # kb_retrieval_enabled defaults to True → retrieval call is made
+            mc.post.assert_called_once()
+            body = mc.post.call_args.kwargs.get("json") or {}
+            # kb_personal_enabled defaults to True → scope='both'
+            assert body.get("scope") == "both"
+
+    @pytest.mark.asyncio
+    async def test_portal_fail_returns_enabled_false(self, monkeypatch):
+        """Portal unreachable → fail-closed (enabled=False), no injection."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=None)
+
+        data = {"user": "aabbcc112233445566778899", "messages": [
+            {"role": "user", "content": "Wat is de status van de migratie?"}
+        ]}
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(side_effect=Exception("Connection refused"))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            result = await hook.async_pre_call_hook(_make_user_api_key(), cache, data, "completion")
+
+            mc.post.assert_not_called()
+        assert "_klai_kb_meta" not in result

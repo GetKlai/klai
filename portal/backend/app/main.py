@@ -8,6 +8,7 @@ from fastapi.responses import Response
 
 from app.api import me, signup
 from app.api.admin import router as admin_router
+from app.api.app_account import router as app_account_router
 from app.api.app_gaps import router as app_gaps_router
 from app.api.app_knowledge_bases import router as app_knowledge_bases_router
 from app.api.auth import router as auth_router
@@ -120,6 +121,7 @@ app.include_router(meetings_router)
 app.include_router(webhooks_router)
 app.include_router(internal_router)
 app.include_router(knowledge_bases_router)
+app.include_router(app_account_router)
 app.include_router(app_knowledge_bases_router)
 app.include_router(app_gaps_router)
 app.include_router(connectors_router)

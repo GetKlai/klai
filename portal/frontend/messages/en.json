@@ -1107,5 +1107,19 @@
   "gaps_filter_all": "All",
   "gaps_empty_state": "No knowledge gaps detected in this period.",
   "gaps_overview_tile": "Gaps (7d)",
-  "gaps_index_card_none": "No gaps detected in the last 7 days — your knowledge base is covering all questions."
+  "gaps_index_card_none": "No gaps detected in the last 7 days — your knowledge base is covering all questions.",
+
+  "chat_kb_bar_tooltip_on": "Knowledge base retrieval enabled",
+  "chat_kb_bar_tooltip_off": "Knowledge base retrieval disabled",
+  "chat_kb_bar_toggle_label": "Knowledge base",
+  "chat_kb_bar_personal_label": "Personal KB",
+  "chat_kb_bar_personal_tooltip": "Include your personal notebooks in search",
+  "chat_kb_bar_org_filter_label": "Org knowledge bases",
+  "chat_kb_bar_org_filter_placeholder": "All knowledge bases",
+  "chat_kb_bar_saving": "Saving…",
+  "chat_kb_bar_save_error": "Could not save preference",
+  "chat_kb_bar_no_kbs": "No knowledge bases available",
+  "chat_kb_bar_apply": "Apply",
+  "chat_kb_bar_select_all": "Select all",
+  "chat_kb_bar_deselect_all": "Deselect all"
 }

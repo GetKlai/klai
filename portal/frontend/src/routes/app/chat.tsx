@@ -1,5 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { KBScopeBar } from './_components/KBScopeBar'
+
 const chatUrl = (() => {
   const { hostname } = window.location
   if (hostname !== 'localhost') {
@@ -17,10 +19,11 @@ export const Route = createFileRoute('/app/chat')({
 
 function ChatPage() {
   return (
-    <div className="h-full w-full" data-help-id="chat-page">
+    <div className="flex h-full w-full flex-col" data-help-id="chat-page">
+      <KBScopeBar />
       <iframe
         src={chatUrl}
-        className="h-full w-full border-none"
+        className="w-full flex-1 border-none"
         title="Chat"
         allow="clipboard-write; microphone; screen-wake-lock"
       />
