@@ -140,6 +140,7 @@ async def me(
 
 class SarIdentity(BaseModel):
     """SAR response - identity section (SPEC-GDPR-001)"""
+
     first_name: str | None
     last_name: str | None
     display_name: str | None
@@ -354,8 +355,7 @@ async def sar_export(
         )
     ).all()
     group_memberships = [
-        SarGroupMembership(group_name=r.name, joined_at=r.joined_at, is_group_admin=r.is_group_admin)
-        for r in gm_rows
+        SarGroupMembership(group_name=r.name, joined_at=r.joined_at, is_group_admin=r.is_group_admin) for r in gm_rows
     ]
 
     # 5. Knowledge base access
@@ -372,8 +372,7 @@ async def sar_export(
         )
     ).all()
     knowledge_base_access = [
-        SarKBAccess(kb_name=r.name, kb_slug=r.slug, role=r.role, granted_at=r.granted_at)
-        for r in kb_rows
+        SarKBAccess(kb_name=r.name, kb_slug=r.slug, role=r.role, granted_at=r.granted_at) for r in kb_rows
     ]
 
     # 6. Audit events where this user was the actor (no details field - may contain org-wide data)
@@ -411,12 +410,16 @@ async def sar_export(
 
     # 8. Meetings - includes transcript and summary (most sensitive personal data)
     meeting_rows = (
-        await db.execute(
-            select(VexaMeeting)
-            .where(VexaMeeting.zitadel_user_id == user_id)
-            .order_by(VexaMeeting.created_at.desc())
+        (
+            await db.execute(
+                select(VexaMeeting)
+                .where(VexaMeeting.zitadel_user_id == user_id)
+                .order_by(VexaMeeting.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     meetings = [
         SarMeeting(
             meeting_title=mtg.meeting_title,
