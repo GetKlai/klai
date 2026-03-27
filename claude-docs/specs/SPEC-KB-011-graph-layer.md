@@ -1,6 +1,6 @@
 # SPEC-KB-011: Graphiti + FalkorDB Knowledge Graph Layer
 
-> Status: completed
+> Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-005 (contextual retrieval), SPEC-KB-008 (retrieval-api), SPEC-KB-009 (docs-sync via Gitea webhooks)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`

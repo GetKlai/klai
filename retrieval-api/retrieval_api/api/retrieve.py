@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 
+import structlog
 from fastapi import APIRouter, HTTPException
 
 from retrieval_api.config import settings
+from retrieval_api.metrics import retrieval_chunks_total, retrieval_requests_total, step_latency_seconds
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.services import coreference, gate, graph_search, reranker, search
 from retrieval_api.services.tei import embed_single, embed_sparse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -51,13 +52,19 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     t0 = time.perf_counter()
 
     # 1. Coreference resolution
+    t_coref = time.perf_counter()
     query_resolved = await coreference.resolve(req.query, req.conversation_history)
+    coref_ms = (time.perf_counter() - t_coref) * 1000
+    step_latency_seconds.labels(step="coref").observe((time.perf_counter() - t_coref))
 
     # 2. Embed resolved query (dense + sparse in parallel)
+    t_embed = time.perf_counter()
     query_vector, sparse_vector = await asyncio.gather(
         embed_single(query_resolved),
         embed_sparse(query_resolved),
     )
+    embed_ms = (time.perf_counter() - t_embed) * 1000
+    step_latency_seconds.labels(step="embed").observe((time.perf_counter() - t_embed))
 
     # 3. Gate check
     bypassed, gate_margin = await gate.should_bypass(query_vector)
@@ -65,12 +72,14 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     chunks_out: list[ChunkResult] = []
     candidates_retrieved = 0
     reranked_to = 0
+    qdrant_ms: float | None = None
     rerank_ms: float | None = None
     graph_results_count = 0
     graph_search_ms: float | None = None
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
+        t_qdrant = time.perf_counter()
         qdrant_coro = search.hybrid_search(query_vector, req, settings.retrieval_candidates, sparse_vector)
 
         graph_task: asyncio.Task[list[dict]] | None = None
@@ -82,24 +91,29 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             )
 
         raw_results = await qdrant_coro
+        qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
+        step_latency_seconds.labels(step="qdrant").observe(time.perf_counter() - t_qdrant)
 
         if graph_task is not None and t_graph is not None:
             try:
                 graph_results = await graph_task
                 graph_search_ms = (time.perf_counter() - t_graph) * 1000
+                step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
                 graph_results_count = len(graph_results)
                 if graph_results:
                     raw_results = _rrf_merge(raw_results, graph_results)
             except Exception as exc:
-                logger.warning("Graph search task failed: %s", exc)
+                logger.warning("Graph search task failed", error=str(exc))
 
         candidates_retrieved = len(raw_results)
 
-        # 5. Rerank (skip for notebook scope)
-        if req.scope != "notebook" and raw_results:
+        # 5. Rerank (skip for notebook scope or when reranker disabled)
+        if req.scope != "notebook" and raw_results and settings.reranker_enabled:
             t_rerank = time.perf_counter()
-            reranked = await reranker.rerank(query_resolved, raw_results, req.top_k)
+            rerank_input = raw_results[: settings.reranker_candidates]
+            reranked = await reranker.rerank(query_resolved, rerank_input, req.top_k)
             rerank_ms = (time.perf_counter() - t_rerank) * 1000
+            step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
             reranked_to = len(reranked)
         else:
             reranked = raw_results[: req.top_k]
@@ -123,21 +137,25 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         ]
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
+    step_latency_seconds.labels(step="total").observe(retrieval_ms / 1000)
+    retrieval_requests_total.labels(scope=req.scope, bypassed=str(bypassed).lower()).inc()
+    retrieval_chunks_total.labels(scope=req.scope).observe(len(chunks_out))
 
     logger.info(
         "retrieve",
-        extra={
-            "org_id": req.org_id,
-            "scope": req.scope,
-            "top_k": req.top_k,
-            "candidates_retrieved": candidates_retrieved,
-            "graph_results_count": graph_results_count,
-            "retrieval_ms": round(retrieval_ms, 1),
-            "graph_search_ms": round(graph_search_ms, 1) if graph_search_ms is not None else None,
-            "rerank_ms": round(rerank_ms, 1) if rerank_ms is not None else None,
-            "gate_margin": round(gate_margin, 4) if gate_margin is not None else None,
-            "retrieval_bypassed": bypassed,
-        },
+        org_id=req.org_id,
+        scope=req.scope,
+        top_k=req.top_k,
+        candidates_retrieved=candidates_retrieved,
+        graph_results_count=graph_results_count,
+        coref_ms=round(coref_ms, 1),
+        embed_ms=round(embed_ms, 1),
+        qdrant_ms=round(qdrant_ms, 1) if qdrant_ms is not None else None,
+        retrieval_ms=round(retrieval_ms, 1),
+        graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
+        rerank_ms=round(rerank_ms, 1) if rerank_ms is not None else None,
+        gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
+        retrieval_bypassed=bypassed,
     )
 
     return RetrieveResponse(

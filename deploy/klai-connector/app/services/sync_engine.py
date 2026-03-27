@@ -148,8 +148,16 @@ class SyncEngine:
                 last_pending = await self._get_last_pending_run(session, connector_id)
 
                 cursor_context: dict[str, Any] | None = None
+                resume_ingested_refs: set[str] = set()
                 if last_pending and last_pending.cursor_state:
                     cursor_context = last_pending.cursor_state
+                    resume_ingested_refs = set(cursor_context.get("ingested_refs", []))
+                    if resume_ingested_refs:
+                        logger.info(
+                            "Resuming interrupted sync for connector %s: %d refs already ingested, skipping",
+                            connector_id,
+                            len(resume_ingested_refs),
+                        )
                 elif last_run and last_run.cursor_state:
                     cursor_context = last_run.cursor_state
 
@@ -180,6 +188,12 @@ class SyncEngine:
                 documents_total = len(refs)
 
                 for ref in refs:
+                    # Skip refs already ingested in an interrupted run (resume mode).
+                    ref_key = ref.source_ref or ref.path
+                    if ref_key in resume_ingested_refs:
+                        documents_ok += 1
+                        continue
+
                     try:
                         content_bytes = await adapter.fetch_document(ref, portal_config)
                         bytes_processed += len(content_bytes)
@@ -191,8 +205,15 @@ class SyncEngine:
                             content=text,
                             source_connector_id=str(connector_id),
                             source_ref=ref.source_ref,
+                            content_type=ref.content_type,
                         )
                         documents_ok += 1
+                        resume_ingested_refs.add(ref_key)
+
+                        # Checkpoint progress every 10 docs so a crash can resume mid-sync.
+                        if documents_ok % 10 == 0:
+                            sync_run.cursor_state = {"ingested_refs": list(resume_ingested_refs)}
+                            await session.commit()
 
                     except Exception as doc_err:
                         documents_failed += 1

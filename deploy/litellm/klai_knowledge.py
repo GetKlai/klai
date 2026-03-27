@@ -26,10 +26,9 @@ from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_RETRIEVE_URL = os.getenv(
-    "KNOWLEDGE_RETRIEVE_URL",
-    "http://retrieval-api:8040/retrieve",
-)
+KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
+if not KNOWLEDGE_RETRIEVE_URL:
+    raise RuntimeError("KNOWLEDGE_RETRIEVE_URL is not set")
 PORTAL_API_URL = os.getenv("PORTAL_API_URL", "http://portal-api:8000")
 PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
 RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))

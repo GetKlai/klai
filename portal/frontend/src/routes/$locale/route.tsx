@@ -21,7 +21,7 @@ function LocaleLayout() {
     if ((paramLocale === 'nl' || paramLocale === 'en') && paramLocale !== locale) {
       switchLocale(paramLocale as Locale)
     }
-  }, [paramLocale])
+  }, [paramLocale, locale, switchLocale])
 
   return <Outlet />
 }

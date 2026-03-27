@@ -2,6 +2,7 @@
 Retrieval pipeline for chat endpoint.
 Supports narrow, broad, and web modes.
 """
+import asyncio
 import json
 import logging
 from typing import AsyncIterator
@@ -17,6 +18,7 @@ _TOP_K = 8
 _MAX_CONTEXT_TOKENS = 6000
 _WEB_TOP_K = 3
 _WEB_RESULTS = 5
+_WEB_URL_TIMEOUT = 15.0  # seconds per URL fetch
 
 NARROW_SYSTEM_PROMPT = """You are a research assistant. Answer the user's question using only the provided source excerpts below.
 If the answer is not found in the provided sources, respond with:
@@ -37,10 +39,34 @@ You have access to Focus documents: uploaded documents specific to this notebook
 Supplement with your general knowledge where helpful.
 Always indicate which parts of your answer come from the Focus documents or your general knowledge."""
 
+WEB_SYSTEM_PROMPT = """You are a research assistant. Use the provided source excerpts as your primary reference.
+You have access to two types of sources:
+- Focus documents: uploaded documents specific to this notebook
+- Web results: live web pages retrieved for this question
+Supplement with your general knowledge where helpful.
+Always indicate which parts of your answer come from Focus documents, web results,
+or your general knowledge."""
+
+
+async def _fetch_web_url(url: str) -> tuple[str, str] | None:
+    """Fetch a single URL via docling with a per-URL timeout. Returns (url, text) or None."""
+    try:
+        doc = await asyncio.wait_for(docling.convert_url(url), timeout=_WEB_URL_TIMEOUT)
+        if doc.text.strip():
+            return url, doc.text
+        logger.warning("Empty text for web URL: %s", url)
+        return None
+    except asyncio.TimeoutError:
+        logger.warning("Timeout fetching web URL: %s", url)
+        return None
+    except Exception:
+        logger.warning("Failed to fetch web URL: %s", url)
+        return None
+
 
 async def retrieve_web_chunks(question: str) -> list[dict]:
     """
-    Query SearXNG, fetch URLs via docling, embed and return top-k web chunks.
+    Query SearXNG, fetch URLs via docling in parallel, embed and return top-k web chunks.
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -55,19 +81,10 @@ async def retrieve_web_chunks(question: str) -> list[dict]:
         return []
 
     results = data.get("results", [])[:_WEB_RESULTS]
-    web_texts: list[tuple[str, str]] = []  # (url, text)
+    urls = [r.get("url", "") for r in results if r.get("url")]
 
-    for result in results:
-        url = result.get("url", "")
-        if not url:
-            continue
-        try:
-            doc = await docling.convert_url(url)
-            if doc.text.strip():
-                web_texts.append((url, doc.text))
-        except Exception:
-            logger.warning("Failed to fetch web URL: %s", url)
-            continue
+    fetch_results = await asyncio.gather(*[_fetch_web_url(url) for url in urls])
+    web_texts: list[tuple[str, str]] = [r for r in fetch_results if r is not None]
 
     if not web_texts:
         return []
@@ -77,8 +94,13 @@ async def retrieve_web_chunks(question: str) -> list[dict]:
     all_text_chunks: list[dict] = []
 
     for url, text in web_texts:
-        # Simple single-chunk representation per URL for web results
-        all_text_chunks.append({"source_id": "web", "content": text[:3000], "url": url, "score": 0.0})
+        all_text_chunks.append({
+            "source_id": "web",
+            "origin": "web",
+            "content": text[:3000],
+            "url": url,
+            "score": 0.0,
+        })
 
     # Re-rank by embedding similarity
     embeddings = await tei.embed_texts([c["content"] for c in all_text_chunks])
@@ -199,6 +221,11 @@ def extract_citations(chunks: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         if chunk.get("source_id") == "web":
+            citations.append({
+                "source_id": "web",
+                "url": chunk.get("url", ""),
+                "excerpt": chunk["content"][:200],
+            })
             continue
         citations.append({
             "source_id": chunk["source_id"],

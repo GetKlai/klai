@@ -20,10 +20,14 @@ from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.meetings import router as meetings_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
+from app.logging_setup import setup_logging
+from app.middleware.logging_context import LoggingContextMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
+
+setup_logging("portal-api")
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,8 @@ async def no_cache_authenticated(request: Request, call_next: object) -> Respons
         response.headers["Cache-Control"] = "no-store"
     return response
 
+
+app.add_middleware(LoggingContextMiddleware)
 
 app.include_router(signup.router)
 app.include_router(me.router)

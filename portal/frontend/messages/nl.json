@@ -923,7 +923,9 @@
 
   "admin_connectors_action_view": "Details bekijken",
   "admin_connectors_action_sync": "Nu synchroniseren",
+  "admin_connectors_action_edit": "Bewerken",
   "admin_connectors_action_delete": "Verwijderen",
+  "admin_connectors_save": "Opslaan",
   "admin_connectors_syncing": "Bezig...",
   "admin_connectors_sync_error": "Synchronisatie mislukt ({status})",
 

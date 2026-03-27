@@ -4,8 +4,9 @@ RUN apt-get update && apt-get install -y ca-certificates libpq5 && update-ca-cer
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv && \
+    uv pip install --system --no-cache -r pyproject.toml
 
 COPY knowledge_ingest/ knowledge_ingest/
 

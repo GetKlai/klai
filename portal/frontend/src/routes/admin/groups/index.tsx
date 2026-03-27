@@ -259,6 +259,7 @@ function AdminGroups() {
     }),
   ]
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
   const table = useReactTable({
     data: groups,
     columns,

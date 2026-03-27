@@ -18,6 +18,7 @@
 | [patterns/frontend.md](patterns/frontend.md) | i18n (Paraglide JS), frontend conventions, button placement |
 | [patterns/code-quality.md](patterns/code-quality.md) | ruff, pyright, ESLint, pre-commit, CI quality gates |
 | [patterns/testing.md](patterns/testing.md) | Playwright browser testing, permissions, GlitchTip debugging |
+| [patterns/logging.md](patterns/logging.md) | Structured logging with structlog, querying VictoriaLogs, debugging patterns |
 
 ## Project Pattern Files
 
@@ -61,6 +62,12 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[playwright-workflow](patterns/testing.md#standard-workflow)** - Kill Brave, navigate, grant permissions, snapshot, close browser
 - **[playwright-permissions](patterns/testing.md#3-grant-browser-permissions-mic-camera-etc)** - Grant mic/camera/etc. programmatically
 - **[glitchtip-debugging](patterns/testing.md#debugging-with-glitchtip)** - Frontend error tracking via errors.getklai.com
+
+### Logging
+
+- **[logging-write](patterns/logging.md#logging-write)** - Configure structlog with ProcessorFormatter for uniform JSON from both structlog and stdlib loggers; bind org_id / request_id via contextvars
+- **[logging-query](patterns/logging.md#logging-query)** - LogsQL query patterns for debugging in VictoriaLogs
+- **[logging-new-service](patterns/logging.md#logging-new-service)** - Copy `logging_setup.py` and wire up a new Python service
 
 ### Platform (AI Stack)
 
