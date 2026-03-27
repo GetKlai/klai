@@ -149,9 +149,9 @@ else
   echo "${LOG_PREFIX}       Zie klai-infra/SERVERS.md voor setup-instructies."
 fi
 
-# ─── Local retention: keep last 7 days ───────────────────────────────────────
+# ─── Local retention: keep last 30 days ──────────────────────────────────────
 echo ""
-echo "${LOG_PREFIX} Lokale cleanup: backups ouder dan 7 dagen verwijderen..."
+echo "${LOG_PREFIX} Lokale cleanup: backups ouder dan 30 dagen verwijderen..."
 find /opt/klai/backups/ -maxdepth 1 -type d -name '20*' | sort | head -n -30 | xargs -r rm -rf
 REMAINING=$(find /opt/klai/backups/ -maxdepth 1 -type d -name '20*' | wc -l)
 echo "${LOG_PREFIX} Lokale backups bewaard: ${REMAINING}"

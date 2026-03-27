@@ -32,10 +32,16 @@ apt-get update -qq
 apt-get upgrade -y -qq
 apt-get install -y -qq curl git htop unzip ufw fail2ban
 
-echo "=== [2/7] Hostname and timezone ==="
+echo "=== [2/7] Hostname, timezone and NTP ==="
 hostnamectl set-hostname "$SERVER_HOST"
 timedatectl set-timezone Europe/Helsinki
 echo "$SERVER_HOST" > /etc/hostname
+
+echo "Enabling NTP synchronisation (systemd-timesyncd)..."
+timedatectl set-ntp true
+sleep 3
+timedatectl timesync-status || true
+echo "NTP status logged above (A.8.17 evidence)."
 
 echo "=== [3/7] Create deploy user ==="
 if ! id "$SERVER_USER" &>/dev/null; then

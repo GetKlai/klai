@@ -1,0 +1,34 @@
+name: SAST — Semgrep
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'portal/backend/**'
+      - 'portal/frontend/**'
+      - '.github/workflows/semgrep.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'portal/backend/**'
+      - 'portal/frontend/**'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SAST scan (Semgrep)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            auto
+            p/owasp-top-ten
+        env:
+          # No SEMGREP_APP_TOKEN needed for OSS rules
+          SEMGREP_APP_TOKEN: ""

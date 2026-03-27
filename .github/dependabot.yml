@@ -44,3 +44,18 @@ updates:
     directory: /docs
     schedule:
       interval: weekly
+
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+
+# CVE exceptions — reference GitHub issues for traceability
+# Each ignored vulnerability must have a corresponding GitHub issue with:
+# - reason for ignoring
+# - compensating controls in place
+# - re-assessment date
+#
+# CVE-2026-4539: see https://github.com/GetKlai/klai/issues/62
+# Not directly exploitable in Klai's context; re-assess Q3 2026
+ignore: []
