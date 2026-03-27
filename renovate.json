@@ -8,8 +8,7 @@
     "dockerfile",
     "github-actions",
     "npm",
-    "pep621",
-    "uv"
+    "pep621"
   ],
   "packageRules": [
     {
