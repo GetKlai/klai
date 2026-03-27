@@ -17,8 +17,11 @@ After every commit to klai-portal:
 
 1. `git push`
 2. `gh run watch --exit-status` — wait for the GitHub Action to complete
+3. Verify server rollout — check bundle timestamp or container age on core-01
 
-The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before `gh run watch --exit-status` succeeds.
+The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before both CI is green AND the new code is confirmed on the server.
+
+Full verification protocol (CI + server health check, cross-platform): `klai-claude/rules/klai/ci-verify-after-push.md`
 
 Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
 

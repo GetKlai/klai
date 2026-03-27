@@ -65,6 +65,66 @@ docker compose up -d service-name
 
 ---
 
+## deploy-verify-after-push
+
+**When to use:** After every `git push` to main in any klai project that has a GitHub Actions deploy workflow
+
+Every push must be verified in two stages: CI green + server rollout confirmed.
+
+### Stage 1 — CI verification
+
+```bash
+# Watch the run (blocks until done, exit 0 = success)
+gh run watch --exit-status
+
+# If multiple workflows triggered, pick the right one:
+gh run list --limit 5
+gh run watch <run-id> --exit-status
+
+# On failure — show only the failing step:
+gh run view <run-id> --log-failed
+```
+
+### Stage 2 — Server rollout check
+
+**Frontend (portal-frontend):**
+```bash
+# Verify new bundle is in the directory Caddy serves
+ssh core-01 "ls -lt /srv/portal/assets/*.js | head -3"
+
+# Confirm the bundle contains expected new code
+ssh core-01 "grep -l 'feature_keyword' /srv/portal/assets/*.js"
+```
+
+**Backend (portal-api):**
+```bash
+# Container age must match deploy time
+ssh core-01 "docker ps --filter name=portal-api --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'"
+
+# Health endpoint
+ssh core-01 "curl -s http://localhost:8010/health"
+
+# Recent logs (look for "Zitadel PAT validated successfully")
+ssh core-01 "docker logs --tail 20 klai-core-portal-api-1"
+```
+
+### Prerequisites: `gh` CLI
+
+| Platform | Install | Auth |
+|----------|---------|------|
+| macOS | `brew install gh` | `gh auth login` |
+| Linux (Debian/Ubuntu) | `sudo apt install gh` | `gh auth login` |
+| Windows (winget) | `winget install --id GitHub.cli` | `gh auth login` |
+| Windows (scoop) | `scoop install gh` | `gh auth login` |
+
+If `gh` is not in PATH on Windows Git Bash, try: `"/c/Program Files/GitHub CLI/gh.exe"`
+
+**Rule:** Never declare a deploy complete until both stages pass. CI green alone does not guarantee the new code is running.
+
+**See also:** `klai-claude/rules/klai/ci-verify-after-push.md` — the full rule for AI agents
+
+---
+
 ## uptime-kuma-add-monitor
 
 **When to use:** Adding a new service to monitoring / status page (status.getklai.com)
