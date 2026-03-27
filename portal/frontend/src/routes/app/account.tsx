@@ -61,6 +61,29 @@ function AccountPage() {
     },
   })
 
+  const sarMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/api/me/sar-export`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(m.account_sar_error())
+      return res.json()
+    },
+    onSuccess: (data: unknown) => {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const date = new Date().toISOString().split('T')[0]
+      a.download = `sar-export-${date}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    },
+  })
+
   const name = auth.user?.profile?.name ?? auth.user?.profile?.preferred_username ?? ''
   const email = auth.user?.profile?.email ?? ''
 
@@ -130,6 +153,27 @@ function AccountPage() {
               : saveMutation.isPending
                 ? m.account_saving()
                 : m.account_save()}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Subject Access Request — AVG art. 15 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{m.account_sar_title()}</CardTitle>
+          <CardDescription>
+            {m.account_sar_description()}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {sarMutation.error && (
+            <p className="text-sm text-[var(--color-destructive)]">{m.account_sar_error()}</p>
+          )}
+          <Button
+            onClick={() => sarMutation.mutate()}
+            disabled={sarMutation.isPending}
+          >
+            {sarMutation.isPending ? m.account_sar_downloading() : m.account_sar_button()}
           </Button>
         </CardContent>
       </Card>
