@@ -1,5 +1,5 @@
 # the name by which the project can be referenced within Serena
-project_name: "klai-mono"
+project_name: "klai"
 
 
 # list of languages for which language servers are started; choose from:
@@ -27,6 +27,7 @@ project_name: "klai-mono"
 # Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
 languages:
 - python
+- typescript
 
 # the encoding used by text files in the project
 # For a list of possible encodings, see https://docs.python.org/3.11/library/codecs.html#standard-encodings
@@ -125,7 +126,19 @@ default_modes:
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
-initial_prompt: ""
+initial_prompt: |
+  You are working on the Klai monorepo. Use Serena tools as your primary code exploration layer — not Read/Grep.
+
+  HARD rules:
+  - "What's in this file?" → get_symbols_overview, never Read
+  - "Where is X defined?" → find_symbol, never Grep + Read
+  - "Who calls X?" → find_referencing_symbols, never Grep
+  - "Replace this whole function/method" → replace_symbol_body, never Edit
+  - "Add code at end of file" → insert_after_symbol, never Edit
+  - Read full symbol bodies (include_body=True) only when you need implementation details
+  - Fall back to Read/Grep only for non-code files (markdown, yaml, config, env)
+
+  Do NOT call activate_project — the project is already active via --project-from-cwd.
 
 # time budget (seconds) per tool call for the retrieval of additional symbol information
 # such as docstrings or parameter information.
