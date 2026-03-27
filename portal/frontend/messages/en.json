@@ -1115,7 +1115,7 @@
   "chat_kb_bar_personal_label": "Personal KB",
   "chat_kb_bar_personal_tooltip": "Include your personal notebooks in search",
   "chat_kb_bar_org_filter_label": "Org knowledge bases",
-  "chat_kb_bar_org_filter_placeholder": "All knowledge bases",
+  "chat_kb_bar_org_filter_placeholder": "Company knowledge",
   "chat_kb_bar_saving": "Saving…",
   "chat_kb_bar_save_error": "Could not save preference",
   "chat_kb_bar_no_kbs": "No knowledge bases available",
