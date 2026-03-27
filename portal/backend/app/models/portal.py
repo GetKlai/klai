@@ -54,6 +54,7 @@ class PortalUser(Base):
         String(8), nullable=False, default="nl", server_default="nl"
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+    github_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
