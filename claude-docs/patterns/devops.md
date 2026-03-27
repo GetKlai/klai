@@ -4,6 +4,28 @@
 
 ---
 
+## docker-compose-sync
+
+**When to use:** Adding or removing a service in `deploy/docker-compose.yml`
+
+The CI service workflows (`knowledge-ingest.yml`, `retrieval-api.yml`, etc.) do NOT copy the compose file to the server — they only pull the new image and restart the specific service. The compose file must be synced separately.
+
+**Automated sync:** The `deploy-compose.yml` workflow runs automatically when `deploy/docker-compose.yml` changes on main. It does a sparse checkout and copies the file to `/opt/klai/docker-compose.yml`.
+
+**Manual sync (emergency):**
+```bash
+scp "$(git rev-parse --show-toplevel)/deploy/docker-compose.yml" core-01:/opt/klai/docker-compose.yml
+```
+
+**After syncing:** Restart any services whose definition changed:
+```bash
+ssh core-01 "cd /opt/klai && docker compose up -d <service>"
+```
+
+**New services:** After adding a new service to the compose file, the automated sync will copy the file, but you must still start the service manually the first time (CI only restarts services it knows about).
+
+---
+
 ## coolify-env-update
 
 **When to use:** Adding or changing an environment variable for a Coolify service
@@ -29,6 +51,38 @@ sops config.sops.env
 **Rule:** SOPS is the source of truth for secrets. Coolify needs a manual sync.
 
 **See also:** `klai-claude/docs/pitfalls/infrastructure.md#infra-env-not-synced`
+
+---
+
+## public-01-ssh
+
+**When to use:** Accessing public-01 (Coolify host, Uptime Kuma) via SSH
+
+```bash
+# Use klai_ed25519 key as root — NOT markv, NOT id_ed25519
+ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64
+```
+
+`markv@65.109.237.64` with `id_ed25519` is rejected. Root + klai_ed25519 is the working combination.
+
+---
+
+## core-01-ssh
+
+**When to use:** Accessing core-01 (AI stack, portal, vexa) via SSH
+
+```bash
+# ALWAYS use the SSH config alias — NEVER direct IP
+ssh core-01
+```
+
+**Critical rules:**
+- NEVER use `ssh klai@65.21.174.162` or `ssh root@65.21.174.162` — direct IP connections time out (firewall/routing)
+- NEVER try multiple key/user combinations — **fail2ban is active** and will ban the IP after failed attempts
+- The SSH config alias handles the correct key, user, and routing automatically
+- If `ssh core-01` times out or returns "Permission denied", check: are you using the correct terminal/SSH agent? Do not retry with different flags.
+
+**fail2ban jail:** `sshd` — active, has banned 2000+ IPs historically from brute-force attempts.
 
 ---
 
@@ -65,63 +119,39 @@ docker compose up -d service-name
 
 ---
 
-## deploy-verify-after-push
+## ghcr-ci-deploy-build-on-server
 
-**When to use:** After every `git push` to main in any klai project that has a GitHub Actions deploy workflow
+**When to use:** CI deploys a private `ghcr.io/getklai/...` image to core-01, but the server's docker login credentials are stale or missing
 
-Every push must be verified in two stages: CI green + server rollout confirmed.
+`docker pull ghcr.io/getklai/<image>:latest` on core-01 fails with `denied` when the server has no valid ghcr.io credentials. The GITHUB_TOKEN passed via `appleboy/ssh-action` `envs:` also fails — it is scoped to the CI runner context, not the remote shell.
 
-### Stage 1 — CI verification
+**Solution:** Build the image directly on the server from the public monorepo, instead of pulling from the registry.
 
-```bash
-# Watch the run (blocks until done, exit 0 = success)
-gh run watch --exit-status
-
-# If multiple workflows triggered, pick the right one:
-gh run list --limit 5
-gh run watch <run-id> --exit-status
-
-# On failure — show only the failing step:
-gh run view <run-id> --log-failed
+```yaml
+- name: Deploy to core-01
+  uses: appleboy/ssh-action@v1
+  with:
+    host: ${{ secrets.CORE01_HOST }}
+    username: klai
+    key: ${{ secrets.CORE01_DEPLOY_KEY }}
+    script: |
+      cd /tmp && rm -rf klai-build
+      git clone --depth=1 --filter=blob:none --sparse https://github.com/GetKlai/klai.git klai-build
+      cd klai-build && git sparse-checkout set focus/<service>
+      docker build -t ghcr.io/getklai/<service>:latest ./focus/<service>
+      rm -rf /tmp/klai-build
+      cd /opt/klai && docker compose up -d <service>
 ```
 
-### Stage 2 — Server rollout check
+**Why this works:**
+- `GetKlai/klai` is a public repo — no auth needed for clone
+- The sparse checkout pulls only the relevant service directory (~seconds)
+- The built image uses the same tag as before; `docker compose up -d` picks it up normally
+- The CI step still pushes to ghcr.io as an artifact (useful for rollbacks)
 
-**Frontend (portal-frontend):**
-```bash
-# Verify new bundle is in the directory Caddy serves
-ssh core-01 "ls -lt /srv/portal/assets/*.js | head -3"
+**Services using this pattern:** `research-api` (since 2026-03-26)
 
-# Confirm the bundle contains expected new code
-ssh core-01 "grep -l 'feature_keyword' /srv/portal/assets/*.js"
-```
-
-**Backend (portal-api):**
-```bash
-# Container age must match deploy time
-ssh core-01 "docker ps --filter name=portal-api --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}'"
-
-# Health endpoint
-ssh core-01 "curl -s http://localhost:8010/health"
-
-# Recent logs (look for "Zitadel PAT validated successfully")
-ssh core-01 "docker logs --tail 20 klai-core-portal-api-1"
-```
-
-### Prerequisites: `gh` CLI
-
-| Platform | Install | Auth |
-|----------|---------|------|
-| macOS | `brew install gh` | `gh auth login` |
-| Linux (Debian/Ubuntu) | `sudo apt install gh` | `gh auth login` |
-| Windows (winget) | `winget install --id GitHub.cli` | `gh auth login` |
-| Windows (scoop) | `scoop install gh` | `gh auth login` |
-
-If `gh` is not in PATH on Windows Git Bash, try: `"/c/Program Files/GitHub CLI/gh.exe"`
-
-**Rule:** Never declare a deploy complete until both stages pass. CI green alone does not guarantee the new code is running.
-
-**See also:** `klai-claude/rules/klai/ci-verify-after-push.md` — the full rule for AI agents
+**Alternative (when registry auth can be fixed):** Store a GitHub PAT with `read:packages` in `/opt/klai/.env` as `GHCR_READ_PAT`, then: `echo "$GHCR_READ_PAT" | docker login ghcr.io -u getklai --password-stdin`
 
 ---
 
@@ -143,8 +173,11 @@ ssh core-01 "openssl rand -hex 16"
 ### Step 2 — Insert monitor into Uptime Kuma DB
 
 ```bash
+# SSH to public-01: use klai_ed25519 key as root (NOT markv, NOT id_ed25519)
+# See: devops.md → public-01-ssh
+
 # Find the container name
-ssh public-01 "docker ps --format '{{.Names}}' | grep kuma"
+ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64 "docker ps --format '{{.Names}}' | grep kuma"
 
 # Insert via Python on the host (avoids shell quoting issues with JSON)
 CONTAINER=uptime-kuma-ucowwogo0ogoskwk0ggg4o48
@@ -235,6 +268,32 @@ ssh public-01 "docker exec ${CONTAINER} sh -c 'sqlite3 /app/data/kuma.db \"SELEC
 
 Status `1` = up, `0` = down.
 
-**See also:** `push-health.sh` on core-01 for exec check examples
+**See also:**
+- `push-health.sh` on core-01 — exec check examples
+- `klai-infra/SERVERS.md` → "Uptime Kuma monitoring" — full list of all `KUMA_TOKEN_*` variables and which services are monitored
+
+---
+
+## umami-access
+
+**When to use:** Accessing or managing the Umami website analytics dashboard
+
+Umami runs on public-01 as a Coolify-managed service.
+
+- **Dashboard:** `https://analytics.getklai.com` — credentials in team password manager (admin account)
+- **Container:** `umami-o48wg8wc0cc448gkcs4scsko`
+- **Database:** dedicated PostgreSQL container `postgresql-o48wg8wc0cc448gkcs4scsko` (managed by Coolify)
+- **Image:** `ghcr.io/umami-software/umami:3.0.3`
+- **Website ID:** `bf92a12b-08fe-47f7-a3f1-3ed88d2ba379` (used in the tracker script on getklai.com)
+
+**To check health:**
+```bash
+ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64 "docker logs --tail 20 umami-o48wg8wc0cc448gkcs4scsko"
+curl -s https://analytics.getklai.com/api/heartbeat  # returns {"ok":true}
+```
+
+**Tracker script** is in `klai-website/src/layouts/Base.astro` — rendered production-only (`import.meta.env.PROD`).
+
+**Custom events** tracked: `cta-click`, `waitlist-open/submit/close`, `billing-toggle`, `faq-expand`, `lang-switch`, `contact-submit`, `careers-submit`, `outbound-link`, `scroll-depth`.
 
 ---

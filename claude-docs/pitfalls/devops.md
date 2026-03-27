@@ -71,6 +71,109 @@ docker exec librechat-getklai printenv KNOWLEDGE_INGEST_SECRET
 
 ---
 
+## devops-compose-up-inherits-global-env
+
+**Severity:** HIGH
+
+**Trigger:** Running `docker compose up -d [service]` na een config change, of op een service zonder expliciete `env_file`
+
+`docker compose up -d` recreëert de container en injecteert **alle** variabelen uit `/opt/klai/.env` — inclusief vars die de service nooit eerder zag. Als het image een env var als default gebruikt die opeens een waarde krijgt vanuit `.env`, kan dat onverwacht gedrag of een crash veroorzaken.
+
+**Wat er mis ging:** Vexa bot-manager werkte prima. Na `docker compose up -d` (voor een andere config change) pakte de container opeens de globale `REDIS_URL` op uit `.env`. Die URL bevatte een wachtwoord met speciale tekens — URL parsing crashte. Vóór de recreatie was deze var onbekend bij de container.
+
+**Verplichte pre-flight check vóór elke `docker compose up -d`:**
+```bash
+# 1. Check welke env vars de service krijgt (inclusief globale .env vars)
+docker compose config [service] | grep -A 50 'environment:'
+
+# 2. Let specifiek op URL-vars met wachtwoorden: REDIS_URL, DATABASE_URL, etc.
+#    Conflicteren ze met image defaults?
+
+# 3. Na start: direct logs checken VOOR je verder gaat
+docker logs --tail 30 [container-name]
+
+# 4. Health check groen?
+docker ps --filter name=[service] --format '{{.Names}}\t{{.Status}}'
+```
+
+**Regel:** Nooit verder gaan na een `up -d` zonder expliciete verificatie dat de service healthy is en de logs geen errors tonen.
+
+---
+
+## devops-redis-password-special-chars
+
+**Severity:** HIGH
+
+**Trigger:** Redis wachtwoord opnemen in een `redis://` URL via `${REDIS_PASSWORD}`
+
+Wachtwoorden met `/`, `+`, `=` breken URL parsing als ze niet URL-encoded zijn. Python's `redis.from_url()` en andere clients parsen `redis://:wachtwoord/met/slashes@host:6379` verkeerd — de `/` wordt als URL-pad geïnterpreteerd, waarna de port als wachtwoord wordt gezien.
+
+**Fout:**
+```yaml
+REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379   # Kapot als wachtwoord / of + bevat
+```
+
+**Correct:** Gebruik een aparte URL-encoded variabele in `.env`:
+```bash
+# In .env — handmatig URL-encoden (/ → %2F, + → %2B, = → %3D):
+REDIS_URL=redis://:hPKBf%2FKXA%2B%2F%2FOixZhv...@redis:6379
+```
+
+Voorkeur: gebruik services die `REDIS_HOST` + `REDIS_PORT` + `REDIS_PASSWORD` **apart** accepteren — die zijn robuuster dan een volledige URL.
+
+**Referentie in deze stack:** `FIRECRAWL_REDIS_URL` in `.env` is correct URL-encoded. Gebruik dat als voorbeeld, nooit een raw `${REDIS_PASSWORD}` in een URL.
+
+**Detectie:** `ValueError: Port could not be cast to integer` of `Authentication required` bij Redis connect na container recreatie.
+
+---
+
+## devops-ghcr-auth-silent-stale-deploy
+
+**Severity:** HIGH
+
+**Trigger:** CI workflow deploys via SSH + `docker compose up -d` and the deploy appears to succeed but the server runs an old image.
+
+**What happened:** `docker pull ghcr.io/getklai/...` failed silently on core-01 because the Docker credentials in `/home/klai/.docker/config.json` contained an expired `ghs_` token (GitHub App installation token). The `docker compose up -d` still succeeded using the cached old image. CI reported success but the new code was never deployed. This was discovered weeks after the fact when a breaking change was not reflected in production.
+
+**Root causes:**
+1. No `set -e` in the deploy script — `docker pull` failure didn't abort the script
+2. GITHUB_TOKEN (via `envs:`) had already expired or was not scoped for pulls from the org's packages
+3. The server's stored credentials in `~/.docker/config.json` were stale
+
+**What to do:**
+
+1. **Use a permanent PAT stored in `/opt/klai/.env`** instead of passing GITHUB_TOKEN from the workflow:
+   ```yaml
+   - name: Deploy to core-01
+     uses: appleboy/ssh-action@v1
+     with:
+       host: ${{ secrets.CORE01_HOST }}
+       username: klai
+       key: ${{ secrets.CORE01_DEPLOY_KEY }}
+       script: |
+         set -e
+         source /opt/klai/.env
+         echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
+         docker pull ghcr.io/getklai/SERVICE:latest
+         cd /opt/klai && docker compose up -d SERVICE
+   ```
+
+2. **Always use `set -e`** — without it, `docker pull` failure silently continues to `docker compose up -d` with the old image.
+
+3. **Store `GHCR_READ_PAT` in SOPS** (`klai-infra/core-01/.env.sops`), deploy via `deploy.sh main`. The PAT is a fine-grained personal access token scoped to `read:packages`.
+
+**Why not GITHUB_TOKEN via envs?**
+- `GITHUB_TOKEN` is a short-lived installation token. When passed via `envs:` it may have expired by the deploy step.
+- The `envs:` mechanism requires the variable to be set on the _GitHub Actions runner_, not the target server. Storing it in the server `.env` is more reliable and doesn't depend on GHA token lifecycle.
+
+**Diagnosis:** To check if an image is stale on the server:
+```bash
+docker inspect ghcr.io/getklai/SERVICE:latest --format '{{.Created}}'
+```
+Compare to the CI build time.
+
+---
+
 ## devops-deploy-path-mismatch
 
 **Severity:** CRIT

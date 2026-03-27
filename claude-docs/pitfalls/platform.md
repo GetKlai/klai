@@ -1,7 +1,7 @@
 # Platform Pitfalls
 
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy, Meilisearch — Klai AI stack.
-> Most entries are derived from the compatibility review in `klai-website/docs/platform-beslissingen.md`.
+> Most entries are derived from the compatibility review in `architecture/platform.md`.
 
 ---
 
@@ -25,7 +25,7 @@ model: hosted_vllm/qwen3-32b
 api_base: http://localhost:8001/v1
 ```
 
-**Source:** `platform-beslissingen.md` — Compatibility Review: LiteLLM to vLLM
+**Source:** `architecture/platform.md` — Compatibility Review: LiteLLM to vLLM
 
 ---
 
@@ -42,7 +42,7 @@ litellm_settings:
   drop_params: true
 ```
 
-**Source:** `platform-beslissingen.md` — Compatibility Review: LiteLLM to vLLM
+**Source:** `architecture/platform.md` — Compatibility Review: LiteLLM to vLLM
 
 ---
 
@@ -67,7 +67,7 @@ litellm_settings:
 # Combined: ~76 GB of 80 GB. Leaves ~4 GB for CUDA overhead and Whisper.
 ```
 
-**Source:** `platform-beslissingen.md` — Compatibility Review: vLLM gpu-memory-utilization
+**Source:** `architecture/platform.md` — Compatibility Review: vLLM gpu-memory-utilization
 
 ---
 
@@ -88,7 +88,7 @@ vLLM has a memory accounting bug where parallel startup causes the second instan
 
 **Implementation:** Use `depends_on` with health checks in Docker Compose, or sequential systemd/startup scripts.
 
-**Source:** `platform-beslissingen.md` — Compatibility Review: vLLM two instances on one GPU
+**Source:** `architecture/platform.md` — Compatibility Review: vLLM two instances on one GPU
 
 ---
 
@@ -106,7 +106,7 @@ vLLM CUDAGraph combined with MPS can cause instability (illegal memory access) o
 vllm serve qwen3-8b ... --enforce-eager
 ```
 
-**Source:** `platform-beslissingen.md` — Compatibility Review: NVIDIA MPS setup
+**Source:** `architecture/platform.md` — Compatibility Review: NVIDIA MPS setup
 
 ---
 
@@ -124,7 +124,7 @@ This setting breaks existing users. Do not set it on any deployment that has exi
 OPENID_REUSE_TOKENS=false   # Never set to true on non-fresh deployments
 ```
 
-**Source:** `platform-beslissingen.md` — LibreChat OIDC known issues (GitHub #9303)
+**Source:** `architecture/platform.md` — LibreChat OIDC known issues (GitHub #9303)
 
 ---
 
@@ -141,7 +141,7 @@ Without explicit configuration, LibreChat falls back to `given_name` as the user
 OPENID_USERNAME_CLAIM=preferred_username
 ```
 
-**Source:** `platform-beslissingen.md` — LibreChat OIDC known issues (GitHub #8672)
+**Source:** `architecture/platform.md` — LibreChat OIDC known issues (GitHub #8672)
 
 ---
 
@@ -161,7 +161,7 @@ The portal sidebar logout:
 
 **Race condition fix:** The `fetch` to `/api/auth/logout` is awaited before `signoutRedirect()`. Without the await, the browser navigates away before the logout request completes.
 
-**Source:** `platform-beslissingen.md` — Auth: Zitadel + LibreChat + FastAPI + React SPA
+**Source:** `architecture/platform.md` — Auth: Zitadel + LibreChat + FastAPI + React SPA
 
 ---
 
@@ -180,7 +180,7 @@ GF_INSTALL_PLUGINS=victoriametrics-logs-datasource
 
 Configure the datasource using the `victoriametrics-logs-datasource` plugin type, not the Loki plugin.
 
-**Source:** `platform-beslissingen.md` — Monitoring: Grafana datasource
+**Source:** `architecture/platform.md` — Monitoring: Grafana datasource
 
 ---
 
@@ -200,7 +200,7 @@ Cloud86 (former DNS provider for getklai.com) has no Caddy DNS plugin. Caddy req
 
 **Do not revert DNS to Cloud86 or any provider without a Caddy plugin.**
 
-**Source:** `platform-beslissingen.md` — Per-Tenant Routing: Caddy + Wildcard DNS
+**Source:** `architecture/platform.md` — Per-Tenant Routing: Caddy + Wildcard DNS
 
 ---
 
@@ -218,7 +218,7 @@ Caddy does NOT automatically discover new Docker containers. Provisioning a new 
 - After appending, the Caddy **container is restarted** via Docker SDK so it picks up the new block
 - The Caddyfile is bind-mounted (`./caddy/Caddyfile:/etc/caddy/Caddyfile`) so the portal-api can write to it
 
-**Source:** `platform-beslissingen.md` — Per-Tenant Routing: Tenant Router
+**Source:** `architecture/platform.md` — Per-Tenant Routing: Tenant Router
 
 ---
 
@@ -272,7 +272,7 @@ ghcr.io/danny-avila/librechat-rag-api-dev:latest
 
 **Also:** `EMBEDDINGS_MODEL` must be the TEI service URL, not a model name.
 
-**Source:** `platform-beslissingen.md` — RAG Stack: LibreChat rag_api + HuggingFace TEI
+**Source:** `architecture/platform.md` — RAG Stack: LibreChat rag_api + HuggingFace TEI
 
 ---
 
@@ -289,7 +289,7 @@ CTranslate2 (the Whisper runtime) requires CUDA 12 + cuDNN 9. Version mismatch i
 2. Verify cuDNN version: `cat /usr/local/cuda/include/cudnn_version.h | grep CUDNN_MAJOR`
 3. Use a base Docker image that already pins `cuda:12.x-cudnn9`
 
-**Source:** `platform-beslissingen.md` — GPU Resource Management: faster-whisper on H100
+**Source:** `architecture/platform.md` — GPU Resource Management: faster-whisper on H100
 
 ---
 
@@ -752,6 +752,52 @@ ssh core-01 "curl -s https://auth.getklai.com/v2/sessions \
 
 ---
 
+## platform-vexa-timeout-looks-like-bug
+
+**Severity:** MED
+
+**Trigger:** Meeting stays in "Recording" status for up to 60 seconds after everyone leaves Google Meet
+
+The Vexa bot intentionally waits `everyoneLeftTimeout` milliseconds before stopping. During that window the portal correctly shows "Recording" — this is not a bug, it is bot lifecycle behavior. The default in `process.py` was 60000ms (60 seconds), making every normal meeting end look like it was stuck.
+
+**Why it happens:**
+The Vexa bot orchestrator config lives in `/opt/klai/vexa-patches/process.py`, mounted as a volume override into the `vexa-bot-manager` container. This file is not in the codebase — it is on the server. Its timeout values are invisible unless you explicitly read it.
+
+**Prevention:**
+1. When a meeting appears "stuck in Recording", read `process.py` before looking at portal-api code
+2. Confirmed working values (as of March 2026):
+   - `everyoneLeftTimeout: 5000` (was 60000)
+   - `noOneJoinedTimeout: 30000` (was 120000)
+   - `waitingRoomTimeout: 60000` (was 300000)
+3. After any Vexa deployment, verify these values on the server: `ssh core-01 cat /opt/klai/vexa-patches/process.py`
+
+**See also:** `patterns/platform.md#platform-vexa-bot-lifecycle`
+
+---
+
+## platform-vexa-guard-breaks-stop-flow
+
+**Severity:** HIGH
+
+**Trigger:** Adding a status guard to the webhook handler to "prevent race conditions" while debugging Vexa
+
+The normal Stop flow is: user clicks Stop → `status = processing` → Vexa fires `completed` webhook → `run_transcription`. If you add a guard like "skip if status == processing" to the webhook handler mid-debug, you block step 3. Transcription never runs after clicking Stop.
+
+**What went wrong:**
+A guard was added to prevent a perceived race condition between the bot_poller and the webhook. The guard was correct in intent but wrong in placement — it blocked the primary happy path, not just the race.
+
+**Why it happens:**
+When debugging a multi-path system (webhook + poller + manual stop), partial guards feel safe but break the coordinated flow. The DB showing `status: done` after the fix is also unreliable as a signal — the poller or a late webhook can resolve the meeting independently, masking whether the fix actually worked.
+
+**Prevention:**
+1. Never add status guards inside the webhook handler — the `completed` webhook IS the expected trigger for `run_transcription`
+2. When the DB shows `status: done` after a change, check `docker logs` to confirm which path resolved it (webhook vs poller vs manual)
+3. Before modifying the webhook handler, draw the full state machine: Idle → Joining → Active → Stopping → Completed
+
+**See also:** `patterns/platform.md#platform-vexa-bot-lifecycle`
+
+---
+
 ## docs-app (klai-docs / Next.js)
 
 ---
@@ -1024,5 +1070,4 @@ Most modern LLMs accept multiple system messages without breaking, but the behav
 ## See Also
 
 - [patterns/platform.md](../patterns/platform.md) - Correct platform configuration patterns
-- [platform-beslissingen.md](../../../klai-website/docs/platform-beslissingen.md) - Full compatibility review
-- [research/librechat-dynamic-config.md](../research/librechat-dynamic-config.md) - Full dynamic config investigation (March 2026)
+- [architecture/platform.md](architecture/platform.md) - Full compatibility review

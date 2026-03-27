@@ -255,4 +255,35 @@ The PAT in the `.env` is almost certainly corrupted. Ask the user for the correc
 
 ---
 
+## infra-sops-files-in-subdirs
+
+**Severity:** CRIT
+
+**Trigger:** Bulk-deleting directories from klai-infra (e.g. during a repo cleanup or restructuring)
+
+Service-specific `.env.sops` files live inside service directories (`core-01/caddy/.env.sops`, `core-01/litellm/.env.sops`, `core-01/zitadel/.env.sops`). When those directories are deleted wholesale with `git rm -r`, the `.env.sops` files inside go with them — silently.
+
+**What went wrong:**
+During monorepo consolidation, `git rm -r core-01/caddy/ core-01/litellm/ core-01/zitadel/` removed the service configs (which had moved to the public monorepo) but also deleted the service-specific encrypted secret files that had no other backup.
+
+**Why it is dangerous:**
+The main `core-01/.env.sops` contains shared docker-compose secrets but does NOT contain all service-specific secrets. The Hetzner DNS token (caddy), LiteLLM key + Mistral API key (litellm), and Zitadel masterkey + Postgres passwords (zitadel) are only in their respective `.env.sops` files. Losing them requires rotating all of those secrets.
+
+**Recovery:**
+```bash
+# Restore from git history (works as long as repo history is intact)
+git checkout HEAD~1 -- core-01/caddy/.env.sops core-01/litellm/.env.sops core-01/zitadel/.env.sops
+git checkout HEAD -- <any other files incorrectly restored>
+git commit -m "fix: restore accidentally deleted .env.sops files"
+```
+
+**Prevention:**
+When bulk-deleting service directories, always check first:
+```bash
+find core-01/ -name "*.sops*" | sort
+```
+Never delete a directory that contains a `.sops` file without explicitly moving that file first.
+
+---
+
 *(Add more entries here with `/retro "description"` after infrastructure incidents.)*
