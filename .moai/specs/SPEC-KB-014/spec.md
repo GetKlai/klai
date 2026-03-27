@@ -3,9 +3,10 @@
 ```yaml
 spec_id: SPEC-KB-014
 title: Knowledge Gap Detection
-status: draft
+status: completed
 priority: medium
 created: 2026-03-27
+completed: 2026-03-27
 depends_on:
   - SPEC-KB-008  # retrieval-api (provides score/reranker_score signals)
   - SPEC-KB-010  # LiteLLM knowledge hook (injection point for gap detection)
@@ -268,3 +269,46 @@ Prefix: `gaps_`
 | R3, R4, R5 | M2 (Backend) | AC-2.x |
 | R6 (incl. R6.6), R7 (incl. R7.2), R8 | M3 (Frontend) | AC-3.x |
 | R9 | M2 (Backend) | AC-2.5 |
+
+---
+
+## Implementation Notes
+
+**Completed:** 2026-03-27 | **Commits:** ddadf25, 5b3b9b7 | **Branch:** main
+
+### Scope vs. Original Plan
+
+All requirements implemented as specified. One design decision made during review:
+
+- **R7 navigation placement**: Changed from sidebar nav item (`/app/gaps` in `PRODUCT_ROUTES`) to a "Knowledge Gaps" card on the Knowledge index page (`/app/knowledge`). This keeps the navigation clean for non-admin users and makes the feature discoverable for admins in context.
+
+### Files Created
+
+| File | Purpose |
+|---|---|
+| `portal/backend/app/api/app_gaps.py` | Gap query and summary endpoints |
+| `portal/backend/app/models/retrieval_gaps.py` | SQLAlchemy model for `portal_retrieval_gaps` |
+| `portal/backend/alembic/versions/e8f9a0b1c2d3_add_retrieval_gaps_table.py` | Database migration |
+| `portal/frontend/src/routes/app/gaps/index.tsx` | Gap dashboard UI |
+
+### Files Modified
+
+| File | Change |
+|---|---|
+| `deploy/litellm/klai_knowledge.py` | Added `_classify_gap()`, `_fire_gap_event()`, gap detection block |
+| `deploy/litellm/tests/test_klai_knowledge_hook.py` | 29 new TDD tests for gap detection |
+| `portal/backend/app/api/internal.py` | Added `POST /internal/v1/gap-events` endpoint |
+| `portal/backend/app/api/app_knowledge_bases.py` | Extended `KBStatsOut` with `org_gap_count_7d` |
+| `portal/backend/app/main.py` | Registered `app_gaps_router` |
+| `portal/frontend/messages/en.json` | 18 new `gaps_*` i18n keys |
+| `portal/frontend/messages/nl.json` | 18 new `gaps_*` i18n keys (NL translations) |
+| `portal/frontend/src/routes/app/knowledge/index.tsx` | Knowledge Gaps card for admins |
+| `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Gap count metric tile in overview |
+| `portal/frontend/src/routeTree.gen.ts` | Regenerated to include `/app/gaps` route |
+
+### Deployment Prerequisites
+
+1. Run `alembic upgrade head` on portal-api before restart (creates `portal_retrieval_gaps` table)
+2. Optional env vars for LiteLLM container (safe defaults built in):
+   - `KLAI_GAP_SOFT_THRESHOLD=0.4` (reranker score threshold)
+   - `KLAI_GAP_DENSE_THRESHOLD=0.35` (dense score fallback threshold)
