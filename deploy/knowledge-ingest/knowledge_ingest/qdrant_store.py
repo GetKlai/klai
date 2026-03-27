@@ -66,7 +66,7 @@ async def ensure_collection() -> None:
                 ),
             },
         )
-        for field in ("org_id", "kb_slug", "artifact_id", "content_type"):
+        for field in ("org_id", "kb_slug", "artifact_id", "content_type", "user_id"):
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema="keyword",
             )
