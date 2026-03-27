@@ -66,13 +66,18 @@ async def ensure_collection() -> None:
                 ),
             },
         )
-        for field in ("org_id", "kb_slug", "artifact_id", "content_type", "user_id"):
+        logger.info("Created Qdrant collection %s with named + sparse vectors", COLLECTION)
+
+    # Always ensure payload indexes exist — idempotent on existing collections.
+    # This handles newly added fields (e.g. user_id) on pre-existing collections.
+    collection_info = await client.get_collection(COLLECTION)
+    indexed_fields = set((collection_info.payload_schema or {}).keys())
+    for field in ("org_id", "kb_slug", "artifact_id", "content_type", "user_id"):
+        if field not in indexed_fields:
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema="keyword",
             )
-        logger.info("Created Qdrant collection %s with named + sparse vectors", COLLECTION)
-    else:
-        logger.info("Qdrant collection %s already exists", COLLECTION)
+            logger.info("Created payload index for field '%s' on collection %s", field, COLLECTION)
 
 
 async def upsert_chunks(
