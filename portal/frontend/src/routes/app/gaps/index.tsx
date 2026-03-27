@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BookOpen, PlusCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
@@ -35,6 +35,17 @@ interface GapsResponse {
   total: number
 }
 
+interface KnowledgeBase {
+  id: number
+  name: string
+  slug: string
+  owner_type: string
+}
+
+interface KBsResponse {
+  knowledge_bases: KnowledgeBase[]
+}
+
 const GAP_TYPE_CLASSES: Record<string, string> = {
   hard: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]',
   soft: 'bg-[var(--color-warning)]/10 text-[var(--color-warning)]',
@@ -44,9 +55,11 @@ function GapsPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const navigate = useNavigate()
 
   const [days, setDays] = useState(30)
   const [gapType, setGapType] = useState<string>('')
+  const [activePicker, setActivePicker] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<GapsResponse>({
     queryKey: ['app-gaps', token, days, gapType],
@@ -65,6 +78,21 @@ function GapsPage() {
     enabled: !!token && isAdmin,
     retry: false,
   })
+
+  const { data: kbsData } = useQuery<KBsResponse>({
+    queryKey: ['app-knowledge-bases-for-gaps', token],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      return res.json() as Promise<KBsResponse>
+    },
+    enabled: !!token && isAdmin,
+    retry: false,
+  })
+
+  const orgKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => kb.owner_type === 'org')
 
   if (!isAdmin) {
     return (
@@ -166,33 +194,84 @@ function GapsPage() {
                   <th className="px-4 py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                     {m.gaps_column_last()}
                   </th>
+                  <th className="px-4 py-3 w-10" />
                 </tr>
               </thead>
               <tbody>
-                {gaps.map((gap, i) => (
-                  <tr
-                    key={`${gap.query_text}-${gap.gap_type}`}
-                    className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
-                  >
-                    <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs truncate">
-                      {gap.query_text}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${GAP_TYPE_CLASSES[gap.gap_type] ?? ''}`}>
-                        {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-muted-foreground)]">
-                      {gap.nearest_kb_slug ?? '\u2014'}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-[var(--color-purple-deep)]">
-                      {gap.occurrence_count}
-                    </td>
-                    <td className="px-4 py-3 text-right text-[var(--color-muted-foreground)]">
-                      {new Date(gap.last_occurred).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
+                {gaps.map((gap, i) => {
+                  const rowKey = `${gap.query_text}-${gap.gap_type}`
+                  return (
+                    <tr
+                      key={rowKey}
+                      className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+                    >
+                      <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs truncate">
+                        {gap.query_text}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${GAP_TYPE_CLASSES[gap.gap_type] ?? ''}`}>
+                          {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-muted-foreground)]">
+                        {gap.nearest_kb_slug ?? '\u2014'}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-[var(--color-purple-deep)]">
+                        {gap.occurrence_count}
+                      </td>
+                      <td className="px-4 py-3 text-right text-[var(--color-muted-foreground)]">
+                        {new Date(gap.last_occurred).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {gap.gap_type === 'soft' && gap.nearest_kb_slug ? (
+                          <button
+                            onClick={() =>
+                              void navigate({
+                                to: '/app/docs/$kbSlug',
+                                params: { kbSlug: gap.nearest_kb_slug! },
+                              })
+                            }
+                            aria-label={m.gaps_action_add()}
+                            className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
+                          >
+                            <PlusCircle className="h-3.5 w-3.5" />
+                          </button>
+                        ) : activePicker === rowKey ? (
+                          <Select
+                            value=""
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                void navigate({
+                                  to: '/app/docs/$kbSlug',
+                                  params: { kbSlug: e.target.value },
+                                })
+                                setActivePicker(null)
+                              }
+                            }}
+                            onBlur={() => setActivePicker(null)}
+                            className="w-32 text-xs"
+                            autoFocus
+                          >
+                            <option value="">{m.gaps_action_pick_kb()}</option>
+                            {orgKbs.map((kb) => (
+                              <option key={kb.id} value={kb.slug}>
+                                {kb.name}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : (
+                          <button
+                            onClick={() => setActivePicker(rowKey)}
+                            aria-label={m.gaps_action_pick_kb()}
+                            className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
+                          >
+                            <BookOpen className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </CardContent>
