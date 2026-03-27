@@ -339,6 +339,31 @@ except ImportError:
 
 ---
 
+## process-test-cache-two-level-dispatch
+
+**Severity:** MEDIUM
+
+**Trigger:** Writing tests for a hook or service that uses a multi-key cache (e.g. version pointer + feature data)
+
+When a cache uses multiple key prefixes (e.g. `kb_ver:{id}` → version string, `kb_feature:{id}:{ver}` → feature dict), a test helper that returns the same value for all keys will cause the code under test to treat the version string as the feature dict (KeyError or type error).
+
+**Pattern — key-prefix dispatch in `AsyncMock.side_effect`:**
+```python
+async def _get(key: str) -> object:
+    if key.startswith("kb_ver:"):
+        return "0"           # version pointer
+    if key.startswith("kb_feature:"):
+        return feat_dict     # full feature dict
+    return None              # cache miss
+cache.async_get_cache = AsyncMock(side_effect=_get)
+```
+
+**Rule:** When testing two-level caches, always dispatch by key prefix in the mock, not by a single return value.
+
+**Source:** SPEC-KB-013 (two-level version cache: `kb_ver:` + `kb_feature:`)
+
+---
+
 ## See Also
 
 - [pitfalls/platform.md](platform.md) - Platform-specific mistakes (LiteLLM, LibreChat, Caddy)

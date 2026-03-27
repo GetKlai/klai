@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-013
 version: 0.2.0
-status: approved
+status: completed
 created: 2026-03-27
 updated: 2026-03-27
 author: mark
@@ -15,7 +15,7 @@ priority: high
 | SPEC ID    | SPEC-KB-013                                       |
 | Title      | KB Scope Control Bar (iframe-native)              |
 | Created    | 2026-03-27                                        |
-| Status     | Draft                                             |
+| Status     | Completed                                         |
 | Priority   | High                                              |
 | Domain     | Knowledge Base / Chat / Frontend                  |
 | Depends On | SPEC-KB-008 (retrieval-api), SPEC-KB-010 (hook)   |
@@ -338,3 +338,23 @@ chat_kb_collapsed_off
 | REQ-N1 | M1-hook | AC-1.6 |
 | REQ-N2 | M3-frontend | AC-3.2 |
 | REQ-N3 | M2-backend | AC-2.5 |
+
+---
+
+## Implementation Notes
+
+Implemented in commit `8c15dd8` (2026-03-27). All core requirements (M1–M4) delivered.
+
+**Deferred items (removed from scope):**
+
+- **AC-3.8** (collapsible control bar, REQ-O2): Removed from scope. The bar is always visible above the iframe; no collapse/expand toggle was implemented.
+- **AC-3.9** ("Wis filter" reset button, REQ-O3): Removed from scope. Users can deselect org KBs by clicking individual checkboxes; no bulk-clear button was added.
+
+**Partial implementation:**
+
+- **AC-3.4** (input disable during pending mutation, REQ-S2): The bar shows "Saving…" text while the mutation is in flight, but the toggle and checkbox inputs are not disabled. Full disable was not implemented.
+
+**Additional notes:**
+
+- M0 (retrieval-api bugfix): A bugfix for `kb_slugs` filtering (org-only when `scope=both`) was included in this commit as a prerequisite, covered by 2 new tests in `retrieval-api/tests/test_scope_filter.py`.
+- The two-level version cache (`kb_ver:{org_id}:{user_id}` with 30s TTL pointing to `kb_feature:{org_id}:{user_id}:{version}` with 300s TTL) ensures preference changes propagate to the LiteLLM hook within 30 seconds without requiring a direct cache-bust API call.
