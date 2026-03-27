@@ -146,6 +146,16 @@ async def _graphiti_background(
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk -> embed -> upsert."""
 
+    # Early exit if content is unchanged since last ingest
+    content_hash = hashlib.sha256(req.content.encode()).hexdigest()
+    stored_hash = await pg_store.get_active_content_hash(req.org_id, req.kb_slug, req.path)
+    if stored_hash is not None and stored_hash == content_hash:
+        logger.info(
+            "content unchanged, skipping ingest (%s/%s org=%s)",
+            req.kb_slug, req.path, req.org_id,
+        )
+        return {"status": "skipped", "reason": "content unchanged", "chunks": 0}
+
     # Determine chunks: skip_chunking uses pre-provided chunks or content as single chunk
     if req.skip_chunking:
         if req.chunks:
@@ -190,6 +200,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         user_id=req.user_id,
         content_type=req.content_type,
         extra=req.extra or None,
+        content_hash=content_hash,
     )
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}

@@ -10,6 +10,23 @@ from knowledge_ingest.db import get_pool
 _SENTINEL = 253402300800  # 9999-12-31 — sentinel value for "still active"
 
 
+async def get_active_content_hash(org_id: str, kb_slug: str, path: str) -> str | None:
+    """Return the content_hash of the current active artifact for this path, or None."""
+    pool = await get_pool()
+    row = await pool.fetchval(
+        """
+        SELECT content_hash
+        FROM knowledge.artifacts
+        WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+          AND belief_time_end = $4
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        org_id, kb_slug, path, _SENTINEL,
+    )
+    return row
+
+
 async def create_artifact(
     org_id: str,
     kb_slug: str,
@@ -23,6 +40,7 @@ async def create_artifact(
     user_id: str | None = None,
     content_type: str = "unknown",
     extra: dict | None = None,
+    content_hash: str | None = None,
 ) -> str:
     """Create a knowledge artifact record. Returns the artifact UUID."""
     artifact_id = str(uuid.uuid4())
@@ -36,15 +54,15 @@ async def create_artifact(
            provenance_type, assertion_mode,
            synthesis_depth, confidence,
            belief_time_start, belief_time_end,
-           content_type, extra,
+           content_type, extra, content_hash,
            created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         """,
         artifact_id, org_id, user_id, kb_slug, path,
         provenance_type, assertion_mode,
         synthesis_depth, confidence,
         belief_time_start, belief_time_end,
-        content_type, extra_json,
+        content_type, extra_json, content_hash,
         now,
     )
     return artifact_id
