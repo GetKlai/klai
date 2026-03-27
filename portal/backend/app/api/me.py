@@ -140,7 +140,7 @@ async def me(
 
 # ---------------------------------------------------------------------------
 # SAR (Subject Access Request) response models
-# @MX:NOTE SPEC-GDPR-001 — AVG Art. 15 compliance. All models are intentionally
+# @MX:NOTE SPEC-GDPR-001 - AVG Art. 15 compliance. All models are intentionally
 # narrow: audit_log.details and product_events.properties are excluded to prevent
 # org-wide data leakage. External systems documented via notes, not live data.
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ async def update_my_language(
     user.preferred_language = body.preferred_language
     await db.commit()
 
-    # Best-effort sync to Zitadel — don't fail if it doesn't work
+    # Best-effort sync to Zitadel - don't fail if it doesn't work
     try:
         await zitadel.update_user_language(
             org_id=settings.zitadel_portal_org_id,
@@ -311,7 +311,7 @@ async def sar_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     org, portal_user = row
 
-    # 2. Zitadel identity (live fetch — source of truth for name/email)
+    # 2. Zitadel identity (live fetch - source of truth for name/email)
     zitadel_user_data: dict[str, Any] = {}
     try:
         zitadel_response = await zitadel.get_user_by_id(user_id)
@@ -383,7 +383,7 @@ async def sar_export(
         for r in kb_rows
     ]
 
-    # 6. Audit events where this user was the actor (no details field — may contain org-wide data)
+    # 6. Audit events where this user was the actor (no details field - may contain org-wide data)
     audit_rows = (
         await db.execute(
             select(
@@ -406,7 +406,7 @@ async def sar_export(
         for r in audit_rows
     ]
 
-    # 7. Product usage events (type + timestamp only — no properties, may contain org-wide data)
+    # 7. Product usage events (type + timestamp only - no properties, may contain org-wide data)
     event_rows = (
         await db.execute(
             select(ProductEvent.event_type, ProductEvent.created_at)
@@ -416,7 +416,7 @@ async def sar_export(
     ).all()
     usage_events = [SarUsageEvent(event_type=r.event_type, created_at=r.created_at) for r in event_rows]
 
-    # 8. Meetings — includes transcript and summary (most sensitive personal data)
+    # 8. Meetings - includes transcript and summary (most sensitive personal data)
     meeting_rows = (
         await db.execute(
             select(VexaMeeting)
@@ -441,7 +441,7 @@ async def sar_export(
         for mtg in meeting_rows
     ]
 
-    # 9. External systems — data not held in the portal DB
+    # 9. External systems - data not held in the portal DB
     external_systems = SarExternalSystems(
         moneybird=SarMoneybird(
             note=(
