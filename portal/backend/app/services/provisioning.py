@@ -284,7 +284,7 @@ chat-{slug}.{domain} {{
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "geolocation=(), microphone=(), camera=()"
-        Content-Security-Policy "frame-ancestors https://{slug}.{domain}"
+        Content-Security-Policy "frame-ancestors https://*.{domain}"
         -Server
     }}
     rate_limit {{
