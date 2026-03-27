@@ -1106,5 +1106,6 @@
   "gaps_filter_type": "Hiaattype",
   "gaps_filter_all": "Alle",
   "gaps_empty_state": "Geen kennishiaten gedetecteerd in deze periode.",
-  "gaps_overview_tile": "Hiaten (7d)"
+  "gaps_overview_tile": "Hiaten (7d)",
+  "gaps_index_card_none": "Geen hiaten gedetecteerd in de afgelopen 7 dagen — je kennisbank beantwoordt alle vragen."
 }

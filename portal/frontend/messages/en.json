@@ -1106,5 +1106,6 @@
   "gaps_filter_type": "Gap type",
   "gaps_filter_all": "All",
   "gaps_empty_state": "No knowledge gaps detected in this period.",
-  "gaps_overview_tile": "Gaps (7d)"
+  "gaps_overview_tile": "Gaps (7d)",
+  "gaps_index_card_none": "No gaps detected in the last 7 days — your knowledge base is covering all questions."
 }

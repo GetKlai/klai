@@ -293,21 +293,27 @@ function KnowledgePage() {
                     <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed mb-3">
                       {m.gaps_index_card_body()}
                     </p>
-                    <div className="flex items-center gap-4">
-                      <span className="text-sm font-medium text-[var(--color-purple-deep)]">
-                        {gapSummary.total_7d} total
-                      </span>
-                      {gapSummary.hard_7d > 0 && (
-                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]">
-                          {gapSummary.hard_7d} {m.gaps_type_hard()}
+                    {gapSummary.total_7d === 0 ? (
+                      <p className="text-sm text-[var(--color-muted-foreground)]">
+                        {m.gaps_index_card_none()}
+                      </p>
+                    ) : (
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                          {gapSummary.total_7d} total
                         </span>
-                      )}
-                      {gapSummary.soft_7d > 0 && (
-                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
-                          {gapSummary.soft_7d} {m.gaps_type_soft()}
-                        </span>
-                      )}
-                    </div>
+                        {gapSummary.hard_7d > 0 && (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]">
+                            {gapSummary.hard_7d} {m.gaps_type_hard()}
+                          </span>
+                        )}
+                        {gapSummary.soft_7d > 0 && (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
+                            {gapSummary.soft_7d} {m.gaps_type_soft()}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>

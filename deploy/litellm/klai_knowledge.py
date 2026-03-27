@@ -81,24 +81,36 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     return history[-6:]
 
 
-async def _check_user_feature(user_id: str, org_id: str, cache) -> bool:
-    """Check whether the user has the knowledge product entitlement.
+async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
+    """Return the user's KB feature state including entitlement and scope preference.
 
-    Result is cached in LiteLLM DualCache for 300s to avoid a portal API call
-    per chat turn. Entitlements rarely change mid-session; 5-minute lag on
-    revocation is acceptable.
+    Two-level cache strategy:
+    - Version pointer (kb_ver:...) — 30s TTL. Expires when kb_pref_version increments,
+      forcing a fresh portal fetch within 30s of a preference change.
+    - Feature data (kb_feature:...:version) — 300s TTL.
 
-    Fail-closed: any HTTP error or unreachable portal returns False.
+    Fail-closed for entitlement: portal errors return enabled=False.
+    Fail-open for retrieval preference: portal errors leave kb_retrieval_enabled=True
+    so existing retrieval behavior is preserved (REQ-N1).
+
+    Backward compatible: handles old {"enabled": bool} portal responses gracefully.
     """
-    cache_key = f"kb_authz:{org_id}:{user_id}"
-    cached = await cache.async_get_cache(cache_key)
-    if cached is not None:
-        return cached == "1"
-
     if not PORTAL_INTERNAL_SECRET:
         logger.warning("KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed")
-        return False
+        return {"enabled": False, "kb_retrieval_enabled": True, "kb_personal_enabled": True,
+                "kb_slugs_filter": None, "version": 0}
 
+    # Step 1: check version pointer (short-lived — invalidated by preference changes)
+    version_key = f"kb_ver:{org_id}:{user_id}"
+    cached_version = await cache.async_get_cache(version_key)
+
+    if cached_version is not None:
+        feature_key = f"kb_feature:{org_id}:{user_id}:{cached_version}"
+        cached = await cache.async_get_cache(feature_key)
+        if cached is not None:
+            return cached
+
+    # Cache miss — fetch fresh from portal
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(
@@ -107,14 +119,25 @@ async def _check_user_feature(user_id: str, org_id: str, cache) -> bool:
                 headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
             )
             resp.raise_for_status()
-            enabled = resp.json().get("enabled", False)
+            data = resp.json()
     except Exception as exc:
-        logger.warning("KlaiKnowledgeHook: portal authz failed (%s) — fail-closed", exc)
-        return False
+        logger.warning("KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc)
+        return {"enabled": False, "kb_retrieval_enabled": True, "kb_personal_enabled": True,
+                "kb_slugs_filter": None, "version": 0}
 
-    # Cache result: True as "1", False as "0" (DualCache stores strings)
-    await cache.async_set_cache(cache_key, "1" if enabled else "0", ttl=300)
-    return enabled
+    version = data.get("kb_pref_version", 0)
+    result = {
+        "enabled": data.get("enabled", False),
+        "kb_retrieval_enabled": data.get("kb_retrieval_enabled", True),
+        "kb_personal_enabled": data.get("kb_personal_enabled", True),
+        "kb_slugs_filter": data.get("kb_slugs_filter"),
+        "version": version,
+    }
+
+    # Store version pointer (30s) and feature data (300s) separately
+    await cache.async_set_cache(version_key, str(version), ttl=30)
+    await cache.async_set_cache(f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300)
+    return result
 
 
 # @MX:NOTE: [AUTO] Gap thresholds (0.4 reranker, 0.35 dense) are configurable via
@@ -196,10 +219,9 @@ def _fire_gap_event(
             logger.warning("KlaiKnowledgeHook: gap event POST failed (%s)", exc)
 
     try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(_post())
+        asyncio.get_running_loop().create_task(_post())
     except RuntimeError:
-        pass  # No event loop — skip silently
+        pass  # No running event loop (test context) — skip silently
 
 
 class KlaiKnowledgeHook(CustomLogger):
@@ -224,25 +246,37 @@ class KlaiKnowledgeHook(CustomLogger):
         if not user_id:
             return data
 
-        # Authorization check (fail-closed, cached 300s)
-        if not await _check_user_feature(user_id, org_id, cache):
-            return data
+        # Feature gate + KB scope preference (version-based cache, 30s propagation)
+        feature = await _get_kb_feature(user_id, org_id, cache)
+        if not feature["enabled"]:
+            return data  # no entitlement — fail-closed
+
+        if not feature["kb_retrieval_enabled"]:
+            return data  # user disabled KB retrieval (REQ-E4 pre-step skip)
+
+        # Determine retrieval scope and optional org KB slug filter
+        scope = "both" if feature.get("kb_personal_enabled", True) else "org"
+        kb_slugs = feature.get("kb_slugs_filter")  # None = all org KBs
 
         conversation_history = _build_conversation_history(messages)
+
+        retrieve_body: dict = {
+            "query": query,
+            "org_id": org_id,
+            "user_id": user_id,
+            "scope": scope,
+            "top_k": RETRIEVE_TOP_K,
+            "conversation_history": conversation_history,
+        }
+        if kb_slugs:
+            retrieve_body["kb_slugs"] = kb_slugs
 
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
                 resp = await client.post(
                     KNOWLEDGE_RETRIEVE_URL,
-                    json={
-                        "query": query,
-                        "org_id": org_id,
-                        "user_id": user_id,
-                        "scope": "both",
-                        "top_k": RETRIEVE_TOP_K,
-                        "conversation_history": conversation_history,
-                    },
+                    json=retrieve_body,
                     headers={"X-Internal-Secret": PORTAL_INTERNAL_SECRET} if PORTAL_INTERNAL_SECRET else {},
                 )
                 resp.raise_for_status()
