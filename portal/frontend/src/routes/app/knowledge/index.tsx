@@ -278,7 +278,7 @@ function KnowledgePage() {
         )}
 
         {/* Knowledge Gaps (admin only) */}
-        {isAdmin && gapSummary != null && gapSummary.total_7d > 0 && (
+        {isAdmin && gapSummary != null && (
           <Link to="/app/gaps">
             <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
               <CardContent className="pt-6">
