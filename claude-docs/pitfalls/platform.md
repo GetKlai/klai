@@ -725,20 +725,23 @@ The portal-api uses a Personal Access Token (PAT) to call Zitadel's `/v2/session
    cd /opt/klai && docker compose up -d portal-api   # must be up -d, not restart
    docker exec klai-core-portal-api-1 env | grep PORTAL_API_ZITADEL_PAT  # verify
    ```
-5. Update `.env.sops` in the repo (decrypt on core-01 → update → re-encrypt → copy back):
+5. Update `.env.sops` in the repo — do this on the MacBook from `/tmp` (to avoid `.sops.yaml` path mismatch):
    ```bash
-   # On your MacBook:
-   scp klai-infra/core-01/.env.sops core-01:/tmp/core-01.env.sops
-   ssh core-01 "
-     sops --input-type dotenv --output-type dotenv --decrypt /tmp/core-01.env.sops > /tmp/core-01.decrypted &&
-     sed -i 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' /tmp/core-01.decrypted &&
-     sops --input-type dotenv --output-type dotenv --encrypt \
-       --age 'age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur,age15ztzw9vnngkdnw0pg5tn8upplglvhzkep23sm5zu86res5lcmv7syw5m4v' \
-       /tmp/core-01.decrypted > /tmp/core-01.env.sops.new &&
-     rm /tmp/core-01.decrypted
-   "
-   scp core-01:/tmp/core-01.env.sops.new klai-infra/core-01/.env.sops
-   cd klai-infra && git add core-01/.env.sops && git commit -m "Rotate PORTAL_API_ZITADEL_PAT"
+   cd /tmp
+   SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+     sops --decrypt --input-type dotenv --output-type dotenv \
+     ~/Server/projects/klai/klai-infra/core-01/.env.sops > klai-env-plain
+
+   sed -i '' 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' klai-env-plain
+
+   SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+     sops --encrypt --input-type dotenv --output-type dotenv \
+     --age age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur,age15ztzw9vnngkdnw0pg5tn8upplglvhzkep23sm5zu86res5lcmv7syw5m4v \
+     /tmp/klai-env-plain > ~/Server/projects/klai/klai-infra/core-01/.env.sops
+
+   rm /tmp/klai-env-plain  # never leave plaintext lying around
+
+   cd ~/Server/projects/klai/klai-infra && git add core-01/.env.sops && git commit -m "Rotate PORTAL_API_ZITADEL_PAT"
    ```
 
 **Verify the new PAT works before committing:**
@@ -1064,6 +1067,64 @@ Most modern LLMs accept multiple system messages without breaking, but the behav
 - Check `data["messages"][0]["role"] == "system"` and extend its content rather than inserting a new message
 
 **Note:** The correct field name is `promptPrefix`, not `systemPrompt`. The librechat.yaml `preset` schema does not have a `systemPrompt` key.
+
+---
+
+## platform-portal-api-deploy-env-preflight
+
+**Severity:** CRIT
+
+**Trigger:** Running `docker compose pull portal-api && docker compose up -d portal-api` after merging security commits or any code change that adds new required fields to `portal/backend/app/core/config.py`
+
+Portal-api validates ALL required env vars at startup and performs a live PAT check against Zitadel before accepting any traffic. If a new required field has no value in `.env`, the container crashes immediately with a `ValueError`. Because **all authentication goes through portal-api** (Login V2 routes Zitadel's own login through the portal), a portal-api crash creates a total auth outage — no one can log in, including to the Zitadel console.
+
+**What happened (2026-03-27):**
+1. Security commits added three new required fields to `config.py`: `zitadel_pat`, `portal_secrets_key`, `sso_cookie_key`
+2. `docker compose up -d portal-api` was run without pre-flight check
+3. Portal-api crashed with `ValueError: AES-256 requires a 32-byte key, got 0 bytes`
+4. All auth broke — Login V2 routes Zitadel's login through the portal, so even the Zitadel console was inaccessible
+5. Recovery required: database fix for Login V2, manual PAT creation from the user, manual secrets generation
+
+**How to check before deploying a new portal-api image:**
+
+```bash
+# 1. Check what changed in config.py (new required fields have no default value)
+cd ~/Server/projects/klai
+git log --oneline portal/backend/app/core/config.py | head -5
+git show HEAD:portal/backend/app/core/config.py | grep -E '^\s+\w+: str\s*$|^\s+\w+: \w+\s*$' | grep -v '='
+
+# 2. Pre-flight: check which env vars the container will receive
+ssh core-01 "cd /opt/klai && docker compose config portal-api | grep -A 80 'environment:'"
+
+# 3. Verify every required field (no default in config.py) has a non-empty value in the output
+#    Required fields in config.py have NO '= ""' or default value — they look like:
+#    zitadel_pat: str
+#    portal_secrets_key: str
+#    sso_cookie_key: str
+
+# 4. Only then deploy
+ssh core-01 "cd /opt/klai && docker compose up -d portal-api"
+```
+
+**If portal-api is already down and all auth is broken:**
+1. First break the Login V2 deadlock: `platform-zitadel-login-v2-recovery`
+2. Get the missing secrets (PAT from Zitadel console, generate keys locally)
+3. Add to `/opt/klai/.env` with single quotes: `echo 'PORTAL_API_ZITADEL_PAT=...' >> /opt/klai/.env`
+4. Do pre-flight check, then `docker compose up -d portal-api`
+5. Re-enable Login V2: use the INSERT from `platform-zitadel-login-v2-recovery`
+6. Update `.env.sops` from MacBook `/tmp` (see `platform-zitadel-pat-invalid-after-upgrade` step 5)
+
+**Required secrets and how to generate them:**
+
+| Env var | Config field | How to generate |
+|---|---|---|
+| `PORTAL_API_ZITADEL_PAT` | `zitadel_pat` | Zitadel console → Users → Service Accounts → Portal API → Personal Access Tokens → + New |
+| `PORTAL_API_PORTAL_SECRETS_KEY` | `portal_secrets_key` | `openssl rand -hex 32` (must be 64 hex chars = 32 bytes) |
+| `PORTAL_API_SSO_COOKIE_KEY` | `sso_cookie_key` | `python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` |
+
+**Rule:** Before deploying ANY new portal-api image: `git diff HEAD portal/backend/app/core/config.py` to see if new required fields were added. If yes, generate and add the missing vars to `.env` AND `.env.sops` BEFORE deploying.
+
+**Rule:** The PAT and encryption keys are now in `core-01/.env.sops`. Never regenerate them — only rotate the PAT if it becomes invalid (see `platform-zitadel-pat-invalid-after-upgrade`).
 
 ---
 
