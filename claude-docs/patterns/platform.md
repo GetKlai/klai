@@ -408,8 +408,17 @@ api/server/index.js
 1. Restart the LibreChat container.
 
 **Reload procedure — with Redis (`USE_REDIS=true`, which is Klai's setup):**
-1. `docker exec <redis> redis-cli FLUSHALL` — config is cached in Redis indefinitely with no TTL, a container restart alone leaves the old config in Redis
-2. Restart the LibreChat container
+1. Delete only the config cache key — **never use `FLUSHALL`** (it destroys all user sessions):
+   ```bash
+   docker exec klai-core-redis-1 redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning DEL base_config
+   ```
+   If unsure of the exact key name, scan first:
+   ```bash
+   docker exec klai-core-redis-1 redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning --scan --pattern "*config*"
+   ```
+2. Restart the LibreChat container.
+
+**Why not FLUSHALL:** LibreChat stores all user session tokens in Redis. `FLUSHALL` invalidates every active session, forcing every user to re-authenticate with password + 2FA. Targeted key deletion removes only the config cache.
 
 **Programmatic reload (future):** `clearAppConfigCache()` already exists in the source but has no HTTP endpoint. A `POST /api/config/reload` that calls this + re-triggers `getAppConfig()` would be ~20-40 lines and is the correct approach if hot-reload is ever needed.
 
