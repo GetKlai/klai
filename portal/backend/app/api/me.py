@@ -456,8 +456,10 @@ async def sar_export(
         ),
         twenty_crm=SarTwentyCRM(
             note=(
-                "Eventuele salesdata in onze interne CRM valt buiten deze self-service export. "
-                "Stuur een verzoek naar privacy@getklai.com."
+                "Klai verwerkt mogelijk de volgende persoonsgegevens in haar interne CRM: "
+                "voornaam, achternaam, e-mailadres en bedrijfsnaam. "
+                "Deze gegevens vallen buiten de self-service export. "
+                "Neem contact op met privacy@getklai.com voor een volledig overzicht."
             ),
         ),
     )
