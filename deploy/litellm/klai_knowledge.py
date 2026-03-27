@@ -7,9 +7,15 @@ Configure in config.yaml:
   litellm_settings:
     callbacks:
       - klai_knowledge.klai_knowledge_hook
+
+Authorization is fail-closed: any user without a verified knowledge entitlement
+receives no KB injection. If the portal authorization endpoint is unreachable,
+injection is silently skipped (WARNING logged).
+
+KB-context presence is signalled to downstream hooks via data["_klai_kb_meta"].
+The custom_router uses this to prevent model downgrade for KB-enriched requests.
 """
 
-import asyncio
 import logging
 import os
 import re
@@ -23,9 +29,10 @@ logger = logging.getLogger(__name__)
 KNOWLEDGE_RETRIEVE_URL = os.getenv("KNOWLEDGE_RETRIEVE_URL")
 if not KNOWLEDGE_RETRIEVE_URL:
     raise RuntimeError("KNOWLEDGE_RETRIEVE_URL is not set")
-RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "2.0"))
+PORTAL_API_URL = os.getenv("PORTAL_API_URL", "http://portal-api:8000")
+PORTAL_INTERNAL_SECRET = os.getenv("PORTAL_INTERNAL_SECRET", "")
+RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
-RETRIEVE_MIN_SCORE = float(os.getenv("KNOWLEDGE_RETRIEVE_MIN_SCORE", "0.4"))
 
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
@@ -34,26 +41,6 @@ _TRIVIAL_PATTERNS = re.compile(
     r"begrepen|understood|clear|got it|doei|bye|hoi|hallo|hello|hi)[\s!.?]*$",
     re.IGNORECASE,
 )
-
-
-def _render_chunks(chunks: list[dict], header: str) -> list[str]:
-    """Render a list of knowledge chunks into context block lines.
-
-    Produces: a header line, one entry per chunk (optional ### title + text),
-    and a trailing blank line between entries.
-    Returns an empty list when chunks is empty.
-    """
-    if not chunks:
-        return []
-    lines: list[str] = [f"{header}\n"]
-    for chunk in chunks:
-        title = chunk.get("metadata", {}).get("title", "")
-        text = chunk.get("text", "").strip()
-        if title:
-            lines.append(f"### {title}")
-        lines.append(text)
-        lines.append("")
-    return lines
 
 
 def _is_trivial(text: str) -> bool:
@@ -77,21 +64,55 @@ def _last_user_message(messages: list[dict]) -> str | None:
     return None
 
 
-async def _retrieve(client: httpx.AsyncClient, payload: dict) -> list[dict] | BaseException:
-    """Issue one retrieve POST and return filtered chunks, or the exception on failure.
+def _build_conversation_history(messages: list[dict]) -> list[dict]:
+    """Return up to the last 6 turns (3 exchanges) of user/assistant history.
 
-    Catches BaseException (not just Exception) so that asyncio.CancelledError
-    and other BaseException subclasses are returned rather than propagating,
-    which would cause asyncio.gather(return_exceptions=True) to swallow them
-    with an empty string representation.
+    The last user message is excluded — it is the current query being retrieved for.
+    Used by retrieval-api for coreference resolution ("hij" → "Jan Pietersen").
     """
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages[:-1]
+        if m.get("role") in ("user", "assistant")
+        and isinstance(m.get("content"), str)
+    ]
+    return history[-6:]
+
+
+async def _check_user_feature(user_id: str, org_id: str, cache) -> bool:
+    """Check whether the user has the knowledge product entitlement.
+
+    Result is cached in LiteLLM DualCache for 300s to avoid a portal API call
+    per chat turn. Entitlements rarely change mid-session; 5-minute lag on
+    revocation is acceptable.
+
+    Fail-closed: any HTTP error or unreachable portal returns False.
+    """
+    cache_key = f"kb_authz:{org_id}:{user_id}"
+    cached = await cache.async_get_cache(cache_key)
+    if cached is not None:
+        return cached == "1"
+
+    if not PORTAL_INTERNAL_SECRET:
+        logger.warning("KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed")
+        return False
+
     try:
-        resp = await client.post(KNOWLEDGE_RETRIEVE_URL, json=payload)
-        resp.raise_for_status()
-        chunks = resp.json().get("chunks", [])
-        return [c for c in chunks if c.get("score", 0) >= RETRIEVE_MIN_SCORE]
-    except BaseException as exc:
-        return exc
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(
+                f"{PORTAL_API_URL}/internal/v1/users/{user_id}/feature/knowledge",
+                params={"org_id": org_id},
+                headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
+            )
+            resp.raise_for_status()
+            enabled = resp.json().get("enabled", False)
+    except Exception as exc:
+        logger.warning("KlaiKnowledgeHook: portal authz failed (%s) — fail-closed", exc)
+        return False
+
+    # Cache result: True as "1", False as "0" (DualCache stores strings)
+    await cache.async_set_cache(cache_key, "1" if enabled else "0", ttl=300)
+    return enabled
 
 
 class KlaiKnowledgeHook(CustomLogger):
@@ -111,65 +132,71 @@ class KlaiKnowledgeHook(CustomLogger):
             # Master key usage — no org scope available, skip silently
             return data
 
-        user_id: str | None = data.get("user")
+        # user_id = LibreChat MongoDB ObjectId sent as the "user" field
+        user_id = data.get("user", "")
+        if not user_id:
+            return data
 
-        org_payload = {"query": query, "org_id": org_id, "top_k": RETRIEVE_TOP_K}
-        personal_payload = {
-            "query": query,
-            "org_id": org_id,
-            "top_k": RETRIEVE_TOP_K,
-            "user_id": user_id,
-            "kb_slugs": ["personal"],
-        } if user_id else None
+        # Authorization check (fail-closed, cached 300s)
+        if not await _check_user_feature(user_id, org_id, cache):
+            return data
 
-        # Per-request client — avoids event loop issues with class-level singletons.
-        t_retrieve = time.perf_counter()
-        async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
-            # Fire both retrieves concurrently when a user_id is present.
-            if personal_payload is not None:
-                org_result, personal_result = await asyncio.gather(
-                    _retrieve(client, org_payload),
-                    _retrieve(client, personal_payload),
-                    return_exceptions=True,
+        conversation_history = _build_conversation_history(messages)
+
+        t0 = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=RETRIEVE_TIMEOUT) as client:
+                resp = await client.post(
+                    KNOWLEDGE_RETRIEVE_URL,
+                    json={
+                        "query": query,
+                        "org_id": org_id,
+                        "user_id": user_id,
+                        "scope": "both",
+                        "top_k": RETRIEVE_TOP_K,
+                        "conversation_history": conversation_history,
+                    },
+                    headers={"X-Internal-Secret": PORTAL_INTERNAL_SECRET} if PORTAL_INTERNAL_SECRET else {},
                 )
+                resp.raise_for_status()
+                result = resp.json()
+        except Exception as exc:
+            logger.warning("KlaiKnowledgeHook: retrieval failed (%s) — degrading", exc)
+            return data
+
+        retrieval_ms = int((time.monotonic() - t0) * 1000)
+
+        # If the retrieval-gate determined no KB context is needed, skip injection
+        if result.get("retrieval_bypassed"):
+            data["_klai_kb_meta"] = {
+                "org_id": org_id,
+                "user_id": user_id,
+                "chunks_injected": 0,
+                "retrieval_ms": retrieval_ms,
+                "gate_bypassed": True,
+            }
+            return data
+
+        chunks = result.get("chunks", [])
+        if not chunks:
+            return data
+
+        # Build context block with provenance labels per chunk
+        lines = [
+            "[Klai Kennisbank — gebruik dit als primaire informatiebron voor deze vraag]\n"
+        ]
+        for chunk in chunks:
+            title = chunk.get("metadata", {}).get("title", "")
+            scope_label = chunk.get("scope", "org")
+            label = "[persoonlijk]" if scope_label == "personal" else "[org]"
+            text = chunk.get("text", "").strip()
+            if title:
+                lines.append(f"### {title}  {label}")
             else:
-                org_result = await _retrieve(client, org_payload)
-                personal_result = []
-        retrieve_ms = (time.perf_counter() - t_retrieve) * 1000
-
-        # Handle per-scope failures independently — degrade gracefully.
-        if isinstance(org_result, BaseException):
-            logger.warning(
-                "KlaiKnowledgeHook: org retrieval failed (%s: %s) after %.0fms — degrading",
-                type(org_result).__name__,
-                org_result,
-                retrieve_ms,
-            )
-            return data
-        if isinstance(personal_result, BaseException):
-            logger.warning(
-                "KlaiKnowledgeHook: personal retrieval failed (%s: %s) — continuing with org-only",
-                type(personal_result).__name__,
-                personal_result,
-            )
-            personal_result = []
-
-        org_chunks: list[dict] = org_result
-        personal_chunks: list[dict] = personal_result
-
-        if not org_chunks and not personal_chunks:
-            return data
-
-        # Build context block: personal chunks first, then org chunks
-        lines: list[str] = (
-            _render_chunks(personal_chunks, "[Persoonlijke kennis]")
-            + _render_chunks(
-                org_chunks,
-                "[Klai Knowledge — relevant context from your organisation's knowledge base]",
-            )
-        )
-
-        lines.append("[End knowledge base context]")
+                lines.append(f"### Kennisbank  {label}")
+            lines.append(text)
+            lines.append("")
+        lines.append("[Einde kennisbank-context]")
         context_block = "\n".join(lines)
 
         # Prepend to existing system message or insert new one
@@ -186,14 +213,26 @@ class KlaiKnowledgeHook(CustomLogger):
             messages.insert(0, {"role": "system", "content": context_block})
 
         data["messages"] = messages
-        logger.info(
-            "KlaiKnowledgeHook: injected %d org + %d personal chunks for org=%s in %.0fms",
-            len(org_chunks), len(personal_chunks), org_id, retrieve_ms,
-        )
+        # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
+        data["_klai_kb_meta"] = {
+            "org_id": org_id,
+            "user_id": user_id,
+            "chunks_injected": len(chunks),
+            "retrieval_ms": retrieval_ms,
+            "gate_bypassed": False,
+        }
         return data
 
-    async def async_post_call_success_hook(self, *args, **kwargs):
-        pass
+    async def async_post_call_success_hook(self, data, user_api_key_dict, response):
+        kb_meta = data.get("_klai_kb_meta")
+        if kb_meta and not kb_meta.get("gate_bypassed"):
+            logger.info(
+                "KB injection: org=%s user=%s chunks=%d retrieval_ms=%d",
+                kb_meta["org_id"],
+                kb_meta["user_id"],
+                kb_meta["chunks_injected"],
+                kb_meta["retrieval_ms"],
+            )
 
     async def async_post_call_failure_hook(self, *args, **kwargs):
         pass
