@@ -286,10 +286,10 @@ async def sar_export(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> SarExportResponse:
-    """POST /api/me/sar-export — AVG Art. 15 subject access request.
+    """POST /api/me/sar-export - AVG Art. 15 subject access request.
 
     Returns a self-service export of all personal data Klai holds for the
-    authenticated user. Always scoped to the requesting user — no admin override.
+    authenticated user. Always scoped to the requesting user - no admin override.
     """
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
