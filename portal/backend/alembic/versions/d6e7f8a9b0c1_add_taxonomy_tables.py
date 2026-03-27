@@ -48,9 +48,7 @@ def upgrade() -> None:
         "WHERE parent_id IS NOT NULL"
     )
     op.execute(
-        "CREATE UNIQUE INDEX uq_taxonomy_nodes_root_name "
-        "ON portal_taxonomy_nodes (kb_id, name) "
-        "WHERE parent_id IS NULL"
+        "CREATE UNIQUE INDEX uq_taxonomy_nodes_root_name ON portal_taxonomy_nodes (kb_id, name) WHERE parent_id IS NULL"
     )
 
     op.create_table(
