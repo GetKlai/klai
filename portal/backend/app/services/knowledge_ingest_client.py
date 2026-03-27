@@ -27,11 +27,10 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
                 json={"org_id": org_id, "kb_slug": kb_slug, "visibility": visibility},
             )
             resp.raise_for_status()
-    except Exception as exc:
-        logger.error(
-            "Failed to sync KB visibility to knowledge-ingest (org=%s kb=%s visibility=%s): %s",
+    except Exception:
+        logger.exception(
+            "Failed to sync KB visibility to knowledge-ingest (org=%s kb=%s visibility=%s)",
             org_id,
             kb_slug,
             visibility,
-            exc,
         )
