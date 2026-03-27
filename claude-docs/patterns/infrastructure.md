@@ -11,6 +11,8 @@
 | [env-modification-rules](#env-modification-rules) | Adding or changing variables in `/opt/klai/.env` |
 | [sops-secret-edit](#sops-secret-edit) | Editing an existing secret in a SOPS file |
 | [sops-secret-add](#sops-secret-add) | Adding a new secret to a SOPS file |
+| [sops-non-interactive](#sops-non-interactive) | Adding secrets to SOPS without an interactive editor (AI/automation) |
+| [sops-per-service](#sops-per-service) | Creating a per-service `.env.sops` file (e.g. klai-mailer) |
 | [sops-disaster-recovery](#sops-disaster-recovery) | Recovering access after losing the age key |
 | [sops-add-new-server](#sops-add-new-server) | Adding a new server to the SOPS key ring |
 | [ssh-server-access](#ssh-server-access) | SSH access to any Klai server |
@@ -27,10 +29,13 @@
 | File | What it contains | Who can decrypt |
 |------|-----------------|-----------------|
 | `klai-infra/config.sops.env` | Server IPs, SSH config, domain | MacBook only |
-| `klai-infra/core-01/.env.sops` | All docker-compose secrets for core-01 | MacBook + core-01 server |
+| `klai-infra/core-01/.env.sops` | Global docker-compose secrets for core-01 (REDIS_PASSWORD, GITHUB_ADMIN_PAT, GLITCHTIP_* etc.) | MacBook + core-01 server |
 | `klai-infra/core-01/caddy/.env.sops` | Hetzner DNS API token (Caddy TLS) | MacBook + core-01 server |
 | `klai-infra/core-01/litellm/.env.sops` | LiteLLM master key, DB password, Mistral API key | MacBook + core-01 server |
 | `klai-infra/core-01/zitadel/.env.sops` | Zitadel masterkey, Postgres passwords | MacBook + core-01 server |
+| `klai-infra/core-01/klai-mailer/.env.sops` | SMTP credentials, webhook secrets for klai-mailer | MacBook + core-01 server |
+
+**Per-service deployment:** `deploy.sh <service>` decrypts the matching `core-01/<service>/.env.sops` and writes it to `/opt/klai/<service>/.env` on the server (separate from the global `/opt/klai/.env`). Services: `zitadel`, `litellm`, `caddy`, `klai-mailer`.
 
 **Age key locations:**
 
@@ -119,6 +124,107 @@ sops config.sops.env
 git add config.sops.env
 git commit -m "Update config"
 ```
+
+---
+
+## sops-non-interactive
+
+**When to use:** Adding secrets to an EXISTING SOPS file without an interactive editor — required when running in AI agent sessions, CI, or any non-TTY context where `$EDITOR` is unavailable.
+
+**Why the interactive editor fails in agents:**
+`sops core-01/.env.sops` opens your `$EDITOR`. In agent sessions there is no TTY, so the editor invocation hangs or fails. Use the decrypt-modify-encrypt approach instead.
+
+**Key rule:** The temp file path MUST match the `.sops.yaml` `path_regex` (`core-01/.*\.env(\.sops)?$`) for SOPS to pick up the correct encryption keys. Always use the full explicit key path — `$HOME` expansion is unreliable in non-interactive shells.
+
+```bash
+cd klai-infra
+
+# 1. Decrypt to a temp file at a path matching the .sops.yaml regex
+SOPS_AGE_KEY_FILE=/Users/mark/.config/sops/age/keys.txt \
+    sops --decrypt --input-type dotenv --output-type dotenv \
+    core-01/.env.sops > core-01/.new.env
+
+# 2. Append the new variable (use Python to avoid shell escaping issues)
+python3 -c "
+with open('core-01/.new.env', 'a') as f:
+    f.write('NEW_VAR=my-value-here\n')
+"
+
+# 3. Encrypt in-place (SOPS uses the file path to find creation rules)
+SOPS_AGE_KEY_FILE=/Users/mark/.config/sops/age/keys.txt \
+    sops --encrypt --in-place --input-type dotenv --output-type dotenv \
+    core-01/.new.env
+
+# 4. Replace the original
+mv core-01/.new.env core-01/.env.sops
+
+# 5. Verify
+SOPS_AGE_KEY_FILE=/Users/mark/.config/sops/age/keys.txt \
+    sops --decrypt --input-type dotenv --output-type dotenv \
+    core-01/.env.sops | grep NEW_VAR
+
+# 6. Commit and deploy
+git add core-01/.env.sops
+git commit -m "feat(secrets): add NEW_VAR to core-01 SOPS"
+git push
+./core-01/deploy.sh main
+```
+
+**Common mistakes:**
+- Using `$HOME` instead of the literal path (`/Users/mark/.config/sops/age/keys.txt`) — `$HOME` is empty in non-interactive shells
+- Writing the temp file to a path that does NOT match the regex (e.g. `/tmp/new.env`) — SOPS can't find the creation rules and creates a new encrypted file with no recipients
+- Using `sops edit` — requires interactive TTY
+
+---
+
+## sops-per-service
+
+**When to use:** Creating or updating a per-service `.env.sops` file (e.g. `core-01/klai-mailer/.env.sops`)
+
+Per-service SOPS files are separate from the global `core-01/.env.sops`. They are deployed by `deploy.sh <service>` to `/opt/klai/<service>/.env` on the server.
+
+**Creating a new per-service file from scratch:**
+
+```bash
+cd klai-infra
+
+# 1. Write plaintext to a path matching the .sops.yaml regex
+#    The regex is: core-01/.*\.env(\.sops)?$
+#    So core-01/klai-mailer/.env matches!
+mkdir -p core-01/klai-mailer
+cat > core-01/klai-mailer/.env << 'EOF'
+SMTP_HOST=shared199.cloud86-host.io
+SMTP_USER=hello@getklai.com
+SMTP_PASSWORD=my-smtp-password
+WEBHOOK_SECRET=my-webhook-secret
+EOF
+
+# 2. Encrypt in-place (SOPS reads path → finds creation rules → uses correct keys)
+SOPS_AGE_KEY_FILE=/Users/mark/.config/sops/age/keys.txt \
+    sops --encrypt --in-place --input-type dotenv --output-type dotenv \
+    core-01/klai-mailer/.env
+
+# 3. Rename to .env.sops
+mv core-01/klai-mailer/.env core-01/klai-mailer/.env.sops
+
+# 4. Verify decryption works
+SOPS_AGE_KEY_FILE=/Users/mark/.config/sops/age/keys.txt \
+    sops --decrypt --input-type dotenv --output-type dotenv \
+    core-01/klai-mailer/.env.sops
+
+# 5. Deploy the service env to the server
+./core-01/deploy.sh klai-mailer
+# → writes /opt/klai/klai-mailer/.env on core-01
+
+# 6. Commit
+git add core-01/klai-mailer/.env.sops
+git commit -m "feat(secrets): add klai-mailer service secrets"
+git push
+```
+
+**Supported services for `deploy.sh <service>`:** `main`, `zitadel`, `litellm`, `caddy`, `klai-mailer`, `all`
+
+**Why the path matters:** SOPS reads `.sops.yaml` from the current working directory upward. The file `core-01/klai-mailer/.env` matches the regex `core-01/.*\.env(\.sops)?$` in `klai-infra/.sops.yaml`, so SOPS automatically uses the correct age recipients. A file at `/tmp/klai-mailer.env` would NOT match and SOPS would fail or use wrong keys.
 
 ---
 
