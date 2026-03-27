@@ -281,9 +281,10 @@ async def update_my_language(
 
 
 @router.post("/me/sar-export", response_model=SarExportResponse)
-# @MX:ANCHOR SPEC-GDPR-001 — Public AVG Art. 15 endpoint. Callers: frontend sarMutation (account.tsx).
-# External deps: Zitadel (get_user_by_id, has_any_mfa) — both wrapped in try/except for graceful
-# degradation. Privacy invariant: never expose audit details or event properties.
+# @MX:ANCHOR SPEC-GDPR-001 — Public AVG Art. 15 endpoint. Callers: frontend
+# sarMutation (account.tsx). External deps: Zitadel (get_user_by_id, has_any_mfa)
+# — both wrapped in try/except for graceful degradation. Privacy invariant:
+# never expose audit details or event properties.
 async def sar_export(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
