@@ -7,16 +7,35 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from prometheus_client import make_asgi_app
 
 from retrieval_api.api.chat import router as chat_router
 from retrieval_api.api.retrieve import router as retrieve_router
 from retrieval_api.config import settings
+from retrieval_api.logging_setup import setup_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
+
+
+async def _warmup_reranker() -> None:
+    """Send a dummy request to load the reranker model before the first real query."""
+    if not settings.reranker_enabled or not settings.tei_reranker_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            await client.post(
+                f"{settings.tei_reranker_url}/v1/rerank",
+                json={
+                    "model": "bge-reranker-v2-m3",
+                    "query": "warmup",
+                    "documents": ["warmup document"],
+                    "top_n": 1,
+                },
+            )
+        logger.info("reranker warmup complete")
+    except Exception as exc:
+        logger.warning("reranker warmup failed (non-fatal): %s", exc)
 
 
 @asynccontextmanager
@@ -27,6 +46,7 @@ async def lifespan(app: FastAPI):
         settings.tei_url,
         settings.litellm_url,
     )
+    await _warmup_reranker()
     yield
     logger.info("retrieval-api shutting down")
 
@@ -34,6 +54,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="retrieval-api", version="1.0.0", lifespan=lifespan)
 app.include_router(retrieve_router, prefix="")
 app.include_router(chat_router, prefix="")
+
+# Prometheus metrics endpoint — scraped by Grafana Alloy → VictoriaMetrics
+app.mount("/metrics", make_asgi_app())
 
 
 @app.get("/health")

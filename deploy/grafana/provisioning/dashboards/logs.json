@@ -1,6 +1,6 @@
 {
   "uid": "klai-logs",
-  "title": "Core-01: Container Logs",
+  "title": "Container Logs",
   "tags": ["klai", "logs"],
   "timezone": "browser",
   "schemaVersion": 38,
@@ -13,9 +13,39 @@
         "name": "service",
         "label": "Service",
         "type": "query",
-        "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+        "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
         "query": {
-          "query": "label_values(container_last_seen, container_label_com_docker_compose_service)",
+          "query": "{job=~\".+\"}",
+          "refId": "A"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "sort": 1
+      },
+      {
+        "name": "server",
+        "label": "Server",
+        "type": "query",
+        "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+        "query": {
+          "query": "{job=~\".+\"}",
+          "refId": "A"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "sort": 1
+      },
+      {
+        "name": "level",
+        "label": "Level",
+        "type": "query",
+        "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+        "query": {
+          "query": "{job=~\".+\"}",
           "refId": "A"
         },
         "refresh": 2,
@@ -29,13 +59,13 @@
   "panels": [
     {
       "id": 1,
-      "title": "Logs — $service",
+      "title": "Logs — $server / $service / $level",
       "type": "logs",
       "gridPos": {"x": 0, "y": 0, "w": 24, "h": 25},
       "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
       "targets": [
         {
-          "expr": "service:~\"$service\"",
+          "expr": "server:~\"$server\" AND service:~\"$service\" AND level:~\"$level\"",
           "legendFormat": "{{service}}",
           "refId": "A"
         }

@@ -18,7 +18,7 @@ import httpx
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from knowledge_ingest import chunker, embedder, graph as graph_module, org_config, pg_store, qdrant_store
+from knowledge_ingest import chunker, embedder, graph as graph_module, kb_config, org_config, pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import (
@@ -146,6 +146,16 @@ async def _graphiti_background(
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk -> embed -> upsert."""
 
+    # Early exit if content is unchanged since last ingest
+    content_hash = hashlib.sha256(req.content.encode()).hexdigest()
+    stored_hash = await pg_store.get_active_content_hash(req.org_id, req.kb_slug, req.path)
+    if stored_hash is not None and stored_hash == content_hash:
+        logger.info(
+            "content unchanged, skipping ingest (%s/%s org=%s)",
+            req.kb_slug, req.path, req.org_id,
+        )
+        return {"status": "skipped", "reason": "content unchanged", "chunks": 0}
+
     # Determine chunks: skip_chunking uses pre-provided chunks or content as single chunk
     if req.skip_chunking:
         if req.chunks:
@@ -190,7 +200,11 @@ async def ingest_document(req: IngestRequest) -> dict:
         user_id=req.user_id,
         content_type=req.content_type,
         extra=req.extra or None,
+        content_hash=content_hash,
     )
+
+    pool = await get_pool()
+    visibility = await kb_config.get_kb_visibility(req.org_id, req.kb_slug, pool)
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
     if req.source_type:
@@ -204,6 +218,8 @@ async def ingest_document(req: IngestRequest) -> dict:
     extra_payload["belief_time_start"] = kf["belief_time_start"]
     extra_payload["belief_time_end"] = kf["belief_time_end"]
     extra_payload.update(_extract_frontmatter_metadata(req.content))
+    # Visibility is authoritative from kb_config — set last so req.extra cannot override it
+    extra_payload["visibility"] = visibility
 
     await qdrant_store.upsert_chunks(
         org_id=req.org_id,
@@ -217,7 +233,6 @@ async def ingest_document(req: IngestRequest) -> dict:
     )
 
     # Enqueue enrichment as async Procrastinate task (non-blocking)
-    pool = await get_pool()
     if await org_config.is_enrichment_enabled(req.org_id, pool):
         from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
         proc_app = enrichment_tasks.get_app()
@@ -226,19 +241,28 @@ async def ingest_document(req: IngestRequest) -> dict:
             if req.source_type == "upload"
             else proc_app.enrich_document_bulk  # type: ignore[attr-defined]
         )
-        await task_fn.defer_async(
-            org_id=req.org_id,
-            kb_slug=req.kb_slug,
-            path=req.path,
-            document_text=req.content,
-            chunks=texts,
-            title=title,
-            artifact_id=artifact_id,
-            user_id=req.user_id,
-            extra_payload=extra_payload,
-            synthesis_depth=kf["synthesis_depth"],
-            content_type=req.content_type,
-        )
+        try:
+            from procrastinate.exceptions import AlreadyEnqueued  # noqa: PLC0415
+            await task_fn.configure(
+                queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}",
+            ).defer_async(
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+                path=req.path,
+                document_text=req.content,
+                chunks=texts,
+                title=title,
+                artifact_id=artifact_id,
+                user_id=req.user_id,
+                extra_payload=extra_payload,
+                synthesis_depth=kf["synthesis_depth"],
+                content_type=req.content_type,
+            )
+        except AlreadyEnqueued:
+            logger.info(
+                "enrichment already queued, skipping (%s/%s org=%s)",
+                req.kb_slug, req.path, req.org_id,
+            )
 
     # Graphiti episode ingest — fire-and-forget background task (AC-1, AC-3, AC-8)
     if settings.graphiti_enabled:
@@ -325,27 +349,66 @@ async def gitea_webhook(request: Request) -> dict:
             if path.endswith(".md"):
                 removed.add(path)
 
-    ingested = 0
+    queued = 0
     deleted = 0
 
-    # Ingest changed files
+    # Schedule a debounced ingest for each changed file.
+    # queueing_lock ensures at most one pending task per document: if the user
+    # keeps saving, all intermediate saves hit AlreadyEnqueued and are silently
+    # dropped. The task fetches the LATEST content from Gitea at execution time,
+    # so the knowledge layer always receives the final version.
+    # Falls back to immediate ingest when enrichment is disabled (no Procrastinate app).
     for path in changed:
-        content = await _fetch_gitea_file(full_name, path)
-        if content is None:
-            logger.warning("Could not fetch %s from %s", path, full_name)
-            continue
-        req = IngestRequest(
-            org_id=org_id, kb_slug=kb_slug, path=path,
-            content=content, source_type="docs",
-            content_type="kb_article",
-        )
-        try:
-            await ingest_document(req)
-            ingested += 1
-        except Exception as exc:
-            logger.warning("Failed to ingest %s: %s", path, exc)
+        # Personal KB: path is "users/{user_uuid}/filename.md" — extract user_id.
+        # Note: save_personal_knowledge (MCP) currently posts directly to /ingest/v1/document
+        # with user_id set by the MCP. This Gitea path handles the future case where personal
+        # KB content is Gitea-backed (e.g. written via klai-docs personal KB support).
+        webhook_user_id: str | None = None
+        if kb_slug == "personal" and path.startswith("users/"):
+            path_parts = path.split("/")
+            if len(path_parts) >= 2 and path_parts[1]:
+                webhook_user_id = path_parts[1]
 
-    # Delete removed files
+        if settings.enrichment_enabled:
+            try:
+                import datetime as _dt  # noqa: PLC0415
+                from procrastinate.exceptions import AlreadyEnqueued  # noqa: PLC0415
+                from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+                proc_app = enrichment_tasks.get_app()
+                await proc_app.ingest_from_gitea.configure(  # type: ignore[attr-defined]
+                    queueing_lock=f"gitea:{org_id}:{kb_slug}:{path}",
+                    schedule_in=_dt.timedelta(seconds=settings.ingest_debounce_seconds),
+                ).defer_async(
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    path=path,
+                    gitea_repo=full_name,
+                    user_id=webhook_user_id,
+                )
+                queued += 1
+            except AlreadyEnqueued:
+                logger.debug("ingest already pending for %s/%s — debounce active", kb_slug, path)
+            except Exception as exc:
+                logger.warning("Failed to queue debounced ingest for %s: %s", path, exc)
+        else:
+            # No Procrastinate (enrichment disabled) — ingest immediately as before
+            content = await _fetch_gitea_file(full_name, path)
+            if content is None:
+                logger.warning("Could not fetch %s from %s", path, full_name)
+                continue
+            req = IngestRequest(
+                org_id=org_id, kb_slug=kb_slug, path=path,
+                content=content, source_type="docs",
+                content_type="kb_article",
+                user_id=webhook_user_id,
+            )
+            try:
+                await ingest_document(req)
+                queued += 1
+            except Exception as exc:
+                logger.warning("Failed to ingest %s: %s", path, exc)
+
+    # Delete removed files — immediate, no debounce needed
     for path in removed:
         try:
             await qdrant_store.delete_document(org_id, kb_slug, path)
@@ -354,7 +417,7 @@ async def gitea_webhook(request: Request) -> dict:
         except Exception as exc:
             logger.warning("Failed to delete %s: %s", path, exc)
 
-    return {"status": "ok", "ingested": ingested, "deleted": deleted, "org_slug": org_slug}
+    return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 
 
 async def _get_org_id(gitea_org_name: str) -> str | None:
@@ -389,8 +452,10 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
 
 @router.patch("/ingest/v1/kb/visibility")
 async def update_kb_visibility_route(request: Request, req: UpdateKBVisibilityRequest) -> dict:
-    """Update visibility for all chunks in a knowledge base. Called by Docs on visibility change."""
+    """Update visibility for a KB: persists to kb_config table and backfills all Qdrant chunks."""
     _verify_internal_secret(request)
+    pool = await get_pool()
+    await kb_config.set_kb_visibility(req.org_id, req.kb_slug, req.visibility, pool)
     await qdrant_store.update_kb_visibility(req.org_id, req.kb_slug, req.visibility)
     return {"status": "ok"}
 

@@ -22,6 +22,25 @@ LOG=/opt/klai/logs/health.log
 
 mkdir -p /opt/klai/logs
 
+# Resolve container name by compose project + service label.
+# Coolify may prefix container names with a hash after redeploy; this finds
+# the actual running container regardless of name prefix.
+resolve_container() {
+    docker ps \
+        --filter "label=com.docker.compose.project=klai-core" \
+        --filter "label=com.docker.compose.service=$1" \
+        --format "{{.Names}}" | head -1
+}
+
+# Resolve exec proxy and healthcheck containers once at startup
+PORTAL_API=$(resolve_container portal-api)
+LIBRECHAT=$(resolve_container librechat-klai)
+LITELLM=$(resolve_container litellm)
+MONGODB=$(resolve_container mongodb)
+POSTGRES=$(resolve_container postgres)
+REDIS=$(resolve_container redis)
+VEXA=$(resolve_container vexa-bot-manager)
+
 # Push based on Docker-native healthcheck status (requires healthcheck: in compose)
 push_healthcheck() {
     local container="$1" token="$2" label="$3"
@@ -38,6 +57,11 @@ push_healthcheck() {
 # Push based on connectivity test via docker exec (for services on isolated networks)
 push_exec() {
     local container="$1" cmd="$2" token="$3" label="$4"
+    if [ -z "$container" ]; then
+        curl -sf "${KUMA}/${token}?status=down&msg=container-not-found" -o /dev/null
+        echo "$(date -Iseconds) WARN ${label}: container not found" >> "$LOG"
+        return
+    fi
     if docker exec "$container" sh -c "$cmd" &>/dev/null; then
         curl -sf "${KUMA}/${token}?status=up&msg=OK" -o /dev/null
     else
@@ -49,122 +73,132 @@ push_exec() {
 # ── Products ──────────────────────────────────────────────────────────────────
 
 # Chat: LibreChat health endpoint
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://librechat-klai:3080/health')\"" \
     "${KUMA_TOKEN_CHAT}" "Chat"
 
 # Scribe: scribe-api receives audio, calls whisper-server internally
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://scribe-api:8020/health')\"" \
     "${KUMA_TOKEN_SCRIBE}" "Scribe"
 
 # Focus: research-api (document Q&A + web research)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://research-api:8030/health')\"" \
     "${KUMA_TOKEN_FOCUS}" "Focus"
 
 # Docs: Next.js app — check TCP reachability (no /health route)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import socket; s=socket.create_connection(('docs-app',3010),timeout=5); s.close()\"" \
     "${KUMA_TOKEN_DOCS}" "Docs"
 
 # Knowledge: knowledge-ingest product-level (RAG ingestion pipeline)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://knowledge-ingest:8000/health')\"" \
     "${KUMA_TOKEN_KNOWLEDGE:-}" "Knowledge"
 
 # ── Infrastructure ────────────────────────────────────────────────────────────
 
 # Portal API: tenant provisioning + auth gateway
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health')\"" \
     "${KUMA_TOKEN_PORTAL_API:-}" "Portal API"
 
 # MongoDB: conversation store (Chat)
-push_healthcheck klai-core-mongodb-1  "${KUMA_TOKEN_MONGODB}"  "Conversations Database"
+push_healthcheck "$MONGODB"  "${KUMA_TOKEN_MONGODB}"  "Conversations Database"
 
 # PostgreSQL: accounts, meetings, knowledge (shared)
-push_healthcheck klai-core-postgres-1 "${KUMA_TOKEN_POSTGRES}" "Account Database"
+push_healthcheck "$POSTGRES" "${KUMA_TOKEN_POSTGRES}" "Account Database"
 
 # Redis: LLM request cache + LibreChat session store
-push_healthcheck klai-core-redis-1    "${KUMA_TOKEN_REDIS}"    "AI Request Cache"
+push_healthcheck "$REDIS"    "${KUMA_TOKEN_REDIS}"    "AI Request Cache"
 
 # Meilisearch: LibreChat message search index
-push_exec klai-core-librechat-klai-1 \
+push_exec "$LIBRECHAT" \
     "wget -qO- http://meilisearch:7700/health 2>/dev/null | grep -q available" \
     "${KUMA_TOKEN_MEILI}" "Message Search"
 
 # Ollama: local fallback LLM (backup for LiteLLM)
-push_exec klai-core-litellm-1 \
+push_exec "$LITELLM" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://ollama:11434/')\"" \
     "${KUMA_TOKEN_OLLAMA}" "Backup Language Model"
 
 # Whisper: transcription engine (Scribe + Meetings via portal-api)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://whisper-server:8000/health')\"" \
     "${KUMA_TOKEN_WHISPER}" "Transcription Engine"
 
 # Docling: document-to-markdown conversion (Focus/research-api)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://docling-serve:5001/health')\"" \
     "${KUMA_TOKEN_DOCLING:-}" "Document Processing"
 
 # Research API: service-level monitor (Focus product depends on this)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://research-api:8030/health')\"" \
     "${KUMA_TOKEN_RESEARCH_API:-}" "Research API"
 
 # Gitea: docs content store (Docs product, Knowledge webhook source)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://gitea:3000/api/healthz')\"" \
     "${KUMA_TOKEN_GITEA}" "Docs Storage"
 
 # Qdrant: vector store for Knowledge retrieval
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://qdrant:6333/healthz')\"" \
     "${KUMA_TOKEN_QDRANT:-}" "Vector Database"
 
 # TEI: text embeddings (Knowledge ingestion + Focus retrieval)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://tei:8080/health')\"" \
     "${KUMA_TOKEN_TEI:-}" "Embeddings"
 
 # Infinity Reranker: cross-encoder reranking for Chat RAG retrieval
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://infinity-reranker:7997/health')\"" \
     "${KUMA_TOKEN_RERANKER:-}" "Reranker"
 
 # Firecrawl: web content fetcher (Chat web mode)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://firecrawl-api:3002/')\"" \
     "${KUMA_TOKEN_FIRECRAWL:-}" "Web Content Fetcher"
 
 # SearXNG: privacy-preserving web search (Chat + Focus)
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://searxng:8080/')\"" \
     "${KUMA_TOKEN_SEARXNG:-}" "Web Search"
 
 # Mailer: transactional email service
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://klai-mailer:8000/health')\"" \
     "${KUMA_TOKEN_MAILER:-}" "Email Service"
 
 # Vexa bot manager: meeting bot lifecycle (Docker-native healthcheck)
-push_healthcheck klai-core-vexa-bot-manager-1 "${KUMA_TOKEN_VEXA:-}" "Meeting Bot Manager"
+push_healthcheck "$VEXA" "${KUMA_TOKEN_VEXA:-}" "Meeting Bot Manager"
 
 # ── Knowledge layer (service-level) ──────────────────────────────────────────
 
 # Knowledge Ingestion: RAG pipeline service (separate from Products "Knowledge")
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://knowledge-ingest:8000/health')\"" \
     "${KUMA_TOKEN_KNOWLEDGE_INGEST:-}" "Knowledge Ingestion"
 
 # External Source Sync: klai-connector syncs GitHub → knowledge-ingest
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import urllib.request; urllib.request.urlopen('http://klai-connector:8200/health')\"" \
     "${KUMA_TOKEN_CONNECTOR:-}" "External Source Sync"
 
 # Knowledge MCP: bridge between Chat (LibreChat) and Knowledge layer
-push_exec klai-core-portal-api-1 \
+push_exec "$PORTAL_API" \
     "python3 -c \"import socket; s=socket.create_connection(('klai-knowledge-mcp',8080),timeout=5); s.close()\"" \
     "${KUMA_TOKEN_KNOWLEDGE_MCP:-}" "Knowledge MCP"
+
+# FalkorDB: graph database (Knowledge graph store — Graphiti)
+push_exec "$PORTAL_API" \
+    "python3 -c \"import socket; s=socket.create_connection(('falkordb',6379),timeout=5); s.close()\"" \
+    "${KUMA_TOKEN_FALKORDB:-}" "Graph Database"
+
+# Retrieval API: hybrid vector + graph search (Knowledge product)
+push_exec "$PORTAL_API" \
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://retrieval-api:8040/health')\"" \
+    "${KUMA_TOKEN_RETRIEVAL_API:-}" "Retrieval API"

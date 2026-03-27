@@ -536,3 +536,13 @@ SPEC described RRF for notebook scope, but `klai_focus` only has an unnamed sing
 - `a077e98` — feat(infra): CI workflow + docker-compose entry
 - `499ea03` — test(retrieval): synthesis/tei/chat coverage (90%)
 - Merged to main via PR #33
+
+### Reranker uitgeschakeld op CPU (2026-03-26)
+
+BGE-reranker-v2-m3 (`infinity-reranker`) draait op CPU. Benchmarked op 20 documenten met gemiddeld 692 tekens: **~83 seconden**. Dat maakt reranking onbruikbaar in productie.
+
+`RERANKER_ENABLED=false` (standaard). Reranking wordt overgeslagen; retrieval valt terug op RRF-scores uit Qdrant. De RRF hybrid search (vector_chunk + vector_questions + vector_sparse) compenseert een groot deel van de kwaliteitswinst die reranking zou bieden.
+
+Schakel in met `RERANKER_ENABLED=true` zodra GPU-inference beschikbaar is. Cold start op GPU verwacht <500ms; ~200ms per 20 docs.
+
+Gerelateerde commits: `22ad47d`, `836ff2c`, `7c5cdf1`, `213fb9e`

@@ -18,12 +18,14 @@ class Settings(BaseSettings):
     retrieval_gate_enabled: bool = True
     retrieval_gate_threshold: float = 0.1
     retrieval_candidates: int = 60
+    reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
 
     sparse_sidecar_url: str = ""
     sparse_sidecar_timeout: float = 5.0
 
+    reranker_enabled: bool = False  # CPU reranker too slow (~83s/20 docs); enable when GPU available
     coreference_timeout: float = 3.0
-    reranker_timeout: float = 2.0
+    reranker_timeout: float = 30.0
     # Graphiti / FalkorDB knowledge graph
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379

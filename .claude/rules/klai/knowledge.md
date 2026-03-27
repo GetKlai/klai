@@ -13,6 +13,7 @@ Always consult this before working on a relevant domain.
 | Infrastructure (Hetzner, SOPS, env, DNS) | `claude-docs/patterns/infrastructure.md` | `claude-docs/pitfalls/infrastructure.md` |
 | Platform (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) | `claude-docs/patterns/platform.md` | `claude-docs/pitfalls/platform.md` |
 | Frontend (i18n, component patterns) | `claude-docs/patterns/frontend.md` | — |
+| Logging (structlog, VictoriaLogs, LogsQL) | `claude-docs/patterns/logging.md` / auto-loaded via `.claude/rules/klai/python-logging.md` (Python) and `.claude/rules/klai/logging.md` (frontend) | — |
 | UI design system (colors, typography, buttons) | `claude-docs/styleguide.md` (full) / auto-loaded via `.claude/rules/klai/klai-ui-styleguide.md` | — |
 
 ## Project knowledge
@@ -28,6 +29,7 @@ Check the project's CLAUDE.md for the full list.
 - **Working on the AI stack** (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) → read `pitfalls/platform.md` and `patterns/platform.md`
 - **Managing secrets or env vars** → read `patterns/infrastructure.md` first
 - **Working on frontend UI** → styleguide rule auto-loads for `.astro`/`.tsx` files; full detail in `claude-docs/styleguide.md`
+- **Writing Python logging** → `python-logging.md` auto-loads for all Klai Python files; full guide in `claude-docs/patterns/logging.md`
 - **Working on a project-specific domain** → read that project's relevant domain files
 
 ## When to add new entries

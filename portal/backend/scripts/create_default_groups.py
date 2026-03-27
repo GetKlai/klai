@@ -12,11 +12,12 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.core.plans import get_plan_products
+from app.logging_setup import setup_logging
 from app.models.groups import PortalGroup, PortalGroupProduct
 from app.models.portal import PortalOrg
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+setup_logging("portal-api")
+logger = logging.getLogger(__name__)
 
 PRODUCT_GROUP_NAMES: dict[str, str] = {
     "chat": "Chat users",
@@ -29,12 +30,12 @@ async def run() -> None:
     async with AsyncSessionLocal() as db:
         orgs_result = await db.execute(select(PortalOrg))
         orgs = orgs_result.scalars().all()
-        log.info("Found %d orgs", len(orgs))
+        logger.info("Found %d orgs", len(orgs))
 
         for org in orgs:
             plan_products = get_plan_products(org.plan)
             if not plan_products:
-                log.info("Org %s (plan=%s): no products, skipping", org.slug, org.plan)
+                logger.info("Org %s (plan=%s): no products, skipping", org.slug, org.plan)
                 continue
 
             created = 0
@@ -50,7 +51,7 @@ async def run() -> None:
                     )
                 )
                 if existing.scalar_one_or_none():
-                    log.info("Org %s: group '%s' already exists, skipping", org.slug, group_name)
+                    logger.info("Org %s: group '%s' already exists, skipping", org.slug, group_name)
                     continue
 
                 group = PortalGroup(org_id=org.id, name=group_name, created_by="system")
@@ -65,12 +66,12 @@ async def run() -> None:
                     )
                 )
                 created += 1
-                log.info("Org %s: created group '%s' with product '%s'", org.slug, group_name, product)
+                logger.info("Org %s: created group '%s' with product '%s'", org.slug, group_name, product)
 
             await db.commit()
-            log.info("Org %s: done (%d groups created)", org.slug, created)
+            logger.info("Org %s: done (%d groups created)", org.slug, created)
 
-        log.info("Migration complete")
+        logger.info("Migration complete")
 
 
 if __name__ == "__main__":

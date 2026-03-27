@@ -17,6 +17,7 @@ from qdrant_client.models import (
     Filter,
     Fusion,
     FusionQuery,
+    MatchAny,
     MatchValue,
     Prefetch,
     SparseVector,
@@ -55,9 +56,13 @@ def _invalid_at_filter() -> Filter:
     )
 
 
-def _scope_filter(request: RetrieveRequest) -> list[FieldCondition]:
-    """Build scope-specific Qdrant filter conditions for klai_knowledge."""
-    conditions = [
+def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
+    """Build scope-specific Qdrant filter conditions for klai_knowledge.
+
+    Visibility enforcement: chunks with visibility='private' are excluded from org/both
+    scopes unless the requesting user owns them (matched via user_id).
+    """
+    conditions: list[FieldCondition | Filter] = [
         FieldCondition(key="org_id", match=MatchValue(value=request.org_id)),
     ]
     if request.scope == "personal":
@@ -65,8 +70,25 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition]:
             conditions.append(
                 FieldCondition(key="user_id", match=MatchValue(value=request.user_id))
             )
-    # For "org" and "both", we just filter by org_id (returns all)
-    # "both" intentionally includes personal + org chunks
+        # personal scope is already restricted to one user; no visibility filter needed
+    else:
+        # org / both: exclude private chunks that do not belong to the requesting user
+        not_private = Filter(
+            must_not=[FieldCondition(key="visibility", match=MatchValue(value="private"))]
+        )
+        visibility_should: list[Filter] = [not_private]
+        if request.user_id:
+            visibility_should.append(
+                Filter(must=[
+                    FieldCondition(key="visibility", match=MatchValue(value="private")),
+                    FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+                ])
+            )
+        conditions.append(Filter(should=visibility_should))
+    if request.kb_slugs:
+        conditions.append(
+            FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
+        )
     return conditions
 
 
