@@ -17,6 +17,7 @@
 | [ghcr-ci-deploy-build-on-server](#ghcr-ci-deploy-build-on-server) | Deploy when GHCR registry auth is stale |
 | [uptime-kuma-add-monitor](#uptime-kuma-add-monitor) | Adding a new service to status monitoring |
 | [umami-access](#umami-access) | Accessing Umami analytics dashboard |
+| [trivy-scan-new-workflow](#trivy-scan-new-workflow) | Adding Trivy container scanning to a new Docker build workflow |
 
 ---
 
@@ -229,5 +230,70 @@ curl -s https://analytics.getklai.com/api/heartbeat  # returns {"ok":true}
 **Tracker script** is in `klai-website/src/layouts/Base.astro` — rendered production-only (`import.meta.env.PROD`).
 
 **Custom events** tracked: `cta-click`, `waitlist-open/submit/close`, `billing-toggle`, `faq-expand`, `lang-switch`, `contact-submit`, `careers-submit`, `outbound-link`, `scroll-depth`.
+
+---
+
+## trivy-scan-new-workflow
+
+**When to use:** Adding a Trivy container vulnerability scan to a new Docker build workflow
+
+Every `Build and push *` workflow must include a `scan` job that runs after the image is built and uploads SARIF results to the GitHub Security tab. This is the standard pattern as of March 2026 — all existing workflows already have it.
+
+**Required: add `security-events: write` to the top-level `permissions` block:**
+```yaml
+permissions:
+  contents: read
+  packages: write
+  security-events: write   # required for SARIF upload
+```
+
+**The `scan` job** (add after `build-push`, parallel with `deploy`):
+```yaml
+  scan:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ghcr.io/getklai/<service-name>:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+```
+
+**Key rules:**
+- `needs: build-push` — scan runs after the image is pushed, not before
+- `exit-code: '1'` — scan job fails on CRITICAL/HIGH CVEs, but `deploy` does NOT need scan (deploy stays `needs: [build-push]` only)
+- `ignore-unfixed: true` — skip CVEs with no available fix to avoid noise
+- `if: always()` on SARIF upload — uploads results even when the scan finds issues (so they appear in Security tab)
+- Use `${{ github.sha }}` tag, not `:latest` — ensures you scan the exact image just built
+
+**For `docs.yml`** (uses env vars for image name):
+```yaml
+image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+```
+
+**Results location:** GitHub → Security → Code scanning alerts (SARIF results per workflow run)
+
+**See also:** `pitfalls/devops.md#devops-ci-green-not-enough`
 
 ---

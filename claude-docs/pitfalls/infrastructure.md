@@ -10,6 +10,7 @@
 | [infra-env-not-synced](#infra-env-not-synced) | HIGH | SOPS and Coolify are not auto-synced; update both |
 | [infra-sops-missing-main-env](#infra-sops-missing-main-env) | HIGH | Service-specific SOPS needs local `.sops.yaml` |
 | [infra-sops-dotenv-dollar-sign](#infra-sops-dotenv-dollar-sign) | HIGH | `$` in secrets breaks SOPS dotenv; use YAML format |
+| [infra-env-bash-special-chars](#infra-env-bash-special-chars) | CRIT | Unquoted `(`, `)`, `&` in `.env` break `source`; quote all values with special chars |
 | [infra-docker-user-container-ip-stale](#infra-docker-user-container-ip-stale) | CRIT | Container IPs change on restart; never hardcode in iptables |
 | [infra-zitadel-console-http-api](#infra-zitadel-console-http-api) | CRIT | Zitadel console broken; use Management API directly |
 | [infra-caddy-no-global-csp](#infra-caddy-no-global-csp) | HIGH | Global CSP `header {}` blocks browser APIs silently |
@@ -107,6 +108,49 @@ docker exec <container> env | grep <VAR_NAME>
 **Prevention:**
 - When generating bcrypt hashes or any secret with `$`, immediately store it with `$$` in `.env.sops`
 - After decrypting and writing to server `.env`, verify the variable value with `docker exec` before restarting dependent services
+
+---
+
+## infra-env-bash-special-chars
+
+**Severity:** CRIT
+
+**Trigger:** Adding a secret whose value contains bash special characters — `(`, `)`, `&`, `!`, `;`, `|`, `<`, `>` — to `.env.sops` without quoting it
+
+All CI deploy scripts start with `source /opt/klai/.env`. If any value contains unquoted bash special characters, bash raises a syntax error and the entire deploy fails — for **every** service, not just the one whose secret is new.
+
+**What happened (March 2026):**
+`GLITCHTIP_SECRET_KEY` was added to SOPS without quotes. The value contained `(` and `)`. Every CI deploy job started failing immediately after `source /opt/klai/.env`:
+
+```
+/opt/klai/.env: line 32: syntax error near unexpected token `)'
+Process exited with status 2
+```
+
+This blocked all service deploys on core-01 for the duration of the incident.
+
+**Fix:**
+Wrap any value containing special chars in double quotes in `.env.sops`:
+
+```bash
+# WRONG — breaks source
+GLITCHTIP_SECRET_KEY=jxIt)%wLF+6gWKpvDzBYmEci#)FGpbuirsv#_&YRwkRCmdIN(O
+
+# CORRECT — double quotes prevent bash parse errors
+GLITCHTIP_SECRET_KEY="jxIt)%wLF+6gWKpvDzBYmEci#)FGpbuirsv#_&YRwkRCmdIN(O"
+```
+
+**Double quotes are safe when the value does NOT contain `$` or backticks.** If the value contains `$`, use the `infra-sops-dotenv-dollar-sign` pattern instead (use `$$` to escape).
+
+**Prevention:**
+Before adding any new secret to `.env.sops`, check if the value contains: `( ) & ! ; | < >`
+If yes → wrap in double quotes. When in doubt, always quote.
+
+**Quick diagnosis:**
+```bash
+# Test that .env can be sourced on the server before declaring deploy fixed
+ssh core-01 "bash -c 'source /opt/klai/.env && echo OK'"
+```
 
 ---
 
