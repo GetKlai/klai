@@ -19,6 +19,7 @@ from fastapi import HTTPException
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_http_error(status_code: int) -> httpx.HTTPStatusError:
     """Build an httpx.HTTPStatusError with the given status code."""
     request = httpx.Request("POST", "https://zitadel.test/session")
@@ -98,9 +99,7 @@ class TestAuthAuditLogging:
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-2", "zorg-2"))
             mock_zitadel.has_totp = AsyncMock(return_value=False)
-            mock_zitadel.create_session_with_password = AsyncMock(
-                side_effect=_make_http_error(401)
-            )
+            mock_zitadel.create_session_with_password = AsyncMock(side_effect=_make_http_error(401))
             mock_audit.log_event = AsyncMock()
 
             with pytest.raises(Exception) as exc_info:
@@ -154,11 +153,13 @@ class TestAuthAuditLogging:
         from app.api.auth import TOTPLoginRequest, _pending_totp, totp_login
 
         # Pre-populate the TOTP pending cache
-        temp_token = _pending_totp.put({
-            "session_id": "sess-totp",
-            "session_token": "tok-totp",
-            "failures": 0,
-        })
+        temp_token = _pending_totp.put(
+            {
+                "session_id": "sess-totp",
+                "session_token": "tok-totp",
+                "failures": 0,
+            }
+        )
         body = TOTPLoginRequest(temp_token=temp_token, code="123456", auth_request_id="ar-totp")
         response = MagicMock()
         db = AsyncMock()
@@ -167,10 +168,12 @@ class TestAuthAuditLogging:
             patch("app.api.auth.zitadel") as mock_zitadel,
             patch("app.api.auth.audit") as mock_audit,
         ):
-            mock_zitadel.update_session_with_totp = AsyncMock(return_value={
-                "sessionId": "sess-totp",
-                "sessionToken": "tok-totp-new",
-            })
+            mock_zitadel.update_session_with_totp = AsyncMock(
+                return_value={
+                    "sessionId": "sess-totp",
+                    "sessionToken": "tok-totp-new",
+                }
+            )
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
             mock_audit.log_event = AsyncMock()
 
@@ -193,11 +196,13 @@ class TestAuthAuditLogging:
         """When TOTP verification fails (400), audit must log action='auth.totp.failed'."""
         from app.api.auth import TOTPLoginRequest, _pending_totp, totp_login
 
-        temp_token = _pending_totp.put({
-            "session_id": "sess-totp-2",
-            "session_token": "tok-totp-2",
-            "failures": 0,
-        })
+        temp_token = _pending_totp.put(
+            {
+                "session_id": "sess-totp-2",
+                "session_token": "tok-totp-2",
+                "failures": 0,
+            }
+        )
         body = TOTPLoginRequest(temp_token=temp_token, code="000000", auth_request_id="ar-totp-2")
         response = MagicMock()
         db = AsyncMock()
@@ -206,9 +211,7 @@ class TestAuthAuditLogging:
             patch("app.api.auth.zitadel") as mock_zitadel,
             patch("app.api.auth.audit") as mock_audit,
         ):
-            mock_zitadel.update_session_with_totp = AsyncMock(
-                side_effect=_make_http_error(400)
-            )
+            mock_zitadel.update_session_with_totp = AsyncMock(side_effect=_make_http_error(400))
             mock_audit.log_event = AsyncMock()
 
             with pytest.raises(HTTPException):

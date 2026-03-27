@@ -5,7 +5,6 @@ Revises: e8f9a0b1c2d3
 Create Date: 2026-03-27
 """
 
-
 from alembic import op
 
 revision = "d7e8f9a0b1c2"
@@ -24,10 +23,7 @@ def upgrade() -> None:
     # Fix 5: Row Level Security for tenant isolation
     op.execute("ALTER TABLE portal_audit_log ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE portal_audit_log FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY tenant_isolation ON portal_audit_log "
-        f"USING (org_id = {_T})"
-    )
+    op.execute(f"CREATE POLICY tenant_isolation ON portal_audit_log USING (org_id = {_T})")
 
 
 def downgrade() -> None:
