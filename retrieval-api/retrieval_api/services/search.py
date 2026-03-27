@@ -86,9 +86,18 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
             )
         conditions.append(Filter(should=visibility_should))
     if request.kb_slugs:
-        conditions.append(
-            FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
-        )
+        if request.scope == "both" and request.user_id:
+            # kb_slugs is an org-only filter. When scope=both, personal chunks must not be
+            # excluded by the slug filter — a chunk passes if it matches a slug OR belongs
+            # to the requesting user (personal ownership bypass).
+            conditions.append(Filter(should=[
+                FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs)),
+                FieldCondition(key="user_id", match=MatchValue(value=request.user_id)),
+            ]))
+        else:
+            conditions.append(
+                FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
+            )
     return conditions
 
 

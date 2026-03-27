@@ -84,9 +84,53 @@ class TestScopeFilterVisibility:
         assert "visibility" in keys
         assert "user_id" in keys
 
-    def test_kb_slugs_filter_is_always_added(self):
-        """kb_slugs filter is appended regardless of visibility logic."""
+    def test_kb_slugs_filter_org_scope(self):
+        """kb_slugs filter added as a direct FieldCondition for scope=org."""
         req = _make_request(scope="org", kb_slugs=["kb-a", "kb-b"])
+        conditions = _scope_filter(req)
+        slug_conds = [c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"]
+        assert len(slug_conds) == 1
+
+    def test_kb_slugs_both_scope_with_user_bypasses_personal_chunks(self):
+        """scope=both + kb_slugs: personal chunks bypass the slug filter.
+
+        The slug filter must not exclude personal KB chunks when the user has
+        personal KB enabled. kb_slugs is an org-only filter.
+
+        The resulting condition must be a Filter(should=[slug_match, user_id_match])
+        so that a chunk passes if it matches a slug OR belongs to the requesting user.
+        """
+        req = _make_request(scope="both", user_id="user-42", kb_slugs=["engineering"])
+        conditions = _scope_filter(req)
+
+        # Must NOT be a bare FieldCondition on kb_slug (that would exclude personal chunks)
+        bare_slug_conds = [
+            c for c in conditions
+            if isinstance(c, FieldCondition) and c.key == "kb_slug"
+        ]
+        assert len(bare_slug_conds) == 0, "bare kb_slug FieldCondition must not exist for scope=both"
+
+        # Must be a Filter(should=[...]) containing both slug and user_id bypass
+        slug_should_filters = [
+            c for c in conditions
+            if isinstance(c, Filter) and c.should is not None
+            and any(
+                isinstance(s, FieldCondition) and s.key == "kb_slug"
+                for s in c.should
+            )
+        ]
+        assert len(slug_should_filters) == 1, "expected one slug should-filter"
+        should_filter = slug_should_filters[0]
+        keys = set()
+        for s in should_filter.should:
+            if isinstance(s, FieldCondition):
+                keys.add(s.key)
+        assert "kb_slug" in keys
+        assert "user_id" in keys
+
+    def test_kb_slugs_both_scope_without_user_falls_back_to_direct_filter(self):
+        """scope=both + kb_slugs without user_id: direct slug FieldCondition (no bypass possible)."""
+        req = _make_request(scope="both", user_id=None, kb_slugs=["engineering"])
         conditions = _scope_filter(req)
         slug_conds = [c for c in conditions if isinstance(c, FieldCondition) and c.key == "kb_slug"]
         assert len(slug_conds) == 1

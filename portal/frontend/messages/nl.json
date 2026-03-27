@@ -1107,5 +1107,19 @@
   "gaps_filter_all": "Alle",
   "gaps_empty_state": "Geen kennishiaten gedetecteerd in deze periode.",
   "gaps_overview_tile": "Hiaten (7d)",
-  "gaps_index_card_none": "Geen hiaten gedetecteerd in de afgelopen 7 dagen — je kennisbank beantwoordt alle vragen."
+  "gaps_index_card_none": "Geen hiaten gedetecteerd in de afgelopen 7 dagen — je kennisbank beantwoordt alle vragen.",
+
+  "chat_kb_bar_tooltip_on": "Kennisbank zoeken ingeschakeld",
+  "chat_kb_bar_tooltip_off": "Kennisbank zoeken uitgeschakeld",
+  "chat_kb_bar_toggle_label": "Kennisbank",
+  "chat_kb_bar_personal_label": "Persoonlijke KB",
+  "chat_kb_bar_personal_tooltip": "Zoek ook in je persoonlijke notities",
+  "chat_kb_bar_org_filter_label": "Organisatie-kennisbanken",
+  "chat_kb_bar_org_filter_placeholder": "Alle kennisbanken",
+  "chat_kb_bar_saving": "Opslaan…",
+  "chat_kb_bar_save_error": "Voorkeur kon niet worden opgeslagen",
+  "chat_kb_bar_no_kbs": "Geen kennisbanken beschikbaar",
+  "chat_kb_bar_apply": "Toepassen",
+  "chat_kb_bar_select_all": "Alles selecteren",
+  "chat_kb_bar_deselect_all": "Alles deselecteren"
 }

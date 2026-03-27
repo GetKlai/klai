@@ -176,6 +176,10 @@ async def receive_sync_status(
 
 class KnowledgeFeatureResponse(BaseModel):
     enabled: bool
+    kb_retrieval_enabled: bool = True
+    kb_personal_enabled: bool = True
+    kb_slugs_filter: list[str] | None = None
+    kb_pref_version: int = 0
 
 
 @router.get("/v1/users/{librechat_user_id}/feature/knowledge", response_model=KnowledgeFeatureResponse)
@@ -252,10 +256,18 @@ async def get_knowledge_feature(
 
     # Org-admins always get knowledge access
     if user.role == "admin":
-        return KnowledgeFeatureResponse(enabled=True)
+        enabled = True
+    else:
+        products = await get_effective_products(user.zitadel_user_id, db)
+        enabled = "knowledge" in products
 
-    products = await get_effective_products(user.zitadel_user_id, db)
-    return KnowledgeFeatureResponse(enabled="knowledge" in products)
+    return KnowledgeFeatureResponse(
+        enabled=enabled,
+        kb_retrieval_enabled=user.kb_retrieval_enabled,
+        kb_personal_enabled=user.kb_personal_enabled,
+        kb_slugs_filter=user.kb_slugs_filter,
+        kb_pref_version=user.kb_pref_version,
+    )
 
 
 class GapEventIn(BaseModel):
