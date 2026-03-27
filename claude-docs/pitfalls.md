@@ -13,7 +13,8 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 |----------|------|---------|
 | [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 15 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
-| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
+| [Code Quality](pitfalls/code-quality.md) | Linting, type checking, CI quality gates | 1 entry |
+| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 6 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
 | [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana | 28 entries |
 
@@ -45,12 +46,22 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `git-commit-specific-files` | **HIGH** | Stage specific files, not git add . |
 | `git-verify-before-commit` | **HIGH** | Always git diff --staged before committing |
 
-### DevOps (2)
+### Code Quality (1)
+
+| ID | Sev | Trigger | Rule |
+|----|-----|---------|------|
+| `cq-pyright-noqa-mismatch` | **HIGH** | Using `# noqa: F401` with pyright in CI | `# noqa` is for ruff only; use `__all__` or `# pyright: ignore` for pyright |
+
+### DevOps (6)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
 | `devops-image-versions-from-training-data` | **HIGH** | Writing compose with pinned versions | Never use version numbers from AI training data |
 | `devops-compose-restart-does-not-reload-env` | **HIGH** | Updating .env then restarting | Use `docker compose up -d`, not `restart` |
+| `devops-deploy-path-mismatch` | **CRIT** | Frontend deploy succeeds but site does not update | Verify rsync target matches web server serve directory |
+| `devops-ci-green-not-enough` | **HIGH** | Declaring deploy complete after green CI | Always verify server rollout after CI passes |
+| `devops-alembic-multiple-heads` | **HIGH** | Merging branch with its own Alembic migration | Run `alembic heads` after merge; resolve with `alembic merge heads` |
+| `devops-alembic-duplicate-object-on-rerun` | **HIGH** | Migration creates objects that already exist | Use `IF NOT EXISTS` in migrations; stamp already-applied revisions |
 
 ### Infrastructure (6)
 

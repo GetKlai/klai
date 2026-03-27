@@ -12,6 +12,7 @@ Always consult this before working on a relevant domain.
 | DevOps (Coolify, Docker) | `claude-docs/patterns/devops.md` | `claude-docs/pitfalls/devops.md` |
 | Infrastructure (Hetzner, SOPS, env, DNS) | `claude-docs/patterns/infrastructure.md` | `claude-docs/pitfalls/infrastructure.md` |
 | Platform (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) | `claude-docs/patterns/platform.md` | `claude-docs/pitfalls/platform.md` |
+| Code Quality (ruff, pyright, ESLint) | `claude-docs/patterns/code-quality.md` | `claude-docs/pitfalls/code-quality.md` |
 | Frontend (i18n, component patterns) | `claude-docs/patterns/frontend.md` | — |
 | Logging (structlog, VictoriaLogs, LogsQL) | `claude-docs/patterns/logging.md` / auto-loaded via `.claude/rules/klai/python-logging.md` (Python) and `.claude/rules/klai/logging.md` (frontend) | — |
 | UI design system (colors, typography, buttons) | `claude-docs/styleguide.md` (full) / auto-loaded via `.claude/rules/klai/klai-ui-styleguide.md` | — |
@@ -25,6 +26,7 @@ Check the project's CLAUDE.md for the full list.
 
 - **Before making code changes** → read `pitfalls/process.md` — universal AI dev rules
 - **Before committing** → check `pitfalls/git.md`
+- **Fixing CI lint/type failures** → read `pitfalls/code-quality.md` and `patterns/code-quality.md`
 - **Deploying or changing infrastructure** → read `pitfalls/devops.md` and `pitfalls/infrastructure.md`
 - **Working on the AI stack** (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) → read `pitfalls/platform.md` and `patterns/platform.md`
 - **Managing secrets or env vars** → read `patterns/infrastructure.md` first
