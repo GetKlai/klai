@@ -1,0 +1,3 @@
+[submodule "klai-private"]
+	path = klai-private
+	url = git@github.com:GetKlai/klai-private.git

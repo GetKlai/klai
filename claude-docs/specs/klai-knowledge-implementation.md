@@ -1,8 +1,8 @@
 # SPEC: Klai Knowledge — Implementation Plan
 
 > Status: ✅ DONE — all core phases complete (2026-03-22)
-> Architecture reference: `klai-claude/docs/klai-knowledge-architecture.md`
-> Remaining low-priority items: `klai-claude/docs/specs/klai-knowledge-improvements.md`
+> Architecture reference: `claude-docs/architecture/klai-knowledge-architecture.md`
+> Remaining low-priority items: `claude-docs/specs/klai-knowledge-improvements.md`
 > Last updated: 2026-03-22
 
 ---

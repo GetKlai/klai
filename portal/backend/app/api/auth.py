@@ -43,8 +43,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.portal import PortalOrg, PortalUser
+from app.services import audit
 from app.services.events import emit_event
 from app.services.zitadel import zitadel
 
@@ -315,6 +319,15 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     except httpx.HTTPStatusError as exc:
         logger.exception("create_session failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401, 404, 412):
+            await audit.log_event(
+                db,
+                org_id=0,
+                actor=zitadel_user_id or "unknown",
+                action="auth.login.failed",
+                resource_type="session",
+                resource_id=zitadel_user_id or "unknown",
+                details={"reason": "invalid_credentials"},
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Email address or password is incorrect",
@@ -324,7 +337,50 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
             detail="Login failed, please try again later",
         ) from exc
 
+    # 2b. Enforce MFA policy (NEN 7510: REQ-SEC-001-08)
+    portal_user_for_mfa: PortalUser | None = None
+    mfa_policy = "optional"
+    if zitadel_user_id:
+        try:
+            portal_user_for_mfa = await db.scalar(
+                select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id)
+            )
+            if portal_user_for_mfa:
+                org_for_mfa = await db.get(PortalOrg, portal_user_for_mfa.org_id)
+                mfa_policy = org_for_mfa.mfa_policy if org_for_mfa else "optional"
+        except Exception:
+            logger.warning("MFA policy lookup failed -- defaulting to optional (fail-open)")
+
+        if mfa_policy == "required":
+            try:
+                user_has_mfa = await zitadel.has_any_mfa(zitadel_user_id)
+            except httpx.HTTPStatusError as exc:
+                logger.warning(
+                    "has_any_mfa check failed %s -- defaulting to pass (fail-open)",
+                    exc.response.status_code,
+                )
+                user_has_mfa = True
+            if not user_has_mfa:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="MFA required by your organization. Please set up two-factor authentication.",
+                )
+
     emit_event("login", user_id=zitadel_user_id, properties={"method": "password"})
+
+    # Audit log: successful login (non-fatal -- must not block login)
+    try:
+        await audit.log_event(
+            db,
+            org_id=portal_user_for_mfa.org_id if portal_user_for_mfa else 0,
+            actor=zitadel_user_id or "unknown",
+            action="auth.login",
+            resource_type="session",
+            resource_id=zitadel_user_id or "unknown",
+            details={"method": "password"},
+        )
+    except Exception:
+        logger.warning("Audit log write failed for auth.login (non-fatal)")
 
     # 3. If the user has TOTP, require a code before finalizing
     if has_totp:
@@ -347,7 +403,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 
 @router.post("/auth/totp-login", response_model=LoginResponse)
-async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginResponse:
+async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     """Complete login by providing a TOTP code after password was accepted."""
     pending = _pending_totp.get(body.temp_token)
     if not pending:
@@ -375,6 +431,15 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
         logger.exception("update_session_with_totp failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401):
             pending["failures"] += 1
+            await audit.log_event(
+                db,
+                org_id=0,
+                actor="unknown",
+                action="auth.totp.failed",
+                resource_type="session",
+                resource_id=pending["session_id"],
+                details={"reason": "invalid_code"},
+            )
             if pending["failures"] >= _TOTP_MAX_FAILURES:
                 _pending_totp.pop(body.temp_token)
                 raise HTTPException(
@@ -389,6 +454,17 @@ async def totp_login(body: TOTPLoginRequest, response: Response) -> LoginRespons
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Verification failed, please try again later",
         ) from exc
+
+    # Audit: successful TOTP login
+    await audit.log_event(
+        db,
+        org_id=0,
+        actor="unknown",
+        action="auth.login.totp",
+        resource_type="session",
+        resource_id=pending["session_id"],
+        details={"method": "totp"},
+    )
 
     session_id = updated.get("sessionId", pending["session_id"])
     session_token = updated.get("sessionToken", pending["session_token"])
@@ -441,8 +517,22 @@ async def sso_complete(
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response) -> None:
+async def logout(
+    response: Response,
+    klai_sso: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     """Clear the SSO cookie on logout."""
+    session_data = _decrypt_sso(klai_sso) if klai_sso else None
+    session_id = session_data["sid"] if session_data else "unknown"
+    await audit.log_event(
+        db,
+        org_id=0,
+        actor="unknown",
+        action="auth.logout",
+        resource_type="session",
+        resource_id=session_id,
+    )
     response.delete_cookie(key="klai_sso", domain=f".{settings.domain}")
 
 

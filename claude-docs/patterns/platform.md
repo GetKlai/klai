@@ -1,7 +1,7 @@
 # Platform Patterns
 
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy — Klai AI stack configuration.
-> Based on the compatibility review in `klai-claude/docs/architecture/platform.md`.
+> Based on the compatibility review in `claude-docs/architecture/platform.md`.
 
 ---
 

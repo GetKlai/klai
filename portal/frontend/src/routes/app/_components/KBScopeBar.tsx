@@ -65,11 +65,22 @@ export function KBScopeBar() {
       if (!res.ok) throw new Error('Failed to save preference')
       return res.json() as Promise<KBPref>
     },
+    onMutate: async (patch) => {
+      await queryClient.cancelQueries({ queryKey: ['kb-preference'] })
+      const previous = queryClient.getQueryData<KBPref>(['kb-preference'])
+      if (previous) {
+        queryClient.setQueryData<KBPref>(['kb-preference'], { ...previous, ...patch })
+      }
+      return { previous }
+    },
     onSuccess: (data) => {
       queryClient.setQueryData(['kb-preference'], data)
       chatKbLogger.info('KB preference saved', { version: data.kb_pref_version })
     },
-    onError: (err) => {
+    onError: (err, _patch, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['kb-preference'], context.previous)
+      }
       chatKbLogger.error('KB preference save failed', { err })
     },
   })
@@ -91,10 +102,12 @@ export function KBScopeBar() {
   if (!pref || orgKbs.length === 0) return null
 
   const allSlugs = orgKbs.map((kb) => kb.slug)
-  // null means all KBs selected
-  const currentSlugs: string[] = pref.kb_slugs_filter ?? allSlugs
-  const selectedCount = pref.kb_slugs_filter === null ? orgKbs.length : pref.kb_slugs_filter.length
+  // null means all KBs selected; filter out stale slugs no longer in the org
+  const currentSlugs: string[] =
+    pref.kb_slugs_filter === null ? allSlugs : pref.kb_slugs_filter.filter((s) => allSlugs.includes(s))
+  const selectedCount = currentSlugs.length
   const isOn = pref.kb_retrieval_enabled
+  const isPending = mutation.isPending
 
   const filterLabel =
     pref.kb_slugs_filter === null || selectedCount === orgKbs.length
@@ -125,9 +138,11 @@ export function KBScopeBar() {
       <button
         type="button"
         onClick={toggleRetrieval}
+        disabled={isPending}
         title={isOn ? m.chat_kb_bar_tooltip_on() : m.chat_kb_bar_tooltip_off()}
         className={[
           'flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors',
+          isPending ? 'opacity-50' : '',
           isOn
             ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
             : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]',
@@ -149,13 +164,17 @@ export function KBScopeBar() {
 
           {/* Personal KB checkbox */}
           <label
-            className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]"
+            className={[
+              'flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]',
+              isPending ? 'cursor-not-allowed opacity-50' : '',
+            ].join(' ')}
             title={m.chat_kb_bar_personal_tooltip()}
           >
             <input
               type="checkbox"
               checked={pref.kb_personal_enabled}
               onChange={togglePersonal}
+              disabled={isPending}
               className="h-3.5 w-3.5 accent-[var(--color-accent)]"
             />
             {m.chat_kb_bar_personal_label()}
@@ -166,7 +185,13 @@ export function KBScopeBar() {
             <button
               type="button"
               onClick={() => setDropdownOpen((v) => !v)}
-              className="flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted-foreground)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-purple-deep)]"
+              disabled={isPending}
+              className={[
+                'flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted-foreground)] transition-colors',
+                isPending
+                  ? 'opacity-50'
+                  : 'hover:border-[var(--color-accent)] hover:text-[var(--color-purple-deep)]',
+              ].join(' ')}
             >
               {filterLabel}
               <span className="text-[10px]">▾</span>
@@ -183,6 +208,7 @@ export function KBScopeBar() {
                       type="checkbox"
                       checked={currentSlugs.includes(kb.slug)}
                       onChange={() => toggleSlug(kb.slug)}
+                      disabled={isPending}
                       className="h-3.5 w-3.5 accent-[var(--color-accent)]"
                     />
                     <span className="truncate text-[var(--color-purple-deep)]">{kb.name}</span>
