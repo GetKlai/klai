@@ -68,6 +68,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Pre-deploy env check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            cd /opt/klai
+            REQUIRED="ZITADEL_PAT PORTAL_SECRETS_KEY SSO_COOKIE_KEY DOMAIN"
+            MISSING=""
+            for VAR in $REQUIRED; do
+              VALUE=$(docker compose config portal-api 2>/dev/null | grep -E "^\s+${VAR}:" | sed "s/.*: *//" | tr -d '"' | xargs || true)
+              if [ -z "$VALUE" ]; then
+                MISSING="$MISSING $VAR"
+              fi
+            done
+            if [ -n "$MISSING" ]; then
+              echo "DEPLOY BLOCKED: critical env vars are empty:$MISSING"
+              echo "Push an update to klai-infra/core-01/.env.sops first."
+              echo "The sync-env workflow will update the server automatically."
+              exit 1
+            fi
+            echo "Pre-flight OK — all critical vars present."
+
       - name: Deploy to core-01
         uses: appleboy/ssh-action@v1
         with:
