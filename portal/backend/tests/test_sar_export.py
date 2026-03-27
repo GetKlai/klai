@@ -4,7 +4,7 @@ Tests for POST /api/me/sar-export (AVG Art. 15 Subject Access Request).
 Pure unit tests — no real DB, all async sessions are mocked.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,7 +28,7 @@ def _mock_portal_user() -> MagicMock:
     user.kb_retrieval_enabled = True
     user.kb_personal_enabled = True
     user.kb_slugs_filter = None
-    user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    user.created_at = datetime(2024, 1, 1, tzinfo=UTC)
     user.librechat_user_id = None
     return user
 
@@ -61,7 +61,7 @@ class TestSarExport:
         mock_result_org_user = MagicMock()
         mock_result_org_user.one_or_none.return_value = (org, portal_user)
 
-        # Calls 2–5: empty .all() for group memberships, KB access, audit, usage events
+        # Calls 2-5: empty .all() for group memberships, KB access, audit, usage events
         mock_result_empty = MagicMock()
         mock_result_empty.all.return_value = []
 
