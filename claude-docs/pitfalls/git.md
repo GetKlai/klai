@@ -2,6 +2,16 @@
 
 > Version control safety rules.
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [git-no-destructive-commands](#git-no-destructive-commands) | CRIT | Never run reset/restore/clean without explicit confirmation |
+| [git-no-secrets-in-commits](#git-no-secrets-in-commits) | CRIT | Never commit secrets or credentials |
+| [git-commit-specific-files](#git-commit-specific-files) | HIGH | Stage specific files; never `git add -A` |
+| [git-verify-before-commit](#git-verify-before-commit) | HIGH | Read `git diff` before committing |
+
 ---
 
 ## git-no-destructive-commands

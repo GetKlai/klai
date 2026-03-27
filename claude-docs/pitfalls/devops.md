@@ -2,6 +2,21 @@
 
 > Coolify, Docker, deployments, service management
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [devops-image-versions-from-training-data](#devops-image-versions-from-training-data) | HIGH | WebSearch current version before pinning any image |
+| [devops-compose-restart-does-not-reload-env](#devops-compose-restart-does-not-reload-env) | HIGH | Use `up -d` not `restart` after `.env` changes |
+| [devops-compose-up-inherits-global-env](#devops-compose-up-inherits-global-env) | HIGH | Pre-flight check env vars before `docker compose up -d` |
+| [devops-redis-password-special-chars](#devops-redis-password-special-chars) | HIGH | URL-encode special chars (`/`, `+`, `=`) in Redis password |
+| [devops-ghcr-auth-silent-stale-deploy](#devops-ghcr-auth-silent-stale-deploy) | HIGH | Store GHCR PAT in SOPS; use `set -e` in deploy script |
+| [devops-deploy-path-mismatch](#devops-deploy-path-mismatch) | CRIT | Verify rsync target matches web server serve directory |
+| [devops-ci-green-not-enough](#devops-ci-green-not-enough) | HIGH | CI green ≠ production rollout; always verify on server |
+| [devops-alembic-multiple-heads](#devops-alembic-multiple-heads) | HIGH | Run `alembic heads` after merging branches with migrations |
+| [devops-alembic-duplicate-object-on-rerun](#devops-alembic-duplicate-object-on-rerun) | HIGH | Use `IF NOT EXISTS` in all migration DDL statements |
+
 ---
 
 ## devops-image-versions-from-training-data
