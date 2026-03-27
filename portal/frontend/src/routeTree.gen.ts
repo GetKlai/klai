@@ -33,6 +33,7 @@ import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
 import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
+import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
@@ -175,6 +176,11 @@ const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
 const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
   id: '/knowledge/',
   path: '/knowledge/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppGapsIndexRoute = AppGapsIndexRouteImport.update({
+  id: '/gaps/',
+  path: '/gaps/',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppFocusIndexRoute = AppFocusIndexRouteImport.update({
@@ -335,6 +341,7 @@ export interface FileRoutesByFullPath {
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
+  '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
@@ -382,6 +389,7 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
+  '/app/gaps': typeof AppGapsIndexRoute
   '/app/knowledge': typeof AppKnowledgeIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
@@ -432,6 +440,7 @@ export interface FileRoutesById {
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
+  '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
@@ -483,6 +492,7 @@ export interface FileRouteTypes {
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
+    | '/app/gaps/'
     | '/app/knowledge/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
@@ -530,6 +540,7 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/app/docs'
     | '/app/focus'
+    | '/app/gaps'
     | '/app/knowledge'
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
@@ -579,6 +590,7 @@ export interface FileRouteTypes {
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
+    | '/app/gaps/'
     | '/app/knowledge/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
@@ -775,6 +787,13 @@ declare module '@tanstack/react-router' {
       path: '/knowledge'
       fullPath: '/app/knowledge/'
       preLoaderRoute: typeof AppKnowledgeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/gaps/': {
+      id: '/app/gaps/'
+      path: '/gaps'
+      fullPath: '/app/gaps/'
+      preLoaderRoute: typeof AppGapsIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/focus/': {
@@ -1003,6 +1022,7 @@ interface AppRouteRouteChildren {
   AppTranscribeAddRoute: typeof AppTranscribeAddRoute
   AppDocsIndexRoute: typeof AppDocsIndexRoute
   AppFocusIndexRoute: typeof AppFocusIndexRoute
+  AppGapsIndexRoute: typeof AppGapsIndexRoute
   AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
@@ -1026,6 +1046,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppTranscribeAddRoute: AppTranscribeAddRoute,
   AppDocsIndexRoute: AppDocsIndexRoute,
   AppFocusIndexRoute: AppFocusIndexRoute,
+  AppGapsIndexRoute: AppGapsIndexRoute,
   AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
