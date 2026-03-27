@@ -138,11 +138,8 @@ async def me(
     )
 
 
-# SAR response models (SPEC-GDPR-001)
-# @MX:NOTE Narrow scope - excludes audit details and product event properties
-
-
 class SarIdentity(BaseModel):
+    """SAR response - identity section (SPEC-GDPR-001)"""
     first_name: str | None
     last_name: str | None
     display_name: str | None
