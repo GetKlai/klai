@@ -17,6 +17,7 @@ from qdrant_client.models import (
     Filter,
     Fusion,
     FusionQuery,
+    MatchAny,
     MatchValue,
     Prefetch,
     SparseVector,
@@ -67,6 +68,10 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition]:
             )
     # For "org" and "both", we just filter by org_id (returns all)
     # "both" intentionally includes personal + org chunks
+    if request.kb_slugs:
+        conditions.append(
+            FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
+        )
     return conditions
 
 
