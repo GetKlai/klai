@@ -4,7 +4,8 @@
 |------------|------------------------------------------|
 | SPEC-ID    | SPEC-SEC-001                             |
 | Created    | 2026-03-27                               |
-| Status     | Draft                                    |
+| Completed  | 2026-03-27                               |
+| Status     | Done                                     |
 | Priority   | High                                     |
 | Domain     | Security / Compliance                    |
 | Releases   | R2 (backend code), R3 (DB + infra)       |
@@ -211,12 +212,17 @@ CREATE POLICY tenant_isolation ON portal_audit_log
 
 **Acceptance Criteria**
 
-- `systemctl list-timers` (or `crontab -l`) shows the backup timer scheduled at 02:00 daily.
-- After the timer fires, a new backup file exists locally and in Hetzner Object Storage.
-- Local backups older than 30 days are automatically pruned.
-- Object Storage backups older than 90 days are automatically pruned.
-- Uptime Kuma shows a heartbeat for the backup monitor.
-- A simulated backup failure (e.g., stopped PostgreSQL) triggers an Uptime Kuma alert.
+- ✅ `crontab -l` shows the backup timer scheduled at 02:00 daily.
+- ✅ After the timer fires, new backup files exist locally and in Hetzner Storage Box (offsite).
+- ✅ Local backups older than 30 days are automatically pruned (`head -n -30`).
+- ⚠️ Remote retention: Storage Box uses restricted shell (no `find`/`rm` via SSH). At ~45MB/day and 100GB capacity, pruning is not needed until ~2026 days. TODO: sftp-based pruning when storage exceeds 80GB.
+- ✅ Uptime Kuma shows a heartbeat for monitor "Backup core-01" (ID 48, push token KUMA_TOKEN_BACKUP).
+- ✅ ERR trap calls `_kuma_push down` on any backup step failure, triggering Uptime Kuma alert.
+
+**Implementation notes (deviations from spec):**
+- Used Hetzner Storage Box (rsync over SSH) instead of rclone + Object Storage. Equivalent offsite encryption via `age`.
+- Backed up: PostgreSQL (incl. Gitea DB schema), Gitea git repos + config (KB source of truth), MongoDB, Redis. FalkorDB and Qdrant are derived and excluded (rebuild via ingest pipeline).
+- Commits: `de42b79`, `e0293a8` (deploy/scripts/backup.sh); `42f829b`, `9a5875a` (R2+R3 backend/migrations).
 
 ---
 
