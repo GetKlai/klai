@@ -99,6 +99,21 @@ prometheus.scrape "retrieval_api" {
   job_name        = "retrieval-api"
 }
 
+// ─── Portal-API Web Vitals metrics ───────────────────────────────────────────
+// Scrapes /metrics on portal-api for web-vitals histograms.
+// Metrics: webvitals_{lcp,fcp,inp,ttfb}_seconds, webvitals_cls_score,
+//          webvitals_reports_total
+
+prometheus.scrape "portal_api" {
+  targets = [{
+    __address__ = "portal-api:8010",
+  }]
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  job_name        = "portal-api"
+}
+
 // ─── Container metrics from cAdvisor ─────────────────────────────────────────
 
 prometheus.scrape "cadvisor" {

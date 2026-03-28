@@ -16,6 +16,7 @@ dependencies = [
     "cryptography>=43.0",
     "icalendar>=6.1.0,<8.0",
     "motor>=3.6",
+    "prometheus-client>=0.21,<1.0",
     "structlog>=25.0",
 ]
 

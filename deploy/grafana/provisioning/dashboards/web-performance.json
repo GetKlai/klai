@@ -1,0 +1,296 @@
+{
+  "annotations": { "list": [] },
+  "description": "Core Web Vitals: LCP, FCP, INP, CLS, TTFB collected from portal-api",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "LCP p50 / p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2.5 },
+              { "color": "red", "value": 4.0 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.5, sum(rate(webvitals_lcp_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(webvitals_lcp_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "FCP p50 / p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1.8 },
+              { "color": "red", "value": 3.0 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.5, sum(rate(webvitals_fcp_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(webvitals_fcp_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "INP p50 / p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "red", "value": 0.5 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.5, sum(rate(webvitals_inp_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(webvitals_inp_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "CLS p50 / p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.25 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.5, sum(rate(webvitals_cls_score_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(webvitals_cls_score_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "TTFB p50 / p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "red", "value": 1.8 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.5, sum(rate(webvitals_ttfb_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(webvitals_ttfb_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "LCP Rating Distribution",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "sum(rate(webvitals_lcp_seconds_count[1h])) by (rating)",
+          "legendFormat": "{{rating}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "LCP p95 by Page",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "histogram_quantile(0.95, sum(rate(webvitals_lcp_seconds_bucket[1h])) by (le, page))",
+          "legendFormat": "{{page}}",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Reports / min",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "expr": "sum(rate(webvitals_reports_total[5m])) * 60",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["klai", "web-vitals", "performance"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Web Performance",
+  "uid": "web-performance",
+  "version": 1
+}

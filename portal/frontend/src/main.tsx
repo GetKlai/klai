@@ -7,6 +7,7 @@ import { KlaiAuthProvider } from '@/lib/auth'
 import { LocaleProvider } from '@/lib/locale'
 import { Toaster } from '@/components/ui/sonner'
 import { routeTree } from './routeTree.gen'
+import { initVitals } from '@/lib/vitals'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -67,7 +68,7 @@ Sentry.init({
     // DOM click trails are behavioural data we don't need for debugging.
     Sentry.breadcrumbsIntegration({ console: false, dom: false }),
   ],
-  tracesSampleRate: 0.05,
+  tracesSampleRate: 0.3,
   beforeSend(event) {
     // Strip IP address — we identify by user ID only, not by network location.
     if (event.user) delete event.user.ip_address
@@ -88,3 +89,5 @@ createRoot(document.getElementById('root')!).render(
     </LocaleProvider>
   </StrictMode>
 )
+
+initVitals()
