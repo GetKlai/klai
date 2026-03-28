@@ -13,8 +13,8 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 |----------|------|---------|
 | [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
-| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 2 entries |
-| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 7 entries |
+| [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
+| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 10 entries |
 | [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 31 entries |
 | [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 4 entries |
 
@@ -51,14 +51,15 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `git-commit-specific-files` | **HIGH** | Stage specific files, not git add . |
 | `git-verify-before-commit` | **HIGH** | Always git diff --staged before committing |
 
-### DevOps (2)
+### DevOps (3)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
 | `devops-image-versions-from-training-data` | **HIGH** | Writing compose with pinned versions | Never use version numbers from AI training data |
 | `devops-compose-restart-does-not-reload-env` | **HIGH** | Updating .env then restarting | Use `docker compose up -d`, not `restart` |
+| `devops-recover-secrets-from-running-containers` | **HIGH** | Env vars lost, containers still running | Recover with `docker exec printenv` before restarting anything |
 
-### Infrastructure (7)
+### Infrastructure (10)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -69,6 +70,9 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `infra-zitadel-console-http-api` | **CRIT** | Zitadel console broken, API calls fail | Remove --tlsMode disabled, use ZITADEL_TLS_ENABLED env |
 | `infra-caddy-no-global-csp` | **HIGH** | Adding CSP to Caddy global header | No global CSP -- apps manage their own |
 | `infra-never-modify-env-secrets` | **CRIT** | Modifying secrets in /opt/klai/.env | NEVER modify existing secrets via shell commands |
+| `infra-sops-incomplete-wipes-server` | **CRIT** | SOPS has fewer vars than server | SOPS must be COMPLETE source of truth; never a subset |
+| `infra-sync-env-no-safety-checks` | **CRIT** | Secrets sync without validation | Must have: line count, threshold, atomic write, diff, backup |
+| `infra-placeholder-values-in-sops` | **CRIT** | Placeholder values in SOPS | Never commit placeholders; generate real values immediately |
 
 ### Platform (31)
 

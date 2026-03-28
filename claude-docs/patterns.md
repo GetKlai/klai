@@ -34,6 +34,7 @@ Each project has its own `docs/patterns/` directory for project-specific pattern
 - **[coolify-env-update](patterns/devops.md#coolify-env-update)** - Update env var in SOPS and Coolify
 - **[coolify-redeploy](patterns/devops.md#coolify-redeploy)** - Trigger a fresh deploy
 - **[docker-rebuild-no-cache](patterns/devops.md#docker-rebuild-no-cache)** - Full rebuild after dependency changes
+- **[atomic-env-deploy](patterns/devops.md#atomic-env-deploy)** - Write `.env` via temp file + atomic `mv`, never `cat >`
 
 ### Infrastructure
 

@@ -16,6 +16,7 @@
 | [devops-ci-green-not-enough](#devops-ci-green-not-enough) | HIGH | CI green ≠ production rollout; always verify on server |
 | [devops-alembic-multiple-heads](#devops-alembic-multiple-heads) | HIGH | Run `alembic heads` after merging branches with migrations |
 | [devops-alembic-duplicate-object-on-rerun](#devops-alembic-duplicate-object-on-rerun) | HIGH | Use `IF NOT EXISTS` in all migration DDL statements |
+| [devops-recover-secrets-from-running-containers](#devops-recover-secrets-from-running-containers) | HIGH | Recover lost env vars from running containers before restarting |
 
 ---
 
@@ -309,6 +310,48 @@ alembic upgrade head
 **Rule:** All Alembic migrations that create policies, indexes, or other named database objects must use `IF NOT EXISTS` guards. Migrations that fail partway through leave the database in an inconsistent state that requires manual intervention.
 
 **See also:** `pitfalls/platform.md#platform-alembic-shared-postgres-schema-conflict`
+
+---
+
+## devops-recover-secrets-from-running-containers
+
+**Severity:** HIGH
+
+**Trigger:** Environment variables on the server have been lost or overwritten, and services are still running
+
+When `/opt/klai/.env` is wiped or corrupted, running containers still have their original environment variables in memory. These values are recoverable with `docker exec <container> printenv VAR_NAME` — but only until the container is restarted or recreated. Once a container restarts, it reads the (now broken) `.env` and the original values are gone forever.
+
+**What happened (March 2026):**
+The `sync-env.yml` workflow overwrote `/opt/klai/.env` with an incomplete SOPS file, wiping 47 vars. The `MISTRAL_API_KEY` was among the lost vars — it had been added manually to the server months ago and never back-ported to SOPS. It was recovered from the still-running LiteLLM container:
+```bash
+docker exec klai-core-litellm-1 printenv MISTRAL_API_KEY
+```
+
+**Critical recovery procedure:**
+```bash
+# 1. DO NOT restart any containers — their memory still has the real values
+# 2. List all running containers
+docker ps --format '{{.Names}}'
+
+# 3. For each critical var, recover from the container that uses it
+docker exec <container> printenv VAR_NAME
+
+# 4. Build the complete .env from recovered values + known values
+# 5. Write the corrected .env to the server
+# 6. Only THEN restart containers that need it
+```
+
+**Key services and their critical vars:**
+| Container | Critical vars to recover |
+|-----------|------------------------|
+| litellm | `MISTRAL_API_KEY`, `LITELLM_MASTER_KEY` |
+| caddy | `HETZNER_AUTH_API_TOKEN`, `ADMIN_EMAIL` |
+| portal-api | `PORTAL_API_ZITADEL_PAT`, `PORTAL_API_DB_PASSWORD` |
+| zitadel | `ZITADEL_MASTERKEY` |
+
+**Rule:** During an env wipe incident, the first priority is recovering values from running containers. Never restart or `docker compose up -d` any service until you have recovered all critical vars. A restart reads the broken `.env` and permanently loses the in-memory values.
+
+**See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`
 
 ---
 
