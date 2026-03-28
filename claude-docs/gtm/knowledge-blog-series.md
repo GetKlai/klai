@@ -28,18 +28,24 @@ Author voice: Mark Vletter (see `klai-claude/rules/gtm/mark-tone-of-voice.md`)
 | B1 | Evidence vs. claims: the distinction that changes everything | arch 3.1 (source_document vs knowledge_artifact) | published |
 | B2 | Three axes, not one label | arch 3.2 (provenance, assertion mode, synthesis depth) | published |
 | B3 | The self-managing taxonomy is a myth | arch 6.2-6.5 (BERTopic, outlier rates, human gate) | published |
-| B4 | Quality happens at storage, not at search | arch 4.2, fund 13 (Contextual Retrieval, HyPE) | planned |
-| B5 | How a knowledge system handles uncertainty | fund 11 (CWA vs OWA, confidence, assertion_mode) | planned |
+| B4 | Quality happens at storage, not at search | arch 4.2, fund 13 (Contextual Retrieval, HyPE) | published |
+| B5 | Why knowledge base search fails users | vocabulary gap, hybrid search, HyPE, query expansion | published |
+
+> Note: originally planned B5 ("How a knowledge system handles uncertainty" — CWA vs OWA, assertion_mode) was replaced by the vocabulary gap topic. The uncertainty post is dropped.
 
 ### Series C: "Retrieval that works" (deep: engineers, AI builders)
 
-| # | Working title | Source sections | Status |
+Based on code audit of retrieval-api, knowledge-ingest, and litellm hook (March 2026).
+
+| # | Working title | Source (actual code) | Status |
 |---|---|---|---|
-| C1 | Why 31% of all retrievals make your answer worse | fund 15 (TARG, pre-retrieval gate, Self-RAG) | planned |
-| C2 | Dense + sparse: when exact terms matter | fund 14 (BGE-M3, hybrid search, RRF) | planned |
-| C3 | How Graph RAG fails for B2B knowledge bases | arch 5.3 (LightRAG token costs, regression on facts) | planned |
-| C4 | One collection for all tenants | arch 5.1 (Qdrant multitenancy, GDPR erasure) | planned |
-| C5 | Five query intents, three backends | fund 15 (routing, coreference, multi-turn) | planned |
+| C1 | How to find and prioritize knowledge base gaps | litellm/klai_knowledge.py `_classify_gap`, app_gaps.py | published |
+| C2 | How to know if your knowledge base fix actually worked | gap_rescorer.py, gap_classification.py (SPEC-KB-015) | published |
+| C3 | Not every question needs the knowledge base | retrieval-api/services/gate.py `should_bypass`, cosine margin | planned |
+| C4 | Three signals, one answer | retrieval-api/services/search.py 3-leg RRF, reranker.py, coreference.py | planned |
+| C5 | Not every document is the same | knowledge-ingest/content_profiles.py, context_strategies.py | planned |
+| C6 | Searchable in seconds, smart in minutes | knowledge-ingest two-phase: immediate upsert + async enrichment via Procrastinate | planned |
+| C7 | Personal knowledge: five things your AI should remember | klai-knowledge-mcp, personal KB scope, assertion_mode | planned |
 
 ---
 
@@ -98,11 +104,13 @@ Already introduced in A0. Do not re-explain it. Reference it by name in later po
 | B3 | Myth-bust | Inversion (title is already the claim) | Objection handling |
 | B4 | Case build | Data point (the cost of bad storage) | The honest trade-off |
 | B5 | Essay | Scenario (system confidently wrong) | Open question |
-| C1 | Case build | Data point first (31% number) | No action section |
-| C2 | Framework intro | Direct challenge | "Start here" |
-| C3 | Myth-bust | Inversion | Trade-off |
-| C4 | Essay | Scenario | Trade-off |
-| C5 | Taxonomy | Observation | "Start here" |
+| C1 | Essay | Observation (every failed query is data) | Open question (threads to C2) |
+| C2 | Essay | Short scenario (you added the article, gap still showing) | No action section |
+| C3 | Essay | Inversion (more retrieval = better, right?) | The honest trade-off |
+| C4 | Case build | Data point / direct challenge | "Start here" |
+| C5 | Taxonomy | Observation (a PDF and a transcript walk into a pipeline) | The honest trade-off |
+| C6 | Essay | Short scenario (user saves, searches immediately) | No action section |
+| C7 | Taxonomy | Narrative scene (personal saves) | Open question |
 
 ---
 
@@ -115,3 +123,4 @@ Link from knowledge blogs to compliance blogs where relevant (e.g. GDPR erasure 
 ---
 
 *Created: 2026-03-26*
+*Updated: 2026-03-28 — code audit, B4/B5 marked published, C-series rewritten from actual codebase*
