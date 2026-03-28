@@ -16,6 +16,9 @@
 | [infra-caddy-no-global-csp](#infra-caddy-no-global-csp) | HIGH | Global CSP `header {}` blocks browser APIs silently |
 | [infra-never-modify-env-secrets](#infra-never-modify-env-secrets) | CRIT | Never `sed`/`echo` existing secrets in `.env` |
 | [infra-sops-files-in-subdirs](#infra-sops-files-in-subdirs) | CRIT | SOPS files in subdirs need a local `.sops.yaml` |
+| [infra-sops-incomplete-wipes-server](#infra-sops-incomplete-wipes-server) | CRIT | SOPS with fewer vars than server wipes production on sync |
+| [infra-sync-env-no-safety-checks](#infra-sync-env-no-safety-checks) | CRIT | Secrets sync without safety guards is a ticking time bomb |
+| [infra-placeholder-values-in-sops](#infra-placeholder-values-in-sops) | CRIT | Placeholder values in SOPS break services silently |
 
 ---
 
@@ -341,6 +344,89 @@ When bulk-deleting service directories, always check first:
 find core-01/ -name "*.sops*" | sort
 ```
 Never delete a directory that contains a `.sops` file without explicitly moving that file first.
+
+---
+
+## infra-sops-incomplete-wipes-server
+
+**Severity:** CRIT
+
+**Trigger:** Running `sync-env.yml` when `.env.sops` has fewer variables than the server's `/opt/klai/.env`
+
+A secrets sync workflow that overwrites the server `.env` with a decrypted SOPS file will destroy every variable that exists on the server but not in SOPS. If SOPS has 35 vars and the server has 82, the sync wipes 47 vars — taking down Caddy (TLS), portal-api, LiteLLM, and every service that depends on the missing vars.
+
+**What happened (March 2026):**
+The server's `/opt/klai/.env` had accumulated 82 vars over months of manual additions and provisioning. The SOPS file only contained the initial 35 vars, many with placeholder values. A push to `klai-infra/main` triggered `sync-env.yml`, which did a blind `cat >` overwrite. Result:
+- Caddy lost `HETZNER_AUTH_API_TOKEN` and `ADMIN_EMAIL` — all HTTPS endpoints down
+- LiteLLM lost `MISTRAL_API_KEY` — all AI features broken
+- Portal-api crashed (Zitadel unreachable behind dead Caddy)
+- SearXNG, docs-app, Grafana, Gitea — all degraded
+
+**Why it happens:**
+The SOPS file was treated as a partial backup rather than the authoritative source. Manual `echo >> /opt/klai/.env` additions on the server were never back-ported to SOPS. Over time, the gap between SOPS (35 vars) and server (82 vars) grew silently until the next sync wiped the difference.
+
+**Prevention:**
+1. SOPS must be the COMPLETE source of truth — every var on the server must exist in SOPS with a real value
+2. After adding any var to the server manually, immediately add it to `.env.sops` and push
+3. The sync workflow must have a threshold check: abort if the new file has significantly fewer vars than the current one (see `infra-sync-env-no-safety-checks`)
+4. Periodically audit: `ssh core-01 "wc -l /opt/klai/.env"` vs `sops -d .env.sops | wc -l`
+
+**See also:** `pitfalls/infrastructure.md#infra-sync-env-no-safety-checks`, `patterns/devops.md#sops-env-sync`
+
+---
+
+## infra-sync-env-no-safety-checks
+
+**Severity:** CRIT
+
+**Trigger:** A secrets sync workflow (CI or manual script) that writes to a server `.env` without validation
+
+A sync workflow that does `sops -d .env.sops | ssh server "cat > /opt/klai/.env"` with no safety checks is a production outage waiting for any of: a SOPS decryption failure (writes empty file), an incomplete SOPS file (wipes vars), or a network drop during transfer (writes partial file).
+
+**Why it happens:**
+The initial workflow was written as a simple decrypt-and-copy. It worked fine when SOPS and the server were in sync. No one added guards because the workflow ran infrequently and "always worked." The first time SOPS diverged from the server, it caused a major outage.
+
+**Prevention — required guards for any secrets sync workflow:**
+1. **Minimum line count** — abort if decrypted file has fewer than N lines (catches decryption failure producing empty output)
+2. **Var count threshold (90%)** — abort if new file has significantly fewer vars than the current server file
+3. **Critical vars validation** — check that essential vars (e.g. `HETZNER_AUTH_API_TOKEN`, `MISTRAL_API_KEY`, `PORTAL_API_ZITADEL_PAT`) are present, non-empty, and not placeholders
+4. **Masked diff output** — log ADDED/REMOVED/CHANGED key names (never values) so operators can review
+5. **Key removal block** — if vars would be removed, abort on push-trigger; require manual `workflow_dispatch` with explicit confirmation
+6. **Atomic write** — write to `.env.new`, chmod, then `mv` (never `cat >` directly to `.env`)
+7. **Post-deploy server verification** — after writing, verify critical vars on the actual server
+8. **Backup rotation** — keep N most recent backups of `.env` before overwriting
+
+**See also:** `patterns/devops.md#sops-env-sync`, `patterns/devops.md#atomic-env-deploy`
+
+---
+
+## infra-placeholder-values-in-sops
+
+**Severity:** CRIT
+
+**Trigger:** SOPS file contains placeholder values like `PLACEHOLDER_VOER_IN`, `placeholder_generate_later`, `CHANGE_ME`, or empty strings for required variables
+
+Placeholder values in SOPS are silent production bombs. They pass simple existence checks (`grep -q "^VAR="`) and even non-empty checks (`-n "$VAR"`) but break the actual service when it tries to use the value. The service starts, reads the placeholder, and fails at the first real operation (API call, TLS handshake, database connect).
+
+**What happened (March 2026):**
+Seven variables in `.env.sops` had placeholder values (`PLACEHOLDER_VOER_IN` or `placeholder_generate_later`). When the sync workflow deployed this file, services received these strings as their actual config. SearXNG got a fake secret key, VictoriaLogs got a placeholder auth token, Grafana got a non-bcrypt admin hash. Each service failed in a different way — some crashed, some started but rejected all requests.
+
+**Why it happens:**
+During initial setup, placeholder values are added as reminders to fill in later. "Later" never comes because the services work fine with their manually-set server values. The SOPS file drifts further from reality with each manual addition, and the placeholders sit dormant until the next sync.
+
+**Prevention:**
+1. Never commit a SOPS file with placeholder values — generate real values at the time of adding the variable
+2. Add a CI check that rejects common placeholder patterns: `grep -E '(PLACEHOLDER|placeholder|CHANGE_ME|TODO|FIXME|xxx)' .env.sops && exit 1`
+3. The sync workflow's critical vars validation must check for placeholder patterns, not just non-empty values:
+   ```bash
+   if echo "$value" | grep -qiE '(placeholder|change_me|generate_later)'; then
+     echo "ABORT: $key has a placeholder value"
+     exit 1
+   fi
+   ```
+4. When adding a new service that needs secrets, generate the real values immediately (use `openssl rand -base64 32` or the service's own key generation tool)
+
+**See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`
 
 ---
 

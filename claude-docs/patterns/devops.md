@@ -19,6 +19,7 @@
 | [umami-access](#umami-access) | Accessing Umami analytics dashboard |
 | [trivy-scan-new-workflow](#trivy-scan-new-workflow) | Adding Trivy container scanning to a new Docker build workflow |
 | [renovate](#renovate) | How Renovate works, automerge rules, and how to run it manually |
+| [atomic-env-deploy](#atomic-env-deploy) | Writing `.env` files to a server without data loss risk |
 
 ---
 
@@ -27,8 +28,22 @@
 **When to use:** Updating secrets in `klai-infra/core-01/.env.sops`
 
 Pushing a change to `core-01/.env.sops` on main automatically triggers the
-`sync-env.yml` workflow in `klai-infra`. That workflow decrypts the file and
-writes `/opt/klai/.env` on core-01. No manual action required.
+`sync-env.yml` workflow in `klai-infra`. That workflow decrypts the file,
+validates it against 8 safety guards, and atomically writes `/opt/klai/.env`
+on core-01.
+
+**Safety guards in `sync-env.yml` (hardened March 2026 after production wipe):**
+
+| Guard | What it catches |
+|-------|----------------|
+| Minimum 10 lines | Decryption failure (empty output) |
+| 90% var count threshold | Incomplete SOPS file (would wipe server vars) |
+| Critical vars validation | 15 essential vars checked for presence, non-empty, non-placeholder |
+| Masked diff output | ADDED/REMOVED/CHANGED keys logged (never values) |
+| Key removal block | Removed vars abort on push-trigger; require `workflow_dispatch` |
+| Atomic write | `.env.new` + `mv` — no partial files on SSH drop |
+| Post-deploy server verification | Same critical var checks on actual server after write |
+| Backup rotation | Keep 5 most recent `.env` backups, clean up old ones |
 
 **After a SOPS update lands:** services that need the new value must be restarted
 manually (or by their own deploy workflow). Secrets sync does NOT restart containers.
@@ -39,11 +54,19 @@ cd klai-infra && ./core-01/deploy.sh main
 ```
 
 **Adding a new required field to `config.py`:**
-1. Add the value to `core-01/.env.sops` (push → auto-syncs to server)
+1. Add the real value (never a placeholder) to `core-01/.env.sops` (push → auto-syncs to server)
 2. Then push the `config.py` change (portal-api workflow will pre-flight check before deploying)
+
+**SOPS must be the COMPLETE source of truth:**
+- Every variable on the server must exist in `.env.sops` with its real production value
+- Never add a var to the server without also adding it to SOPS
+- Never commit placeholder values (`PLACEHOLDER_VOER_IN`, `CHANGE_ME`, etc.) — generate real values immediately
+- Periodically audit: `ssh core-01 "wc -l /opt/klai/.env"` vs `sops -d .env.sops | wc -l`
 
 **Rule:** Never manually edit `/opt/klai/.env` for permanent changes — always go via `.env.sops`.
 Manual edits are lost the next time `sync-env.yml` runs.
+
+**See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`, `pitfalls/infrastructure.md#infra-placeholder-values-in-sops`
 
 ---
 
@@ -332,5 +355,60 @@ gh run watch --exit-status
 - `.github/workflows/renovate.yml` — workflow definition
 
 **Why not Dependabot:** Dependabot has limited Docker Compose support and less flexible grouping. Renovate handles all package managers (npm, pip/uv, GitHub Actions, Docker Compose) in one tool with consistent automerge rules.
+
+---
+
+## atomic-env-deploy
+
+**When to use:** Writing an `.env` file to a server (CI workflow, deploy script, or manual operation)
+
+Never use `cat >` or `echo >` to write directly to a live `.env` file. If the SSH connection drops, the process is killed, or the source data is empty, the `.env` file is left truncated or empty — and every service that reads it on next restart is broken.
+
+**Pattern: write-to-temp, then atomic move:**
+```bash
+# 1. Write to a temporary file (same filesystem as target)
+cat > /opt/klai/.env.new << 'ENVEOF'
+VAR1=value1
+VAR2=value2
+ENVEOF
+
+# 2. Set correct permissions before moving
+chmod 600 /opt/klai/.env.new
+
+# 3. Atomic move — either fully succeeds or fully fails
+mv /opt/klai/.env.new /opt/klai/.env
+```
+
+**In a CI workflow (via SSH):**
+```yaml
+script: |
+  set -euo pipefail
+
+  # Decrypt and write to temp file
+  echo "$DECRYPTED_ENV" > /opt/klai/.env.new
+  chmod 600 /opt/klai/.env.new
+
+  # Validate before moving
+  NEW_LINES=$(wc -l < /opt/klai/.env.new)
+  OLD_LINES=$(wc -l < /opt/klai/.env)
+  if [ "$NEW_LINES" -lt 10 ]; then
+    echo "ABORT: new .env has only $NEW_LINES lines (decryption failure?)"
+    rm -f /opt/klai/.env.new
+    exit 1
+  fi
+
+  # Backup current
+  cp /opt/klai/.env "/opt/klai/.env.bak.$(date +%s)"
+
+  # Atomic swap
+  mv /opt/klai/.env.new /opt/klai/.env
+```
+
+**Why `mv` is atomic:**
+On the same filesystem, `mv` is a single `rename()` syscall. The file is either the old version or the new version — never a half-written intermediate. `cat >` opens, truncates, then writes incrementally — any interruption leaves a partial file.
+
+**Rule:** Any script or workflow that writes to a production `.env` must use the write-to-temp + validate + `mv` pattern. Direct overwrites (`cat >`, `echo >`, `tee >`) are never acceptable for production secrets files.
+
+**See also:** `pitfalls/infrastructure.md#infra-sync-env-no-safety-checks`
 
 ---
