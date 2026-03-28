@@ -19,6 +19,8 @@
 | [infra-sops-incomplete-wipes-server](#infra-sops-incomplete-wipes-server) | CRIT | SOPS with fewer vars than server wipes production on sync |
 | [infra-sync-env-no-safety-checks](#infra-sync-env-no-safety-checks) | CRIT | Secrets sync without safety guards is a ticking time bomb |
 | [infra-placeholder-values-in-sops](#infra-placeholder-values-in-sops) | CRIT | Placeholder values in SOPS break services silently |
+| [infra-kuma-tokens-not-in-containers](#infra-kuma-tokens-not-in-containers) | CRIT | KUMA_TOKEN vars are cron-only; invisible to container-based recovery |
+| [infra-push-health-set-u-total-blackout](#infra-push-health-set-u-total-blackout) | HIGH | One missing KUMA_TOKEN crashes entire monitoring script |
 
 ---
 
@@ -427,6 +429,68 @@ During initial setup, placeholder values are added as reminders to fill in later
 4. When adding a new service that needs secrets, generate the real values immediately (use `openssl rand -base64 32` or the service's own key generation tool)
 
 **See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`
+
+---
+
+## infra-kuma-tokens-not-in-containers
+
+**Severity:** CRIT
+
+**Trigger:** Recovering `/opt/klai/.env` from running Docker containers after a wipe or corruption
+
+`KUMA_TOKEN_*` variables (29 of them) are only used by the `push-health.sh` cron script, not by any Docker container. When recovering `.env` by running `docker exec <container> printenv` across all containers, these tokens are completely invisible — no container has them in its environment.
+
+**What happened (March 2026):**
+After the `.env` wipe, all 82 vars were recovered from running containers. The 15 KUMA_TOKEN vars that happened to also be in Docker environments were recovered, but 14 were not — they existed solely for the cron script. The push-health.sh script crashed on the first missing token (`KUMA_TOKEN_CHAT: unbound variable`), killing ALL monitoring for 17+ hours. The status page showed everything red despite all services being healthy.
+
+**Other non-container vars to watch for:**
+- `GRAFANA_CADDY_HASH` — used in Caddyfile basic_auth, not a container env var
+- Any variable only referenced by scripts in `/opt/klai/scripts/`
+
+**Recovery procedure for KUMA_TOKEN vars:**
+```bash
+# Extract all push tokens from Uptime Kuma's SQLite DB on public-01
+ssh public-01 "docker exec $(docker ps -qf name=uptime-kuma) \
+  sqlite3 /app/data/kuma.db \
+  \"SELECT name, push_token FROM monitor WHERE type='push' ORDER BY name;\""
+```
+Then map monitor names to `KUMA_TOKEN_*` variable names using `push-health.sh` as reference.
+
+**Prevention:**
+1. SOPS must contain ALL `.env` vars, including non-container ones
+2. After any `.env` recovery, run `push-health.sh` manually to verify monitoring works
+3. Audit: `grep -oP 'KUMA_TOKEN_\w+' /opt/klai/scripts/push-health.sh | sort -u` vs `grep -c KUMA_TOKEN /opt/klai/.env`
+
+**See also:** `pitfalls/devops.md#devops-recover-secrets-from-running-containers`, `runbooks/uptime-kuma.md`
+
+---
+
+## infra-push-health-set-u-total-blackout
+
+**Severity:** HIGH
+
+**Trigger:** Any `KUMA_TOKEN_*` variable missing from `.env` when `push-health.sh` runs
+
+`push-health.sh` uses `set -euo pipefail`. The `-u` flag causes bash to abort on any unset variable. Some token references in the script use `${VAR:-}` (safe default), but others use bare `${VAR}` or `$VAR`. If ANY bare-referenced token is missing, the entire script crashes before it can push ANY heartbeat — causing a total monitoring blackout across all 37 monitors.
+
+**Symptoms:**
+- `status.getklai.com` shows ALL services red
+- All 41 containers are running and healthy
+- `/opt/klai/logs/health.log` has no new entries (script crashes before writing)
+- Running the script manually shows: `line 76: KUMA_TOKEN_CHAT: unbound variable`
+
+**Diagnosis:**
+```bash
+# Run manually to see the crash
+ssh core-01 "bash /opt/klai/scripts/push-health.sh"
+
+# Check when logging stopped
+tail -5 /opt/klai/logs/health.log
+```
+
+**Fix:** Add the missing token to `.env` (recover from Uptime Kuma DB — see `infra-kuma-tokens-not-in-containers`), then run the script manually to verify.
+
+**Prevention:** All `KUMA_TOKEN_*` references in `push-health.sh` should use `${VAR:-}` syntax so a missing token skips that one monitor instead of crashing the entire script.
 
 ---
 

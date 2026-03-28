@@ -14,8 +14,8 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
-| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 10 entries |
-| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 31 entries |
+| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 12 entries |
+| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 32 entries |
 | [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 4 entries |
 
 ## Runbooks (emergency recovery procedures)
@@ -59,7 +59,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `devops-compose-restart-does-not-reload-env` | **HIGH** | Updating .env then restarting | Use `docker compose up -d`, not `restart` |
 | `devops-recover-secrets-from-running-containers` | **HIGH** | Env vars lost, containers still running | Recover with `docker exec printenv` before restarting anything |
 
-### Infrastructure (10)
+### Infrastructure (12)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -73,8 +73,10 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `infra-sops-incomplete-wipes-server` | **CRIT** | SOPS has fewer vars than server | SOPS must be COMPLETE source of truth; never a subset |
 | `infra-sync-env-no-safety-checks` | **CRIT** | Secrets sync without validation | Must have: line count, threshold, atomic write, diff, backup |
 | `infra-placeholder-values-in-sops` | **CRIT** | Placeholder values in SOPS | Never commit placeholders; generate real values immediately |
+| `infra-kuma-tokens-not-in-containers` | **CRIT** | Recovering .env from containers | KUMA_TOKEN vars are cron-only; invisible to container recovery |
+| `infra-push-health-set-u-total-blackout` | **HIGH** | Missing KUMA_TOKEN in .env | One missing token crashes entire monitoring script |
 
-### Platform (31)
+### Platform (32)
 
 | ID | Sev | Trigger | Rule |
 |----|-----|---------|------|
@@ -109,6 +111,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-librechat-addparams-no-envvars` | **MED** | Using env vars in addParams | addParams is literal — use LiteLLM hook or MCP headers instead |
 | `platform-librechat-dual-system-message` | **MED** | promptPrefix + LiteLLM hook both inject system messages | Append to existing system message, don't prepend a new one |
 | `platform-portal-api-deploy-env-preflight` | **CRIT** | Deploying portal-api after new required field in config.py | Pre-flight check env vars; add to .env.sops BEFORE pushing config change |
+| `platform-litellm-health-vs-liveliness` | **HIGH** | Health-checking LiteLLM from another service | `/health` requires auth; use `/health/liveliness` |
 
 ### Docs-app (4)
 
