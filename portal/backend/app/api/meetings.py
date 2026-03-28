@@ -26,6 +26,7 @@ from app.models.portal import PortalUser
 from app.services.access import can_write_meeting, get_accessible_meetings, is_member_of_group
 from app.services.audit import log_event
 from app.services.events import emit_event
+from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
 from app.services.zitadel import zitadel
 
@@ -632,6 +633,7 @@ async def vexa_webhook(
     await db.commit()
 
     if meeting.status == "done":
+        await cleanup_recording(meeting, db)
         emit_event(
             "meeting.completed",
             org_id=meeting.org_id,
