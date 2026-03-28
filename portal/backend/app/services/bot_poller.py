@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.api.meetings import ACTIVE_STATUSES, run_transcription
 from app.core.database import AsyncSessionLocal
 from app.models.meetings import VexaMeeting
+from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ async def poll_loop() -> None:
 
                     await run_transcription(m, db)
                     await db.commit()
+                    if m.status == "done":
+                        await cleanup_recording(m, db)
 
             for meeting in stuck:
                 logger.warning(
@@ -113,6 +116,8 @@ async def poll_loop() -> None:
                         continue
                     await run_transcription(m, db)
                     await db.commit()
+                    if m.status == "done":
+                        await cleanup_recording(m, db)
 
         except asyncio.CancelledError:
             break

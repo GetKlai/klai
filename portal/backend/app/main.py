@@ -26,6 +26,7 @@ from app.logging_setup import setup_logging
 from app.middleware.logging_context import LoggingContextMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
+from app.services.recording_cleanup import recording_cleanup_loop
 from app.services.vexa import vexa
 from app.services.zitadel import zitadel
 
@@ -60,6 +61,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")
 
+    cleanup_task = asyncio.create_task(recording_cleanup_loop())
+    logger.info("Recording cleanup loop started")
+
     imap_task: asyncio.Task[None] | None = None
     if settings.imap_host and settings.imap_username:
         from app.services.imap_listener import start_imap_listener
@@ -72,6 +76,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     poller_task.cancel()
+    cleanup_task.cancel()
     if imap_task is not None:
         imap_task.cancel()
     if _event_tasks:
