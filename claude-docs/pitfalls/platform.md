@@ -40,6 +40,7 @@
 | [platform-librechat-addparams-no-envvars](#platform-librechat-addparams-no-envvars) | MED | `addParams` does not support env var interpolation |
 | [platform-librechat-dual-system-message](#platform-librechat-dual-system-message) | MED | `promptPrefix` + LiteLLM hook = duplicate system messages |
 | [platform-portal-api-deploy-env-preflight](#platform-portal-api-deploy-env-preflight) | CRIT | New config fields need env vars before deploying |
+| [platform-litellm-health-vs-liveliness](#platform-litellm-health-vs-liveliness) | HIGH | `/health` requires auth; use `/health/liveliness` for checks |
 
 ---
 
@@ -860,6 +861,35 @@ sso_cookie_key: str
 **Rule:** When adding a new required field to `config.py`: push the value to `core-01/.env.sops` FIRST (auto-sync writes to server via `sync-env.yml`), then push the `config.py` change. The portal-api CI will block the deploy if the var is still missing.
 
 **If portal-api is already down (all auth broken):** See `runbooks/platform-recovery.md#portal-api-deploy-outage-recovery`
+
+---
+
+## platform-litellm-health-vs-liveliness
+
+**Severity:** HIGH
+
+**Trigger:** Writing a health check for LiteLLM from another service
+
+LiteLLM has two health endpoints with different authentication requirements:
+
+| Endpoint | Auth required | Returns |
+|---|---|---|
+| `/health` | Yes — valid virtual key or master key in `Authorization: Bearer` header | Model health status |
+| `/health/liveliness` | No | `200` if LiteLLM process is alive |
+
+The master key (`LITELLM_MASTER_KEY`) is NOT accepted as a Bearer token for `/health` — it is only for admin API operations. The `/health` endpoint requires a virtual key registered in `LiteLLM_VerificationTokenTable`. If you pass the master key, you get `401 token_not_found_in_db`.
+
+**What happened:**
+The retrieval-api health check called `/health` with `LITELLM_API_KEY` (set to the master key). LiteLLM rejected it with 401. The retrieval-api reported `{"status":"degraded","litellm":"status=401"}` and returned 503 on its own `/health` endpoint. The Uptime Kuma push monitor for Retrieval API showed permanent red.
+
+**Fix:**
+Use `/health/liveliness` for service-to-service health checks. It confirms LiteLLM is running without requiring authentication:
+```python
+resp = await client.get(f"{settings.litellm_url}/health/liveliness")
+```
+
+**When to use `/health`:**
+Only when you have a valid virtual key and need to check individual model health status (e.g. admin dashboard).
 
 ---
 

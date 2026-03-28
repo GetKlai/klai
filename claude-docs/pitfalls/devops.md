@@ -349,9 +349,12 @@ docker exec <container> printenv VAR_NAME
 | portal-api | `PORTAL_API_ZITADEL_PAT`, `PORTAL_API_DB_PASSWORD` |
 | zitadel | `ZITADEL_MASTERKEY` |
 
-**Rule:** During an env wipe incident, the first priority is recovering values from running containers. Never restart or `docker compose up -d` any service until you have recovered all critical vars. A restart reads the broken `.env` and permanently loses the in-memory values.
+**IMPORTANT — non-container vars are invisible to this method:**
+`KUMA_TOKEN_*` vars (monitoring tokens), `GRAFANA_CADDY_HASH`, and any other vars only used by scripts in `/opt/klai/scripts/` are NOT in any container's environment. They cannot be recovered with `docker exec printenv`. Recover these from Uptime Kuma's SQLite DB or other external sources. See `pitfalls/infrastructure.md#infra-kuma-tokens-not-in-containers`.
 
-**See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`
+**Rule:** During an env wipe incident, the first priority is recovering values from running containers. Never restart or `docker compose up -d` any service until you have recovered all critical vars. A restart reads the broken `.env` and permanently loses the in-memory values. After container recovery, also check for non-container vars by running `push-health.sh` and comparing against the script's expected variables.
+
+**See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`, `pitfalls/infrastructure.md#infra-kuma-tokens-not-in-containers`
 
 ---
 
