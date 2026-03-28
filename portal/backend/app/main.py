@@ -20,6 +20,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.meetings import router as meetings_router
 from app.api.taxonomy import router as taxonomy_router
+from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.logging_setup import setup_logging
@@ -131,6 +132,7 @@ app.include_router(app_knowledge_bases_router)
 app.include_router(app_gaps_router)
 app.include_router(connectors_router)
 app.include_router(taxonomy_router)
+app.include_router(vitals_router)
 
 
 @app.get("/health")
