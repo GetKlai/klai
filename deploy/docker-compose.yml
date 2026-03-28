@@ -317,6 +317,7 @@ services:
     environment:
       CONTAINERS: 1
       NETWORKS: 1
+      EXEC: 1          # recording cleanup: docker exec inside vexa-bot-manager
       POST: 1
       DELETE: 1
     volumes:
