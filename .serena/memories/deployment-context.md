@@ -7,12 +7,12 @@
 | public-01 | Website, Twenty CRM, Fider, Uptime Kuma | `ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64` |
 
 ## Deploy Workflows
-- **klai-portal frontend:** `git push` → GitHub Action auto-builds + rsyncs to core-01. Always verify: `gh run watch --exit-status`
+- **portal frontend:** `git push` → GitHub Action `Build and deploy portal-frontend` auto-builds + rsyncs to core-01. Always verify: `gh run watch --exit-status`
 - **klai-website:** Coolify on public-01. Push to main → Coolify auto-deploys
 - **Backend services:** Docker on core-01, managed via Coolify or manual `docker compose up -d`
 
 ## gh CLI
-Not on PATH. Always use: `/c/Program Files/GitHub CLI/gh.exe`
+On macOS: `gh` is available on PATH (installed via Homebrew). Just use `gh run watch --exit-status`.
 
 ## Tenant Provisioning
 When a new org is created, portal backend auto-provisions:
@@ -28,10 +28,13 @@ Caddy tenants dir: `/caddy/tenants/`
 - Core env file: `/opt/klai/.env`
 - NEVER modify existing secrets with sed/echo — shell `$` truncation corrupts values silently
 - Add new vars: `echo 'NEW=value' >> /opt/klai/.env` (single quotes)
-- Change existing: use SOPS
+- Change existing: use SOPS (klai-infra submodule at `klai-infra/`)
 - After change: verify with `docker exec <container> printenv VAR_NAME`
 
 ## Infrastructure Repos
-- Secrets/SOPS: klai-infra (private, `C:\Users\markv\stack\02 - Voys\Code\klai\klai-infra`)
-- Deploy configs: klai-mono/deploy/
-- Claude assets: klai-claude
+- Secrets/SOPS: `klai-infra/` (git submodule, private)
+- Deploy configs: `deploy/` (in monorepo)
+- Claude assets: `.claude/` (in monorepo)
+
+## Monorepo location
+`/Users/mark/Server/projects/klai`
