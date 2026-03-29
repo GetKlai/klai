@@ -2,6 +2,14 @@
 
 > Linting, type checking, formatting — CI quality gate failures.
 
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [cq-pyright-noqa-mismatch](#cq-pyright-noqa-mismatch) | HIGH | Use `__all__` not `# noqa` when both ruff and pyright are in CI |
+| [cq-eslint-react-refresh-tanstack-routes](#cq-eslint-react-refresh-tanstack-routes) | MED | Disable `react-refresh/only-export-components` for `src/routes/**` in TanStack Router projects |
+
 ---
 
 ## cq-pyright-noqa-mismatch
@@ -33,6 +41,40 @@ ruff and pyright are independent tools with separate configuration. ruff uses in
 **Rule:** When suppressing an import warning, check which tool is flagging it. `# noqa` is for ruff; `__all__` or `# pyright: ignore` is for pyright. Prefer `__all__` because it solves both at once.
 
 **See also:** `patterns/code-quality.md` -- ruff + pyright configuration per project
+
+---
+
+## cq-eslint-react-refresh-tanstack-routes
+
+**Severity:** MED
+
+**Trigger:** Adding a new TanStack Router route file (`src/routes/**/*.tsx`) and seeing ESLint errors about `only-export-components`
+
+`eslint-plugin-react-refresh` reports a false positive on TanStack Router route files. A route file exports `Route` (a non-component constant created by `createFileRoute`) alongside local component functions. The plugin's `only-export-components` rule does not understand this pattern and flags the export, even when `allowConstantExport: true` is set.
+
+**What went wrong:**
+The `react-refresh/only-export-components` rule was failing in CI for `vitals.ts` (a lib file that also exports non-components). The fix was to extend the existing `src/routes/**` exception to also cover `src/lib/locale.tsx`.
+
+**Why it happens:**
+The plugin's purpose is to warn when a non-component export in a file might break Fast Refresh. For route files this is a false positive — Fast Refresh works fine because the component is registered via `Route.component`, not via a direct export. The plugin has no knowledge of TanStack Router's registration model.
+
+**Prevention:**
+The exception is already in `frontend/eslint.config.js` — do not remove it:
+```js
+// src/components/ui/ and src/routes/ are intentional exceptions
+{
+  files: ['src/components/ui/**/*.{ts,tsx}', 'src/lib/locale.tsx', 'src/routes/**/*.{ts,tsx}'],
+  rules: {
+    'react-refresh/only-export-components': 'off',
+  },
+},
+```
+
+If a new file in `src/lib/` exports non-component values alongside React components and the lint rule fires, add it to this glob pattern. Do not try to restructure the file to satisfy the rule — the exception is the correct fix.
+
+**Rule:** `react-refresh/only-export-components` must be disabled for `src/routes/**` in any TanStack Router project. Do not attempt workarounds (re-exporting, barrel files) — they add complexity for no gain.
+
+**See also:** `patterns/code-quality.md#klai-portalfrontend`
 
 ---
 

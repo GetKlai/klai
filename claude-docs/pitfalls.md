@@ -16,6 +16,8 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 12 entries |
 | [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 32 entries |
+| [Backend](pitfalls/backend.md) | Python async, FastAPI, prometheus_client | 5 entries |
+| [Code Quality](pitfalls/code-quality.md) | ESLint, ruff, pyright, CI quality gates | 2 entries |
 | [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 4 entries |
 
 ## Runbooks (emergency recovery procedures)
@@ -58,6 +60,16 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `devops-image-versions-from-training-data` | **HIGH** | Writing compose with pinned versions | Never use version numbers from AI training data |
 | `devops-compose-restart-does-not-reload-env` | **HIGH** | Updating .env then restarting | Use `docker compose up -d`, not `restart` |
 | `devops-recover-secrets-from-running-containers` | **HIGH** | Env vars lost, containers still running | Recover with `docker exec printenv` before restarting anything |
+
+### Backend (5)
+
+| ID | Sev | Trigger | Rule |
+|----|-----|---------|------|
+| `backend-async-sequential-loop` | **MED** | `await` in a for loop for external calls | Use `asyncio.gather` for parallel fetches |
+| `backend-async-no-per-call-timeout` | **MED** | `asyncio.gather` with slow external calls | Wrap each task with `asyncio.wait_for` |
+| `backend-config-default-vs-env` | **LOW** | Wrong default masked by prod env var | Set defaults to real production values |
+| `backend-prometheus-global-registry-tests` | **HIGH** | prometheus_client tests fail with duplicate timeseries | Use dedicated `CollectorRegistry` per instance |
+| `backend-sendbeacon-no-auth-header` | **HIGH** | Building an analytics endpoint for the browser | `sendBeacon` cannot send Auth headers — design endpoint as unauthenticated |
 
 ### Infrastructure (12)
 

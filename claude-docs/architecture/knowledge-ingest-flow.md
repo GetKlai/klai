@@ -547,3 +547,200 @@ text from the fetched pages.
 |---|---|
 | MCP read tools (semantic search via tool call) | V1 covers saves only |
 | Helpdesk transcript adapter | Interface with whisper-server not decided |
+| Assertion mode active in retrieval | See research below |
+
+---
+
+## Part 6: Assertion modes — research and open design question
+
+> Compiled: 2026-03-28.
+> Status: Research complete, no implementation decision made.
+> Question: Should assertion modes become an active signal in the retrieval pipeline?
+
+### What assertion modes are
+
+The knowledge architecture defines five assertion modes per artifact: `factual`,
+`procedural`, `quoted`, `belief`, `hypothesis`. These are one of three metadata axes
+(alongside provenance type and synthesis depth) described in the architecture doc §3.2.
+
+### Current implementation status
+
+| Component | Status |
+|---|---|
+| DB schema (`knowledge.artifacts.assertion_mode`, 5-value enum) | Done |
+| Ingest parsing (from YAML frontmatter, default `factual`) | Done |
+| MCP tool interface (accepts `fact`, `claim`, `note`) | Done, with mapping gap |
+| HyPE classification | Not built — enrichment does not classify assertion mode |
+| Qdrant payload | Not included — cannot filter or weight by assertion mode |
+| Retrieval API response | Not returned — stripped from results |
+| Reranker weighting | Not built |
+
+The MCP tools accept `{fact, claim, note}` but the database stores `{factual, procedural,
+quoted, belief, hypothesis}`. There is no mapping layer. Invalid MCP values fall back to
+`note`, which has no DB equivalent.
+
+**Summary:** Storage exists. The entire consumption side (retrieval, reranking, generation
+context) ignores assertion mode.
+
+### Industry landscape
+
+No production RAG system tags chunks with epistemic type labels and uses them as a
+retrieval signal. The building blocks exist separately:
+
+| Building block | What it does | Maturity |
+|---|---|---|
+| Certainty classifiers | Classify scholarly assertions into 3 certainty categories | 89.2% accuracy on biomedical text (Prieto et al. 2020) |
+| Nanopublications | RDF-based atomic assertions with provenance graphs | 10M+ published, biomedical domain |
+| TrustGraph | Per-triple confidence via RDF-star reification | Production platform, open source |
+| RAG+ | Separates declarative from procedural knowledge into two corpora | Research prototype (arXiv 2025) |
+| MDKeyChunker | Single LLM call extracts 7 metadata fields per chunk | March 2026 preprint |
+
+Nobody has assembled epistemic type labeling + metadata-enriched retrieval +
+confidence-weighted reranking into a single production pipeline.
+
+### Evidence: metadata enrichment improves retrieval
+
+These studies demonstrate that adding structured metadata to chunks improves RAG retrieval
+quality. None use epistemic type labels specifically.
+
+| Study | What metadata | Key result |
+|---|---|---|
+| Mishra et al. 2025 | Content type (procedural/conceptual/reference/warning/example) | +12.5% precision on AWS S3 docs |
+| Multi-Meta-RAG (ICTERI 2024) | Source publication + date as pre-filters | +8-26% answer accuracy (PaLM +25.6%, GPT-4 +8.2%) |
+| Anthropic Contextual Retrieval 2024 | Chunk-level context summary prepended before embedding | -67% top-20 retrieval failure rate |
+| Financial QA (arXiv 2025) | Thematic clusters, entities, anticipated questions | +35% F1; but chunk expansion increased hallucination from 14.7% to 22.2% |
+| Legal RAG (arXiv 2026) | Document name, jurisdiction, local summaries | -84% document mismatch on MAUD; minimal improvement on PrivacyQA |
+| MEGA-RAG (Frontiers 2025) | Multi-source provenance + conflict detection | 35-60% error reduction in hybrid architectures |
+| SELF-RAG (ICLR 2024 Oral) | Runtime relevance/support assessment via reflection tokens | +22-30% citation precision |
+
+### Evidence gap: epistemic type labels specifically
+
+No study tests fact/hypothesis/opinion labels on chunks and measures their impact on
+retrieval quality. The closest work:
+
+- **Mishra et al.** classifies content *type* (tutorial, reference, FAQ) — structural, not
+  epistemic. Does not distinguish "stated as fact" from "stated as hypothesis."
+- **SELF-RAG** performs epistemic assessment at runtime (is this passage relevant? does it
+  support the claim?) but does not pre-label chunks.
+- **Medical RAG literature** shows corpus-level source type selection matters (clinical
+  guidelines outperform abstracts) but operates at document level, not chunk level.
+- **Legal RAG** uses document metadata (parties, jurisdiction) which partially overlaps
+  with epistemic context but is structural.
+
+**The gap:** Strong evidence that metadata enrichment improves retrieval. No evidence that
+*epistemic type* metadata specifically improves retrieval over other metadata types. The
+hypothesis is plausible by analogy but untested.
+
+### Classification feasibility
+
+**Human agreement by taxonomy size:**
+
+| Categories | Agreement | Source |
+|---|---|---|
+| 5 levels (absolute/high/moderate/low/uncertain) | ~67% (kappa 0.51) | Rubin 2007, NYT corpus |
+| 3 levels | ~91% | Prieto et al. 2020, biomedical corpus |
+| 2 levels (certain/uncertain) | ~84% | Prieto et al. 2020 |
+
+Five categories is too fine-grained for reliable classification. Three is workable.
+
+**LLM zero-shot on fact vs. opinion (61,514 claims, 30 languages):**
+
+| Model | Facts correct | Opinions correct |
+|---|---|---|
+| GPT-4o | 65% | 79% |
+| LLaMA 3.1 8B | 57% | 67% |
+| Mixtral 8x7B | 43% | 61% |
+
+Facts are systematically harder to classify than opinions — the opposite of what you want
+for safety (misclassifying a hypothesis as a fact is the most dangerous error).
+
+Note: this study measured fact-*checking* (is this claim true?), not fact-*typing* (is this
+stated as a fact or as a hypothesis?). Fact-typing relies on linguistic markers and is more
+tractable, but no benchmark exists for business documents.
+
+**Fine-tuned models** outperform zero-shot by 5-69 percentage points depending on task
+granularity. Prieto's 89.2% was achieved with a modest 5-layer neural network on 3,221
+examples.
+
+**Practical path if we proceed:**
+
+1. Use 3 categories: `assertion` (factual + quoted), `speculation` (hypothesis + belief),
+   `procedure` (procedural). Human agreement is dramatically better at 3 than 5.
+2. Piggyback on HyPE — the enrichment step already calls an LLM per chunk. MDKeyChunker
+   (2026) demonstrates multi-field extraction in a single call. Adding assertion mode as an
+   additional field is marginal prompt engineering.
+3. Confidence gating — only apply the label when classifier confidence exceeds a threshold
+   (e.g. 85%). Below that, default to unclassified.
+
+### Error asymmetry
+
+| Misclassification | Risk |
+|---|---|
+| Hypothesis labeled as fact | **HIGH** — user trusts unverified information |
+| Fact labeled as hypothesis | **MEDIUM** — user seeks unnecessary verification |
+| Procedure labeled as fact | **MEDIUM** — user misses that action is required |
+
+Conservative strategy: when uncertain, label toward `speculation`. A false conservative
+label degrades user experience slightly. A false confident label degrades trust
+fundamentally.
+
+### User-facing display: evidence says no
+
+- **CHI 2024:** Showing AI confidence does NOT improve task accuracy. Users adjust behavior
+  based on confidence but don't make better decisions.
+- **ACL 2024 (Zhou et al.):** Overconfident epistemic markers cause lasting trust damage
+  that persists even after the model returns to being well-calibrated.
+- **ACL 2025 (Liu et al.):** LLMs cannot reliably produce calibrated epistemic markers.
+  "Fairly confident" does not correlate with actual correctness across domains.
+
+If assertion modes are activated, they should be **internal ranking signals only**, not
+exposed to end users as labels.
+
+### Open questions (no implementation decision made)
+
+1. **Does assertion mode improve retrieval on Klai's data?** Untested. Needs an A/B
+   evaluation on actual content — 50 real queries, measure whether assertion mode as a
+   filter or ranking weight changes recall@10 or precision@10 using existing
+   frontmatter-derived labels.
+
+2. **Does the 3-category taxonomy fit Klai's content mix?** Needs a 200-sample evaluation.
+   Hand-label 200 chunks, measure inter-annotator agreement. If below 80%, the categories
+   need refinement.
+
+3. **Can the HyPE prompt classify assertion mode reliably?** Needs prompt engineering +
+   evaluation. The marginal compute cost is near-zero but prompt quality may degrade.
+
+4. **Is the benefit domain-dependent?** Almost certainly yes. Legal RAG showed dramatic
+   improvement on structured contracts but near-zero on privacy policies. Mixed-domain
+   tenants may see inconsistent benefit.
+
+5. **MCP taxonomy alignment** is needed regardless of this decision. The current `{fact,
+   claim, note}` → `{factual, procedural, quoted, belief, hypothesis}` gap creates data
+   quality issues.
+
+### Sources
+
+**Metadata enrichment in RAG:**
+- Mishra et al. (2025). Enterprise Knowledge Retrieval with LLM-Generated Metadata. [emergentmind.com](https://www.emergentmind.com/topics/meta-rag-framework)
+- Poliakov & Shvai (2024). Multi-Meta-RAG. ICTERI 2024. [arXiv:2406.13213](https://arxiv.org/abs/2406.13213)
+- Anthropic (2024). Contextual Retrieval. [anthropic.com](https://www.anthropic.com/news/contextual-retrieval)
+- Metadata-Driven RAG for Financial QA (2025). [arXiv:2510.24402](https://arxiv.org/html/2510.24402v1)
+- Maniyar et al. (2026). Legal RAG with Metadata-Enriched Pipelines. [arXiv:2603.19251](https://arxiv.org/abs/2603.19251)
+- Xu et al. (2025). MEGA-RAG. Frontiers in Public Health. [frontiersin.org](https://www.frontiersin.org/journals/public-health/articles/10.3389/fpubh.2025.1635381/full)
+- Asai et al. (2024). Self-RAG. ICLR 2024 Oral. [arXiv:2310.11511](https://arxiv.org/abs/2310.11511)
+
+**Epistemic classification:**
+- Rubin (2007). Epistemic Modality Annotation. NAACL 2007. [ACL Anthology](https://aclanthology.org/N07-2036/)
+- Prieto et al. (2020). Classification of Scholarly Assertion Certainty. [PeerJ](https://peerj.com/articles/8871/)
+- Aicher et al. (2025). Facts are Harder Than Opinions. [arXiv:2506.03655](https://arxiv.org/abs/2506.03655)
+- MDKeyChunker (2026). Single-Call LLM Enrichment for RAG. [arXiv:2603.23533](https://arxiv.org/abs/2603.23533)
+
+**User-facing confidence:**
+- CHI 2024. Human Self-Confidence Calibration in AI-Assisted Decision Making. [ACM DL](https://dl.acm.org/doi/10.1145/3613904.3642780)
+- Zhou et al. (2024). Overconfident Epistemic Markers. ACL 2024. [ACL Anthology](https://aclanthology.org/2024.acl-long.198.pdf)
+- Liu et al. (2025). Epistemic Markers in Confidence Estimation. ACL 2025. [ACL Anthology](https://aclanthology.org/2025.acl-short.18/)
+
+**Epistemic building blocks:**
+- Nanopublication Guidelines. [nanopub.net](https://nanopub.net/guidelines/working_draft/)
+- TrustGraph. [trustgraph.ai](https://trustgraph.ai/guides/key-concepts/context-graphs/)
+- Gilda et al. (2026). First Principles Framework for Epistemic Status Tracking. [arXiv:2601.21116](https://arxiv.org/abs/2601.21116)
