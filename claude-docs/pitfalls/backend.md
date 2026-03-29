@@ -10,6 +10,8 @@
 | [backend-async-sequential-loop](#backend-async-sequential-loop) | MED | Use `asyncio.gather`, not `await` in a for loop |
 | [backend-async-no-per-call-timeout](#backend-async-no-per-call-timeout) | MED | Always set `timeout=` on external httpx calls |
 | [backend-config-default-vs-env](#backend-config-default-vs-env) | LOW | Config defaults should not silently override env vars |
+| [backend-prometheus-global-registry-tests](#backend-prometheus-global-registry-tests) | HIGH | Never use the global prometheus_client registry in tests |
+| [backend-sendbeacon-no-auth-header](#backend-sendbeacon-no-auth-header) | HIGH | `navigator.sendBeacon` cannot send Authorization headers — design the endpoint as intentionally unauthenticated |
 
 ---
 
@@ -83,3 +85,95 @@ searxng_url: str = "http://searxng:8888"
 **Fix:** Always set the default to the real production value. Verify by checking the actual service port (`docker ps`) before writing the default.
 
 **Seen in:** `focus/research-api` config — default port was 8888, actual container port 8080.
+
+---
+
+## backend-prometheus-global-registry-tests
+
+**Severity:** HIGH
+
+**Problem:** `prometheus_client` uses a global `REGISTRY` by default. If two tests register the same metric name, the second test raises `ValueError: Duplicated timeseries`. Tests also bleed state into each other — counters from test A affect assertions in test B.
+
+```python
+# WRONG — uses global registry, breaks on second test run
+lcp = Histogram("webvitals_lcp_seconds", "LCP", ["page", "rating"],
+    buckets=(...))
+```
+
+**Fix:** Use a dedicated `CollectorRegistry` per instantiation, wrapped in a dataclass. Patch the module-level instance in tests via `autouse` fixture.
+
+```python
+# vitals.py — dedicated registry per instance
+from dataclasses import dataclass, field
+from prometheus_client import CollectorRegistry, Histogram
+
+@dataclass
+class VitalsMetrics:
+    registry: CollectorRegistry = field(default_factory=CollectorRegistry)
+    lcp: Histogram = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.lcp = Histogram("webvitals_lcp_seconds", "LCP", ["page", "rating"],
+            buckets=(...), registry=self.registry)
+
+_metrics = VitalsMetrics()  # module-level singleton
+```
+
+```python
+# test_vitals.py — fresh instance per test via autouse patch
+import pytest
+from unittest.mock import patch
+from app.api import vitals as vitals_mod
+from app.api.vitals import VitalsMetrics
+
+@pytest.fixture(autouse=True)
+def _fresh_metrics():
+    fresh = VitalsMetrics()
+    with patch.object(vitals_mod, "_metrics", fresh):
+        yield
+```
+
+**Seen in:** `portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
+
+---
+
+## backend-sendbeacon-no-auth-header
+
+**Severity:** HIGH
+
+**Trigger:** Building a browser → backend analytics or monitoring endpoint that requires authentication
+
+`navigator.sendBeacon` is the correct API for sending telemetry on page unload (`visibilitychange → hidden`). It cannot set custom headers — including `Authorization`. Any backend endpoint that requires a Bearer token will reject every beacon request with 401.
+
+**Why it happens:**
+`sendBeacon` is a fire-and-forget, non-blocking API designed for the page-close scenario. It deliberately does not support `fetch`-style request options (no headers, no credentials override). The browser controls the request.
+
+**Prevention:**
+1. Design analytics/vitals ingest endpoints as intentionally unauthenticated. Accept this and document it explicitly in the router.
+2. Add rate limiting at the reverse proxy (Caddy) as the primary protection against abuse:
+   ```
+   # Caddy — 60 req/min per IP for the vitals endpoint
+   rate_limit /api/vitals 60r/m
+   ```
+3. Validate and clamp incoming values at the FastAPI layer (Pydantic `Field(ge=0, le=60000)`) to limit damage from bad data.
+4. If you need authentication, use `fetch()` instead (with `keepalive: true` as a substitute for sendBeacon reliability) — but note that `keepalive` requests are dropped if the payload exceeds 64 KB.
+
+**Correct pattern:**
+```python
+# vitals.py — intentionally unauthenticated; rate limiting is the only guard
+@router.post("/api/vitals", status_code=204)
+async def ingest_vitals(
+    metrics: Annotated[list[VitalMetric], Body(max_length=10)],
+) -> Response:
+    """Receive a batch of Web Vitals metrics from the browser.
+    Unauthenticated by design: navigator.sendBeacon cannot set headers.
+    Rate limited at the Caddy layer.
+    """
+    ...
+```
+
+**Seen in:** `portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
+
+**See also:** MDN sendBeacon docs, `patterns/platform.md#platform-caddy-tenant-routing` for Caddy config
+
+---

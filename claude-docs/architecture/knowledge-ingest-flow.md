@@ -403,7 +403,52 @@ that directly answers the query. Sparse search finds keyword matches. The rerank
 a final precision pass. Together they reduce retrieval failures significantly compared to
 dense-only search.
 
-### 3.3 The explicit path: klai-knowledge-mcp
+### 3.3 Gap detection (SPEC-KB-014)
+
+After every retrieval call, the LiteLLM hook classifies the result before injecting
+chunks into context. If the result looks like a knowledge gap, a lightweight event is
+fired to the portal — asynchronously, without blocking the chat response.
+
+**Two gap types:**
+
+| Type | Condition | Meaning |
+|---|---|---|
+| `hard` | Zero chunks returned | The knowledge base has nothing on this topic |
+| `soft` | Chunks returned but all scores < 0.4 | Results exist but confidence is too low |
+
+**The async event flow:**
+
+```
+Retrieval result received in LiteLLM hook
+  → Classify: hard (no chunks) or soft (all scores < 0.4)?
+  → If gap: fire-and-forget POST /internal/v1/gap-events (portal-api, internal token)
+    { org_id, query, gap_type, nearest_kb_slug, scores }
+  → Continue: inject whatever chunks exist (or skip injection if hard gap)
+```
+
+The event POST is non-blocking. If the portal is unreachable, the gap is silently
+dropped — retrieval quality is unaffected.
+
+**Storage:** `portal_retrieval_gaps` table in PostgreSQL, with `org_id`, `query`,
+`gap_type`, `nearest_kb_slug` (populated when a soft gap has a closest matching KB),
+`scores`, and a `created_at` timestamp. Rows are retained for 90 days and then
+automatically purged.
+
+**The `/app/gaps` dashboard** (admin-only):
+
+- Grouped table of recent gap queries, filterable by gap type (hard/soft) and period (default 30d)
+- Each row shows the user's query and whether it was a hard or soft gap
+- **Action buttons per row:**
+  - Soft gap (nearest KB known): PlusCircle icon → navigates directly to that KB's editor
+  - Hard gap (no KB): BookOpen icon → opens an inline KB picker select; selecting a KB navigates to its editor
+- Summary card on the knowledge index page shows gap count for the last 7 days
+- KB detail page shows a 7d gap count metric tile per KB
+
+The intended workflow: an admin reviews the gaps dashboard periodically, identifies
+recurring unanswered questions, and uses the action button to jump directly into the KB
+editor to write or update the relevant content.
+
+### 3.4 The explicit path: klai-knowledge-mcp
 
 LibreChat tenants also have access to `klai-knowledge-mcp` as an MCP tool server. Unlike
 the hook (which runs automatically for every message), MCP tools are explicitly invoked
