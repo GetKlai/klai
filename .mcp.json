@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.mcp.schema.json",
+  "mcpServers": {
+    "serena": {
+      "$comment": "Semantic code navigation and persistent project memories",
+      "command": "serena",
+      "args": ["start-mcp-server", "--project-from-cwd"]
+    },
+    "context7": {
+      "$comment": "Up-to-date documentation and code examples via Context7",
+      "command": "/bin/bash",
+      "args": ["-l", "-c", "exec npx -y @upstash/context7-mcp@latest"]
+    },
+    "sequential-thinking": {
+      "$comment": "Step-by-step reasoning for complex problems",
+      "command": "/bin/bash",
+      "args": ["-l", "-c", "exec npx -y @modelcontextprotocol/server-sequential-thinking"]
+    },
+    "playwright": {
+      "$comment": "Browser automation for E2E spot-checks — uses dedicated Brave profile",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"]
+    }
+  },
+  "staggeredStartup": {
+    "enabled": true,
+    "delayMs": 500,
+    "connectionTimeout": 15000
+  }
+}
