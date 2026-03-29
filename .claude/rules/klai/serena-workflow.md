@@ -15,16 +15,45 @@ Code startup, which exceeds the MCP timeout and causes Serena to fail silently.
 
 ### 2. Configure MCP
 
-In the workspace `.mcp.json`, the Serena entry must be:
+The MCP config lives at `/Users/mark/Server/projects/.mcp.json` (one level above the klai repo —
+not committed to git). This file is shared across all projects in the workspace.
+
+**Required content** (restore this if the file is missing or Serena stops working):
 
 ```json
 {
-  "serena": {
-    "command": "serena",
-    "args": ["start-mcp-server", "--project-from-cwd"]
+  "mcpServers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--executable-path",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "--user-data-dir",
+        "/Users/mark/Library/Caches/ms-playwright/klai-profile"
+      ],
+      "env": {}
+    },
+    "serena": {
+      "type": "stdio",
+      "command": "serena",
+      "args": ["start-mcp-server", "--project-from-cwd"],
+      "env": {}
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "env": {}
+    }
   }
 }
 ```
+
+**Common failure mode:** If Serena stops loading, check that the `command` is `"serena"` (not
+`"uvx"` with `--from git+...`). The uvx variant clones and rebuilds on every startup → MCP
+timeout → Serena never available.
 
 ### 3. Disable dashboard auto-open
 
