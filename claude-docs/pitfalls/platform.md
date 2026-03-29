@@ -41,6 +41,7 @@
 | [platform-librechat-dual-system-message](#platform-librechat-dual-system-message) | MED | `promptPrefix` + LiteLLM hook = duplicate system messages |
 | [platform-portal-api-deploy-env-preflight](#platform-portal-api-deploy-env-preflight) | CRIT | New config fields need env vars before deploying |
 | [platform-litellm-health-vs-liveliness](#platform-litellm-health-vs-liveliness) | HIGH | `/health` requires auth; use `/health/liveliness` for checks |
+| [platform-grafana-dashboard-datasource-uid](#platform-grafana-dashboard-datasource-uid) | MED | Dashboard datasource UID must match provisioning YAML `uid` exactly |
 
 ---
 
@@ -890,6 +891,42 @@ resp = await client.get(f"{settings.litellm_url}/health/liveliness")
 
 **When to use `/health`:**
 Only when you have a valid virtual key and need to check individual model health status (e.g. admin dashboard).
+
+---
+
+## platform-grafana-dashboard-datasource-uid
+
+**Severity:** MED
+
+**Trigger:** Provisioning a Grafana dashboard JSON file that references a datasource by a hardcoded UID
+
+Grafana provisioned dashboards reference datasources by UID. If the UID in the JSON does not match the actual datasource UID in the Grafana instance, every panel silently shows "datasource not found" — no error in logs, no red banner. The dashboard loads but every graph is blank.
+
+**Why it happens:**
+When building a dashboard JSON locally or in CI, a convenient placeholder UID is chosen (e.g. `"victoriametrics"`). In a fresh Grafana install, auto-generated UIDs look like `a1b2c3d4e5`. They never match unless explicitly set.
+
+**Example — brittle (hardcoded UID):**
+```json
+{
+  "datasource": { "type": "prometheus", "uid": "victoriametrics" }
+}
+```
+
+**Prevention:**
+1. In `deploy/grafana/provisioning/datasources/*.yaml`, set a fixed `uid` that matches what the dashboard JSON expects:
+   ```yaml
+   datasources:
+     - name: VictoriaMetrics
+       type: prometheus
+       uid: victoriametrics        # Must match dashboard JSON exactly
+       url: http://victoriametrics:8428
+   ```
+2. Never let Grafana auto-generate a UID for a datasource that is referenced by provisioned dashboards.
+3. When sharing a dashboard JSON outside the klai deploy stack (e.g. importing into a standalone Grafana), the importer must remap the datasource UID via Grafana's import dialog.
+
+**Rule:** Dashboard JSON datasource UIDs and datasource provisioning YAML `uid` fields must match exactly. Define the UID in the datasource YAML — do not rely on Grafana auto-generation.
+
+**Seen in:** `deploy/grafana/provisioning/dashboards/web-performance.json` — SPEC-PERF-001 Web Vitals dashboard uses `uid: "victoriametrics"` throughout; the datasource YAML must set the same UID.
 
 ---
 

@@ -15,7 +15,7 @@ Project-specific pitfalls live in each project's own `docs/pitfalls/` directory.
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 12 entries |
-| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 32 entries |
+| [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 33 entries |
 | [Backend](pitfalls/backend.md) | Python async, FastAPI, prometheus_client | 5 entries |
 | [Code Quality](pitfalls/code-quality.md) | ESLint, ruff, pyright, CI quality gates | 2 entries |
 | [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 4 entries |
@@ -124,6 +124,7 @@ Full descriptions with examples: `pitfalls/process.md`.
 | `platform-librechat-dual-system-message` | **MED** | promptPrefix + LiteLLM hook both inject system messages | Append to existing system message, don't prepend a new one |
 | `platform-portal-api-deploy-env-preflight` | **CRIT** | Deploying portal-api after new required field in config.py | Pre-flight check env vars; add to .env.sops BEFORE pushing config change |
 | `platform-litellm-health-vs-liveliness` | **HIGH** | Health-checking LiteLLM from another service | `/health` requires auth; use `/health/liveliness` |
+| `platform-grafana-dashboard-datasource-uid` | **MED** | Provisioning a Grafana dashboard JSON with a hardcoded datasource UID | Dashboard UID and datasource provisioning YAML `uid` must match exactly |
 
 ### Docs-app (4)
 
