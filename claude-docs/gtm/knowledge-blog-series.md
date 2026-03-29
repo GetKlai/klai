@@ -41,11 +41,11 @@ Based on code audit of retrieval-api, knowledge-ingest, and litellm hook (March 
 |---|---|---|---|
 | C1 | How to find and prioritize knowledge base gaps | litellm/klai_knowledge.py `_classify_gap`, app_gaps.py | published |
 | C2 | How to know if your knowledge base fix actually worked | gap_rescorer.py, gap_classification.py (SPEC-KB-015) | published |
-| C3 | Not every question needs the knowledge base | retrieval-api/services/gate.py `should_bypass`, cosine margin | planned |
-| C4 | Three signals, one answer | retrieval-api/services/search.py 3-leg RRF, reranker.py, coreference.py | planned |
-| C5 | Not every document is the same | knowledge-ingest/content_profiles.py, context_strategies.py | planned |
-| C6 | Searchable in seconds, smart in minutes | knowledge-ingest two-phase: immediate upsert + async enrichment via Procrastinate | planned |
-| C7 | Personal knowledge: five things your AI should remember | klai-knowledge-mcp, personal KB scope, assertion_mode | planned |
+| C3 | Not every question needs the knowledge base | retrieval-api/services/gate.py `should_bypass`, cosine margin | published |
+| C4 | Three signals, one answer | retrieval-api/services/search.py 3-leg RRF, reranker.py, coreference.py | published |
+| C5 | Not every document is the same | knowledge-ingest/content_profiles.py, context_strategies.py (includes two-phase ingest note) | published |
+| ~~C6~~ | ~~Searchable in seconds, smart in minutes~~ | Merged into C5 as one-liner — not enough for standalone post | dropped |
+| ~~C7~~ | ~~Personal knowledge: five things your AI should remember~~ | Topic too obvious for standalone post | dropped |
 
 ---
 
@@ -74,6 +74,12 @@ Match the structure to what the content actually is:
 | **Myth-bust** — claim → why people believe it → why it's wrong → what's true | Post title is already a refutation | B3 (self-managing taxonomy) |
 | **Case build** — experiment → finding → implication | When you have a concrete result to share | C1 (31% of retrievals, TARG finding) |
 | **Framework intro** — here is the model, here are its parts | When introducing a new mental model | B2 (three axes) |
+| **Walkthrough** — follow one thing through a system step by step | Explaining a pipeline or process; reader walks alongside | C4 (a query through the retrieval pipeline) |
+| **Before/after** — show the problem state, then the solved state | When the impact is concrete and visual | C6 (immediate upsert vs enriched) |
+| **Analogy-driven** — one extended metaphor carries the post | When the concept is abstract but a good metaphor exists | (use sparingly, max 1 per series) |
+| **Question cascade** — one question, each section peels back a layer | When "but what about X?" drives the logic naturally | C5 (why is my PDF chunked differently?) |
+
+**Format distribution rule:** No two consecutive posts should use the same spine. If the last three posts were essays, the next one must not be. Check the series table before choosing.
 
 ### Closing variety
 
@@ -107,9 +113,9 @@ Already introduced in A0. Do not re-explain it. Reference it by name in later po
 | C1 | Essay | Observation (every failed query is data) | Open question (threads to C2) |
 | C2 | Essay | Short scenario (you added the article, gap still showing) | No action section |
 | C3 | Essay | Inversion (more retrieval = better, right?) | The honest trade-off |
-| C4 | Case build | Data point / direct challenge | "Start here" |
-| C5 | Taxonomy | Observation (a PDF and a transcript walk into a pipeline) | The honest trade-off |
-| C6 | Essay | Short scenario (user saves, searches immediately) | No action section |
+| C4 | Walkthrough — follow one query through the full pipeline | Narrative scene (a user asks a follow-up question) | "Start here" |
+| C5 | Question cascade — why is my PDF chunked differently? | Direct challenge (not every document is the same) | The honest trade-off |
+| C6 | Before/after — immediate upsert vs async enrichment | Short scenario (user saves, searches immediately) | No action section |
 | C7 | Taxonomy | Narrative scene (personal saves) | Open question |
 
 ---

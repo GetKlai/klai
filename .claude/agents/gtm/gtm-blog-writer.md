@@ -83,6 +83,26 @@ featured: false
 3. **Social snippets**: 2-3 short quotes for LinkedIn/social
 4. **Repurposing guide**: how to use content across channels
 
+## Post Format Variety
+
+No two consecutive posts should use the same structure. Choose the format that fits the content, not the one that is easiest to write.
+
+| Format | When to use | What it feels like |
+|---|---|---|
+| **Essay** | One key insight with nuance | Op-ed: argument builds to a conclusion |
+| **Taxonomy** | The thing comes in N distinct forms | Reference: each type gets its own section |
+| **Myth-bust** | The title is already a refutation | Debate: claim, why people believe it, why it is wrong |
+| **Case build** | You have a concrete result to share | Lab report: experiment, finding, implication |
+| **Framework intro** | Introducing a new mental model | Textbook: here is the model, here are its parts |
+| **Walkthrough** | Explaining a pipeline or process | Documentary: follow one thing through a system, step by step |
+| **Before/after** | The impact is concrete and visual | Renovation show: problem state, then solved state |
+| **Analogy-driven** | The concept is abstract but a good metaphor exists | Storytelling: one extended metaphor carries the post |
+| **Question cascade** | "But what about X?" drives the logic | Interview: one question, each section peels back a layer |
+
+**How to check:** Before writing, look at the last 2-3 published posts in the same series. If they are all essays, the next one must not be.
+
+**Accessible intros:** The opening paragraph must be understandable by someone who does not work in the field. Use a concrete scenario, a question, or an analogy. Save the technical terms for after the reader understands the problem.
+
 ## Quality Standards
 
 - Minimum 800 words, optimal 1200-2000 words for SEO

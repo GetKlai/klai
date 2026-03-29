@@ -20,7 +20,7 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 Before working on a specific package, read its CLAUDE.md:
 
 @portal/CLAUDE.md
-@docs/CLAUDE.md
+@klai-docs/CLAUDE.md
 
 ## Knowledge base
 

@@ -91,7 +91,8 @@ When understanding code structure or relationships:
 2. Use `find_symbol` with `include_body=False` to locate symbols across the codebase
 3. Use `find_referencing_symbols` to understand who calls/uses a symbol
 4. Only read full symbol bodies (`include_body=True`) when you need implementation details
-5. Fall back to Read/Grep only for non-code files (markdown, yaml, config)
+5. Use `search_for_pattern` for free-text search — parameter is `substring_pattern` (not `pattern`)
+6. Fall back to Read/Grep only for non-code files (markdown, yaml, config)
 
 This is more token-efficient than reading entire files with the Read tool.
 
