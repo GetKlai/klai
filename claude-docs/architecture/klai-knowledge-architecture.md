@@ -57,7 +57,7 @@ With Klai Knowledge:
 
 ## 0. Current State vs. Target Architecture
 
-This document describes the **target architecture** for Klai Knowledge. Most of it does not exist yet. This section captures what is already running in production (core-01) so the gap is clear.
+This section captures what is running in production (core-01) as of March 2026. The core architecture is built and live. Remaining open items are tracked in §13.
 
 ### What exists today
 
@@ -66,42 +66,52 @@ This document describes the **target architecture** for Klai Knowledge. Most of 
 | Service | What it is | Notes |
 |---|---|---|
 | `docs-app` (klai-docs) | Next.js app — reader + REST API | KB publication and CRUD; editor UI lives in klai-portal |
-| `research-api` (klai-research) | FastAPI — document Q&A | Klai Focus backend; uses pgvector (not Qdrant) |
-| `docling-serve` | Document chunker | HybridChunker; already shared with research-api |
-| `tei` | Text embeddings (BGE-M3, dense only) | TEI does not produce BGE-M3 sparse; only dense embeddings today |
+| `research-api` (klai-research) | FastAPI — document Q&A | Klai Focus backend; uses Qdrant (`klai_focus` collection) |
+| `docling-serve` | Document chunker | HybridChunker; shared across all ingest paths |
+| `tei` | Text embeddings (BGE-M3, dense only) | Dense embeddings. Sparse handled by separate `bge-m3-sparse` sidecar (FlagEmbedding). |
+| `bge-m3-sparse` | BGE-M3 sparse sidecar | FlagEmbedding-based; `http://bge-m3-sparse:8001`; batch sparse embedding |
+| `knowledge-ingest` | Unified ingest API | `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
+| `retrieval-api` | Retrieval service | `POST /retrieve`; 3-leg RRF (dense + question + sparse); called by research-api and LiteLLM hook |
+| `klai-knowledge-mcp` | MCP write server | `save_personal_knowledge`, `save_org_knowledge`, `save_to_docs` — `deploy/klai-knowledge-mcp/main.py` |
+| Qdrant | Vector store | `klai_knowledge` collection (org + personal KB); `klai_focus` collection (research-api) |
 | `gitea` | Self-hosted Git | One repo per org KB; content store for klai-docs |
 | `whisper-server` | Audio transcription | Used by klai-portal Scribe/Transcribe features |
 | `searxng` | Self-hosted web search | Used by research-api for web mode; not Tavily/Brave |
-| PostgreSQL (pgvector) | Relational + vector store | `docs` schema (orgs, KBs, pages); `portal` schema (tenants, billing) |
-| LiteLLM + Ollama | LLM routing | Claude via Mistral API; Ollama as CPU fallback |
+| PostgreSQL | Relational store | `docs` schema (orgs, KBs, pages); `portal` schema (tenants, billing). pgvector no longer used. |
+| LiteLLM + Ollama | LLM routing | Mistral API (primary); Ollama as CPU fallback |
 | Zitadel | Auth/OIDC | Tenant isolation; all services use same instance |
 
 ### What was recently built (March 2026)
 
 | Component | Status |
 |---|---|
-| Qdrant | ✅ Deployed — `klai_knowledge` collection, `org_id` + `kb_slug` payload indexes |
-| `knowledge` schema (PostgreSQL) | ✅ Created — migration `001_knowledge_schema.sql`; tables exist, not yet populated (Phase 4+) |
-| Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/retrieve` |
-| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook`, retrieval verified for `getklai` tenant |
+| Qdrant | ✅ Deployed — `klai_knowledge` + `klai_focus` collections; `org_id`, `kb_slug`, `user_id` payload indexes |
+| `knowledge` schema (PostgreSQL) | ✅ Created — migration `001_knowledge_schema.sql`; tables exist, not yet populated (Qdrant is primary store for now) |
+| Unified Ingest API | ✅ Built as `knowledge-ingest` — `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
+| Retrieval API | ✅ Built — `POST /retrieve` on `retrieval-api`; 3-leg RRF fusion (dense + question + sparse) |
+| BGE-M3 sparse sidecar | ✅ Built — `bge-m3-sparse` using FlagEmbedding; deployed on core-01 |
+| Personal knowledge saves | ✅ Live — `save_personal_knowledge` via MCP; indexed in Qdrant immediately by knowledge-ingest |
+| Org knowledge saves | ✅ Live — `save_org_knowledge` via MCP; indexed in Qdrant immediately |
+| Gap detection | ✅ Live — `_classify_gap` + `_fire_gap_event` in `KlaiKnowledgeHook` |
+| LiteLLM pre-call hook | ✅ Deployed — `KlaiKnowledgeHook` with feature gate, user_id scoping, conversation history, kb_slugs filter, gap detection; verified for `getklai` tenant |
 | Knowledge model fields in frontmatter | ✅ `KnowledgeFrontmatter` in klai-docs; Zod validation deferred |
 
-### What does NOT exist yet
+### What does NOT exist yet (remaining open items)
 
 | Component | Where described | Status |
 |---|---|---|
-| Gap detection | §8 | Not built — deferred pending >50 indexed docs |
-| Personal knowledge scopes | §10.2 | Partial — webhook auto-provisioned on KB creation; retrieval not yet personal-scoped |
-| Sparse embeddings (FlagEmbedding) | §4.2 | Deferred — TEI dense-only until >1K docs |
-| Retrieval orchestration (Haystack) | §14 | Removed from V1 scope — Qdrant + ingest pipeline dekte al de orchestration-taken; Haystack zou dubbele abstractie zijn. Eigen `knowledge-ingest` service gebouwd. |
+| PostgreSQL `knowledge` schema populated | §5.2 | Tables exist but not yet used in production; Qdrant is the primary store for now |
+| Taxonomy / gap editorial inbox UI | §6, §8.4 | Gap events are fired by the hook but no editorial inbox UI exists yet |
+| Cross-org knowledge federation | §10.7 | Deferred to V2 |
+| Graph layer | §5.3 | Explicitly deferred — evidence does not support it for current query patterns |
 
-### The key migrations required
+### Completed migrations
 
-**research-api → Qdrant:** The current research-api uses `VECTOR_BACKEND: pgvector`. Moving to Qdrant requires rebuilding the ingestion pipeline, not just swapping a config value.
+**research-api → Qdrant:** Done. research-api uses `klai_focus` Qdrant collection via `retrieval-api`. pgvector is no longer used.
 
-**TEI → FlagEmbedding:** Decision made to defer. TEI (BGE-M3 dense) is sufficient for current scale (<1K documents). Revisit when document count exceeds 1,000 or retrieval quality issues appear.
+**TEI → FlagEmbedding sparse sidecar:** Done. `bge-m3-sparse` sidecar handles sparse embeddings via FlagEmbedding. TEI continues serving dense-only embeddings.
 
-**SearXNG → TBD:** The architecture document originally mentioned Tavily/Brave as web search options. SearXNG is already self-hosted and deployed. Whether to replace it is an open decision — see §13.8.
+**SearXNG:** Reconfigured (March 2026) — Google/Bing removed, Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). See §13.8.
 
 ### Component ownership today
 
@@ -839,28 +849,22 @@ provenance_chain(claim_id)
 recent(days, type, scope: "org" | "personal" | "both")
 ```
 
-**Write tools — `klai-knowledge-mcp` (deployed 2026-03-21):**
+**Write tools — `klai-knowledge-mcp` (deployed 2026-03-21, org scope added March 2026):**
 
-Personal saves from LibreChat are handled by a dedicated MCP server with streamable-http transport. V1 only supports personal scope; org-scope writes are deferred.
+Saves from LibreChat are handled by a dedicated MCP server with streamable-http transport. Three tools are exposed:
 
 ```
-save_to_personal_kb(
-  title: string,          # agent-generated, max 80 chars
-  content: string,        # text to save (markdown)
-  assertion_mode: string, # factual | procedural | belief | hypothesis | quoted
-  tags: string[],         # agent-suggested, 1–5 tags
-  source_note?: string    # optional source reference (V1 — resolved to UUID in V2)
-)
+save_personal_knowledge(title, content, assertion_mode, tags, source_note?)
+save_org_knowledge(title, content, assertion_mode, tags, source_note?)
+save_to_docs(title, content, kb_slug, assertion_mode, tags, source_note?)
 ```
 
-Identity: `X-User-ID` + `X-Org-Slug` headers sent by LibreChat (see §9.2 LibreChat config).
-Auth: internal service token (`DOCS_INTERNAL_SECRET`) — bypasses Zitadel JWT for same-cluster calls.
-Storage: writes via klai-docs PUT API; YAML frontmatter with knowledge model fields is the V1 store.
-Qdrant indexing: deferred until the Knowledge Service is built. Frontmatter is the source of truth.
+Identity: `X-User-ID` + `X-Org-Slug` headers sent by LibreChat.
+Auth: internal service token (`KNOWLEDGE_INGEST_SECRET`).
+Storage: POSTs directly to `{KNOWLEDGE_INGEST_URL}/ingest/v1/document` — **not** via klai-docs API.
+Qdrant indexing: **live** — saves are ingested and indexed immediately by the knowledge-ingest pipeline.
 
-V1 limitation: `derived_from` field stores `[]` (empty UUID list); source attribution is stored in
-`source_note` as a human-readable string. When the Knowledge Service is built, it will resolve
-`source_note` references to proper UUID provenance entries.
+`derived_from` stores `[]` (empty); source attribution is stored in `source_note` as a human-readable string until UUID provenance is wired in.
 
 **LibreChat config** (per tenant in `librechat.yaml`):
 ```yaml
@@ -876,26 +880,18 @@ mcpServers:
         - klai-knowledge-mcp
 ```
 
-Implementation: `klai-infra/core-01/klai-knowledge-mcp/main.py`
-Agent system prompt: `klai-infra/core-01/klai-knowledge-mcp/agent-system-prompt.md`
+Implementation: `deploy/klai-knowledge-mcp/main.py`
+Agent system prompt: `deploy/klai-knowledge-mcp/agent-system-prompt.md`
 
 This design is model-agnostic — the write layer is independent of which model drives the agent.
 
-**Known risks and V1 limitations:**
+**Known risk:**
 
-*Service token scope* — `DOCS_INTERNAL_SECRET` is a shared symmetric secret. If the MCP
+*Service token scope* — `KNOWLEDGE_INGEST_SECRET` is a shared symmetric secret. If the MCP
 container is compromised, an attacker can write to any user's personal KB by supplying any
 `X-User-ID` value. Mitigation path: replace with a Zitadel machine user token (scoped, rotatable,
 auditable). Acceptable for V1 on an internal Docker network; must be addressed before the MCP
 server is exposed to an untrusted network.
-
-*Saves are not semantically searchable in V1* — content written via `save_to_personal_kb` lands
-in Gitea (YAML frontmatter + markdown) but is not indexed in Qdrant. This means:
-- The LiteLLM pre-call hook (§9.5) does NOT retrieve personal saves as context in chat answers
-- The user cannot find their saves via semantic search
-- Personal saves are only accessible by browsing the knowledge base in the portal
-This is the expected V1 behaviour. Full-text + semantic search becomes available when the
-Knowledge Service is built and retroactively indexes the existing frontmatter files.
 
 ### 9.3 Routing: RAG vs. structured queries
 
@@ -920,7 +916,7 @@ If an answer is not found in retrieved sources, the system explicitly says so. I
 
 ### 9.5 LibreChat automatic context injection via LiteLLM pre-call hook
 
-**Status: decided 2026-03-21. Implementation is greenfield — Klai Knowledge service does not exist yet.**
+**Status: deployed March 2026. Hook is live and verified for the `getklai` tenant.**
 
 Every LibreChat chat message is automatically enriched with relevant organizational knowledge before it reaches the model. This is transparent to the user and to LibreChat.
 
@@ -931,13 +927,16 @@ LibreChat (per-tenant container)
   → POST /chat/completions  (with team-scoped API key)
   → LiteLLM proxy
       → async_pre_call_hook (KlaiKnowledgeHook)
-          1. Extract last user message as retrieval query
-          2. Skip if trivial (short message, ack, greeting)
-          3. GET org_id from key metadata
-          4. POST /knowledge/v1/retrieve  (timeout: 2s)
-          5. Inject chunks as system message prefix
-          6. Degrade silently on any failure
-      → model (Mistral Small 3.1 or Ollama fallback)
+          1. Extract user_id from data["user"] — skip if absent
+          2. Skip if message is trivial (short, ack, greeting)
+          3. _get_kb_feature(user_id, org_id) — fail-closed: skip if not enabled
+          4. scope = "both" if kb_personal_enabled else "org"
+          5. kb_slugs = kb_slugs_filter (None = all org KBs)
+          6. POST {KNOWLEDGE_RETRIEVE_URL}/retrieve  (timeout: 2s, graceful degrade)
+             — sends conversation_history for coreference resolution
+          7. Inject chunks as system message prefix
+          8. _classify_gap(chunks) + _fire_gap_event(...)  (fire-and-forget)
+      → model (Mistral / Ollama fallback)
   → response back to LibreChat
 ```
 
@@ -945,33 +944,30 @@ The hook is a `CustomLogger` subclass mounted as a Python file into the LiteLLM 
 
 #### Retrieval API interface
 
+The hook calls `POST {KNOWLEDGE_RETRIEVE_URL}/retrieve` on the `retrieval-api` service (env var). Scope and user identity are derived from the feature gate result:
+
 ```
-POST /knowledge/v1/retrieve
+POST /retrieve
 Authorization: Bearer <internal-service-token>
 
 {
-  "query": string,          // last user message text
-  "org_id": string,         // raw org UUID (no prefix — service applies org_ internally)
-  "top_k": 5,               // maximum chunks to return
-  "max_tokens": 2000        // hard budget; service truncates server-side
+  "query": string,                  // last user message text
+  "org_id": string,                 // Zitadel org ID
+  "scope": "org" | "both",          // from feature gate (kb_personal_enabled)
+  "user_id": string | null,         // for personal scope filtering
+  "kb_slugs": [...] | null,         // null = all org KBs; from kb_slugs_filter
+  "conversation_history": [...],    // for coreference resolution
+  "top_k": 5
 }
 
 → 200 OK (always — empty chunks = no relevant context)
 {
-  "chunks": [
-    {
-      "id": string,
-      "content": string,
-      "title": string,
-      "score": float,
-      "source_url": string | null
-    }
-  ],
+  "chunks": [{"text": string, "source": string, "score": float, "metadata": {...}}],
   "total_tokens": int
 }
 ```
 
-The service translates `org_id` → Qdrant scope `org_{org_id}` internally. Callers never need to know Qdrant scope conventions.
+The retrieval-api applies 3-leg RRF fusion (vector_chunk + vector_questions + vector_sparse) and returns ranked chunks. The hook injects the top results as a system message prefix.
 
 #### Token budget
 
@@ -1415,8 +1411,8 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 | **Document parsing** | docling-serve (self-hosted) | HybridChunker for token-aware, structure-preserving chunking |
 | **V2 external connectors** | Unstructured.io (Apache 2.0) | 30+ native source connectors (Zendesk, Google Drive, Confluence, Slack, SharePoint, Jira). Integrates as a Python library inside `knowledge-ingest` — no extra infrastructure. Each connector becomes an adapter: call Unstructured, forward output to `/ingest/v1/document`. Chosen over Airbyte (operationally heavy, ELv2 license) and LlamaIndex (code-only, no admin UI). Alternative for orgs with complex sync needs: Airbyte (600+ connectors, native web UI, native Qdrant destination, but requires Temporal + multiple containers). |
 | **Web crawling** | Crawl4AI | Open source, async, sitemap-aware |
-| **Embeddings** | BGE-M3 via FlagEmbedding | Dense + sparse in one pass; TEI does not support BGE-M3 sparse. **Today:** TEI already runs BGE-M3 (dense only) for research-api — switching to FlagEmbedding is a new service. |
-| **Vector store** | Qdrant (self-hosted) | Single collection, `tenant_id` payload index. Scopes: `org_*`, `user_*`, `gap_*`. Tiered multitenancy for large tenants. **Today:** not deployed; research-api uses pgvector. |
+| **Embeddings** | BGE-M3 dense via TEI + sparse via `bge-m3-sparse` sidecar (FlagEmbedding) | Both deployed on core-01. TEI cannot produce BGE-M3 sparse; sidecar handles sparse in a separate HTTP service. |
+| **Vector store** | Qdrant (self-hosted, core-01) | Two collections: `klai_knowledge` (org + personal KB) and `klai_focus` (research-api). `org_id`, `kb_slug`, `user_id` payload indexes. |
 | **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |
 | **Graph layer** | None (V1) | Deferred: evidence does not support graph RAG for B2B single-hop/procedural query patterns. Gate condition: if >20% of real queries are multi-hop relational, evaluate HippoRAG2 + SpaCy. Kùzu (previously suggested) archived Oct 2025 by Apple acquisition. |
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
@@ -1440,9 +1436,12 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 |---|---|
 | `klai-docs` | Publication layer — renders KB sites + REST API; editor UI lives in klai-portal (see §13.7) |
 | `klai-portal` | Editorial interface — editorial inbox, article management, gap review |
-| `klai-research/research-api` | Reference implementation — same ingestion pattern (docling-serve, BackgroundTasks), different store (pgvector → Qdrant) |
-| `docling-serve` (in research-api) | Shared document parser — already self-hosted, already producing HybridChunker output |
+| `klai-research/research-api` | Klai Focus backend — Qdrant (`klai_focus` collection) + calls `retrieval-api` for broad-mode retrieval |
+| `knowledge-ingest` | Unified ingest pipeline — accepts documents from all sources, enriches (Contextual Retrieval + HyPE), embeds (dense + sparse), stores in Qdrant |
+| `retrieval-api` | Retrieval service — 3-leg RRF fusion (dense + question + sparse); used by research-api broad mode and LiteLLM hook |
+| `klai-knowledge-mcp` | MCP write interface — personal + org knowledge saves; posts directly to knowledge-ingest |
+| `docling-serve` | Shared document parser — self-hosted, produces HybridChunker output; called by knowledge-ingest and research-api |
 | Zitadel | Auth — already in production, OIDC for all editor access |
-| Caddy (public-01) | Custom domain routing — already handles CNAME-to-tenant routing |
+| Caddy (core-01) | Reverse proxy — handles `*.getklai.com` routing |
 
-The Unified Ingest API and Qdrant store are the new components to build. Everything else either exists or has a reference implementation.
+The core infrastructure is built. See §0 for remaining open items.
