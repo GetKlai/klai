@@ -1,22 +1,25 @@
 # Klai Architecture Overview
 
 ## Workspace Layout
-`C:\Users\markv\stack\02 - Voys\Code\klai` — NOT a git repo, it's a workspace container.
-Active monorepo lives at `C:\Users\markv\stack\02 - Voys\Code\klai-mono` (GetKlai/klai).
+Monorepo lives at `/Users/mark/Server/projects/klai` (GetKlai/klai).
+Current branch: `main`.
 
-## Repos in workspace
+## Monorepo Structure
 
-| Repo | Purpose | Language | Status |
-|------|---------|----------|--------|
-| klai-portal | Customer portal (UI + API) | Python + TypeScript | Active |
-| klai-connector | GitHub→Knowledge sync service | Python (FastAPI) | Active |
-| klai-scribe | Meeting transcription (Whisper + API) | Python | Active |
-| klai-website | Marketing site | Astro/TypeScript | Active |
-| klai-focus | Research API | Python (FastAPI) | Active |
-| klai-claude | Claude Code assets (agents/rules/commands) | Markdown | Active |
-| klai-infra | Infrastructure secrets (SOPS) | Shell/YAML | Private |
-| klai-compliance | ISO27001 policies + SOA | Markdown | Active |
-| klai-docs | Documentation site | — | Present |
+| Directory | Purpose | Language | Status |
+|-----------|---------|----------|--------|
+| `portal/backend/` | Customer portal API | Python (FastAPI) | Active |
+| `portal/frontend/` | Customer portal UI | TypeScript (React/Vite) | Active |
+| `docs/` | Documentation site | TypeScript (Next.js 15) | Active |
+| `deploy/` | Self-hosting templates | Docker Compose / YAML | Active |
+| `.claude/` | Shared Claude Code tooling — agents, rules, commands, skills | Markdown | Active |
+| `claude-docs/` | Living knowledge base — patterns, pitfalls, styleguide | Markdown | Active |
+| `klai-private/` | Private business docs — research, GTM, pricing | Markdown | Submodule |
+| `klai-infra/` | Infrastructure secrets (SOPS) | Shell/YAML | Submodule (private) |
+| `klai-portal/` | Portal repo (legacy name, now `portal/`) | — | Present |
+| `klai-scribe/` | Meeting transcription service | Python | Present |
+| `klai-website/` | Marketing website | Astro/TypeScript | Present |
+| `scripts/` | Repo management utilities | Shell | Active |
 
 ## Core Platform Stack
 - **Auth:** Zitadel (self-hosted at auth.getklai.com)
