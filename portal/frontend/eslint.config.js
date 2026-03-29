@@ -47,8 +47,10 @@ export default defineConfig([
     },
   },
   // shadcn/ui components export variants alongside the component — this is intentional
+  // TanStack Router route files export `Route` (non-component) alongside local component functions —
+  // Fast Refresh works via Route.component reference; the plugin doesn't understand this pattern
   {
-    files: ['src/components/ui/**/*.{ts,tsx}', 'src/lib/locale.tsx'],
+    files: ['src/components/ui/**/*.{ts,tsx}', 'src/lib/locale.tsx', 'src/routes/**/*.{ts,tsx}'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },
