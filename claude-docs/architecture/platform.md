@@ -53,7 +53,7 @@ For the authoritative and current service list per server, see `klai-infra/SERVE
 | Server | Type | Cost | Services |
 |---|---|---|---|
 | public-01 | CX42 — Hetzner HEL | €17/mo | Coolify, website, Twenty (CRM), Fider, Uptime Kuma |
-| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API, klai-mailer, GlitchTip, whisper-server (CPU), scribe-api, TEI, docling-serve, SearXNG, research-api |
+| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API, klai-mailer, GlitchTip, whisper-server (CPU), scribe-api, TEI, bge-m3-sparse, docling-serve, SearXNG, research-api, knowledge-ingest, retrieval-api, klai-knowledge-mcp, infinity-reranker |
 | monitor-01 _(planned)_ | CAX11 — Hetzner HEL | €5/mo | Dedicated VictoriaMetrics + VictoriaLogs + Grafana (currently co-hosted on core-01) |
 
 EX44 is production-ready from day one (64 GB RAM, dedicated hardware). No migration needed as we grow. ai-01 (GPU) follows at Phase 3 trigger.
@@ -74,7 +74,7 @@ Principle: public-01 and core-01 share no ports and no machines. monitor-01 rece
 
 **Phase 3+ networking (when self-hosting AI):** core-01 (Hetzner HEL) and ai-01 (Nebius HEL) are in the same city — latency 5-15 ms RTT. Connected via WireGuard tunnel. LiteLLM calls vLLM via private WireGuard IP. Failover to Scaleway Paris (H100) or RunPod EU if Nebius goes down. Nebius SLA: 99.9%, has official OpenTofu provider.
 
-**RAG Phase 2:** Qdrant runs on ai-01 alongside BGE-M3 (Phase 3+). In Phase 2, rag_api uses pgvector on core-01.
+**Klai Knowledge (Phase 2 — deployed March 2026):** Qdrant on core-01 (`klai_knowledge` + `klai_focus` collections). Custom `knowledge-ingest` service replaces rag_api. `retrieval-api` serves hybrid RRF search. `bge-m3-sparse` sidecar handles sparse embeddings via FlagEmbedding. pgvector no longer used for vector search.
 
 ## Branding
 
@@ -102,7 +102,7 @@ Usage reporting (token usage per user/company) does not exist natively in LibreC
 |---|---|---|---|
 | 0 | Initial setup | Caddy + Zitadel + MongoDB + LiteLLM OSS + Mistral API + Ollama fallback + LibreChat + Alloy + VictoriaLogs | **Done** |
 | 1 | First paying customer | Customer portal live, Mollie direct debit active, provisioning service, VictoriaMetrics + Grafana | **Done** (2026-03) |
-| 2 | Customers request documents | Klai Knowledge: knowledge-ingest + Qdrant + TEI (dense BGE-M3) + LiteLLM hook | **Done** (2026-03) — retrieval live, getklai tenant verified end-to-end |
+| 2 | Customers request documents | Klai Knowledge: knowledge-ingest + Qdrant + retrieval-api + bge-m3-sparse + LiteLLM hook (feature gate + gap detection) + klai-knowledge-mcp (personal + org KB writes) | **Done** (2026-03) — retrieval live, getklai tenant verified end-to-end |
 | 3 | Break-even self-hosting (~30K active users) | ai-01 GPU server, vLLM, Whisper (GPU) — model choice Qwen3-32B + Qwen3-8B | In progress |
 | 4 | First enterprise customer | SAML SSO per org, SCIM provisioning | Planned |
 | 5 | Audit logs or >5 admins needed | LiteLLM Enterprise | Planned |
@@ -204,32 +204,29 @@ Fixed infrastructure: ~€1,570/mo (H100 €1,500 + servers €70). H100 capacit
 
 These are purely infrastructure costs. Margin, development and support are on top.
 
-## RAG stack (Phase 2)
+## RAG stack (Phase 2 — deployed March 2026)
 
-Two tracks, same components for embeddings and parsing.
+> **Deployed state:** Custom `knowledge-ingest` + `retrieval-api` + Qdrant. LibreChat `rag_api` (Track A) was never deployed — the custom approach was built directly. Haystack/LlamaIndex was removed; the custom services cover all orchestration needs.
 
-### Track A: LibreChat rag_api (starting point)
+Two tracks were evaluated during planning; Track B was built directly.
 
-LibreChat has a built-in RAG service (`rag_api`). By default it calls OpenAI — not suitable. Configured for privacy-first:
+### Track A: LibreChat rag_api (evaluated, not deployed)
 
-```
-EMBEDDINGS_PROVIDER=huggingfacetei
-EMBEDDINGS_MODEL=BAAI/bge-m3
-VECTOR_DB_TYPE=pgvector
-```
+LibreChat has a built-in RAG service (`rag_api`). Evaluated but not deployed. Downsides: LangChain lock-in (breaking changes), no Qdrant support, weak multi-tenant isolation (file_id, not tenant_id).
 
-pgvector is already in PostgreSQL on core-01. No extra services needed for Phase 2. Downsides: LangChain lock-in (breaking changes), no Qdrant support, weak multi-tenant isolation (file_id, not tenant_id). Acceptable as long as one container per customer.
+### Track B: custom RAG services (deployed as knowledge-ingest + retrieval-api)
 
-### Track B: custom RAG microservice (migration when rag_api blocks us)
-
-Custom FastAPI service with full control. Trigger: rag_api limits multi-tenancy, chunking quality or document parsing.
+Custom FastAPI services with full control. Haystack/LlamaIndex orchestration was removed — Qdrant + the ingest pipeline covered all orchestration needs directly.
 
 ```
-Document parsing  Docling (MIT, IBM Research, 54.7k stars)
-Embeddings        BGE-M3 via HuggingFace TEI (MIT, NL/DE/EN)
-Vector store      Qdrant on ai-01 (Apache 2.0, Rust, tiered multitenancy v1.16, 29.2k stars)
-Orchestration     Haystack 2.x or LlamaIndex (both MIT/Apache 2.0)
-Integration       LibreChat Custom Endpoint (OpenAI-compatible API)
+Document parsing   docling-serve (MIT, IBM Research)
+Embeddings dense   BGE-M3 via HuggingFace TEI
+Embeddings sparse  BGE-M3 via FlagEmbedding sidecar (bge-m3-sparse, http://bge-m3-sparse:8001)
+Vector store       Qdrant on core-01 (klai_knowledge + klai_focus collections)
+Ingest service     knowledge-ingest (FastAPI, /ingest/v1/*)
+Retrieval service  retrieval-api (FastAPI, POST /retrieve, 3-leg RRF fusion)
+LiteLLM hook       KlaiKnowledgeHook (feature gate, user_id scoping, gap detection)
+MCP server         klai-knowledge-mcp (save_personal_knowledge, save_org_knowledge)
 ```
 
 ### Shared components (both tracks)
@@ -523,8 +520,14 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 | ✅ Done | Grafana VictoriaLogs plugin | Required (`victoriametrics-logs-datasource`). LogsQL != LogQL, generic Loki does not work. |
 | ✅ Done | LibreChat provisioning | portal-api provisioning service live (Phase 1 complete). Template logic: `provisioning.py`. |
 | ✅ Done | LiteLLM `drop_params` | `drop_params: true` in `litellm/config.yaml`. |
+| ✅ Done | Qdrant | Deployed on core-01. `klai_knowledge` + `klai_focus` collections. Replaces pgvector for vector search. |
+| ✅ Done | knowledge-ingest | Custom ingest service deployed. Gitea webhook, document upload, crawl, personal items endpoints. |
+| ✅ Done | retrieval-api | Hybrid RRF retrieval (dense + question + sparse) deployed on core-01. `POST /retrieve`. |
+| ✅ Done | bge-m3-sparse | FlagEmbedding sparse sidecar deployed. BGE-M3 dense+sparse in production. |
+| ✅ Done | klai-knowledge-mcp | MCP write server deployed. Personal + org KB saves; indexed in Qdrant immediately. |
+| ✅ Done | LiteLLM knowledge hook | `KlaiKnowledgeHook` live with feature gate, user_id scoping, conversation history, gap detection. |
 | ⚠️ Partial | LibreChat OIDC | `OPENID_USERNAME_CLAIM=preferred_username` + `OPENID_REUSE_TOKENS=false` in provisioning.py ✅. Custom logout redirect to Zitadel end-session still missing. |
 | ⚠️ Open | Cleopatra/Voys-UI | Publicly available? React + Tailwind v4 compatible? Verify internally before portal build. |
 | 🔜 Phase 3+ | LiteLLM to vLLM prefix | `hosted_vllm/` prefix in LiteLLM config — applicable when ai-01 GPU server is live. |
 | 🔜 Phase 3+ | MPS system setup | cloud-init or systemd unit for: EXCLUSIVE_PROCESS mode + MPS daemon + Hopper env vars, before Docker starts. |
-| 🔜 Phase 2 | rag_api image | Use non-lite image: `ghcr.io/danny-avila/librechat-rag-api-dev:latest`. |
+| N/A | rag_api image | Not used — custom knowledge-ingest + retrieval-api built instead of LibreChat rag_api. |
