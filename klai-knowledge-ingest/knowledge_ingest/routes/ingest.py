@@ -10,11 +10,11 @@ import asyncio
 import hashlib
 import hmac
 import json
-import logging
 import time
 from datetime import datetime, timezone
 
 import httpx
+import structlog
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
@@ -31,7 +31,7 @@ from knowledge_ingest.models import (
 
 _SENTINEL = 253402300800  # 9999-12-31
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 router = APIRouter()
 
 
@@ -180,6 +180,7 @@ async def _graphiti_background(
 
 async def ingest_document(req: IngestRequest) -> dict:
     """Core ingest pipeline: chunk -> embed -> upsert."""
+    t_ingest = time.monotonic()
 
     # Early exit if content is unchanged since last ingest
     content_hash = hashlib.sha256(req.content.encode()).hexdigest()
@@ -313,9 +314,16 @@ async def ingest_document(req: IngestRequest) -> dict:
             )
         )
 
+    ingest_ms = int((time.monotonic() - t_ingest) * 1000)
     logger.info(
-        "Ingested %s/%s for org %s (%d chunks, artifact %s, type=%s)",
-        req.kb_slug, req.path, req.org_id, len(texts), artifact_id, req.content_type,
+        "ingest_complete",
+        kb_slug=req.kb_slug,
+        path=req.path,
+        org_id=req.org_id,
+        artifact_id=artifact_id,
+        chunks=len(texts),
+        type=req.content_type,
+        ingest_ms=ingest_ms,
     )
     return {"status": "ok", "chunks": len(texts), "title": title, "artifact_id": artifact_id}
 

@@ -8,16 +8,16 @@ Enriched chunk text = "{context_prefix}\n\n{original_text}"
 Questions are used for vector_questions (depth 0-1 only) and stored in payload.
 """
 import asyncio
-import logging
 from dataclasses import dataclass
 
 import httpx
+import structlog
 from pydantic import BaseModel, ValidationError
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.context_strategies import STRATEGIES
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 ENRICHMENT_PROMPT = """\
 Documenttitel: {title}
@@ -127,17 +127,17 @@ async def enrich_chunk(
             resp.raise_for_status()
             data = resp.json()
     except httpx.TimeoutException:
-        logger.warning("Enrichment LLM timeout for path=%s", path)
+        logger.warning("enrichment_llm_timeout", path=path)
         return None
     except Exception as exc:
-        logger.warning("Enrichment LLM error for path=%s: %s", path, exc)
+        logger.warning("enrichment_llm_error", path=path, error=str(exc))
         return None
 
     try:
         content = data["choices"][0]["message"]["content"]
         return EnrichmentResult.model_validate_json(content)
     except (KeyError, IndexError, ValidationError, ValueError) as exc:
-        logger.warning("Enrichment LLM unparseable response for path=%s: %s", path, exc)
+        logger.warning("enrichment_llm_unparseable", path=path, error=str(exc))
         return None
 
 
