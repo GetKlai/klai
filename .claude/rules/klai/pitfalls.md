@@ -10,7 +10,7 @@
 | [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
-| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 12 entries |
+| [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 15 entries |
 | [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 33 entries |
 | [Backend](pitfalls/backend.md) | Python async, FastAPI, prometheus_client | 5 entries |
 | [Code Quality](pitfalls/code-quality.md) | ESLint, ruff, pyright, CI quality gates | 2 entries |

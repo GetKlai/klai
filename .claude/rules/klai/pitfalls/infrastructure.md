@@ -32,6 +32,7 @@ paths:
 | [infra-placeholder-values-in-sops](#infra-placeholder-values-in-sops) | CRIT | Placeholder values in SOPS break services silently |
 | [infra-kuma-tokens-not-in-containers](#infra-kuma-tokens-not-in-containers) | CRIT | KUMA_TOKEN vars are cron-only; invisible to container-based recovery |
 | [infra-push-health-set-u-total-blackout](#infra-push-health-set-u-total-blackout) | HIGH | One missing KUMA_TOKEN crashes entire monitoring script |
+| [infra-deploy-sh-full-overwrite](#infra-deploy-sh-full-overwrite) | CRIT | `deploy.sh main` does full `.env` overwrite, not merge — wipes all non-SOPS vars |
 
 ---
 
@@ -502,6 +503,32 @@ tail -5 /opt/klai/logs/health.log
 **Fix:** Add the missing token to `.env` (recover from Uptime Kuma DB — see `infra-kuma-tokens-not-in-containers`), then run the script manually to verify.
 
 **Prevention:** All `KUMA_TOKEN_*` references in `push-health.sh` should use `${VAR:-}` syntax so a missing token skips that one monitor instead of crashing the entire script.
+
+---
+
+## infra-deploy-sh-full-overwrite
+
+**Severity:** CRIT
+
+**Trigger:** Running `deploy.sh main` from `klai-infra/core-01/` to add or update a secret in SOPS
+
+`deploy.sh main` does `sops -d core-01/.env.sops > /opt/klai/.env` — a full file replace, not a merge. Any env var that exists in the live `/opt/klai/.env` but NOT in the SOPS file gets silently deleted. If the server `.env` has 96 lines and SOPS has 37, running `deploy.sh main` wipes 59 variables in one shot.
+
+**What happened (March 2026):**
+A single new var (`KUMA_TOKEN_GPU_SERVICES`) was added to SOPS. Running `deploy.sh main` to deploy it overwrote the entire `.env`, destroying 59 vars including `QDRANT_API_KEY`, `POSTGRES_PASSWORD`, and dozens of service-specific keys. Qdrant enabled auth with an empty key, locking out all vector search clients. knowledge-ingest crashed with `InvalidPasswordError`. research-api crashed with Qdrant 401. Multiple services were down for ~30 minutes until `.env` was restored from a `.env.bak` file on core-01.
+
+**Why it happens:**
+`deploy.sh` was written as a simple decrypt-and-write tool. It assumes SOPS is the complete source of truth. In practice, the server `.env` accumulates manually-added vars (Uptime Kuma tokens, service keys, provisioning outputs) that are never back-ported to SOPS. The gap between SOPS (~37 vars) and server (~96 vars) grows silently until `deploy.sh` is run and the difference is destroyed.
+
+**Prevention:**
+1. **NEVER** run `deploy.sh main` to deploy secrets — it is a full overwrite, not a merge
+2. To add a new secret: add it to SOPS (for backup) AND separately `echo 'VAR=value' >> /opt/klai/.env` on core-01
+3. To change an existing secret: edit SOPS (for backup), then manually update only that line on core-01
+4. After any SOPS deploy, verify line count: `wc -l /opt/klai/.env` must match expected count (~96+)
+5. Keep `.env.bak` files on core-01 — they saved this incident
+6. Long term: rewrite `deploy.sh` to use a merge strategy (diff keys, add new, update changed, never remove)
+
+**See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`, `pitfalls/infrastructure.md#infra-sync-env-no-safety-checks`
 
 ---
 
