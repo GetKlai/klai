@@ -1825,7 +1825,7 @@ function KnowledgeDetailPage() {
               )}
             </div>
 
-            {/* Volume breakdown per database */}
+            {/* Breakdown per database */}
             <div>
               <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-2">
                 {m.knowledge_detail_volume_breakdown_title()}
@@ -1835,11 +1835,11 @@ function KnowledgeDetailPage() {
                   <Database className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
                   <div>
                     <p className="text-xs font-medium text-[var(--color-purple-deep)]">
-                      {m.knowledge_detail_volume_source_pages()}
+                      {m.knowledge_detail_volume_sources()}
                     </p>
                     <p className="text-sm text-[var(--color-foreground)]">
                       {stats?.source_page_count != null
-                        ? m.knowledge_detail_volume_source_pages_count({ count: String(stats.source_page_count) })
+                        ? m.knowledge_detail_volume_sources_count({ count: String(stats.source_page_count) })
                         : m.knowledge_detail_volume_unavailable()}
                     </p>
                   </div>

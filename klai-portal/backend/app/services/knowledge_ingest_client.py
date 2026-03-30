@@ -34,6 +34,25 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
         return {"entity_count": None, "edge_count": None}
 
 
+async def get_source_count(org_id: str, kb_slug: str) -> int | None:
+    """Fetch the number of active source artifacts for a KB from knowledge-ingest."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            timeout=5.0,
+        ) as client:
+            resp = await client.get(
+                "/ingest/v1/source-count",
+                params={"org_id": org_id, "kb_slug": kb_slug},
+            )
+            resp.raise_for_status()
+            return resp.json().get("source_count")
+    except Exception:
+        logger.debug("Could not fetch source count from knowledge-ingest (org=%s kb=%s)", org_id, kb_slug)
+        return None
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 
