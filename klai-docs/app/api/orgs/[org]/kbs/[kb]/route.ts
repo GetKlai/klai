@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireAuth, requireAuthOrService } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import * as ki from "@/lib/knowledge_ingest";
@@ -8,7 +8,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ org: string; kb: string }> }
 ) {
-  const payload = await requireAuth(request);
+  const payload = await requireAuthOrService(request);
   if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { org: orgSlug, kb: kbSlug } = await params;
