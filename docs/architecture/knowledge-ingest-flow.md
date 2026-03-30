@@ -396,7 +396,7 @@ fallback). If `settings.graphiti_enabled`, a Graphiti graph search fires concurr
 and is RRF-merged with the Qdrant results.
 
 **4. Rerank.** The top candidates are reranked by `infinity-reranker`
-(bge-reranker-v2-m3 on CPU). The reranker applies a cross-attention model that scores
+(bge-reranker-v2-m3 on GPU — gpu-01 via SSH tunnel at 172.18.0.1:7998). The reranker applies a cross-attention model that scores
 each (query, chunk) pair more precisely than vector distance alone. Top 5–10 survive.
 
 **Why not just use vector search directly?** Each retrieval signal captures something
@@ -521,7 +521,7 @@ text from the fetched pages.
 
 ---
 
-## Service map (deployed on core-01)
+## Service map (core-01 + gpu-01)
 
 | Service | Role |
 |---|---|
@@ -529,10 +529,10 @@ text from the fetched pages.
 | `retrieval-api` | Retrieval endpoint (SPEC-KB-008) — replaces deprecated /knowledge/v1/retrieve |
 | `procrastinate-worker` | Async enrichment worker (queues: enrich-interactive, enrich-bulk) |
 | `qdrant` | Vector store — `klai_knowledge` collection, 3 named vectors per chunk |
-| `tei` | BGE-M3 dense embeddings (1024-dim) |
-| `bge-m3-sparse` | BGE-M3 sparse (SPLADE-style) embeddings sidecar |
+| `tei` | BGE-M3 dense embeddings (1024-dim) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
+| `bge-m3-sparse` | BGE-M3 sparse (SPLADE-style) embeddings sidecar — gpu-01 via SSH tunnel at 172.18.0.1:8001 |
 | `docling-serve` | Document parsing and token-aware chunking |
-| `infinity-reranker` | bge-reranker-v2-m3 on CPU — shared with LibreChat webSearch |
+| `infinity-reranker` | bge-reranker-v2-m3 on GPU (gpu-01 via SSH tunnel at 172.18.0.1:7998) — shared with LibreChat webSearch |
 | `litellm` | LLM proxy + KlaiKnowledgeHook pre-call filter |
 | `librechat-{slug}` | Per-tenant chat container |
 | `gitea` | Git store for human-authored KB pages |

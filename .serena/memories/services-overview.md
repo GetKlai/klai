@@ -7,8 +7,8 @@
 ## klai-scribe (`klai-scribe/`)
 - **Purpose:** Meeting/audio transcription
 - **Components:**
-  - `whisper-server/` — Whisper ASR server
-  - `scribe-api/` — FastAPI, stores transcriptions, integrates with portal
+  - `whisper-server/` — Whisper ASR server (deployed on **gpu-01**, reached from core-01 via SSH tunnel at `172.18.0.1:8000`)
+  - `scribe-api/` — FastAPI, stores transcriptions, integrates with portal (deployed on core-01)
 
 ## klai-website (`klai-website/`)
 - **Purpose:** Marketing website
@@ -31,11 +31,20 @@
 - **Stack:** FastAPI + Python
 - Calls retrieval-api for all retrieval (no direct Qdrant access)
 
+## GPU Inference Services (gpu-01 via SSH tunnel)
+All accessed from core-01 containers via 172.18.0.1 (Docker host gateway):
+| Service | Port | Model | Purpose |
+|---------|------|-------|---------|
+| TEI | 7997 | BAAI/bge-m3 | Dense embeddings (1024-dim) for knowledge-ingest + retrieval-api |
+| Infinity | 7998 | BAAI/bge-reranker-v2-m3 | Cross-encoder reranking for retrieval-api |
+| bge-m3-sparse | 8001 | BAAI/bge-m3 | Sparse SPLADE embeddings for knowledge-ingest |
+| whisper-server | 8000 | Whisper large-v3 | STT for scribe-api |
+
 ## External Platform Services
 | Service | Role | URL |
 |---------|------|-----|
 | Zitadel | SSO/Auth | auth.getklai.com |
-| LiteLLM | LLM proxy/routing | internal |
+| LiteLLM | LLM proxy/routing | internal (http://litellm:4000) |
 | LibreChat | AI chat UI (per tenant) | {slug}.getklai.com |
 | Qdrant | Vector DB for knowledge | internal |
 | Vexa | Meeting bot manager | internal port 8056 |
