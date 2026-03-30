@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'deploy/klai-mailer/**'
+      - 'klai-mailer/**'
       - '.github/workflows/klai-mailer.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push klai-mailer
         uses: docker/build-push-action@v7
         with:
-          context: ./deploy/klai-mailer
+          context: ./klai-mailer
           push: true
           tags: |
             ghcr.io/getklai/klai-mailer:latest

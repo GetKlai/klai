@@ -140,7 +140,7 @@ The raw payload is logged to stdout. View with `docker compose logs klai-mailer`
 ## Development
 
 ```bash
-cd deploy/klai-mailer
+cd klai-mailer
 pip install -e .
 cp .env.example .env  # fill in values
 uvicorn app.main:app --reload --port 8000
