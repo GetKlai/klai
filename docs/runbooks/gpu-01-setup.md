@@ -822,6 +822,23 @@ ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64 \
 
 **VRAM verdeling:** TEI (bge-m3) ~2 GB + Infinity (bge-reranker-v2-m3) ~1 GB + Whisper large-v3-turbo ~3 GB = ~6 GB van 20 GB VRAM. BGE-M3 sparse draait op CPU (spaart ~1 GB VRAM, doet het goed op CPU).
 
+### CUDA & driver compatibility
+
+**Huidige staat (maart 2026):** NVIDIA driver 570.x + CUDA 12.8 runtime (`cu128` PyTorch wheels).
+
+**CUDA 13.x upgrade:** Niet mogelijk zonder driver-upgrade. CUDA 13.x vereist driver ≥ 580. De huidige 570.x driver ondersteunt maximaal CUDA 12.8.
+
+**Wat nodig is voor CUDA 13:**
+1. NVIDIA driver upgraden naar ≥ 580 (`apt install nvidia-driver-580` of nieuwer)
+2. Server reboot (driver-wisseling vereist kernel module herlaad)
+3. Remote LUKS unlock na reboot (zie "Operationele Procedures")
+4. Smoke test alle GPU workloads: TEI, Infinity reranker, bge-m3-sparse, whisper-server
+5. PyTorch wheels wisselen van `cu128` naar `cu131` (of nieuwer) in Dockerfiles
+
+**Beslissing:** Blijven op CUDA 12.8. Geen concrete performance-winst van 13.x voor de huidige workloads (BGE-M3 embeddings, reranking, Whisper STT). Revisit wanneer een dependency CUDA 13 vereist.
+
+**Let op:** `cu121` PyTorch wheels zonder version cap installeren torch 2.11.0 dat CUDA 13.x runtime meetrekt — dit faalt op driver 570.x. Altijd `cu128` specificeren (zie `deploy/bge-m3-sparse/Dockerfile`).
+
 ### Monitoring valkuilen
 
 **push-health.sh crashte bij ontbrekende KUMA tokens:** Het script had `set -uo pipefail` + variabelen zonder `:-` default (bijv. `${KUMA_TOKEN_CHAT}`). Bij een ontbrekende token crashte het script direct — alle infrastructuur-heartbeats (VEXA, PORTAL_API, etc.) werden nooit gestuurd. Fix: alle tokens naar `${KUMA_TOKEN_X:-}`, `push_exec`/`push_healthcheck` skippen nu bij leeg token.
