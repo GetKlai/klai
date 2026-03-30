@@ -81,11 +81,21 @@ def _extract_frontmatter_metadata(content: str) -> dict:
         return {}
 
 
+_ASSERTION_MODE_MIGRATION: dict[str, str] = {
+    "factual": "fact",
+    "belief": "claim",
+    "hypothesis": "speculation",
+    "note": "unknown",
+}
+
+_VALID_NEW_ASSERTION_MODES = frozenset({"fact", "claim", "speculation", "procedural", "quoted", "unknown"})
+
+
 def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
     """Extract knowledge model fields from YAML frontmatter. Returns defaults if absent."""
     defaults: dict = {
         "provenance_type": "observed",
-        "assertion_mode": "factual",
+        "assertion_mode": "unknown",
         "synthesis_depth": 4 if source_type == "docs" else 0,
         "confidence": None,
         "belief_time_start": int(time.time()),
@@ -106,8 +116,14 @@ def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
     result = dict(defaults)
     if fm.get("provenance_type") in ("observed", "extracted", "synthesized", "revised"):
         result["provenance_type"] = fm["provenance_type"]
-    if fm.get("assertion_mode") in ("factual", "procedural", "quoted", "belief", "hypothesis"):
-        result["assertion_mode"] = fm["assertion_mode"]
+
+    raw_mode = fm.get("assertion_mode")
+    if raw_mode in _VALID_NEW_ASSERTION_MODES:
+        result["assertion_mode"] = raw_mode
+    elif raw_mode in _ASSERTION_MODE_MIGRATION:
+        result["assertion_mode"] = _ASSERTION_MODE_MIGRATION[raw_mode]
+    # else: keep default "unknown"
+
     if isinstance(fm.get("synthesis_depth"), int) and 0 <= fm["synthesis_depth"] <= 4:
         result["synthesis_depth"] = fm["synthesis_depth"]
     if fm.get("confidence") in ("high", "medium", "low"):
@@ -211,6 +227,8 @@ async def ingest_document(req: IngestRequest) -> dict:
         extra_payload["source_type"] = req.source_type
     if req.content_type != "unknown":
         extra_payload["content_type"] = req.content_type
+    # Evidence tier metadata (SPEC-EVIDENCE-001, R4)
+    extra_payload["assertion_mode"] = kf["assertion_mode"]
     # Merge adapter extra metadata
     if req.extra:
         extra_payload.update(req.extra)

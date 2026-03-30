@@ -135,3 +135,36 @@ class TestSearch:
         assert len(kb_conditions) >= 1
         assert isinstance(kb_conditions[0].match, MatchAny)
         assert kb_conditions[0].match.any == ["intern"]
+
+    @pytest.mark.asyncio
+    async def test_knowledge_search_passes_through_evidence_metadata(self):
+        """Search result dicts include ingested_at, assertion_mode from payload (R4)."""
+        point = _make_point(
+            "c1", "chunk text", 0.8,
+            org_id="org-1",
+            ingested_at=1711843200,
+            assertion_mode="fact",
+        )
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response([point])
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="test", org_id="org-1", scope="org")
+            results = await search.hybrid_search([0.1, 0.2], req, 10)
+
+        assert results[0]["ingested_at"] == 1711843200
+        assert results[0]["assertion_mode"] == "fact"
+
+    @pytest.mark.asyncio
+    async def test_knowledge_search_evidence_metadata_defaults_to_none(self):
+        """When payload lacks evidence fields, they default to None (R4)."""
+        point = _make_point("c1", "chunk text", 0.8, org_id="org-1")
+        mock_client = AsyncMock()
+        mock_client.query_points.return_value = _make_query_response([point])
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="test", org_id="org-1", scope="org")
+            results = await search.hybrid_search([0.1, 0.2], req, 10)
+
+        assert results[0]["ingested_at"] is None
+        assert results[0]["assertion_mode"] is None
