@@ -5,6 +5,8 @@
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
+> For evidence-weighted scoring and assertion mode weights research, see
+> [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).
 
 ---
 
@@ -551,11 +553,12 @@ text from the fetched pages.
 
 ---
 
-## Part 6: Assertion modes — research and open design question
+## Part 6: Assertion modes — research findings and implementation guidance
 
-> Compiled: 2026-03-28.
-> Status: Research complete, no implementation decision made.
-> Question: Should assertion modes become an active signal in the retrieval pipeline?
+> Compiled: 2026-03-28. Updated: 2026-03-30.
+> Status: Research complete. Recommendation: **start with flat weights, measure, then tune.**
+> Full research synthesis: [Evidence-Weighted Knowledge Retrieval](../research/README.md)
+> Detailed weights analysis: [Assertion Mode Weights](../research/assertion-modes/assertion-mode-weights.md)
 
 ### What assertion modes are
 
@@ -696,27 +699,38 @@ fundamentally.
 If assertion modes are activated, they should be **internal ranking signals only**, not
 exposed to end users as labels.
 
-### Open questions (no implementation decision made)
+### Research conclusions (2026-03-30)
 
-1. **Does assertion mode improve retrieval on Klai's data?** Untested. Needs an A/B
-   evaluation on actual content — 50 real queries, measure whether assertion mode as a
-   filter or ranking weight changes recall@10 or precision@10 using existing
-   frontmatter-derived labels.
+The [evidence-weighted knowledge research programme](../research/README.md) investigated four scoring dimensions (content type, assertion mode, temporal decay, cross-source corroboration) across 50+ papers. Key conclusions for assertion modes:
+
+1. **Evidence-weighted retrieval works in principle.** RA-RAG: +51% accuracy; TREC Health: +60% MAP; BayesRAG: +20% Recall@20. But these studies use source credibility or corroboration — not epistemic type labels. The concept of assertion mode as a retrieval signal is **novel and untested**.
+
+2. **Start with flat weights (all 1.00).** The equal-weighting literature (Einhorn & Hogarth 1975, Graefe 2013) strongly shows flat weights outperform intuitive expert weights when empirical calibration data doesn't exist. See [Assertion Mode Weights](../research/assertion-modes/assertion-mode-weights.md).
+
+3. **Maximum safe weight spread: 0.20** for an ~85% accurate classifier. Wider spreads cause more harm from misclassification than benefit from correct classification. The previously proposed 0.30 spread (in the implementation plan) was revised to 0.10 based on the weights research.
+
+4. **Multiplicative compounding risk.** With 4 scoring dimensions at ~85% accuracy each, 48% of chunks will have at least one misclassified dimension. This is why assertion mode weights should start flat and only be activated after empirical validation.
+
+5. **Never show to users.** CHI 2024: confidence indicators don't improve task accuracy. ACL 2024: overconfident epistemic markers cause lasting trust damage. ACL 2025: LLMs can't produce calibrated epistemic markers. Assertion mode is an **internal ranking signal only**.
+
+6. **Corroboration scoring: deferred.** Three prerequisites must be met first: near-duplicate detection (SemHash), source-level grouping (`source_document_id`), and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring](../research/corroboration/corroboration-scoring.md).
+
+**Evaluation protocol before activating weights:** 150 test queries (50 curated + 100 RAGAS-synthetic), Context Precision + NDCG@10 + Faithfulness metrics, Wilcoxon signed-rank paired tests, shadow scoring before cutover. See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md).
+
+### Remaining open questions
+
+1. **Does assertion mode improve retrieval on Klai's data?** Still untested. The research confirms the concept is plausible by analogy but the specific combination is novel. Needs the A/B evaluation described above.
 
 2. **Does the 3-category taxonomy fit Klai's content mix?** Needs a 200-sample evaluation.
    Hand-label 200 chunks, measure inter-annotator agreement. If below 80%, the categories
    need refinement.
 
 3. **Can the HyPE prompt classify assertion mode reliably?** Needs prompt engineering +
-   evaluation. The marginal compute cost is near-zero but prompt quality may degrade.
+   evaluation. MDKeyChunker (2026) demonstrates multi-field extraction is feasible.
 
-4. **Is the benefit domain-dependent?** Almost certainly yes. Legal RAG showed dramatic
-   improvement on structured contracts but near-zero on privacy policies. Mixed-domain
-   tenants may see inconsistent benefit.
-
-5. **MCP taxonomy alignment** is needed regardless of this decision. The current `{fact,
+4. **MCP taxonomy alignment** is needed regardless of the weights decision. The current `{fact,
    claim, note}` → `{factual, procedural, quoted, belief, hypothesis}` gap creates data
-   quality issues.
+   quality issues. The 3-category grouping for retrieval (`assertion`, `speculation`, `procedure`) should inform the MCP mapping.
 
 ### Sources
 

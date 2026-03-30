@@ -1,15 +1,17 @@
 # Evidence-Weighted Knowledge: Implementatieplan voor Klai
 
 > Aangemaakt: 2026-03-29
-> Gebaseerd op: `research.md` + `toepassing.md` in deze map
+> Gebaseerd op: [Evidence-Weighted Knowledge Research](../foundations/evidence-weighted-knowledge.md) + [ThetaOS & Klai Comparison](../foundations/thetaos-klai-comparison.md)
 > Status: voorstel — nog niet geïmplementeerd
 > Scope: `retrieval-api/` en `deploy/knowledge-ingest/`
+> Onderdeel van: [Research Synthesis](../README.md)
+> Gerelateerd: [Assertion Mode Weights](../assertion-modes/assertion-mode-weights.md) (nuanceert de gewichten in dit document), [Corroboration Scoring](../corroboration/corroboration-scoring.md) (deferred corroboratie), [RAG Evaluation Framework](../evaluation/rag-evaluation-framework.md) (meetmethode)
 
 ---
 
 ## Aanleiding
 
-Het onderzoek in `toepassing.md` identificeert zes concrete gaps in Klai's retrieval-pipeline
+Het onderzoek in de [ThetaOS & Klai Comparison](../foundations/thetaos-klai-comparison.md) identificeert zes concrete gaps in Klai's retrieval-pipeline
 die wetenschappelijk bewezen oplossingen hebben. Dit document vertaalt die gaps naar
 exacte codewijzigingen — welk bestand, welke regel, met welke wetenschappelijke
 onderbouwing.
@@ -66,17 +68,26 @@ Misinformation toont +60% MAP bij credibility-gewogen fusie (Huang et al., 2025)
 - TARSA (ACL 2021): stance-aware aggregatie — bevestigende en weerleggende bronnen moeten
   anders gewogen worden. `assertion_mode` is de pre-cursor voor dit onderscheid.
 
-**Proposed assertion weight mapping:**
+**Proposed assertion weight mapping (bijgewerkt o.b.v. [Assertion Mode Weights](../assertion-modes/assertion-mode-weights.md)):**
+
+De oorspronkelijke spread (1.00–0.70 = 0.30) is te agressief voor de huidige classifiernauwkeurigheid (~85%). Maximum veilige spread: **0.10** als startpunt. Zie [Section 4.2](../assertion-modes/assertion-mode-weights.md#42-deriving-maximum-safe-spread-from-error-rate) voor de formele afleiding.
+
+**v1 — Conservatief (aanbevolen startpunt):**
 
 | assertion_mode | weight | Rationale |
 |---|---|---|
-| `factual` | 1.00 | Bewering van feit — hoogste epistemische waarde |
-| `procedural` | 0.95 | Instructie/procedure — feitelijk van aard |
-| `quoted` | 0.90 | Citaat — betrouwbaar maar indirect |
-| `note` | 0.80 | Notitie — vrije vorm, onbeoordeeld |
-| `belief` | 0.75 | Overtuiging — subjectief |
-| `hypothesis` | 0.70 | Hypothese — laagste epistemische waarde |
-| `None` | 0.90 | Onbekend → voordeel van de twijfel |
+| `factual` | 1.00 | Referentiegewicht |
+| `procedural` | 1.00 | Instructies zijn niet minder betrouwbaar dan feiten — ander type, niet mindere kwaliteit |
+| `quoted` | 0.98 | Minimale reductie: geattribueerde content is betrouwbaar maar indirect |
+| `belief` / `claim` | 0.95 | Lichte reductie voor subjectieve content |
+| `hypothesis` | 0.90 | Grootste reductie, nog steeds conservatief |
+| `None` / onbekend | 0.97 | Ongelabeld krijgt voordeel van de twijfel — nooit penaliseren voor ontbrekende metadata |
+
+**Totale spread: 0.10 (1.00 tot 0.90)**
+
+**Alternatief v0 — Vlak (veiligst):** Alle modes op 1.00. Dit is de meest verdedigbare keuze tot empirische evaluatie aantoont dat differentiatie helpt. Zie [Einhorn & Hogarth argument](../assertion-modes/assertion-mode-weights.md#52-when-flat-weighting-outperforms-differentiated-weighting).
+
+**Verbreed pas** naar 0.20 spread na: 200+ chunk classificatie-evaluatie, A/B retrieval test met >3% verbetering, gemeten classifiernauwkeurigheid >85% op Klai-content.
 
 **Implementatie:** 2 regels in `ingest.py` + 1 regel in `qdrant_store.py` + opnemen in
 `evidence_tier.py`.
@@ -157,14 +168,18 @@ Voor LLM:  [sterkste, zwakke, zwakke, ..., op-één-na-sterkste]
   web-crawl van 2 jaar geleden is waarschijnlijk verouderd. Temporele decay verschilt
   per content_type.
 
-**Proposed decay functie:**
+**Proposed decay functie (bijgewerkt — conservatievere spread):**
+
+De oorspronkelijke spread (1.00–0.70) overschrijdt dezelfde veilige grens als bij assertion mode. Met 4 multiplicatieve dimensies is de kans op minstens één misclassificatie ~48% (zie [compounding-analyse](../assertion-modes/assertion-mode-weights.md#52-the-multiplicative-compounding-problem)). Per-dimensie spread moet daarom **0.10–0.15** zijn, niet 0.30.
 
 | Leeftijd | decay factor | ThetaOS-analogie |
 |---|---|---|
 | < 30 dagen | 1.00 | heet |
-| 30–180 dagen | 0.90 | warm |
-| 180–365 dagen | 0.80 | lauw |
-| > 365 dagen | 0.70 | koud (minimum — nooit lager) |
+| 30–180 dagen | 0.95 | warm |
+| 180–365 dagen | 0.90 | lauw |
+| > 365 dagen | 0.85 | koud (minimum — nooit lager) |
+
+**Totale spread: 0.15 (1.00 tot 0.85)**
 
 **Nuance:** KB-artikelen krijgen een lagere decaysnelheid (gecureerd blijft relevant).
 Web-crawls vervallen sneller. Dit is een tweede iteratie — v1 gebruikt één universele curve.
@@ -265,7 +280,7 @@ near-duplicates (zelfde meeting, twee verslagen). Dit is een apart project.
 | Assertion mode als signaal | Kwalitatief — geen directe meting beschikbaar | SELF-RAG 2024 |
 | Temporele decay | Kwalitatief — minder verouderde content in top-k | ThetaOS model |
 
-**Kanttekening:** deze cijfers zijn uit gecontroleerde experimenten op benchmark-datasets.
+**Kanttekening:** deze cijfers zijn uit gecontroleerde experimenten op benchmark-datasets en vertegenwoordigen het maximale effect bij optimale gewichten.
 De werkelijke verbetering in Klai hangt af van de distributie van content_types en
 assertion_modes in de productie-kennisbank. Meting via de gaps-dashboard na uitrol.
 
@@ -309,24 +324,24 @@ Drie gevallen:
 
 | Situatie | Aanbevolen gedrag | Gewicht |
 |---|---|---|
-| LLM classificeert `factual` of `belief` maar is onzeker | Accepteer classificatie, gebruik gedegradeerd gewicht | factual → 0.92, belief → 0.78 (halfway) |
-| LLM kan niet kiezen — retourneert `None` of lege string | Default naar `None` | 0.90 (benefit of the doubt) |
-| LLM hallucineert een ongeldige mode | Validatie vangt dit op → val terug op `None` | 0.90 |
+| LLM classificeert `factual` of `belief` maar is onzeker | Accepteer classificatie, gebruik het conservatieve tabelgewicht | factual → 1.00, belief → 0.95 |
+| LLM kan niet kiezen — retourneert `None` of lege string | Default naar `None` | 0.97 (benefit of the doubt) |
+| LLM hallucineert een ongeldige mode | Validatie vangt dit op → val terug op `None` | 0.97 |
 
-**Kernregel:** `None` krijgt 0.90 — nooit 0.00. Een niet-geclassificeerde chunk is niet per definitie slecht; het ontbreekt alleen aan extra metadata. Hard penaliseren zou nieuwe content (nog niet geclassificeerd) systematisch bevoordelen of benadelen op een manier die niet representatief is.
+**Kernregel:** `None` krijgt 0.97 — nooit 0.00. Een niet-geclassificeerde chunk is niet per definitie slecht; het ontbreekt alleen aan extra metadata. Hard penaliseren zou nieuwe content (nog niet geclassificeerd) systematisch bevoordelen of benadelen op een manier die niet representatief is.
 
 ### Aanbeveling voor de implementatie
 
 Gebruik de MCP-naamgeving (`fact`, `claim`, `note`) als de werkende standaard en voeg `procedural` en `quoted` toe als structureel herkenbare uitzonderingen:
 
-| assertion_mode | Detecteerbaarheid | weight |
+| assertion_mode | Detecteerbaarheid | weight (v1 conservatief) |
 |---|---|---|
-| `procedural` | Hoog — structurele markers | 0.95 |
-| `quoted` | Hoog — syntactische markers | 0.90 |
 | `fact` | Middel — vereist epistemisch oordeel | 1.00 |
-| `claim` | Middel — hedging + subjectiviteit | 0.75 |
-| `note` | Laag — vrije vorm | 0.80 |
-| `None` / onbekend | n.v.t. | 0.90 |
+| `procedural` | Hoog — structurele markers | 1.00 |
+| `quoted` | Hoog — syntactische markers | 0.98 |
+| `note` | Laag — vrije vorm | 0.97 |
+| `claim` | Middel — hedging + subjectiviteit | 0.95 |
+| `None` / onbekend | n.v.t. | 0.97 |
 
 **Technische actie:** synchroniseer de naamgeving tussen MCP en ingest-route. Kies één vocabulaire. De MCP-naamgeving (`fact/claim/note`) is beknopter; uitbreiden met `procedural` en `quoted` als optionele categorieën is de schoonste weg.
 
@@ -369,16 +384,16 @@ DEFAULT_EVIDENCE_PROFILE = {
     "corroboration_boost": "standard",
 }
 
-# Medisch profiel
+# Medisch profiel — NB: spreads blijven binnen veilige grenzen (max 0.20)
 MEDICAL_EVIDENCE_PROFILE = {
     "content_weights": {
         "clinical_guideline": 1.00,   # eigen type
-        "case_report": 0.80,
-        "patient_note": 0.65,         # lager dan standaard note
+        "case_report": 0.90,
+        "patient_note": 0.85,
     },
     "assertion_weights": {
         "fact": 1.00,
-        "hypothesis": 0.50,           # strenger dan standaard
+        "hypothesis": 0.85,           # breder dan standaard, maar binnen max safe spread
     },
     "temporal_decay": "fast",         # medische richtlijnen verouderen snel
 }
@@ -423,3 +438,16 @@ Klai's implementatie is de organisatorische pendant:
 Wat ThetaOS niet heeft en Klai wél: HyPE question-alignment vectoren, cross-attention
 reranking, en multi-tenant isolatie. Wat ThetaOS heeft en Klai nog niet: een
 kalibratiestap voor de absolute gewichten, bronindependentie-meting.
+
+---
+
+## Belangrijke nuancering: assertion mode gewichten
+
+Het [Assertion Mode Weights](../assertion-modes/assertion-mode-weights.md) onderzoek (2026-03-30) nuanceert de gewichten in Gap 2 van dit document:
+
+- De hier voorgestelde spread van 0.30 (1.00 tot 0.70) is **te agressief** voor de huidige classifiernauwkeurigheid (~85%)
+- Maximum veilige spread: 0.20 (minimum gewicht 0.80)
+- Aanbeveling: start met **vlakke gewichten** (allemaal 1.00) of conservatief (spread max 0.10)
+- Verbreed pas na een 200+ chunk classificatie-evaluatie + A/B retrieval test
+
+Zie ook: [Corroboration Scoring](../corroboration/corroboration-scoring.md) — nuanceert Gap 3: implementatie uitgesteld tot prerequisites zijn gebouwd.

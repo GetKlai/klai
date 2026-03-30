@@ -3,6 +3,7 @@
 > Aangemaakt: 2026-03-29
 > Status: Compleet
 > Aanleiding: Vergelijking ThetaOS (synaptische gelaagdheid) met Klai kennissysteem
+> Onderdeel van: [Research Synthesis](../README.md)
 
 ---
 
@@ -306,3 +307,14 @@ Monte Carlo Dropout op query- én documentembeddings. Scoringsfunctie `Sᵢ = μ
 | Why UE Falls Short in RAG (ACL 2025) | RAG | Geen bestaande methode voldoet aan alle 5 axioma's voor UE in RAG |
 | TrustRank (VLDB 2004) | IR | Seed-gebaseerde trustpropagatie als tegenmaatregel voor linkspam |
 | PageRank (Stanford, 1998) | IR | Linkautoriteit als kwaliteitssignaal — 25 jaar commercieel bewezen |
+
+---
+
+## Gerelateerde documenten
+
+- [ThetaOS & Klai Comparison](thetaos-klai-comparison.md) — toepassing van deze bevindingen op ThetaOS en Klai
+- [Assertion Modes Research](../assertion-modes/assertion-modes-research.md) — dieper onderzoek naar assertion mode classificatie
+- [Assertion Mode Weights](../assertion-modes/assertion-mode-weights.md) — gewichten-literatuur en aanbevelingen
+- [Corroboration Scoring](../corroboration/corroboration-scoring.md) — dieper onderzoek naar cross-source corroboratie via Graphiti
+- [RAG Evaluation Framework](../evaluation/rag-evaluation-framework.md) — hoe we de impact gaan meten
+- [Implementation Plan](../implementation/implementation-plan.md) — concrete codewijzigingen
