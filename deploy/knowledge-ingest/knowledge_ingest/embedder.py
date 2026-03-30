@@ -1,6 +1,6 @@
 """
-TEI (Text Embeddings Inference) client for BGE-M3 dense embeddings.
-TEI is already running on klai-net with BAAI/bge-m3 loaded.
+Infinity (OpenAI-compatible) client for BGE-M3 dense embeddings.
+Infinity runs on gpu-01 and is accessible via SSH tunnel on klai-net.
 """
 import asyncio
 import logging
@@ -12,8 +12,9 @@ from knowledge_ingest.config import settings
 logger = logging.getLogger(__name__)
 
 EMBED_DIM = 1024  # BGE-M3 dense output dimension
+_EMBED_MODEL = "BAAI/bge-m3"
 
-# Batch size for TEI requests — keeps queue_time manageable
+# Batch size for Infinity requests — keeps queue_time manageable
 _TEI_BATCH_SIZE = 32
 
 
@@ -24,14 +25,19 @@ async def _embed_batch(
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            resp = await client.post("/embed", json={"inputs": texts})
+            resp = await client.post(
+                "/v1/embeddings",
+                json={"input": texts, "model": _EMBED_MODEL},
+            )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()["data"]
+            data.sort(key=lambda x: x["index"])
+            return [item["embedding"] for item in data]
         except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             last_exc = exc
             wait = 2**attempt
             logger.warning(
-                "TEI embed timeout (attempt %d/3, %d texts), retrying in %ds",
+                "Infinity embed timeout (attempt %d/3, %d texts), retrying in %ds",
                 attempt + 1,
                 len(texts),
                 wait,
@@ -42,7 +48,7 @@ async def _embed_batch(
                 last_exc = exc
                 wait = 2**attempt
                 logger.warning(
-                    "TEI embed 5xx (attempt %d/3, status %d), retrying in %ds",
+                    "Infinity embed 5xx (attempt %d/3, status %d), retrying in %ds",
                     attempt + 1,
                     exc.response.status_code,
                     wait,
@@ -56,7 +62,7 @@ async def _embed_batch(
 async def embed(texts: list[str]) -> list[list[float]]:
     """Return dense embeddings for a list of texts.
 
-    Splits into batches of _TEI_BATCH_SIZE to keep TEI queue_time low
+    Splits into batches of _TEI_BATCH_SIZE to keep Infinity queue_time low
     and avoid client-side read timeouts on large documents.
     """
     if not texts:
