@@ -10,7 +10,6 @@ Tenant isolation: every episode uses group_id=org_id (AC-10).
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from datetime import datetime, timezone
 
@@ -26,9 +25,11 @@ try:
 except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
 
+import structlog
+
 from knowledge_ingest.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
 
@@ -114,14 +115,12 @@ async def ingest_episode(
 
             logger.info(
                 "graphiti_episode_ingested",
-                extra={
-                    "artifact_id": artifact_id,
-                    "org_id": org_id,
-                    "episode_id": episode_id,
-                    "entity_count": getattr(result, "entity_count", 0),
-                    "edge_count": getattr(result, "edge_count", 0),
-                    "ingest_ms": round(ingest_ms, 1),
-                },
+                artifact_id=artifact_id,
+                org_id=org_id,
+                episode_id=episode_id,
+                entity_count=getattr(result, "entity_count", 0),
+                edge_count=getattr(result, "edge_count", 0),
+                ingest_ms=round(ingest_ms, 1),
             )
             return episode_id
 
@@ -129,20 +128,20 @@ async def ingest_episode(
             if attempt < max_attempts - 1:
                 wait = 2**attempt  # 1s, 2s
                 logger.warning(
-                    "Graphiti ingest attempt %d/%d failed for %s: %s — retrying in %ds",
-                    attempt + 1,
-                    max_attempts,
-                    artifact_id,
-                    exc,
-                    wait,
+                    "graphiti_ingest_retry",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    artifact_id=artifact_id,
+                    error=str(exc),
+                    wait_s=wait,
                 )
                 await asyncio.sleep(wait)
             else:
                 logger.warning(
-                    "Graphiti ingest failed for artifact %s after %d attempts: %s",
-                    artifact_id,
-                    max_attempts,
-                    exc,
+                    "graphiti_ingest_failed",
+                    artifact_id=artifact_id,
+                    attempts=max_attempts,
+                    error=str(exc),
                 )
 
     return None

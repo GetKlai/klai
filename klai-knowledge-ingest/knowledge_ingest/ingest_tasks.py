@@ -15,9 +15,9 @@ independently; drained by the same Procrastinate worker in app.py).
 """
 from __future__ import annotations
 
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def register_ingest_tasks(procrastinate_app: object) -> None:
@@ -45,12 +45,11 @@ def register_ingest_tasks(procrastinate_app: object) -> None:
         )
         from knowledge_ingest.models import IngestRequest  # noqa: PLC0415
 
+        logger.info("gitea_ingest_started", kb_slug=kb_slug, path=path, org_id=org_id)
+
         content = await _fetch_gitea_file(gitea_repo, path)
         if content is None:
-            logger.warning(
-                "ingest_from_gitea: could not fetch %s from %s — skipping",
-                path, gitea_repo,
-            )
+            logger.warning("gitea_fetch_failed", path=path, repo=gitea_repo)
             return
 
         req = IngestRequest(
@@ -64,8 +63,11 @@ def register_ingest_tasks(procrastinate_app: object) -> None:
         )
         result = await ingest_document(req)
         logger.info(
-            "ingest_from_gitea complete: %s/%s org=%s status=%s",
-            kb_slug, path, org_id, result.get("status"),
+            "gitea_ingest_complete",
+            kb_slug=kb_slug,
+            path=path,
+            org_id=org_id,
+            status=result.get("status"),
         )
 
     # Expose via app attribute (same pattern as enrichment_tasks)
