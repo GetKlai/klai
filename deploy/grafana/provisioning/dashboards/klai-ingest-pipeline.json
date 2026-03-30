@@ -1,0 +1,385 @@
+{
+  "uid": "klai-ingest-pipeline",
+  "title": "Klai — Ingest Pipeline",
+  "tags": ["klai", "ingest"],
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-3h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Enrichment Queued",
+      "description": "Jobs waiting in enrich-interactive + enrich-bulk queues",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "rawSql": "SELECT COUNT(*) AS value FROM procrastinate_jobs WHERE queue_name IN ('enrich-interactive','enrich-bulk') AND status = 'todo'",
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 2,
+      "title": "Enrichment Active",
+      "description": "Jobs currently being processed (doing). Stuck if elevated for >5 min.",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "rawSql": "SELECT COUNT(*) AS value FROM procrastinate_jobs WHERE queue_name IN ('enrich-interactive','enrich-bulk') AND status = 'doing'",
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 3,
+      "title": "Enrichment Failed (24h)",
+      "description": "Failed enrichment jobs in the last 24 hours",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "rawSql": "SELECT COUNT(*) AS value FROM procrastinate_jobs WHERE queue_name IN ('enrich-interactive','enrich-bulk') AND status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'",
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 4,
+      "title": "Ingest Queued",
+      "description": "Gitea-triggered ingest jobs waiting (ingest-kb queue)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "rawSql": "SELECT COUNT(*) AS value FROM procrastinate_jobs WHERE queue_name = 'ingest-kb' AND status = 'todo'",
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 5,
+      "title": "All Jobs Failed (24h)",
+      "description": "Total failed jobs across all queues in the last 24 hours",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "rawSql": "SELECT COUNT(*) AS value FROM procrastinate_jobs WHERE status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'",
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 6,
+      "title": "Enrichment Succeeded (1h)",
+      "description": "Successfully completed enrichment jobs in the last hour",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "green" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "rawSql": "SELECT COUNT(*) AS value FROM procrastinate_jobs WHERE queue_name IN ('enrich-interactive','enrich-bulk') AND status = 'succeeded' AND updated_at > NOW() - INTERVAL '1 hour'",
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 10,
+      "title": "Enrichment",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+      "panels": []
+    },
+
+    {
+      "id": 11,
+      "title": "enrichment_complete — timing per document",
+      "description": "LLM + TEI + sparse + Qdrant timings. Each line = one enrichment job completing.",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 0, "y": 6, "w": 14, "h": 12 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} event:=\"enrichment_complete\"",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 12,
+      "title": "enrichment_failed — errors",
+      "description": "Enrichment jobs that failed with an exception. Check error field for stacktrace.",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 14, "y": 6, "w": 10, "h": 12 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} event:=\"enrichment_failed\"",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 20,
+      "title": "Ingest",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 },
+      "panels": []
+    },
+
+    {
+      "id": 21,
+      "title": "ingest_complete — documents ingested",
+      "description": "Direct ingest completions. Shows chunks, type, ingest_ms.",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 10 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} event:=\"ingest_complete\" OR event:=\"ingest_skipped\"",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 22,
+      "title": "Gitea webhook pipeline",
+      "description": "gitea_ingest_started → gitea_ingest_complete. Also shows debounced/skipped.",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 10 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} event:~\"gitea_.*|ingest_debounced|enrichment_already_queued\"",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 30,
+      "title": "Graphiti",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
+      "panels": []
+    },
+
+    {
+      "id": 31,
+      "title": "Graphiti knowledge graph events",
+      "description": "graphiti_episode_ingested shows entity_count, edge_count, ingest_ms. Retries and failures also shown.",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 0, "y": 30, "w": 24, "h": 10 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} event:~\"graphiti_.*\"",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 40,
+      "title": "Errors & Warnings",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 40, "w": 24, "h": 1 },
+      "panels": []
+    },
+
+    {
+      "id": 41,
+      "title": "Errors",
+      "description": "All level:error from knowledge-ingest",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 0, "y": 41, "w": 12, "h": 12 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} level:error",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 42,
+      "title": "Warnings",
+      "description": "All level:warning from knowledge-ingest — fetch failures, queue issues, Gitea API errors",
+      "type": "logs",
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "gridPos": { "x": 12, "y": 41, "w": 12, "h": 12 },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{service=\"knowledge-ingest\"} level:warning",
+        "legendFormat": "",
+        "refId": "A"
+      }]
+    }
+
+  ]
+}
