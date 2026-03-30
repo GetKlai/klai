@@ -1,9 +1,13 @@
 ---
 paths:
   - "**/.env*"
+  - "**/*.env"
+  - "**/*sops*"
   - "klai-infra/**"
   - "**/Caddyfile"
   - "**/docker-compose*.yml"
+  - "deploy/caddy/**"
+  - "deploy/*.sh"
 ---
 # Infrastructure Pitfalls
 
@@ -15,14 +19,14 @@ paths:
 | Entry | Sev | Rule |
 |---|---|---|
 | [infra-env-not-synced](#infra-env-not-synced) | HIGH | SOPS and Coolify are not auto-synced; update both |
-| [infra-sops-missing-main-env](#infra-sops-missing-main-env) | HIGH | Service-specific SOPS needs local `.sops.yaml` |
+| [infra-sops-missing-main-env](#infra-sops-missing-main-env) | HIGH | Main docker-compose `.env` not backed up in SOPS |
 | [infra-sops-dotenv-dollar-sign](#infra-sops-dotenv-dollar-sign) | HIGH | `$` in secrets breaks SOPS dotenv; use YAML format |
 | [infra-env-bash-special-chars](#infra-env-bash-special-chars) | CRIT | Unquoted `(`, `)`, `&` in `.env` break `source`; quote all values with special chars |
 | [infra-docker-user-container-ip-stale](#infra-docker-user-container-ip-stale) | CRIT | Container IPs change on restart; never hardcode in iptables |
 | [infra-zitadel-console-http-api](#infra-zitadel-console-http-api) | CRIT | Zitadel console broken; use Management API directly |
 | [infra-caddy-no-global-csp](#infra-caddy-no-global-csp) | HIGH | Global CSP `header {}` blocks browser APIs silently |
 | [infra-never-modify-env-secrets](#infra-never-modify-env-secrets) | CRIT | Never `sed`/`echo` existing secrets in `.env` |
-| [infra-sops-files-in-subdirs](#infra-sops-files-in-subdirs) | CRIT | SOPS files in subdirs need a local `.sops.yaml` |
+| [infra-sops-files-in-subdirs](#infra-sops-files-in-subdirs) | CRIT | Bulk-deleting dirs silently removes `.env.sops` files |
 | [infra-sops-incomplete-wipes-server](#infra-sops-incomplete-wipes-server) | CRIT | SOPS with fewer vars than server wipes production on sync |
 | [infra-sync-env-no-safety-checks](#infra-sync-env-no-safety-checks) | CRIT | Secrets sync without safety guards is a ticking time bomb |
 | [infra-placeholder-values-in-sops](#infra-placeholder-values-in-sops) | CRIT | Placeholder values in SOPS break services silently |
