@@ -47,6 +47,11 @@ class TestRetrieveEndpoint:
                 return_value=[0.1, 0.2, 0.3],
             ),
             patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "retrieval_api.api.retrieve.gate.should_bypass",
                 new_callable=AsyncMock,
                 return_value=(False, 0.05),
@@ -65,6 +70,8 @@ class TestRetrieveEndpoint:
                         "scope": "org",
                         "valid_at": None,
                         "invalid_at": None,
+                        "ingested_at": None,
+                        "assertion_mode": None,
                     }
                 ],
             ),
@@ -83,10 +90,20 @@ class TestRetrieveEndpoint:
                         "scope": "org",
                         "valid_at": None,
                         "invalid_at": None,
+                        "ingested_at": None,
+                        "assertion_mode": None,
                     }
                 ],
             ),
+            patch(
+                "retrieval_api.api.retrieve.settings",
+            ) as mock_settings,
         ):
+            # Enable reranker so the rerank mock is actually called
+            mock_settings.reranker_enabled = True
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_candidates = 20
+            mock_settings.graphiti_enabled = False
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -113,6 +130,11 @@ class TestRetrieveEndpoint:
                 return_value=[0.1, 0.2],
             ),
             patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "retrieval_api.api.retrieve.gate.should_bypass",
                 new_callable=AsyncMock,
                 return_value=(False, None),
@@ -131,6 +153,8 @@ class TestRetrieveEndpoint:
                         "scope": "notebook",
                         "valid_at": None,
                         "invalid_at": None,
+                        "ingested_at": None,
+                        "assertion_mode": None,
                     }
                 ],
             ),
@@ -167,6 +191,11 @@ class TestGraphMetadata:
                 "retrieval_api.api.retrieve.embed_single",
                 new_callable=AsyncMock,
                 return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch(
                 "retrieval_api.api.retrieve.gate.should_bypass",
@@ -210,6 +239,11 @@ class TestGraphMetadata:
                 "retrieval_api.api.retrieve.embed_single",
                 new_callable=AsyncMock,
                 return_value=[0.1],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch(
                 "retrieval_api.api.retrieve.gate.should_bypass",
