@@ -3,7 +3,7 @@
 Klai maintains a living knowledge base of patterns and pitfalls, built up through experience.
 Always consult this before working on a relevant domain.
 
-## Shared knowledge (claude-docs/)
+## Shared knowledge (.claude/rules/klai/)
 
 | Domain | Patterns | Pitfalls |
 |--------|----------|---------|
