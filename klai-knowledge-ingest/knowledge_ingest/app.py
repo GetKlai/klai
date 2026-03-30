@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from knowledge_ingest import db, kb_config, org_config, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
-from knowledge_ingest.routes import crawl, ingest, knowledge, personal
+from knowledge_ingest.routes import crawl, ingest, knowledge, personal, stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -81,6 +81,7 @@ app.include_router(ingest.router)
 app.include_router(crawl.router)
 app.include_router(personal.router)
 app.include_router(knowledge.router)
+app.include_router(stats.router)
 
 
 @app.get("/health")

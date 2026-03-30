@@ -5,7 +5,7 @@ import { useState } from 'react'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
-  Check, X, Settings, AlertTriangle, ArrowLeft,
+  Check, X, Settings, AlertTriangle, ArrowLeft, Database, Search, GitBranch,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -73,6 +73,11 @@ interface KBStats {
   volume: number | null
   usage_last_30d: number | null
   org_gap_count_7d: number | null
+  // Volume breakdown
+  source_page_count: number | null
+  vector_chunk_count: number | null
+  graph_entity_count: number | null
+  graph_edge_count: number | null
 }
 
 interface UserMember {
@@ -1788,7 +1793,7 @@ function KnowledgeDetailPage() {
           </DashboardSection>
 
           <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
-            <div className="flex gap-8">
+            <div className="flex gap-8 mb-5">
               <div>
                 <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Volume</p>
                 <p className="text-sm font-medium text-[var(--color-foreground)]">
@@ -1818,6 +1823,57 @@ function KnowledgeDetailPage() {
                   </div>
                 </Link>
               )}
+            </div>
+
+            {/* Volume breakdown per database */}
+            <div>
+              <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-2">
+                {m.knowledge_detail_volume_breakdown_title()}
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
+                  <Database className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                      {m.knowledge_detail_volume_source_pages()}
+                    </p>
+                    <p className="text-sm text-[var(--color-foreground)]">
+                      {stats?.source_page_count != null
+                        ? m.knowledge_detail_volume_source_pages_count({ count: String(stats.source_page_count) })
+                        : m.knowledge_detail_volume_unavailable()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
+                  <Search className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                      {m.knowledge_detail_volume_search_chunks()}
+                    </p>
+                    <p className="text-sm text-[var(--color-foreground)]">
+                      {stats?.vector_chunk_count != null
+                        ? m.knowledge_detail_volume_search_chunks_count({ count: String(stats.vector_chunk_count) })
+                        : m.knowledge_detail_volume_unavailable()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
+                  <GitBranch className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                      {m.knowledge_detail_volume_graph()}
+                    </p>
+                    <p className="text-sm text-[var(--color-foreground)]">
+                      {stats?.graph_entity_count != null && stats?.graph_edge_count != null
+                        ? m.knowledge_detail_volume_graph_count({
+                            entities: String(stats.graph_entity_count),
+                            edges: String(stats.graph_edge_count),
+                          })
+                        : m.knowledge_detail_volume_unavailable()}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </DashboardSection>
         </div>
