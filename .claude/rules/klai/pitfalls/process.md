@@ -24,6 +24,7 @@
 | [process-no-prompt-files](#process-no-prompt-files) | HIGH | Output prompts in chat, never write to markdown files |
 | [process-spec-stub-deps-premature](#process-spec-stub-deps-premature) | HIGH | Comment out new deps at stub time; enable in `/run` |
 | [process-test-cache-two-level-dispatch](#process-test-cache-two-level-dispatch) | MED | Dispatch by key prefix in multi-key cache mocks |
+| [process-no-architecture-change-in-migration](#process-no-architecture-change-in-migration) | CRIT | During migrations, move services as-is — never consolidate or replace without explicit approval |
 
 ---
 
@@ -384,6 +385,30 @@ cache.async_get_cache = AsyncMock(side_effect=_get)
 **Rule:** When testing two-level caches, always dispatch by key prefix in the mock, not by a single return value.
 
 **Source:** SPEC-KB-013 (two-level version cache: `kb_ver:` + `kb_feature:`)
+
+---
+
+## process-no-architecture-change-in-migration
+
+**Severity:** CRIT
+
+**Trigger:** Migrating services from one server to another (e.g. moving GPU workloads from core-01 to gpu-01)
+
+During a migration, move services **exactly as they are**. Never consolidate, replace, or redesign services as part of the same task — even if it seems like an obvious improvement.
+
+**What happened:** During SPEC-GPU-001, an agent replaced two separate services (TEI for embeddings + Infinity for reranking) with a single consolidated Infinity instance. This was done without explicit user approval and turned out to be architecturally wrong: Infinity has a known GPU memory leak (issue #517) and no Prometheus metrics, making it unsuitable as the sole embedding service. The decision was discovered by the user only after the fact.
+
+**What NOT to do:**
+- Replace `tei` + `infinity-reranker` with a single `infinity` instance during a move
+- Change API formats, consolidate services, or swap implementations mid-migration
+- Mark a migration SPEC as complete when architectural decisions were made unilaterally
+
+**What to do:**
+1. Move services to the new server with identical configuration
+2. Verify everything works identically on the new server
+3. Only then propose architectural improvements as a **separate, explicitly approved task**
+
+**Rule:** A migration task has one goal — same services, different server. Any architectural change requires its own SPEC and explicit user approval.
 
 ---
 
