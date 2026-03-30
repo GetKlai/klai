@@ -1,7 +1,6 @@
 ---
 paths:
   - "**/.env*"
-  - ".github/**/*.yml"
   - "**/docker-compose*.yml"
   - "klai-infra/**"
 ---
