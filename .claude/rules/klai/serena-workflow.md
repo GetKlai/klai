@@ -96,6 +96,68 @@ When understanding code structure or relationships:
 
 This is more token-efficient than reading entire files with the Read tool.
 
+## search_for_pattern — Scoping Rules (HARD)
+
+**[HARD] Never call `search_for_pattern` without at least one scoping parameter.**
+
+Unscoped searches on the klai monorepo return thousands of matches across specs, docs, memories,
+and reports — Serena truncates the result to a useless file:line listing and the search is wasted.
+
+**Always apply at least one of these filters:**
+
+| Parameter | When to use | Example |
+|---|---|---|
+| `relative_path` | You know the directory/file | `"klai-portal/backend/app"` |
+| `paths_include_glob` | You know the file type | `"**/*.py"`, `"**/*.{ts,tsx}"` |
+| `paths_exclude_glob` | Exclude noise directories | `"**/.moai/**"` |
+| `restrict_search_to_code_files` | Only looking for code symbols | `true` |
+
+**Decision tree:**
+
+1. Looking for code in a specific service? → `relative_path` to that service dir
+2. Looking for code across the whole repo? → `restrict_search_to_code_files: true` + `paths_include_glob` for the language
+3. Looking for text in config/docs? → `relative_path` to the relevant doc dir, or `paths_include_glob: "**/*.md"`
+4. Broad exploration across the whole repo? → Use Grep (Claude's native tool) instead — it handles large result sets better
+
+**Anti-patterns (NEVER do these):**
+
+```
+# BAD — no scoping, matches everything
+search_for_pattern(substring_pattern="portal")
+
+# BAD — pattern too generic, no path restriction
+search_for_pattern(substring_pattern="docker")
+```
+
+**Correct patterns:**
+
+```
+# GOOD — scoped to backend code
+search_for_pattern(substring_pattern="def provision_tenant", relative_path="klai-portal/backend")
+
+# GOOD — scoped to Python files, code only
+search_for_pattern(substring_pattern="class PortalUser", restrict_search_to_code_files=True, paths_include_glob="**/*.py")
+
+# GOOD — looking in specific directory with context
+search_for_pattern(substring_pattern="REDIS_URL", relative_path="deploy", context_lines_after=3)
+```
+
+**If a search returns "The answer is too long":** Do NOT raise `max_answer_chars`. Instead:
+1. Add `relative_path` to narrow the directory
+2. Add `paths_include_glob` to filter file types
+3. Make the `substring_pattern` more specific
+4. Add `restrict_search_to_code_files: true` if you only need code
+
+**Searching in ignored directories (specs, workflow, docs):**
+
+The project's `ignored_paths` in `.serena/project.yml` excludes `.moai/specs/`, `.workflow/`,
+`claude-docs/specs/`, and `claude-docs/gtm/` from Serena searches to reduce noise.
+
+When you DO need to search these directories:
+- Use Claude's native **Grep** tool — it is not affected by Serena's ignored_paths
+- Use Serena's `read_file` tool to read specific files in ignored dirs (always works)
+- Do NOT remove entries from `ignored_paths` — the noise reduction is worth the workaround
+
 ## Before Editing Code
 
 Before modifying any function, class, or method:
