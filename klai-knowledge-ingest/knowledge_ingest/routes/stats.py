@@ -36,7 +36,7 @@ async def get_source_count(
             result = await session.execute(
                 text(
                     "SELECT COUNT(*) FROM knowledge.artifacts "
-                    "WHERE org_id = :org_id AND kb_slug = :kb_slug AND status = 'active'"
+                    "WHERE org_id = :org_id AND kb_slug = :kb_slug AND superseded_by IS NULL"
                 ),
                 {"org_id": org_id, "kb_slug": kb_slug},
             )
