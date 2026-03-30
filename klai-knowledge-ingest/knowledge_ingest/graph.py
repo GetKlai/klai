@@ -115,19 +115,26 @@ async def ingest_episode(
                 )
                 ingest_ms = (time.perf_counter() - t0) * 1000
 
-                # Extract episode_id — graphiti returns an EpisodeNode with .uuid
+                # Extract episode_id — add_episode returns AddEpisodeResults
+                # with .episode (EpisodicNode), .nodes, .edges
                 episode_id: str | None = None
                 if result is not None:
-                    episode_id = str(getattr(result, "uuid", None) or getattr(result, "id", ""))
-                    episode_id = episode_id or None
+                    ep_node = getattr(result, "episode", None)
+                    if ep_node is not None:
+                        episode_id = str(getattr(ep_node, "uuid", "")) or None
+                    nodes = getattr(result, "nodes", [])
+                    edges = getattr(result, "edges", [])
+                else:
+                    nodes = []
+                    edges = []
 
                 logger.info(
                     "graphiti_episode_ingested",
                     artifact_id=artifact_id,
                     org_id=org_id,
                     episode_id=episode_id,
-                    entity_count=getattr(result, "entity_count", 0),
-                    edge_count=getattr(result, "edge_count", 0),
+                    entity_count=len(nodes),
+                    edge_count=len(edges),
                     ingest_ms=round(ingest_ms, 1),
                 )
                 episode_result = episode_id
