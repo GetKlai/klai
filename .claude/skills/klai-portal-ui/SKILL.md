@@ -82,5 +82,5 @@ Klai is EU-only. Use only LiteLLM aliases:
 ## Full references
 
 - `klai-portal/docs/ui-components.md` — full component reference with code examples
-- `.claude/rules/klai/klai-portal-ui.md` — form patterns, table patterns, deletion confirmation
-- `.claude/rules/klai/klai-ui-styleguide.md` — typography, spacing, color system
+- `.claude/rules/klai/portal-patterns.md` — form patterns, table patterns, semantic tokens
+- `.claude/rules/klai/styleguide.md` — shared brand DNA (colors, typography, rules)

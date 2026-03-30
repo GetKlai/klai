@@ -32,10 +32,10 @@ Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md
 
 ## Shared rules
 
-@.claude/rules/klai/context7-usage.md
+@.claude/rules/klai/context7.md
 @.claude/rules/klai/knowledge.md
 @.claude/rules/klai/server-secrets.md
-@.claude/rules/klai/serena-workflow.md
+@.claude/rules/klai/serena.md
 
 ## Tech stack
 

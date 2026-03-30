@@ -21,7 +21,7 @@ After every commit to klai-portal:
 
 The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before both CI is green AND the new code is confirmed on the server.
 
-Full verification protocol (CI + server health check, cross-platform): `.claude/rules/klai/ci-verify-after-push.md`
+Full verification protocol (CI + server health check, cross-platform): `.claude/rules/klai/post-push.md`
 
 Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
 
