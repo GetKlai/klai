@@ -33,7 +33,7 @@ jobs:
       - name: Build and push retrieval-api
         uses: docker/build-push-action@v7
         with:
-          context: ./retrieval-api
+          context: ./klai-retrieval-api
           push: true
           tags: |
             ghcr.io/getklai/retrieval-api:latest
