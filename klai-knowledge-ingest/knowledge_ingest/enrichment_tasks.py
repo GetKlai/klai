@@ -162,14 +162,23 @@ async def _enrich_document(
         )
         llm_ms = int((time.monotonic() - t0) * 1000)
 
-        # Step 2: Embed dense (TEI) + sparse (BGE-M3 GPU sidecar) in parallel
+        # Step 2: Embed dense (TEI) + sparse (BGE-M3 GPU sidecar) in parallel.
+        # Wrapped individually so we get separate tei_ms / sparse_ms despite parallel execution.
         enriched_texts = [ec.enriched_text for ec in enriched_chunks]
-        t0 = time.monotonic()
-        chunk_vectors, sparse_vectors = await asyncio.gather(
-            embedder.embed(enriched_texts),
-            sparse_embedder.embed_sparse_batch(enriched_texts),
+
+        async def _timed_dense() -> tuple[list, int]:
+            t = time.monotonic()
+            vecs = await embedder.embed(enriched_texts)
+            return vecs, int((time.monotonic() - t) * 1000)
+
+        async def _timed_sparse() -> tuple[list, int]:
+            t = time.monotonic()
+            vecs = await sparse_embedder.embed_sparse_batch(enriched_texts)
+            return vecs, int((time.monotonic() - t) * 1000)
+
+        (chunk_vectors, tei_ms), (sparse_vectors, sparse_ms) = await asyncio.gather(
+            _timed_dense(), _timed_sparse()
         )
-        embed_ms = int((time.monotonic() - t0) * 1000)
 
         # Step 3: Embed questions based on profile (vector_questions)
         question_vectors: list[list[float] | None]
@@ -222,7 +231,8 @@ async def _enrich_document(
             type=content_type,
             sparse_ok=sparse_success_count,
             llm_ms=llm_ms,
-            embed_ms=embed_ms,
+            tei_ms=tei_ms,
+            sparse_ms=sparse_ms,
             qdrant_ms=qdrant_ms,
             total_ms=total_ms,
         )
