@@ -61,8 +61,8 @@ async def get_graph_stats(org_id: str = Query(..., description="Zitadel org ID")
             port=settings.falkordb_port,
         )
 
-        # Graphiti stores data in a graph named "graphiti_{group_id}"
-        graph_name = f"graphiti_{org_id}"
+        # Graphiti stores data in a graph named after the group_id (org_id)
+        graph_name = org_id
 
         try:
             graph = client.select_graph(graph_name)
