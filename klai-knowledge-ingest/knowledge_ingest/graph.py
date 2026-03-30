@@ -153,6 +153,7 @@ async def ingest_episode(
                         error=str(exc),
                     )
 
-    # Delay after releasing semaphore to space out LLM calls across episodes
-    await asyncio.sleep(EPISODE_DELAY)
+        # Delay INSIDE semaphore — ensures actual gap between consecutive episodes
+        await asyncio.sleep(EPISODE_DELAY)
+
     return episode_result

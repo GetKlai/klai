@@ -14,6 +14,21 @@ from knowledge_ingest.config import settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Lazy-init FalkorDB client singleton — avoids new TCP connection per request.
+_falkordb_client = None
+
+
+def _get_falkordb():
+    """Return the shared FalkorDB client (lazy init, process-singleton)."""
+    global _falkordb_client
+    if _falkordb_client is None:
+        from falkordb import FalkorDB as FalkorDBClient
+        _falkordb_client = FalkorDBClient(
+            host=settings.falkordb_host,
+            port=settings.falkordb_port,
+        )
+    return _falkordb_client
+
 
 class GraphStatsResponse(BaseModel):
     entity_count: int | None = None
@@ -39,7 +54,7 @@ async def get_source_count(
         )
         return SourceCountResponse(source_count=count)
     except Exception as exc:
-        logger.debug("Could not fetch source count for org=%s kb=%s: %s", org_id, kb_slug, exc)
+        logger.warning("Could not fetch source count for org=%s kb=%s: %s", org_id, kb_slug, exc)
         return SourceCountResponse()
 
 
@@ -50,25 +65,11 @@ async def get_graph_stats(org_id: str = Query(..., description="Zitadel org ID")
         return GraphStatsResponse()
 
     try:
-        from falkordb import FalkorDB as FalkorDBClient
-
-        client = FalkorDBClient(
-            host=settings.falkordb_host,
-            port=settings.falkordb_port,
-        )
-
-        # Graphiti stores data in a graph named after the group_id (org_id)
-        graph_name = org_id
-
-        try:
-            graph = client.select_graph(graph_name)
-        except Exception:
-            # Graph doesn't exist yet for this org
-            return GraphStatsResponse(entity_count=0, edge_count=0)
+        client = _get_falkordb()
+        graph = client.select_graph(org_id)
 
         # Count entity nodes — Graphiti uses EntityNode (label "Entity") for extracted
         # concepts; EpisodeNode (label "Episodic") for ingest metadata.
-        # Try Entity label first; fall back to counting all nodes if label doesn't exist.
         try:
             entity_result = graph.query(
                 "MATCH (n:Entity) RETURN count(n) AS cnt"
@@ -89,8 +90,8 @@ async def get_graph_stats(org_id: str = Query(..., description="Zitadel org ID")
         return GraphStatsResponse(entity_count=entity_count, edge_count=edge_count)
 
     except ImportError:
-        logger.debug("falkordb package not available — skipping graph stats")
+        logger.warning("falkordb package not available — skipping graph stats")
         return GraphStatsResponse()
     except Exception as exc:
-        logger.debug("Could not fetch graph stats for org %s: %s", org_id, exc)
+        logger.warning("Could not fetch graph stats for org %s: %s", org_id, exc)
         return GraphStatsResponse()
