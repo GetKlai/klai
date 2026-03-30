@@ -47,7 +47,9 @@ Use paths frontmatter for conditional rule loading:
 
 ```yaml
 ---
-paths: "**/*.py,**/pyproject.toml"
+paths:
+  - "**/*.py"
+  - "**/pyproject.toml"
 ---
 ```
 

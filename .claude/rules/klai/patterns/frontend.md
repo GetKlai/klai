@@ -1,5 +1,9 @@
 ---
-paths: "**/*.tsx,**/*.ts,**/*.css,**/*.astro"
+paths:
+  - "**/*.tsx"
+  - "**/*.ts"
+  - "**/*.css"
+  - "**/*.astro"
 ---
 # Frontend Patterns
 

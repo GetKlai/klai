@@ -1,5 +1,9 @@
 ---
-paths: "**/Dockerfile,**/docker-compose*.yml,.github/**/*.yml,**/*.sh"
+paths:
+  - "**/Dockerfile"
+  - "**/docker-compose*.yml"
+  - ".github/**/*.yml"
+  - "**/*.sh"
 ---
 # DevOps Patterns
 

@@ -1,5 +1,10 @@
 ---
-paths: "**/*.py,**/*.ts,**/*.tsx,**/pyproject.toml,**/eslint.config*"
+paths:
+  - "**/*.py"
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/pyproject.toml"
+  - "**/eslint.config*"
 ---
 # Code Quality Pitfalls
 

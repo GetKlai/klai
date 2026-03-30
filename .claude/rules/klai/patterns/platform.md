@@ -1,5 +1,9 @@
 ---
-paths: "**/*.py,**/litellm*.yml,**/docker-compose*.yml,klai-portal/backend/**"
+paths:
+  - "**/litellm*.yml"
+  - "**/docker-compose*.yml"
+  - "klai-portal/backend/**"
+  - "deploy/**"
 ---
 # Platform Patterns
 

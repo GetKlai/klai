@@ -1,5 +1,7 @@
 ---
-paths: "**/*.py,**/pyproject.toml"
+paths:
+  - "**/*.py"
+  - "**/pyproject.toml"
 ---
 # Backend Pitfalls
 

@@ -1,5 +1,10 @@
 ---
-paths: "**/test_*.py,**/*_test.py,**/*.test.ts,**/*.spec.ts,**/conftest.py"
+paths:
+  - "**/test_*.py"
+  - "**/*_test.py"
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+  - "**/conftest.py"
 ---
 # Frontend Testing with Playwright
 

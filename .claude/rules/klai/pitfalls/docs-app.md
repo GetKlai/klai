@@ -1,5 +1,6 @@
 ---
-paths: "klai-docs/**"
+paths:
+  - "klai-docs/**"
 ---
 # Docs-App Pitfalls
 

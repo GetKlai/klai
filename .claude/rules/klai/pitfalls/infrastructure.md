@@ -1,5 +1,10 @@
 ---
-paths: "**/.env*,.github/**/*.yml,klai-infra/**"
+paths:
+  - "**/.env*"
+  - ".github/**/*.yml"
+  - "klai-infra/**"
+  - "**/Caddyfile"
+  - "**/docker-compose*.yml"
 ---
 # Infrastructure Pitfalls
 
