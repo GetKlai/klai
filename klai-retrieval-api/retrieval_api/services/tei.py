@@ -1,4 +1,4 @@
-"""TEI (Text Embeddings Inference) client for embedding and reranking."""
+"""Infinity (OpenAI-compatible) client for embedding and reranking."""
 
 from __future__ import annotations
 
@@ -11,34 +11,35 @@ from retrieval_api.config import settings
 
 logger = logging.getLogger(__name__)
 
+_EMBED_MODEL = "BAAI/bge-m3"
+
 
 async def embed_single(text: str) -> list[float]:
-    """Embed a single text string via the TEI /embed endpoint.
+    """Embed a single text string via the Infinity /v1/embeddings endpoint.
 
     Returns a dense float vector.
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{settings.tei_url}/embed",
-            json={"inputs": text, "normalize": True},
+            f"{settings.tei_url}/v1/embeddings",
+            json={"input": text, "model": _EMBED_MODEL},
         )
         resp.raise_for_status()
-        # TEI returns [[float, ...]] for a single input
-        embeddings = resp.json()
-        if isinstance(embeddings[0], list):
-            return embeddings[0]
-        return embeddings
+        return resp.json()["data"][0]["embedding"]
 
 
 async def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts via the TEI /embed endpoint."""
+    """Embed a batch of texts via the Infinity /v1/embeddings endpoint."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{settings.tei_url}/embed",
-            json={"inputs": texts, "normalize": True},
+            f"{settings.tei_url}/v1/embeddings",
+            json={"input": texts, "model": _EMBED_MODEL},
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()["data"]
+        # Sort by index to preserve original order
+        data.sort(key=lambda x: x["index"])
+        return [item["embedding"] for item in data]
 
 
 async def embed_sparse(text: str) -> SparseVector | None:
