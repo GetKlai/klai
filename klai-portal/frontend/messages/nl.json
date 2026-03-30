@@ -400,6 +400,7 @@
   "app_tool_docs_title": "Docs",
   "app_tool_docs_description": "Doc Libraries maken en beheren",
   "docs_kbs_title": "Doc Libraries",
+  "docs_kbs_new": "Nieuwe library",
   "docs_kb_name_label": "Naam",
   "docs_kb_name_placeholder": "Bijv. Helpcenter",
   "docs_kb_visibility_label": "Zichtbaarheid",
