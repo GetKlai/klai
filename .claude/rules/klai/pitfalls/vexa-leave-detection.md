@@ -1,5 +1,6 @@
 ---
-paths: "klai-portal/backend/**/*.py"
+paths:
+  - "klai-portal/backend/**/*.py"
 ---
 # Vexa Leave Detection Pitfalls
 

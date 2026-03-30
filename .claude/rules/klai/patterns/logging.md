@@ -1,5 +1,8 @@
 ---
-paths: "**/*.py,**/*.ts,**/*.tsx"
+paths:
+  - "**/*.py"
+  - "**/*.ts"
+  - "**/*.tsx"
 ---
 # Logging Patterns
 
