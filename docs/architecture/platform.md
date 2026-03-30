@@ -53,7 +53,8 @@ For the authoritative and current service list per server, see `klai-infra/SERVE
 | Server | Type | Cost | Services |
 |---|---|---|---|
 | public-01 | CX42 — Hetzner HEL | €17/mo | Coolify, website, Twenty (CRM), Fider, Uptime Kuma |
-| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API, klai-mailer, GlitchTip, whisper-server (CPU), scribe-api, TEI, bge-m3-sparse, docling-serve, SearXNG, research-api, knowledge-ingest, retrieval-api, klai-knowledge-mcp, infinity-reranker |
+| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API, klai-mailer, GlitchTip, scribe-api, docling-serve, SearXNG, research-api, knowledge-ingest, retrieval-api, klai-knowledge-mcp |
+| gpu-01 | GEX44 + RTX 4000 Ada 20GB — Hetzner FSN | — | TEI (BGE-M3 dense, :7997), Infinity (reranker, :7998), bge-m3-sparse (:8001), whisper-server (:8000) — reached from core-01 via SSH tunnel at 172.18.0.1 |
 | monitor-01 _(planned)_ | CAX11 — Hetzner HEL | €5/mo | Dedicated VictoriaMetrics + VictoriaLogs + Grafana (currently co-hosted on core-01) |
 
 EX44 is production-ready from day one (64 GB RAM, dedicated hardware). No migration needed as we grow. ai-01 (GPU) follows at Phase 3 trigger.
@@ -111,7 +112,7 @@ Usage reporting (token usage per user/company) does not exist natively in LibreC
 
 Added early, already working in another stack. UI likely custom-built. Architecture principle: voice data is per user, not per company. No sharing between users.
 
-**Deployment (updated 2026-03):** Scribe is deployed on core-01 running on CPU (`whisper-server` + `scribe-api`). The CPU version is live and serves the portal Scribe module. GPU migration (Phase 3+) is an env-var-only change when ai-01 is available.
+**Deployment (updated 2026-03):** `scribe-api` runs on core-01 and calls `whisper-server` on gpu-01 via SSH tunnel (`http://172.18.0.1:8000`). GPU migration completed with SPEC-GPU-001/SPEC-DEVOPS-002. No env change needed when scaling to a larger GPU — just update the tunnel config.
 
 **Whisper model (Phase 3+):** faster-whisper large-v3-turbo, INT8 quantization. ~2-2.5 GB weights, ~4-6 GB VRAM total. 6x faster than large-v3, multilingual (NL/DE/EN), less than 1-2% quality loss. Deployed on ai-01 alongside vLLM — ~34 GB VRAM free, no conflict. NVIDIA MPS with `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20` prevents SM contention.
 
