@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
-from app.models.knowledge_bases import PortalGroupKBAccess, PortalKBTombstone, PortalKnowledgeBase, PortalUserKBAccess
+from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
@@ -297,19 +297,6 @@ async def create_app_knowledge_base(
 
     owner_user_id = caller_id if body.owner_type == "user" else None
 
-    # Check tombstone -- slug permanently retired
-    tombstone = await db.scalar(
-        select(PortalKBTombstone).where(
-            PortalKBTombstone.org_id == org.id,
-            PortalKBTombstone.slug == body.slug,
-        )
-    )
-    if tombstone:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This slug was previously used for a deleted knowledge base and cannot be reused.",
-        )
-
     kb = PortalKnowledgeBase(
         org_id=org.id,
         name=body.name,
@@ -373,14 +360,9 @@ async def delete_app_knowledge_base(
     if kb.gitea_repo_slug or kb.docs_enabled:
         await docs_client.deprovision_kb(org.slug, kb.slug)
 
-    # Step 2: Portal DB -- delete KB row (cascades access rows) + insert tombstone atomically
-    tombstone = PortalKBTombstone(
-        org_id=org.id,
-        slug=kb.slug,
-        deleted_by=caller_id,
-    )
+    # Step 2: Portal DB -- delete KB row (cascades access rows)
+    # No tombstone: slug is free to reuse after a full delete (all data wiped).
     await db.delete(kb)
-    db.add(tombstone)
     await db.commit()
 
 
