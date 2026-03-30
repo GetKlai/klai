@@ -31,7 +31,7 @@ docker ps --filter name=[service] --format '{{.Names}}\t{{.Status}}'
 
 A `docker compose up -d` recreates the container and injects ALL variables from `/opt/klai/.env`, including ones the service never received before. This has caused production outages when a service picked up a global `REDIS_URL` with a URL-encoded password that broke URL parsing — crashing the service that was working fine before.
 
-See: `claude-docs/pitfalls/devops.md#devops-compose-up-inherits-global-env`
+See: `.claude/rules/klai/pitfalls/devops.md#devops-compose-up-inherits-global-env`
 
 ## Applies to
 

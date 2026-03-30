@@ -116,7 +116,7 @@ sops config.sops.env
 
 **Rule:** SOPS is the source of truth for secrets. Coolify needs a manual sync.
 
-**See also:** `claude-docs/pitfalls/infrastructure.md#infra-env-not-synced`
+**See also:** `.claude/rules/klai/pitfalls/infrastructure.md#infra-env-not-synced`
 
 ---
 

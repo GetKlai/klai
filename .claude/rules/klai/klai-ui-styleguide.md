@@ -5,7 +5,7 @@ paths: ["klai-portal/frontend/src/**/*.tsx", "klai-portal/frontend/src/**/*.ts"]
 # Klai UI Styleguide
 
 > Authoritative visual and interaction reference for all Klai products (website, portal, future apps).
-> Full reference: `claude-docs/styleguide.md`
+> Full reference: `.claude/rules/klai/styleguide.md`
 > Source of truth: `klai-website/src/styles/global.css` and `klai-portal/frontend/src/index.css`.
 
 ---
@@ -133,7 +133,7 @@ Hover:  #2D1B69
 
 1. **Never** put `font-serif` (Baskerville) on nav labels, buttons, or UI chrome. It is editorial, not functional.
 2. **Never** use `#7C6AFF` for small text on sand backgrounds - use `#4A3A8A` instead.
-3. **Never** add new colors without updating `global.css`/`index.css` and `claude-docs/styleguide.md`.
+3. **Never** add new colors without updating `global.css`/`index.css` and `.claude/rules/klai/styleguide.md`.
 4. **Never** use `font-display` (Manrope) for body text.
 5. **Never** use animations for decoration. Every animation must serve a purpose.
 6. **USE side** (user-facing tools): lean warm, more sand, larger type, human language.
@@ -158,7 +158,7 @@ Hover:  #2D1B69
 
 ## See Also
 
-- Full reference with spacing, layout, border radius, shadows, sidebar and portal tokens: `claude-docs/styleguide.md`
+- Full reference with spacing, layout, border radius, shadows, sidebar and portal tokens: `.claude/rules/klai/styleguide.md`
 - Portal admin UI patterns (forms, cards, tables): `klai-portal-ui.md` (auto-loads for portal files)
 - [Brand colors](https://www.getklai.com/company/brand-colors) - canonical color reference
 - [rules/gtm/klai-brand-voice.md](../gtm/klai-brand-voice.md) - tone and writing style

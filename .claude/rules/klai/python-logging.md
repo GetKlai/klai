@@ -84,4 +84,4 @@ IDs, counts, and status values as separate kwargs make logs queryable in Victori
 
 ## Full reference
 
-Pattern guide: `claude-docs/patterns/logging.md` — includes LogsQL query examples for debugging.
+Pattern guide: `.claude/rules/klai/patterns/logging.md` — includes LogsQL query examples for debugging.
