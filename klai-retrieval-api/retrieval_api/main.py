@@ -74,13 +74,17 @@ async def health():
 
     # Qdrant
     try:
+        import warnings
+
         from qdrant_client import AsyncQdrantClient
 
-        qc = AsyncQdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key or None,
-            timeout=3.0,
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
+            qc = AsyncQdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key or None,
+                timeout=3.0,
+            )
         await qc.get_collections()
         checks["qdrant"] = "ok"
     except Exception as exc:

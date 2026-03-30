@@ -4,7 +4,11 @@ Manages the klai_focus collection: creation, upsert, search, and deletion.
 """
 import logging
 import uuid
+import warnings
 from datetime import datetime, timezone
+
+# Qdrant client warns about API key over HTTP; safe inside Docker network
+warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models

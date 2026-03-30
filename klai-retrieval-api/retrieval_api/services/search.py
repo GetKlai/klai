@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from datetime import datetime, timezone
+
+# Qdrant client warns about API key over HTTP; safe inside Docker network
+warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
