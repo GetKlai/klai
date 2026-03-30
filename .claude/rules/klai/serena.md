@@ -24,6 +24,17 @@ Read relevant memories based on the task domain (not all every time):
 5. `search_for_pattern` for free-text search (parameter: `substring_pattern`)
 6. Fall back to Read/Grep only for non-code files (markdown, yaml, config)
 
+## Parameter Names (HARD)
+
+**[HARD] Use the exact parameter names below. Common mistakes are noted.**
+
+| Tool | Correct parameter | WRONG (do not use) |
+|---|---|---|
+| `find_symbol` | `name_path_pattern` | ~~`name_path`~~, ~~`name`~~ |
+| `search_for_pattern` | `substring_pattern` | ~~`pattern`~~, ~~`search`~~ |
+| `find_referencing_symbols` | `name_path_pattern` | ~~`name_path`~~, ~~`symbol`~~ |
+| `replace_symbol_body` | `name_path_pattern` | ~~`name_path`~~ |
+
 ## search_for_pattern — Scoping Rules (HARD)
 
 **[HARD] Never call `search_for_pattern` without at least one scoping parameter.**
