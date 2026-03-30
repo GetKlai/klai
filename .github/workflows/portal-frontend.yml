@@ -54,4 +54,4 @@ jobs:
       - name: Deploy dist to core-01
         run: |
           rsync -av --delete klai-portal/frontend/dist/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/portal-dist/
-          ssh klai@${{ secrets.CORE01_HOST }} "rsync -a --delete /opt/klai/portal-dist/ /srv/klai-portal/"
+          ssh klai@${{ secrets.CORE01_HOST }} "rsync -a --delete /opt/klai/portal-dist/ /srv/portal/"
