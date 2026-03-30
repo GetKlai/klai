@@ -386,7 +386,7 @@ Add cron entry on core-01:
 
 ### Milestone 4.2: Uptime Kuma Monitor
 
-Follow `claude-docs/patterns/devops.md#uptime-kuma-add-monitor`:
+Follow `.claude/rules/klai/patterns/devops.md#uptime-kuma-add-monitor`:
 - Type: Push
 - Name: "GPU Tunnel Health"
 - Token: GPU_PUSH_TOKEN (generate in Uptime Kuma)

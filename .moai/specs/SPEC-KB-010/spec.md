@@ -3,8 +3,8 @@
 > Status: DONE (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-008 (retrieval-api), SPEC-KB-009 (docs-sync)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md`
-> Research basis: `claude-docs/research/knowledge-system-fundamentals.md` §Bevinding 15
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md`
+> Research basis: `docs/architecture/knowledge-system-fundamentals.md` §Bevinding 15
 > Created: 2026-03-26
 > Updated: 2026-03-26 — prerequisite SPEC-KB-010-pre vervallen; lazy MongoDB-mapping ipv aparte sync
 

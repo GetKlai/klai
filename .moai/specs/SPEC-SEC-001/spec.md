@@ -248,4 +248,4 @@ CREATE POLICY tenant_isolation ON portal_audit_log
 | `deploy/scripts/backup.sh` | `deploy/scripts/backup.sh` | Fix 6 (schedule + extend) |
 | `push-health.sh` pattern | `klai-infra/core-01/scripts/push-health.sh` | Fix 6 (Uptime Kuma reporting) |
 | `rclone` | Already installed on core-01 | Fix 6 (offsite upload) |
-| Uptime Kuma monitor setup | See `claude-docs/patterns/devops.md` | Fix 6 (new push monitor) |
+| Uptime Kuma monitor setup | See `.claude/rules/klai/patterns/devops.md` | Fix 6 (new push monitor) |

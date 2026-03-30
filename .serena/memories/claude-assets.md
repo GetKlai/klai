@@ -8,46 +8,37 @@ There is no longer a separate `klai-claude` repo — everything was merged into 
 ```
 .claude/
   agents/
-    klai/       ← Klai-built agents
-    gtm/        ← GTM agents
-    moai/       ← MoAI-ADK upstream reference
-  commands/klai/  ← Klai slash commands
+    klai/       ← Klai-built agents (ceo-sparring, manager-learn)
+    gtm/        ← GTM agents (blog-writer, seo-architect, etc.)
+    moai/       ← MoAI-ADK upstream reference agents
+  commands/
+    klai/       ← Klai slash commands (/sparring, /retro)
+    moai/       ← MoAI slash commands (/plan, /run, /sync, etc.)
   rules/
-    klai/       ← Klai rules (loaded via CLAUDE.md @imports)
+    klai/       ← Klai rules (loaded via CLAUDE.md @imports + paths: frontmatter)
+      patterns/ ← Copy-paste solutions (devops, infrastructure, platform, frontend, etc.)
+      pitfalls/ ← Mistakes to avoid (process-rules, git, devops, platform, backend, etc.)
     gtm/        ← GTM rules
-    moai/       ← MoAI core rules
-  skills/       ← Skill definitions
+    moai/       ← MoAI core rules (constitution, coding-standards, etc.)
+  skills/       ← Skill definitions (moai-*, klai-portal-ui)
   hooks/        ← Claude Code hooks
-
-claude-docs/    ← Living knowledge base (patterns + pitfalls + styleguide)
-  patterns/
-    frontend.md
-    platform.md
-    devops.md
-    infrastructure.md
-    logging.md
-    code-quality.md
-  pitfalls/
-    process.md
-    git.md
-    devops.md
-    platform.md
-    infrastructure.md
-    backend.md
-    code-quality.md
-  styleguide.md
-  patterns.md   ← index
-  pitfalls.md   ← index
+  output-styles/ ← Output formatting
 ```
 
-## Key Knowledge Base Files
-- `claude-docs/pitfalls/process.md` — universal AI dev rules (read before any code change)
-- `claude-docs/pitfalls/git.md` — before committing
-- `claude-docs/pitfalls/devops.md` + `claude-docs/patterns/devops.md` — before infra work
-- `claude-docs/pitfalls/platform.md` + `claude-docs/patterns/platform.md` — LiteLLM/LibreChat/Zitadel/Caddy
-- `claude-docs/pitfalls/infrastructure.md` + `claude-docs/patterns/infrastructure.md` — SOPS, env, DNS
-- `claude-docs/patterns/frontend.md` — i18n, component patterns
-- `claude-docs/styleguide.md` — full UI design system
+## Key Knowledge Base Files (in .claude/rules/klai/)
+- `pitfalls/process-rules.md` — universal AI dev rules (loaded every session)
+- `pitfalls/git.md` — before committing
+- `pitfalls/devops.md` + `patterns/devops.md` — before infra work
+- `pitfalls/platform.md` + `patterns/platform.md` — LiteLLM/LibreChat/Zitadel/Caddy
+- `pitfalls/infrastructure.md` + `patterns/infrastructure.md` — SOPS, env, DNS
+- `patterns/frontend.md` — i18n, component patterns
+- `styleguide.md` — full UI design system (auto-loads for matching files)
+- `patterns/logging.md` — structlog + VictoriaLogs patterns
+- `patterns/code-quality.md` — ruff, pyright, ESLint
+
+## Index files
+- Patterns index: `.claude/rules/klai/patterns.md`
+- Pitfalls index: `.claude/rules/klai/pitfalls.md`
 
 ## Commit destination
 Work on Claude agents/rules/commands → commit in the monorepo (klai), not a separate repo.

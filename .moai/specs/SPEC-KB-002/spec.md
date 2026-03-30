@@ -2,7 +2,7 @@
 
 > Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
-> Builds on: `claude-docs/specs/SPEC-KB-001-unification.md`
+> Builds on: `.moai/specs/SPEC-KB-001/spec.md`
 
 ---
 

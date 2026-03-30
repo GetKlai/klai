@@ -3,7 +3,7 @@
 > Status: COMPLETED (2026-03-26) — commit 8c9571c
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-005 (named vectors, RRF fusion), SPEC-KB-006 (FlagEmbedding sidecar deployment, content-type profiles)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md` SS4.3
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md` SS4.3
 > Created: 2026-03-26
 
 ---

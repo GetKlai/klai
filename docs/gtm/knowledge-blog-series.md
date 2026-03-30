@@ -1,7 +1,7 @@
 # Knowledge Blog Series -- Editorial Plan
 
 Blog series about how Klai Knowledge works, based on the architecture and fundamentals docs.
-Source material: `claude-docs/klai-knowledge-architecture.md` and `claude-docs/knowledge-system-fundamentals.md`.
+Source material: `docs/architecture/klai-knowledge-architecture.md` and `docs/architecture/knowledge-system-fundamentals.md`.
 
 Language: English (published on getklai.com/blog)
 Author voice: Mark Vletter (see `klai-claude/rules/gtm/mark-tone-of-voice.md`)

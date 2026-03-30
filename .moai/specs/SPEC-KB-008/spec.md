@@ -3,7 +3,7 @@
 > Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-005 (contextual retrieval), SPEC-KB-006 (content-type adapters), SPEC-KB-007 (sparse vectors + hybrid search)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md`
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md`
 > Created: 2026-03-26
 
 ---
