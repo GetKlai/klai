@@ -10,6 +10,10 @@ Tenant isolation via org_id payload filter.
 import logging
 import time
 import uuid
+import warnings
+
+# Qdrant client warns about API key over HTTP; safe inside Docker network
+warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
