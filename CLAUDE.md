@@ -10,8 +10,8 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 | `klai-portal/frontend/` | React 19 + Vite + TanStack Router — portal UI |
 | `klai-docs/` | Next.js 15 documentation site |
 | `deploy/` | Self-hosting templates — Docker Compose, Caddy, LiteLLM, Zitadel |
-| `.claude/` | Shared Claude Code tooling — agents, rules, commands, skills |
-| `claude-docs/` | Klai knowledge base — patterns, pitfalls, styleguide |
+| `.claude/` | Shared Claude Code tooling — agents, rules (incl. patterns/pitfalls), commands, skills |
+| `docs/` | Project documentation — architecture, research, runbooks, specs, GTM |
 | `klai-private/` | Private business docs — research, GTM, pricing (team only, git submodule) |
 | `scripts/` | Repo management utilities |
 
@@ -24,14 +24,14 @@ Before working on a specific package, read its CLAUDE.md:
 
 ## Knowledge base
 
-Before making changes, read the relevant domain docs in `claude-docs/`:
+Before making changes, read the relevant domain docs in `.claude/rules/klai/`:
 
-@claude-docs/patterns/frontend.md
-@claude-docs/patterns/platform.md
-@claude-docs/patterns/devops.md
-@claude-docs/pitfalls/process.md
+@.claude/rules/klai/patterns/frontend.md
+@.claude/rules/klai/patterns/platform.md
+@.claude/rules/klai/patterns/devops.md
+@.claude/rules/klai/pitfalls/process.md
 
-Full index: `claude-docs/patterns.md` and `claude-docs/pitfalls.md`
+Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md`
 
 ## Shared rules
 

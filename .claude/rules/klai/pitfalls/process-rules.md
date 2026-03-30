@@ -1,6 +1,6 @@
 # Process Rules (Compact)
 
-> Quick reference for every session. Full descriptions with examples: `claude-docs/pitfalls/process.md`
+> Quick reference for every session. Full descriptions with examples: `.claude/rules/klai/pitfalls/process.md`
 
 | ID | Sev | Trigger | Rule |
 |---|---|---|---|

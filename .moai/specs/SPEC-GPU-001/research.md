@@ -2,7 +2,9 @@
 
 ## Context
 
-Klai migrates GPU-heavy inference services from core-01 (Docker Compose, internal network) to a Vast.ai GPU instance (RTX 3090, 24GB VRAM, Belgium). This is a test/staging setup; production will move to dedicated GPU hardware.
+Klai migrates GPU-heavy inference services from core-01 (Docker Compose, internal network) to **gpu-01** — a dedicated Hetzner server (GEX44 #2963286, IP 5.9.10.215, FSN1-DC13, Germany). Both servers are in Hetzner EU datacenters under Klai's exclusive control.
+
+**2026-03-29 UPDATE**: Target changed from Vast.ai marketplace to dedicated Hetzner hardware. Threat model significantly improved — unknown host operator risk eliminated. Customer data is acceptable on gpu-01. Full-disk LUKS encryption added as requirement.
 
 ## Current Security Posture (core-01)
 
@@ -67,19 +69,22 @@ Moving to Vast.ai means inference services get **publicly routable IP:port combi
 - Network path: core-01 (Hetzner DE) → public internet → Vast.ai (Belgium)
 - ISP or network-level interception possible
 
-### MODERATE: Vast.ai Shared Infrastructure
+### ELIMINATED: Shared Infrastructure Risks (now on dedicated hardware)
 
-**Threat 5: GPU Memory Isolation**
-- Vast.ai runs containers on shared physical hosts
-- GPU memory isolation depends on NVIDIA driver (CUDA MPS/MIG)
-- RTX 3090 does NOT support MIG (only A100/H100 do)
-- Theoretical: another tenant's container could probe GPU memory
-- Practical risk: LOW for embeddings (vectors are not secrets), MODERATE for audio content
+**~~Threat 5: GPU Memory Isolation~~** — ELIMINATED
+- gpu-01 is dedicated hardware. No other tenant's containers run on it.
+- Klai is the only user of this machine.
 
-**Threat 6: Host Operator Access**
-- Physical host operator can inspect container filesystem and network traffic
-- Vast.ai ToS: user data remains user's property, but no formal DPA
-- Belgium = EU jurisdiction (GDPR applies)
+**~~Threat 6: Unknown Host Operator Access~~** — ELIMINATED
+- Hetzner is the datacenter provider. They do not have logical access to the OS.
+- Klai holds the only SSH keys and (after LUKS setup) the only disk encryption keys.
+- Physical datacenter access by Hetzner staff would require bypassing LUKS — not possible without the passphrase.
+
+### REMAINING: Infrastructure Risks (dedicated hardware)
+
+**Threat 5: Data in Transit (core-01 → gpu-01)**
+- Both servers are in Hetzner datacenters but may communicate over Hetzner's internal network
+- Mitigation: SSH tunnel encryption for all inference traffic
 
 ### LOW: Service-Level Risks
 
@@ -172,15 +177,17 @@ User → Caddy (TLS) → research-api/scribe-api/retrieval-api (core-01)
                            └── faster-whisper :8000
 ```
 
-## GDPR Assessment
+## GDPR Assessment (Updated: Hetzner gpu-01)
 
 | Aspect | Status |
 |--------|--------|
-| Data location | Belgium (EU) — compliant |
-| Data processor | Vast.ai is infrastructure provider, not data processor |
+| Data location | Germany, FSN1-DC13 (Hetzner, EU) — compliant |
+| Data processor | Hetzner is infrastructure provider (colocation), not data processor |
 | Data in transit | Encrypted via SSH tunnel |
-| Data at rest | Transient only (inference services don't persist data) |
-| Host operator access | Theoretical risk — acceptable for test, review for production |
+| Data at rest | Transient (inference services don't persist); LUKS encrypts disk if data were written |
+| Host operator access | **Eliminated risk** — Klai controls hardware; Hetzner cannot access OS |
+| Disk contents (theft/seizure) | **Mitigated** — LUKS full-disk encryption |
+| Customer data | **Acceptable** — dedicated hardware under Klai control |
 
 ## Encryption Options Investigated
 

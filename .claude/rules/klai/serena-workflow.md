@@ -151,7 +151,7 @@ search_for_pattern(substring_pattern="REDIS_URL", relative_path="deploy", contex
 **Searching in ignored directories (specs, workflow, docs):**
 
 The project's `ignored_paths` in `.serena/project.yml` excludes `.moai/specs/`, `.workflow/`,
-`claude-docs/specs/`, and `claude-docs/gtm/` from Serena searches to reduce noise.
+`docs/specs/`, and `docs/gtm/` from Serena searches to reduce noise.
 
 When you DO need to search these directories:
 - Use Claude's native **Grep** tool — it is not affected by Serena's ignored_paths
