@@ -155,9 +155,7 @@ async def create_connector(
     """Create a connector for a KB. Requires contributor access."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
-    resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(
-        body.connector_type, "unknown"
-    )
+    resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
     connector = PortalConnector(
         kb_id=kb.id,
         org_id=org.id,
