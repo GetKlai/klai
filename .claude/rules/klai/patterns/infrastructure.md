@@ -1,7 +1,11 @@
 ---
 paths:
   - "**/.env*"
+  - "**/*.env"
+  - "**/*sops*"
   - "**/docker-compose*.yml"
+  - "deploy/caddy/**"
+  - "deploy/*.sh"
   - "klai-infra/**"
 ---
 # Infrastructure Patterns
