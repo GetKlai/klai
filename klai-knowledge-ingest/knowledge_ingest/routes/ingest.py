@@ -187,8 +187,11 @@ async def ingest_document(req: IngestRequest) -> dict:
     stored_hash = await pg_store.get_active_content_hash(req.org_id, req.kb_slug, req.path)
     if stored_hash is not None and stored_hash == content_hash:
         logger.info(
-            "content unchanged, skipping ingest (%s/%s org=%s)",
-            req.kb_slug, req.path, req.org_id,
+            "ingest_skipped",
+            reason="content_unchanged",
+            kb_slug=req.kb_slug,
+            path=req.path,
+            org_id=req.org_id,
         )
         return {"status": "skipped", "reason": "content unchanged", "chunks": 0}
 
@@ -298,8 +301,10 @@ async def ingest_document(req: IngestRequest) -> dict:
             )
         except AlreadyEnqueued:
             logger.info(
-                "enrichment already queued, skipping (%s/%s org=%s)",
-                req.kb_slug, req.path, req.org_id,
+                "enrichment_already_queued",
+                kb_slug=req.kb_slug,
+                path=req.path,
+                org_id=req.org_id,
             )
 
     # Graphiti episode ingest — fire-and-forget background task (AC-1, AC-3, AC-8)
@@ -370,7 +375,7 @@ async def gitea_webhook(request: Request) -> dict:
     full_name = event.repository.full_name
     parts = full_name.split("/")
     if len(parts) != 2 or not parts[0].startswith("org-"):
-        logger.warning("Ignoring webhook for repo %s (unexpected naming)", full_name)
+        logger.warning("webhook_ignored", reason="unexpected_repo_format", repo=full_name)
         return {"status": "ignored", "reason": "unexpected repo format"}
 
     gitea_org_name = parts[0]   # e.g. "org-myslug"
@@ -380,7 +385,7 @@ async def gitea_webhook(request: Request) -> dict:
     # Fetch org_id (Zitadel org ID) from Gitea org metadata
     org_id = await _get_org_id(gitea_org_name)
     if not org_id:
-        logger.warning("Could not resolve org_id for %s — skipping webhook", gitea_org_name)
+        logger.warning("webhook_ignored", reason="org_id_not_found", gitea_org=gitea_org_name)
         return {"status": "ignored", "reason": "org_id not found"}
 
     # Collect changed .md files
@@ -432,14 +437,14 @@ async def gitea_webhook(request: Request) -> dict:
                 )
                 queued += 1
             except AlreadyEnqueued:
-                logger.debug("ingest already pending for %s/%s — debounce active", kb_slug, path)
+                logger.debug("ingest_debounced", kb_slug=kb_slug, path=path)
             except Exception as exc:
-                logger.warning("Failed to queue debounced ingest for %s: %s", path, exc)
+                logger.warning("ingest_queue_failed", path=path, error=str(exc))
         else:
             # No Procrastinate (enrichment disabled) — ingest immediately as before
             content = await _fetch_gitea_file(full_name, path)
             if content is None:
-                logger.warning("Could not fetch %s from %s", path, full_name)
+                logger.warning("gitea_fetch_failed", path=path, repo=full_name)
                 continue
             req = IngestRequest(
                 org_id=org_id, kb_slug=kb_slug, path=path,
@@ -451,7 +456,7 @@ async def gitea_webhook(request: Request) -> dict:
                 await ingest_document(req)
                 queued += 1
             except Exception as exc:
-                logger.warning("Failed to ingest %s: %s", path, exc)
+                logger.warning("ingest_failed", path=path, error=str(exc))
 
     # Delete removed files — immediate, no debounce needed
     for path in removed:
@@ -460,7 +465,7 @@ async def gitea_webhook(request: Request) -> dict:
             await pg_store.soft_delete_artifact(org_id, kb_slug, path)
             deleted += 1
         except Exception as exc:
-            logger.warning("Failed to delete %s: %s", path, exc)
+            logger.warning("delete_failed", path=path, error=str(exc))
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 
@@ -482,7 +487,7 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
             data = resp.json()
             return data.get("description") or None
     except Exception as exc:
-        logger.warning("Gitea API error for %s: %s", gitea_org_name, exc)
+        logger.warning("gitea_api_error", gitea_org=gitea_org_name, error=str(exc))
         return None
 
 
@@ -494,7 +499,7 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     _verify_internal_secret(request)
     await qdrant_store.delete_kb(org_id, kb_slug)
     await pg_store.delete_kb(org_id, kb_slug)
-    logger.info("Deleted KB %s/%s from Qdrant + PostgreSQL", org_id, kb_slug)
+    logger.info("kb_deleted", org_id=org_id, kb_slug=kb_slug)
     return {"status": "ok"}
 
 
@@ -521,7 +526,7 @@ async def _fetch_gitea_file(repo_full_name: str, path: str) -> str | None:
                 return None
             return resp.text
     except Exception as exc:
-        logger.warning("Failed to fetch %s from %s: %s", path, repo_full_name, exc)
+        logger.warning("gitea_fetch_failed", path=path, repo=repo_full_name, error=str(exc))
         return None
 
 
@@ -548,7 +553,7 @@ async def _list_gitea_md_files(repo_full_name: str) -> list[str]:
                 and not item["path"].startswith("_")
             ]
     except Exception as exc:
-        logger.warning("Failed to list files in %s: %s", repo_full_name, exc)
+        logger.warning("gitea_list_failed", repo=repo_full_name, error=str(exc))
         return []
 
 
@@ -579,7 +584,7 @@ async def _deregister_gitea_webhook(gitea_repo: str, webhook_url: str) -> None:
     ) as client:
         resp = await client.get(f"/api/v1/repos/{gitea_repo}/hooks", params={"limit": 50})
         if resp.status_code != 200:
-            logger.warning("Could not list hooks for %s: %s", gitea_repo, resp.status_code)
+            logger.warning("gitea_hooks_list_failed", repo=gitea_repo, status=resp.status_code)
             return
         for hook in resp.json():
             if hook.get("config", {}).get("url") == webhook_url:
@@ -593,7 +598,7 @@ async def register_kb_webhook(request: Request, req: KBWebhookRequest) -> dict:
     _verify_internal_secret(request)
     webhook_url = f"{settings.knowledge_ingest_public_url}/ingest/v1/webhook/gitea"
     await _register_gitea_webhook(req.gitea_repo, webhook_url)
-    logger.info("Registered webhook for %s/%s on %s", req.org_id, req.kb_slug, req.gitea_repo)
+    logger.info("webhook_registered", org_id=req.org_id, kb_slug=req.kb_slug, repo=req.gitea_repo)
     return {"status": "ok"}
 
 
@@ -603,7 +608,7 @@ async def deregister_kb_webhook(request: Request, req: KBWebhookRequest) -> dict
     _verify_internal_secret(request)
     webhook_url = f"{settings.knowledge_ingest_public_url}/ingest/v1/webhook/gitea"
     await _deregister_gitea_webhook(req.gitea_repo, webhook_url)
-    logger.info("Deregistered webhook for %s/%s on %s", req.org_id, req.kb_slug, req.gitea_repo)
+    logger.info("webhook_deregistered", org_id=req.org_id, kb_slug=req.kb_slug, repo=req.gitea_repo)
     return {"status": "ok"}
 
 
@@ -616,7 +621,7 @@ async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
     for path in pages:
         content = await _fetch_gitea_file(req.gitea_repo, path)
         if content is None:
-            logger.warning("Could not fetch %s from %s during bulk sync", path, req.gitea_repo)
+            logger.warning("gitea_fetch_failed", path=path, repo=req.gitea_repo)
             continue
         ingest_req = IngestRequest(
             org_id=req.org_id,
@@ -630,6 +635,6 @@ async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
             await ingest_document(ingest_req)
             ingested += 1
         except Exception as exc:
-            logger.warning("Bulk sync failed for %s: %s", path, exc)
-    logger.info("Bulk sync complete for %s/%s: %d pages", req.org_id, req.kb_slug, ingested)
+            logger.warning("bulk_sync_failed", path=path, error=str(exc))
+    logger.info("bulk_sync_complete", org_id=req.org_id, kb_slug=req.kb_slug, pages=ingested)
     return {"status": "ok", "pages": ingested}
