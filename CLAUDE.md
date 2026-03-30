@@ -24,12 +24,9 @@ Before working on a specific package, read its CLAUDE.md:
 
 ## Knowledge base
 
-Before making changes, read the relevant domain docs in `.claude/rules/klai/`:
-
-@.claude/rules/klai/patterns/frontend.md
-@.claude/rules/klai/patterns/platform.md
-@.claude/rules/klai/patterns/devops.md
-@.claude/rules/klai/pitfalls/process.md
+Domain patterns and pitfalls live in `.claude/rules/klai/` and load automatically
+when you work on matching files (via `paths:` frontmatter). Universal rules
+(`process.md`, `git.md`) load every session.
 
 Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md`
 

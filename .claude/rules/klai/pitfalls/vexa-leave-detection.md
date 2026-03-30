@@ -1,3 +1,6 @@
+---
+paths: "klai-portal/backend/**/*.py"
+---
 # Vexa Leave Detection Pitfalls
 
 > Vexa meeting bot — Google Meet leave/end detection via Playwright DOM scraping.

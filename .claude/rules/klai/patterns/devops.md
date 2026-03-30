@@ -1,3 +1,6 @@
+---
+paths: "**/Dockerfile,**/docker-compose*.yml,.github/**/*.yml,**/*.sh"
+---
 # DevOps Patterns
 
 > Coolify deployments, Docker, service management, CI/CD

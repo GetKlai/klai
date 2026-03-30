@@ -1,3 +1,6 @@
+---
+paths: "**/test_*.py,**/*_test.py,**/*.test.ts,**/*.spec.ts,**/conftest.py"
+---
 # Frontend Testing with Playwright
 
 > Standard workflow for browser-based UI testing via the Playwright MCP tool.

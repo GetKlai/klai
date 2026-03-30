@@ -1,3 +1,6 @@
+---
+paths: "**/*.py,**/pyproject.toml"
+---
 # Backend Pitfalls
 
 > Python async services (FastAPI, httpx, asyncio) in klai-mono.

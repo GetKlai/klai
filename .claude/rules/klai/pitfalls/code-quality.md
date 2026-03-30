@@ -1,3 +1,6 @@
+---
+paths: "**/*.py,**/*.ts,**/*.tsx,**/pyproject.toml,**/eslint.config*"
+---
 # Code Quality Pitfalls
 
 > Linting, type checking, formatting — CI quality gate failures.

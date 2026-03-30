@@ -1,3 +1,6 @@
+---
+paths: "**/Dockerfile,**/docker-compose*.yml,.github/**/*.yml"
+---
 # DevOps Pitfalls
 
 > Coolify, Docker, deployments, service management

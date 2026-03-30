@@ -1,3 +1,6 @@
+---
+paths: "**/*.py,**/litellm*.yml,**/docker-compose*.yml,klai-portal/backend/**"
+---
 # Platform Patterns
 
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy — Klai AI stack configuration.
