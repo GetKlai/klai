@@ -805,6 +805,8 @@ services:
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       TEI_URL: http://172.18.0.1:7997
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
+      # BGE-M3 sparse sidecar on GPU (~100ms/batch). Generous timeout as safety margin.
+      SPARSE_SIDECAR_TIMEOUT: "30"
       GITEA_URL: http://gitea:3000
       GITEA_TOKEN: ${GITEA_ADMIN_TOKEN}
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
