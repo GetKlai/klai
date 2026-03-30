@@ -121,6 +121,10 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
 
+        # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every request but serves
+        # @MX:NOTE: flat results. Diffs logged as shadow_eval to VictoriaLogs for offline analysis.
+        # @MX:NOTE: Set EVIDENCE_SHADOW_MODE=false to activate evidence-tier scoring for users.
+        # @MX:SPEC: SPEC-EVIDENCE-001 R9. Disable shadow mode after RAGAS validation confirms improvement.
         # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
         shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "true").lower() in (
             "true", "1", "yes",

@@ -35,6 +35,9 @@ class EvidenceProfile(TypedDict):
     temporal_decay: dict[str, float]
 
 
+# @MX:NOTE: [AUTO] Evidence weights from SPEC-EVIDENCE-001: kb_article=1.00 (human-validated),
+# @MX:NOTE: web_crawl=0.65 (external/noisy), unknown=0.55 (defensive minimum).
+# @MX:SPEC: SPEC-EVIDENCE-001 R1, R3. Activation of assertion_mode weights: SPEC-EVIDENCE-002.
 DEFAULT_EVIDENCE_PROFILE: EvidenceProfile = {
     "content_type_weights": {
         "kb_article": 1.00,
@@ -78,6 +81,8 @@ def _content_type_weight(content_type: str | None, profile: EvidenceProfile) -> 
     )
 
 
+# @MX:TODO: [AUTO] assertion_mode scoring is flat 1.00 in v1 (plumbing only).
+# @MX:SPEC: SPEC-EVIDENCE-002 — activate differential weights after empirical validation.
 def _assertion_weight(assertion_mode: str | None, profile: EvidenceProfile) -> float:
     """Return weight for assertion_mode. v1: always 1.00 regardless of mode."""
     # Plumbing only in v1. Activation deferred to SPEC-EVIDENCE-002.
@@ -141,6 +146,8 @@ def apply(
     return _order_for_llm(chunks)
 
 
+# @MX:NOTE: [AUTO] U-shape ordering mitigates Lost in the Middle degradation.
+# @MX:SPEC: Liu et al. 2023 (arXiv:2307.03172) — >30% perf drop when best doc in middle.
 def _order_for_llm(chunks: list[dict]) -> list[dict]:
     """U-shape ordering: strongest at position 0, second-strongest at last position.
 
