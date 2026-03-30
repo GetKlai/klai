@@ -1,6 +1,6 @@
 # SPEC-TAXONOMY-001: Assertion Mode Taxonomy Alignment
 
-> Status: Draft
+> Status: Completed
 > Priority: MEDIUM
 > Created: 2026-03-30
 > Research: `docs/research/assertion-modes/assertion-modes-research.md`, `docs/research/assertion-modes/assertion-mode-weights.md`
@@ -161,17 +161,17 @@ De MCP stuurt `assertion_mode` al correct mee in het `metadata` veld van het ing
 
 ## Acceptance Criteria
 
-- [ ] `VALID_ASSERTION_MODES` in MCP bevat alle 6 waarden: `fact`, `claim`, `speculation`, `procedural`, `quoted`, `unknown`
-- [ ] MCP geeft een foutmelding bij ongeldige `assertion_mode`, geen stille fallback; default bij ontbrekende waarde is `unknown`
-- [ ] Ingest `_parse_knowledge_fields()` accepteert zowel nieuwe als oude waarden met mapping (`note` → `unknown`, geen frontmatter-tag → `unknown`)
-- [ ] `assertion_mode` staat in `extra_payload` bij Qdrant upsert
-- [ ] `assertion_mode` staat in `_ALLOWED_METADATA_FIELDS` in `qdrant_store.py`
-- [ ] `search.py` retourneert `assertion_mode` in het result dict
-- [ ] Alembic data-migratie: `factual`→`fact`, `belief`→`claim`, `hypothesis`→`speculation`, `note`→`unknown`, `NULL`→`unknown`
-- [ ] Type validatie via `Literal` + `frozenset` patroon in MCP, ingest en retrieval (6 waarden)
-- [ ] Bestaande tests passen voor nieuwe vocabulary
-- [ ] Geen regressie in MCP save-functionaliteit (handmatige test of unit test)
-- [ ] Geen regressie in ingest-route (bestaand frontmatter met oude waarden blijft werken)
+- [x] `VALID_ASSERTION_MODES` in MCP bevat alle 6 waarden: `fact`, `claim`, `speculation`, `procedural`, `quoted`, `unknown`
+- [x] MCP geeft een foutmelding bij ongeldige `assertion_mode`, geen stille fallback; default bij ontbrekende waarde is `unknown`
+- [x] Ingest `_parse_knowledge_fields()` accepteert zowel nieuwe als oude waarden met mapping (`note` → `unknown`, geen frontmatter-tag → `unknown`)
+- [x] `assertion_mode` staat in `extra_payload` bij Qdrant upsert
+- [x] `assertion_mode` staat in `_ALLOWED_METADATA_FIELDS` in `qdrant_store.py`
+- [x] `search.py` retourneert `assertion_mode` in het result dict
+- [x] Data-migratie: `factual`→`fact`, `belief`→`claim`, `hypothesis`→`speculation`, `note`→`unknown`, `NULL`→`unknown` — als raw SQL in `deploy/postgres/migrations/010_assertion_mode_taxonomy.sql` (zie implementatienoot)
+- [x] Type validatie via `Literal` + `frozenset` patroon in MCP, ingest en retrieval (6 waarden)
+- [x] Bestaande tests passen voor nieuwe vocabulary
+- [x] Geen regressie in MCP save-functionaliteit (handmatige test of unit test)
+- [x] Geen regressie in ingest-route (bestaand frontmatter met oude waarden blijft werken)
 
 ---
 
@@ -273,6 +273,41 @@ Stap 1-3 kunnen als één commit. Stap 4 (Alembic migratie) is een aparte commit
 |---|---|
 | SPEC-EVIDENCE-001 | Consument: R4 en R5 zijn prerequisites voor evidence tier scoring. Assertion mode plumbing met flat weights (R5 van SPEC-EVIDENCE-001) vereist dat de waarden in het result dict beschikbaar zijn. |
 | SPEC-EVIDENCE-002 | Consument: gewichten activeren op assertion mode. Vereist dat de taxonomy stabiel en geünificeerd is. |
+
+---
+
+## Implementatienoten
+
+> Toegevoegd na implementatie (commit `3348c16`, 2026-03-30)
+
+### Afwijkingen van het plan
+
+**R6 — Migratie locatie:** De SPEC specificeerde een Alembic revision in `klai-portal/backend/alembic/versions/`. De implementatie gebruikte raw SQL in `deploy/postgres/migrations/010_assertion_mode_taxonomy.sql`, consistent met het bestaande migratiepatroon in de repository. Functioneel equivalent; de SQL is idempotent (DROP IF EXISTS + UPDATE WHERE).
+
+**R4 + R5 — Al aanwezig:** `assertion_mode` stond al in `_ALLOWED_METADATA_FIELDS` (qdrant_store.py) en in het result dict (search.py). De SPEC ging ervan uit dat deze ontbraken; in werkelijkheid was alleen de `extra_payload` doorgifte in ingest.py nieuw.
+
+### Bestanden gewijzigd
+
+| Bestand | Type | Omschrijving |
+|---|---|---|
+| `deploy/klai-knowledge-mcp/main.py` | Gewijzigd | 6-waarden taxonomy, `unknown` als default, foutmelding bij ongeldig |
+| `deploy/knowledge-ingest/knowledge_ingest/models.py` | Gewijzigd | `AssertionMode` Literal + `VALID_ASSERTION_MODES` |
+| `deploy/knowledge-ingest/knowledge_ingest/routes/ingest.py` | Gewijzigd | Backward-compat mapping, `assertion_mode` in `extra_payload` |
+| `deploy/postgres/migrations/010_assertion_mode_taxonomy.sql` | Nieuw | Idempotente data-migratie + CHECK constraint |
+| `deploy/klai-knowledge-mcp/tests/test_assertion_mode_taxonomy.py` | Nieuw | 11 specificatietests |
+| `deploy/knowledge-ingest/tests/test_assertion_mode_taxonomy.py` | Nieuw | 12 specificatietests |
+| `klai-retrieval-api/tests/test_assertion_mode_taxonomy.py` | Nieuw | 7 specificatietests |
+
+### Testresultaten
+
+- klai-knowledge-mcp: 20/20 passing
+- knowledge-ingest: 178/178 passing
+- klai-retrieval-api: 52/52 passing
+- TRUST 5: PASS (97%)
+
+### Openstaand
+
+- PostgreSQL-migratie `010_assertion_mode_taxonomy.sql` moet nog worden uitgevoerd op productie.
 
 ---
 
