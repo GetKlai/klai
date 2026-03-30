@@ -224,4 +224,4 @@ ESLint enforces this with `'no-console': ['error', { allow: ['warn', 'error'] }]
 ## See Also
 
 - [patterns/testing.md](testing.md) — Playwright browser testing
-- [pitfalls/process.md](../../../../docs/pitfalls/process.md) — process rules (test-user-facing-not-imports, verify-full-flow)
+- [pitfalls/process.md](../pitfalls/process.md) — process rules (test-user-facing-not-imports, verify-full-flow)

@@ -7,7 +7,7 @@
 
 | Category | File | Scope |
 |----------|------|-------|
-| [Process](../../../docs/pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
+| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 12 entries |
@@ -33,7 +33,7 @@
 ## Process rules (always loaded)
 
 Compact table: `pitfalls/process-rules.md` (loads every session).
-Full descriptions with examples: `docs/pitfalls/process.md` (on-demand).
+Full descriptions with examples: `pitfalls/process.md` (on-demand).
 
 ## Adding new pitfalls
 
@@ -46,5 +46,5 @@ Full descriptions with examples: `docs/pitfalls/process.md` (on-demand).
 | Type | Location | Loading |
 |------|----------|---------|
 | Process rules (compact) | `pitfalls/process-rules.md` | Every session (in `.claude/rules/`) |
-| Process rules (full) | `docs/pitfalls/process.md` | On-demand |
+| Process rules (full) | `pitfalls/process.md` | On-demand |
 | Domain pitfalls | `pitfalls/[category].md` | On-demand via `knowledge.md` |

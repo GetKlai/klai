@@ -148,4 +148,4 @@ This captures errors that GlitchTip may not have sent yet (e.g. network failures
 ## See Also
 
 - [patterns/frontend.md](frontend.md) - Component patterns, button placement, form structure
-- [pitfalls/process.md](../../../../docs/pitfalls/process.md) - General process rules
+- [pitfalls/process.md](../pitfalls/process.md) - General process rules
