@@ -400,6 +400,7 @@
   "app_tool_docs_title": "Docs",
   "app_tool_docs_description": "Create and manage doc libraries",
   "docs_kbs_title": "Doc Libraries",
+  "docs_kbs_new": "New library",
   "docs_kb_name_label": "Name",
   "docs_kb_name_placeholder": "E.g. Help center",
   "docs_kb_visibility_label": "Visibility",

@@ -46,6 +46,7 @@ import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
 import { Route as AppKnowledgeKbSlugRouteImport } from './routes/app/knowledge/$kbSlug'
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
+import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
 import { Route as AppDocsKbSlugRouteImport } from './routes/app/docs/$kbSlug'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
@@ -244,6 +245,11 @@ const AppFocusNotebookIdRoute = AppFocusNotebookIdRouteImport.update({
   path: '/focus/$notebookId',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppDocsNewRoute = AppDocsNewRouteImport.update({
+  id: '/docs/new',
+  path: '/docs/new',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppDocsKbSlugRoute = AppDocsKbSlugRouteImport.update({
   id: '/docs/$kbSlug',
   path: '/docs/$kbSlug',
@@ -329,6 +335,7 @@ export interface FileRoutesByFullPath {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
+  '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
@@ -377,6 +384,7 @@ export interface FileRoutesByTo {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
+  '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
@@ -428,6 +436,7 @@ export interface FileRoutesById {
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
+  '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
@@ -480,6 +489,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
+    | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/knowledge/$kbSlug'
@@ -528,6 +538,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
+    | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/knowledge/$kbSlug'
@@ -578,6 +589,7 @@ export interface FileRouteTypes {
     | '/admin/groups/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
+    | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
     | '/app/knowledge/$kbSlug'
@@ -880,6 +892,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppFocusNotebookIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/docs/new': {
+      id: '/app/docs/new'
+      path: '/docs/new'
+      fullPath: '/app/docs/new'
+      preLoaderRoute: typeof AppDocsNewRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/docs/$kbSlug': {
       id: '/app/docs/$kbSlug'
       path: '/docs/$kbSlug'
@@ -1012,6 +1031,7 @@ interface AppRouteRouteChildren {
   AppScribeRoute: typeof AppScribeRoute
   AppIndexRoute: typeof AppIndexRoute
   AppDocsKbSlugRoute: typeof AppDocsKbSlugRoute
+  AppDocsNewRoute: typeof AppDocsNewRoute
   AppFocusNotebookIdRoute: typeof AppFocusNotebookIdRoute
   AppFocusNewRoute: typeof AppFocusNewRoute
   AppKnowledgeKbSlugRoute: typeof AppKnowledgeKbSlugRoute
@@ -1036,6 +1056,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppScribeRoute: AppScribeRoute,
   AppIndexRoute: AppIndexRoute,
   AppDocsKbSlugRoute: AppDocsKbSlugRoute,
+  AppDocsNewRoute: AppDocsNewRoute,
   AppFocusNotebookIdRoute: AppFocusNotebookIdRoute,
   AppFocusNewRoute: AppFocusNewRoute,
   AppKnowledgeKbSlugRoute: AppKnowledgeKbSlugRoute,
