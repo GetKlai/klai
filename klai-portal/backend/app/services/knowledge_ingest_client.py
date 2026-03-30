@@ -11,6 +11,29 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+async def get_graph_stats(org_id: str) -> dict[str, int | None]:
+    """Fetch entity/edge counts from knowledge-ingest (FalkorDB graph).
+
+    Returns {"entity_count": N, "edge_count": N} on success,
+    or {"entity_count": None, "edge_count": None} on failure.
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            timeout=5.0,
+        ) as client:
+            resp = await client.get(
+                "/ingest/v1/graph-stats",
+                params={"org_id": org_id},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        logger.debug("Could not fetch graph stats from knowledge-ingest (org=%s)", org_id)
+        return {"entity_count": None, "edge_count": None}
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 

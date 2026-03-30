@@ -148,6 +148,11 @@ class KBStatsOut(BaseModel):
     volume: int | None
     usage_last_30d: int | None
     org_gap_count_7d: int | None = None
+    # Volume breakdown
+    source_page_count: int | None = None  # docs pages in PostgreSQL (= docs_count alias)
+    vector_chunk_count: int | None = None  # Qdrant vectors (= volume alias)
+    graph_entity_count: int | None = None  # FalkorDB entity nodes
+    graph_edge_count: int | None = None  # FalkorDB relationship edges
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -407,6 +412,11 @@ async def get_kb_stats(
     # Qdrant vector count for this KB
     volume = await _qdrant_count_for_kb(org.zitadel_org_id, kb.slug)
 
+    # FalkorDB graph stats (entity/edge counts for the org)
+    graph_stats = await knowledge_ingest_client.get_graph_stats(org.zitadel_org_id)
+    graph_entity_count: int | None = graph_stats.get("entity_count")
+    graph_edge_count: int | None = graph_stats.get("edge_count")
+
     # Audit log query usage (last 30 days) — placeholder until KB query events are logged
     usage_last_30d: int | None = None
     try:
@@ -449,6 +459,10 @@ async def get_kb_stats(
         volume=volume,
         usage_last_30d=usage_last_30d,
         org_gap_count_7d=org_gap_count_7d,
+        source_page_count=docs_count,
+        vector_chunk_count=volume,
+        graph_entity_count=graph_entity_count,
+        graph_edge_count=graph_edge_count,
     )
 
 
