@@ -7,7 +7,6 @@ import logging
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from sqlalchemy import text
 
 from knowledge_ingest import db
 from knowledge_ingest.config import settings
@@ -32,16 +31,13 @@ async def get_source_count(
 ) -> SourceCountResponse:
     """Return the number of active source artifacts for a KB."""
     try:
-        async with db.async_session() as session:
-            result = await session.execute(
-                text(
-                    "SELECT COUNT(*) FROM knowledge.artifacts "
-                    "WHERE org_id = :org_id AND kb_slug = :kb_slug AND superseded_by IS NULL"
-                ),
-                {"org_id": org_id, "kb_slug": kb_slug},
-            )
-            count = result.scalar_one()
-            return SourceCountResponse(source_count=count)
+        pool = await db.get_pool()
+        count = await pool.fetchval(
+            "SELECT COUNT(*) FROM knowledge.artifacts "
+            "WHERE org_id = $1 AND kb_slug = $2 AND superseded_by IS NULL",
+            org_id, kb_slug,
+        )
+        return SourceCountResponse(source_count=count)
     except Exception as exc:
         logger.debug("Could not fetch source count for org=%s kb=%s: %s", org_id, kb_slug, exc)
         return SourceCountResponse()
