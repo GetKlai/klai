@@ -1,0 +1,124 @@
+# gpu-01 GPU Inference Services
+# SPEC-GPU-001 — Phase 1
+# Alle services gebonden aan 127.0.0.1 (NOOIT 0.0.0.0) — toegang alleen via SSH tunnel van core-01
+
+services:
+
+  # ─── TEI: dense embeddings (BAAI/bge-m3) ──────────────────────────────
+  # HuggingFace Text Embeddings Inference — vervangt Infinity voor dense embeddings
+  # Gebruikt lokaal gecachede model uit infinity-models volume (snapshot met safetensors)
+  # VRAM: ~4-5GB
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    restart: unless-stopped
+    command: --model-id /data/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181 --port 7997
+    volumes:
+      - infinity-models:/data
+    ports:
+      - "127.0.0.1:7997:7997"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      # TEI is a Rust binary — no python3 available. Use curl instead.
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7997/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  # ─── Infinity: reranker (BAAI/bge-reranker-v2-m3) ─────────────────────
+  # Infinity alleen voor reranking — dense embeddings verhuisd naar TEI
+  # VRAM: ~3-4GB
+  infinity:
+    image: michaelf34/infinity:latest
+    restart: unless-stopped
+    command: >
+      v2
+      --model-id BAAI/bge-reranker-v2-m3
+      --device cuda
+      --engine torch
+      --url-prefix /v1
+      --port 7998
+    volumes:
+      - infinity-models:/app/.cache
+    ports:
+      - "127.0.0.1:7998:7998"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7998/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  # ─── BGE-M3 sparse sidecar ─────────────────────────────────────────────
+  # Sparse embeddings (SPLADE-stijl) voor hybride retrieval.
+  # Op GPU — BGE-M3 CPU inference duurt 30s+, wat altijd tot timeout leidt in knowledge-ingest.
+  # RTX 4000 Ada heeft 20GB VRAM; met TEI+Infinity+Whisper is er ~14GB vrij.
+  bge-m3-sparse:
+    build: ./bge-m3-sparse
+    restart: unless-stopped
+    environment:
+      MODEL_NAME: BAAI/bge-m3
+      HF_HOME: /models
+    volumes:
+      - bge-models:/models
+    ports:
+      - "127.0.0.1:8001:8001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # ─── faster-whisper: speech-to-text transcriptie ───────────────────────
+  # Vervangt: whisper-server:8000 op core-01 (nu GPU — float16 ipv int8/cpu)
+  whisper-server:
+    image: ghcr.io/getklai/whisper-server:latest
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: float16
+      WHISPER_DOWNLOAD_ROOT: /models
+    volumes:
+      - whisper-models:/models
+    ports:
+      - "127.0.0.1:8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  infinity-models:
+  bge-models:
+  whisper-models:
