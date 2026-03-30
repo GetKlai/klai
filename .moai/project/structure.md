@@ -162,11 +162,19 @@ klai-focus/
 
 ## klai-retrieval-api/ -- Hybrid Retrieval Service
 
-Unified retrieval endpoint combining vector search (Qdrant) and knowledge graph (FalkorDB/Graphiti) with Reciprocal Rank Fusion.
+Unified retrieval endpoint combining vector search (Qdrant) and knowledge graph (FalkorDB/Graphiti) with Reciprocal Rank Fusion, evidence-weighted scoring, and U-shape chunk ordering.
 
 ```
 klai-retrieval-api/
 ├── retrieval_api/             # Application code
+│   ├── api/
+│   │   └── retrieve.py        # POST /retrieve — shadow scoring, evidence tier pipeline
+│   └── services/
+│       └── evidence_tier.py   # Evidence scoring: content_type × temporal_decay × assertion_mode
+├── evaluation/                # RAGAS evaluation framework (SPEC-EVIDENCE-001)
+│   ├── eval_runner.py         # 150-query evaluation, Wilcoxon test, per-dimension isolation
+│   ├── eval_config.yaml       # Model (klai-large), metrics, retry config
+│   └── test_queries_curated.json  # Curated ground truth queries (expand to 50 for baseline)
 ├── tests/
 ├── scripts/
 ├── pyproject.toml

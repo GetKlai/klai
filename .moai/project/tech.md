@@ -139,6 +139,10 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | Knowledge Graph | graphiti-core[falkordb] | >=0.28, <0.30 |
 | SSE | sse-starlette | >=2.1 |
 
+**Evidence scoring** (SPEC-EVIDENCE-001): chunks krijgen een `final_score = reranker_score × content_type_weight × assertion_weight × temporal_decay`. Shadow mode logt diffs naar VictoriaLogs; activeer met `EVIDENCE_SHADOW_MODE=false` na RAGAS-validatie.
+
+**Evaluatie** (`evaluation/`): RAGAS-script met 150 queries (50 curated + 100 synthetisch), Wilcoxon signed-rank test, per-dimensie isolatie. Gebruik `klai-large` als judge. Run handmatig na baseline-meting.
+
 ---
 
 ## Klai Connector (deploy/klai-connector/)

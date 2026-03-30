@@ -1,8 +1,9 @@
 # SPEC-EVIDENCE-001: Evidence Tier Scoring + Evaluatieframework
 
-> Status: Draft
+> Status: Completed
 > Priority: HIGH
 > Created: 2026-03-30
+> Completed: 2026-03-30
 > Research: `docs/research/evidence-weighted-knowledge/`, `docs/research/rag-evaluation-framework-research.md`, `docs/research/assertion-mode-weights-research.md`
 > Architecture: `docs/architecture/klai-knowledge-architecture.md`
 > Scope: `klai-retrieval-api/`, `deploy/knowledge-ingest/`, `klai-portal/backend/`
@@ -232,3 +233,45 @@ retrieve.py (bestaand)
 - RAGAS (Shahul Es et al., NeurIPS 2023): [arXiv:2309.15217](https://arxiv.org/abs/2309.15217)
 - Einhorn & Hogarth (1975): equal weights under uncertainty
 - Volledige research: `docs/research/evidence-weighted-knowledge/`, `docs/research/rag-evaluation-framework-research.md`
+
+---
+
+## Implementation Notes
+
+**Geïmplementeerd op:** 2026-03-30 · **Commits:** `4723739`, `0ac2135`, `137f70f`, `74290e6`
+
+### Wat er gebouwd is
+
+Alle 15 acceptance criteria zijn gedekt. Scope exact gevolgd; R10 (connector-level `content_type`) is tijdens de review-fase voor implementatie aan de SPEC toegevoegd.
+
+**Nieuwe bestanden:**
+- `klai-retrieval-api/retrieval_api/services/evidence_tier.py` — scoring engine (`apply()`, `_order_for_llm()`, feature flags)
+- `klai-retrieval-api/evaluation/eval_runner.py` — RAGAS evaluatiescript (150 queries, Wilcoxon, per-dimensie isolatie)
+- `klai-retrieval-api/evaluation/eval_config.yaml` — configuratie (model: `klai-large`)
+- `klai-retrieval-api/evaluation/test_queries_curated.json` — 5 placeholder queries (uitbreiden naar 50 voor baseline meting)
+- `klai-portal/backend/alembic/versions/e1f2a3b4c5d6_add_content_type_to_portal_connectors.py` — migratie
+
+**Gewijzigde bestanden:**
+- `klai-retrieval-api/retrieval_api/api/retrieve.py` — shadow scoring (R9), evidence_tier.apply() aanroep
+- `klai-retrieval-api/retrieval_api/models.py` — `ingested_at`, `content_type`, `assertion_mode`, `final_score`, `evidence_tier_metadata` op `ChunkResult`
+- `klai-portal/backend/app/models/connectors.py` — `content_type` kolom op `PortalConnector`
+- `klai-portal/backend/app/api/connectors.py` — `CONTENT_TYPE_DEFAULTS`, `content_type` in `ConnectorCreateRequest`/`ConnectorOut`
+
+**Tests:** 78 tests, alle groen (CI: retrieval-api ✅, portal-api ✅, knowledge-ingest ✅)
+
+### Deployment prerequisiet
+
+Alembic migratie `e1f2a3b4c5d6` moet draaien voor de volgende portal-deploy.
+
+### Nieuwe environment variables (alle met veilige defaults)
+
+| Variable | Default | Beschrijving |
+|---|---|---|
+| `EVIDENCE_CONTENT_TYPE_ENABLED` | `true` | Content type weging aan/uit |
+| `EVIDENCE_TEMPORAL_DECAY_ENABLED` | `true` | Temporal decay aan/uit |
+| `EVIDENCE_ASSERTION_MODE_ENABLED` | `true` | Assertion mode (flat 1.00 in v1) |
+| `EVIDENCE_SHADOW_MODE` | `true` | Shadow scoring: serves flat, logt diffs |
+
+### Volgende stap
+
+Zet `EVIDENCE_SHADOW_MODE=false` nadat RAGAS baseline meting aantoont dat evidence-tier scoring verbetert. Zie SPEC-EVIDENCE-002 voor assertion mode activatie.
