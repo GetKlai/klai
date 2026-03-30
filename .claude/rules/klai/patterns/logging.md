@@ -1,9 +1,3 @@
----
-paths:
-  - "**/*.py"
-  - "**/*.ts"
-  - "**/*.tsx"
----
 # Logging Patterns
 
 > Structured logging with structlog, querying VictoriaLogs via LogsQL, and debugging production issues.
