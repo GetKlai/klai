@@ -1,8 +1,9 @@
 # Research toegepast: ThetaOS en Klai
 
 > Aangemaakt: 2026-03-29
-> Gebaseerd op: `research.md` in deze map
+> Gebaseerd op: [Evidence-Weighted Knowledge Research](evidence-weighted-knowledge.md)
 > Doel: wat zegt de literatuur over wat ThetaOS en Klai doen?
+> Onderdeel van: [Research Synthesis](../README.md)
 
 ---
 
@@ -279,3 +280,14 @@ De oplossing is entity resolution bij synaps-aanmaak: check of de persoon of het
 | Vraag-alignment (HyPE) | Sla ook op welke vragen een herinnering beantwoordt | Betere terugvindbaarheid van oude synapsen |
 | Woord-zoeken (sparse) | Ctrl+F naast de intelligente betekeniszoeker | Nauwkeurig zoeken op namen, datums, termen |
 | Entiteit-resolutie | "Jan" en "Jan van der Berg" = dezelfde persoon | Eerlijkere corroboratietelling |
+
+---
+
+## Gerelateerde documenten
+
+- [Evidence-Weighted Knowledge Research](evidence-weighted-knowledge.md) — het brede onderzoek waarop dit document is gebaseerd
+- [Assertion Modes Research](../assertion-modes/assertion-modes-research.md) — diep onderzoek naar assertion modes (Klai scorekaart: "assertion mode actief in retrieval ontbreekt")
+- [Assertion Mode Weights](../assertion-modes/assertion-mode-weights.md) — nuanceert de gewichten uit het implementatieplan: spread van 0.30 is te agressief
+- [Corroboration Scoring](../corroboration/corroboration-scoring.md) — diep onderzoek naar corroboratie (Klai scorekaart: "cross-source corroboratie ontbreekt")
+- [Implementation Plan](../implementation/implementation-plan.md) — vertaling van de zes gaps naar concrete codewijzigingen
+- [RAG Evaluation Framework](../evaluation/rag-evaluation-framework.md) — hoe we de verbeteringen gaan meten

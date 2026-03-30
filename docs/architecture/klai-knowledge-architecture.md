@@ -4,7 +4,7 @@
 >
 > Source synthesis: `helpdesk-extractie-pipeline.md` (2026-03-18) + `Sovereign Knowledge, Augmented` (2026-01-13). The helpdesk pipeline is now treated as one ingestion adapter, not the product goal. The product goal is Klai Knowledge.
 >
-> *Last updated: 2026-03-22. For platform-wide infrastructure and stack decisions, see [architecture/platform.md](architecture/platform.md).*
+> *Last updated: 2026-03-30. For platform-wide infrastructure and stack decisions, see [architecture/platform.md](platform.md). For the research backing evidence-weighted scoring (§7.4) and assertion mode weights (§3.2, §13.4), see [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).*
 
 ---
 
@@ -19,7 +19,7 @@
 | 4 | [Ingestion Architecture](#4-ingestion-architecture) | Stable |
 | 5 | [Storage Architecture](#5-storage-architecture) | Stable |
 | 6 | [Taxonomy](#6-taxonomy) | Researched |
-| 7 | [Retrieval Architecture](#7-retrieval-architecture) | Stable |
+| 7 | [Retrieval Architecture](#7-retrieval-architecture) | Updated — evidence-weighted scoring added (§7.4) |
 | 8 | [Gap Detection](#8-gap-detection) | Stable |
 | 9 | [AI Interface](#9-ai-interface) | Stable |
 | 10 | [Multi-tenancy, Personal Knowledge, Federated Knowledge](#10-multi-tenancy-personal-knowledge-and-federated-knowledge) | Stable |
@@ -302,6 +302,12 @@ Stored as `assertion_mode` on every knowledge artifact.
 | `belief` | Held as likely true but not verified ("we think this affects macOS 14 only") |
 | `hypothesis` | Explicitly speculative; requires validation |
 
+**Research finding — 3 vs. 5 assertion categories:**
+
+The DB schema stores 5 values for full expressiveness. However, [assertion modes research](../research/assertion-modes/assertion-modes-research.md) found that human inter-annotator agreement drops from ~89% at 3 categories to ~67% at 5 categories (Prieto et al. 2020, Rubin 2007). For **retrieval scoring and automated classification**, the 5 values should be grouped into 3: `assertion` (factual + quoted), `speculation` (hypothesis + belief), `procedure` (procedural). The 5-value schema remains the source of truth for storage and manual labeling; grouping happens only at the scoring/classification layer.
+
+See also: [Assertion Mode Weights](../research/assertion-modes/assertion-mode-weights.md) for starting weight recommendations and maximum safe spread derivation.
+
 **Axis 3 — Synthesis depth** (how much epistemic work has been done?)
 
 Maps to the Zettelkasten transformation chain and GraphRAG's Document → TextUnit → Entity → Community Report levels. Stored as `synthesis_depth` (integer 0–4).
@@ -314,7 +320,7 @@ Maps to the Zettelkasten transformation chain and GraphRAG's Document → TextUn
 | 3 | Cross-topic synthesis, organizational position | Product area knowledge summary |
 | 4 | Published artifact, fully curated | Public help article, approved policy document |
 
-**Why three axes instead of one:** A Wikidata editor manually entering a fact from a primary source is active construction + depth 1 + `observed` provenance simultaneously. An AI-generated summary is synthesis depth 3 + `synthesized` provenance + `factual` assertion. These behave differently in retrieval weighting, citation style, and invalidation logic. A single type label cannot capture this.
+**Why three axes instead of one:** A Wikidata editor manually entering a fact from a primary source is active construction + depth 1 + `observed` provenance simultaneously. An AI-generated summary is synthesis depth 3 + `synthesized` provenance + `factual` assertion. These behave differently in retrieval weighting (§7.4), citation style, and invalidation logic. A single type label cannot capture this.
 
 ---
 
@@ -754,6 +760,56 @@ Bi-encoder retrieval (top-20) → Cross-encoder reranking (top-5) → LLM classi
 ```
 
 The cross-encoder reads query + document together and assesses relevance at claim level, not topic level. This is what distinguishes "Windows vs. Mac" when the topic is the same but the coverage is not.
+
+### 7.4 Evidence-weighted scoring [PLANNED — research complete]
+
+> Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md)
+
+After RRF fusion produces ranked results, an evidence-weighted scoring step adjusts the ranking based on metadata signals. This is a **post-retrieval reranking adjustment**, not a replacement for semantic search.
+
+**Four scoring dimensions:**
+
+| Dimension | Signal | V1 approach | Research evidence |
+|---|---|---|---|
+| Content type | `content_type` (kb_article, crawl, transcript, ...) | Tier-based weight: curated KB articles > web crawls > raw transcripts | RA-RAG: +51% accuracy; TREC Health: +60% MAP via credibility-weighted fusion |
+| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Flat weights (all 1.00)** — activate only after A/B evaluation | Concept is novel — no empirical data for RAG specifically. See [Assertion Mode Weights research](../research/assertion-modes/assertion-mode-weights.md) |
+| Temporal decay | `ingested_at` / `belief_time_start` | Conservative linear decay, max 0.15 spread (0.85–1.00) | Conceptually sound but calibration is unsolved |
+| Chunk ordering | Position in context window | U-shape: strongest chunks first and last, weakest in middle | Lost in the Middle (Liu et al. 2023): >30% accuracy degradation for mid-positioned relevant content |
+
+**Why flat weights for assertion mode:**
+
+The [weights research](../research/assertion-modes/assertion-mode-weights.md) established that the maximum safe weight spread for an ~85% accurate classifier is **0.20** (minimum weight 0.80 if maximum is 1.00). With four multiplicative scoring dimensions at ~85% accuracy each, there is a 48% chance of at least one misclassification per chunk. Starting flat eliminates this compounding risk.
+
+**Evaluation gate before widening weights:**
+
+1. 200+ chunk classification evaluation on Klai content (not biomedical proxy data)
+2. A/B retrieval test: 150 queries (50 curated + 100 RAGAS-synthetic), Wilcoxon signed-rank test
+3. Shadow scoring in production before cutover
+
+See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md) for the full evaluation protocol.
+
+**Formula (V1):**
+
+```
+evidence_score = base_rrf_score × content_type_weight × temporal_decay
+```
+
+Assertion mode and corroboration are **not multiplied in V1** — they are logged for shadow evaluation only.
+
+**Content type tier mapping:**
+
+| Tier | Content types | Weight |
+|---|---|---|
+| Tier 1 — Curated | `kb_article`, `procedure` | 1.00 |
+| Tier 2 — Structured | `faq`, `api_doc`, `changelog` | 0.95 |
+| Tier 3 — Imported | `web_crawl`, `email`, `transcript` | 0.90 |
+
+**Corroboration scoring: deferred.** Cross-source corroboration requires three prerequisites not yet met: near-duplicate detection (SemHash), source-level grouping, and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring research](../research/corroboration/corroboration-scoring.md).
+
+**What is deliberately not built:**
+- Conflict detection between chunks (ACL 2025: no reliable method exists)
+- Confidence calibration (ICLR 2020: systematically miscalibrated without calibration step)
+- User-facing confidence labels (CHI 2024, ACL 2024: don't improve decisions, damage trust)
 
 ---
 
@@ -1214,7 +1270,7 @@ This loop also closes the gap between what an organization knows (formal knowled
 | 13.1 | Taxonomy evolution | Researched — findings in §6 |
 | 13.2 | Bi-temporal query infrastructure | Researched — V1 achievable with Qdrant + PostgreSQL simplification |
 | 13.3 | Graph layer decision | Researched — deferred; gate condition defined |
-| 13.4 | Epistemic labeling automation | Researched — 3-way V1 model recommended |
+| 13.4 | Epistemic labeling automation | Researched — 3-way V1 model + weights guidance |
 | 13.5 | Cross-organizational knowledge federation | **Decision needed** |
 | 13.6 | Enrichment and extraction LLM | Decided — Mistral Small 3.2 (128K) + Qwen3-8B (fast extraction) |
 | 13.7 | Editor gap | Known limitation — no short-term resolution |
@@ -1272,7 +1328,9 @@ Summary of findings:
 
 **Gate condition:** Sample 200 real queries; if >20% are multi-hop relational, evaluate HippoRAG2 + SpaCy construction before adding any graph infrastructure. Do not build in anticipation of a use case that may not materialize.
 
-### 13.4 Epistemic labeling automation [RESEARCHED — simplified model recommended]
+### 13.4 Epistemic labeling automation [RESEARCHED — simplified model + weights guidance]
+
+> Full research: [Assertion Modes Research](../research/assertion-modes/assertion-modes-research.md) | [Assertion Mode Weights](../research/assertion-modes/assertion-mode-weights.md)
 
 **The full 4-way classification (quote/paraphrase/interpretation/synthesis) is not solvable at acceptable accuracy with current open-source tools.** The paraphrase/interpretation boundary is genuinely ambiguous — even human annotators disagree in 25–30% of cases without access to the original source text. Do not attempt to automate this distinction in V1.
 
@@ -1292,6 +1350,16 @@ A simpler 3-way scheme covers most of the epistemic value without the hard bound
 **Tier 3 — Human review via Label Studio:** Label Studio (open source, Apache 2.0) with uncertainty-based active learning — surfaces only low-confidence items, not the full corpus. Research shows uncertainty sampling saves ~66% of annotation effort vs. random sampling. Show LLM chain-of-thought reasoning to reduce reviewer cognitive load.
 
 **Evolution path:** Once 500–1,000 labeled examples are collected, fine-tune `deberta-v3-base` (Hugging Face, open source). This reduces inference cost by ~100× compared to Mistral and improves consistency.
+
+**Retrieval weight guidance (from weights research):**
+
+The [assertion mode weights research](../research/assertion-modes/assertion-mode-weights.md) established:
+
+- **Start with flat weights (all 1.00).** The equal-weighting literature (Einhorn & Hogarth 1975, Graefe 2013) strongly shows flat weights are safest when empirical validation data doesn't exist.
+- **Maximum safe spread: 0.20** for an ~85% accurate classifier (minimum weight 0.80 if max is 1.00). Wider spreads cause more harm from misclassification than benefit from correct classification.
+- **Multiplicative compounding risk:** With 4 scoring dimensions at ~85% accuracy each, 48% of chunks will have at least one misclassified dimension. This is why flat weights are the safe default.
+- **Evaluation gate:** Only widen the spread after 200+ chunk classification evaluation on Klai's own content + A/B retrieval test with Wilcoxon signed-rank paired testing. See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md).
+- **Never show assertion labels to users:** CHI 2024: confidence indicators don't improve task accuracy. ACL 2024: overconfident epistemic markers cause lasting trust damage. ACL 2025: LLMs can't produce calibrated epistemic markers. Use as internal ranking signal only.
 
 **What to defer permanently:**
 - Paraphrase/interpretation boundary without source text — unsolvable at useful accuracy

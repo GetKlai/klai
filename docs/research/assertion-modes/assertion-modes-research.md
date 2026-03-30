@@ -3,6 +3,7 @@
 > Compiled: 2026-03-28
 > Status: Decision-support document for Klai knowledge architecture
 > Scope: Should epistemic assertion modes become an active part of the retrieval pipeline?
+> Part of: [Research Synthesis](../README.md)
 
 ---
 
@@ -275,4 +276,14 @@ The gap is entirely in **consumption**, not storage. The schema and ingest pipel
 
 ---
 
-*End of document. Last updated 2026-03-28.*
+## Related Documents
+
+- [Assertion Mode Weights](assertion-mode-weights.md) — defensible starting weights, maximum safe spread analysis
+- [Evidence-Weighted Knowledge Research](../foundations/evidence-weighted-knowledge.md) — broader research context
+- [Implementation Plan](../implementation/implementation-plan.md) — concrete code changes (assertion_mode weights in Gap 2)
+- [Corroboration Scoring](../corroboration/corroboration-scoring.md) — the corroboration dimension (complements assertion mode)
+- [RAG Evaluation Framework](../evaluation/rag-evaluation-framework.md) — how to measure assertion mode impact
+
+---
+
+*End of document. Last updated 2026-03-30.*
