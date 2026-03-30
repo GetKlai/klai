@@ -1,0 +1,49 @@
+# RAGAS Evaluation Configuration (SPEC-EVIDENCE-001, R8)
+#
+# Judge model: klai-large (Mistral Large, EU-hosted via LiteLLM proxy).
+# Never use OpenAI/Anthropic model names here.
+
+model: "klai-large"
+
+# LiteLLM proxy endpoint (used by RAGAS as judge)
+litellm_url: "http://litellm:4000/v1"
+
+# Retrieval API endpoint (baseline and treatment queries)
+retrieval_url: "http://localhost:8000"
+
+# Metrics computed for both baseline and evidence-tier runs
+metrics:
+  - context_precision
+  - faithfulness
+  - answer_relevancy
+  - ndcg_at_10
+  - recall_at_10
+
+# Statistical thresholds for Wilcoxon signed-rank test
+thresholds:
+  significance_level: 0.05
+  min_improvement_pct: 2.0  # minimum % improvement to declare meaningful
+
+# Per-dimension isolation: toggle each scoring dimension independently
+dimensions:
+  content_type:
+    enabled: true
+    env_var: "EVIDENCE_CONTENT_TYPE_ENABLED"
+  temporal_decay:
+    enabled: true
+    env_var: "EVIDENCE_TEMPORAL_DECAY_ENABLED"
+  assertion_mode:
+    enabled: true
+    env_var: "EVIDENCE_ASSERTION_MODE_ENABLED"
+
+# Retry configuration for rate-limited LLM calls
+retry:
+  max_retries: 5
+  base_delay_seconds: 2.0
+  max_delay_seconds: 60.0
+
+# Output paths (relative to evaluation/ directory)
+output:
+  baseline_results: "results/baseline.json"
+  evidence_results: "results/evidence_tier.json"
+  comparison_report: "results/comparison_report.json"

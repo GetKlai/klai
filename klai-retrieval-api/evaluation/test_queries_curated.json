@@ -1,0 +1,42 @@
+[
+  {
+    "query": "What is the company refund policy?",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-refund-001", "chunk-refund-002"],
+    "expected_answer": "The company offers a 30-day refund policy for all products.",
+    "category": "policy",
+    "difficulty": "easy"
+  },
+  {
+    "query": "How do I set up two-factor authentication?",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-2fa-001"],
+    "expected_answer": "Two-factor authentication can be enabled from Settings > Security > Enable 2FA.",
+    "category": "how-to",
+    "difficulty": "easy"
+  },
+  {
+    "query": "What are the data retention requirements for EU customers?",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-gdpr-001", "chunk-gdpr-002", "chunk-retention-001"],
+    "expected_answer": "EU customer data must be retained for a minimum of 5 years per GDPR requirements, stored in EU-based data centers.",
+    "category": "compliance",
+    "difficulty": "medium"
+  },
+  {
+    "query": "What was discussed in last week's product planning meeting?",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-meeting-001"],
+    "expected_answer": "The product planning meeting covered Q2 roadmap priorities, including the new analytics dashboard and mobile app redesign.",
+    "category": "meeting",
+    "difficulty": "medium"
+  },
+  {
+    "query": "How do I configure SSO with Zitadel?",
+    "org_id": "eval-org-001",
+    "ground_truth_chunks": ["chunk-sso-001", "chunk-sso-002"],
+    "expected_answer": "SSO with Zitadel requires creating an OIDC application in the Zitadel console and configuring the redirect URIs.",
+    "category": "how-to",
+    "difficulty": "hard"
+  }
+]

@@ -27,6 +27,15 @@ router = APIRouter(
 
 ConnectorType = Literal["github", "notion", "web_crawler", "google_drive", "ms_docs"]
 
+# Default content_type per connector_type (SPEC-EVIDENCE-001, R10)
+CONTENT_TYPE_DEFAULTS: dict[str, str] = {
+    "web_crawler": "web_crawl",
+    "github": "kb_article",
+    "notion": "kb_article",
+    "google_drive": "pdf_document",
+    "ms_docs": "kb_article",
+}
+
 
 # -- Pydantic schemas --------------------------------------------------------
 
@@ -36,6 +45,7 @@ class ConnectorCreateRequest(BaseModel):
     connector_type: ConnectorType
     config: dict = Field(default_factory=dict)
     schedule: str | None = None
+    content_type: str | None = None
 
 
 class ConnectorUpdateRequest(BaseModel):
@@ -43,6 +53,7 @@ class ConnectorUpdateRequest(BaseModel):
     config: dict | None = None
     schedule: str | None = None
     is_enabled: bool | None = None
+    content_type: str | None = None
 
 
 class ConnectorOut(BaseModel):
@@ -57,6 +68,7 @@ class ConnectorOut(BaseModel):
     last_sync_status: str | None
     created_at: datetime
     created_by: str
+    content_type: str | None
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -113,6 +125,7 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         last_sync_status=c.last_sync_status,
         created_at=c.created_at,
         created_by=c.created_by,
+        content_type=c.content_type,
     )
 
 
@@ -142,6 +155,9 @@ async def create_connector(
     """Create a connector for a KB. Requires contributor access."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
+    resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(
+        body.connector_type, "unknown"
+    )
     connector = PortalConnector(
         kb_id=kb.id,
         org_id=org.id,
@@ -149,6 +165,7 @@ async def create_connector(
         connector_type=body.connector_type,
         config=body.config,
         schedule=body.schedule,
+        content_type=resolved_content_type,
         created_by=caller_id,
     )
     db.add(connector)
@@ -188,6 +205,8 @@ async def update_connector(
         connector.schedule = body.schedule
     if body.is_enabled is not None:
         connector.is_enabled = body.is_enabled
+    if body.content_type is not None:
+        connector.content_type = body.content_type
     await db.commit()
     await db.refresh(connector)
     return _connector_out(connector)

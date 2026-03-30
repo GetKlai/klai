@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import os
 import time
 
 import structlog
@@ -11,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from retrieval_api.config import settings
 from retrieval_api.metrics import retrieval_chunks_total, retrieval_requests_total, step_latency_seconds
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
-from retrieval_api.services import coreference, gate, graph_search, reranker, search
+from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = structlog.get_logger(__name__)
@@ -119,7 +121,28 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
 
-        # 6. Build ChunkResult objects
+        # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
+        shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "true").lower() in (
+            "true", "1", "yes",
+        )
+        scored = evidence_tier.apply(copy.deepcopy(reranked))
+
+        if shadow_mode:
+            # R9: Log shadow results but serve original flat scoring
+            logger.info(
+                "shadow_eval",
+                flat_top_chunk_ids=[c["chunk_id"] for c in reranked[:5]],
+                evidence_top_chunk_ids=[c["chunk_id"] for c in scored[:5]],
+                score_deltas=[
+                    round(scored[i].get("final_score", 0) - (reranked[i].get("reranker_score") or reranked[i]["score"]), 4)
+                    for i in range(min(5, len(reranked)))
+                ],
+            )
+            serving = reranked
+        else:
+            serving = scored
+
+        # 7. Build ChunkResult objects
         chunks_out = [
             ChunkResult(
                 chunk_id=r["chunk_id"],
@@ -132,8 +155,12 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 scope=r.get("scope"),
                 valid_at=r.get("valid_at"),
                 invalid_at=r.get("invalid_at"),
+                ingested_at=r.get("ingested_at"),
+                assertion_mode=r.get("assertion_mode"),
+                final_score=r.get("final_score"),
+                evidence_tier_metadata=r.get("evidence_tier_metadata"),
             )
-            for r in reranked
+            for r in serving
         ]
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
