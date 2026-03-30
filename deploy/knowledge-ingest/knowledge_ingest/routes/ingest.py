@@ -461,10 +461,13 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
 
 @router.delete("/ingest/v1/kb")
 async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
-    """Delete all Qdrant chunks for a knowledge base. Called by Docs on KB deletion."""
+    """Delete all data for a knowledge base: Qdrant chunks + PostgreSQL records.
+    Called by Docs on KB deletion. Scoped to (org_id, kb_slug).
+    """
     _verify_internal_secret(request)
     await qdrant_store.delete_kb(org_id, kb_slug)
-    logger.info("Deleted KB %s/%s from Qdrant (via API)", org_id, kb_slug)
+    await pg_store.delete_kb(org_id, kb_slug)
+    logger.info("Deleted KB %s/%s from Qdrant + PostgreSQL", org_id, kb_slug)
     return {"status": "ok"}
 
 

@@ -142,6 +142,57 @@ async def soft_delete_artifact(org_id: str, kb_slug: str, path: str) -> None:
     )
 
 
+async def delete_kb(org_id: str, kb_slug: str) -> None:
+    """Hard-delete all PostgreSQL records for a knowledge base.
+
+    Removes: artifacts, artifact_entities, derivations, embedding_queue,
+    kb_config, crawl_jobs — all scoped to (org_id, kb_slug).
+
+    Does NOT delete knowledge.entities: entities are org-scoped and may be
+    shared across multiple KBs within the same org.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Nullify self-references first to avoid FK violations when deleting artifacts
+            await conn.execute(
+                "UPDATE knowledge.artifacts SET superseded_by = NULL WHERE org_id = $1 AND kb_slug = $2",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
+                     SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
+                   )""",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
+                     SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
+                   )""",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.derivations WHERE child_id IN (
+                     SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
+                   ) OR parent_id IN (
+                     SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2
+                   )""",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                "DELETE FROM knowledge.artifacts WHERE org_id = $1 AND kb_slug = $2",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                "DELETE FROM knowledge.kb_config WHERE org_id = $1 AND kb_slug = $2",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1 AND kb_slug = $2",
+                org_id, kb_slug,
+            )
+
+
 async def update_artifact_extra(artifact_id: str, extra_patch: dict) -> None:
     """Merge extra_patch into knowledge.artifacts.extra (JSONB merge, AC-2)."""
     pool = await get_pool()
