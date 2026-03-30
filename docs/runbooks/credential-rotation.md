@@ -270,7 +270,7 @@ git commit -m "security: rotate REDIS_PASSWORD"
 git push
 
 # 3. Restart all services that use Redis
-# WARNING: use container-restart-preflight pattern before each up -d
+# WARNING: use container-preflight pattern before each up -d
 ssh core-01 "cd /opt/klai && docker compose up -d litellm librechat portal-api"
 ```
 

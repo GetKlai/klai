@@ -12,43 +12,9 @@ Multiple times, pushes were declared successful without verifying the CI build. 
 
 Local build success ≠ CI success. CI success ≠ production rollout.
 
-## Prerequisites: Install the GitHub CLI
+## Prerequisites
 
-The `gh` CLI is required. Install it once per machine:
-
-**macOS:**
-```bash
-brew install gh
-gh auth login
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt install gh
-gh auth login
-```
-
-**Linux (other):**
-```bash
-# See https://github.com/cli/cli/blob/trunk/docs/install_linux.md
-```
-
-**Windows (Git Bash / WSL):**
-```bash
-# winget (recommended):
-winget install --id GitHub.cli
-
-# Or scoop:
-scoop install gh
-
-# Then authenticate:
-gh auth login
-```
-
-If `gh` is not in PATH after installation:
-- **Windows Git Bash:** try `"/c/Program Files/GitHub CLI/gh.exe" --version`
-- **Windows WSL:** `which gh` or install separately inside WSL
-- **macOS/Linux:** `which gh` — should be `/usr/bin/gh` or `/opt/homebrew/bin/gh`
+Requires `gh` CLI. Install: `docs/setup/mcp-servers.md` (section 5).
 
 ## Step 1: Watch the CI run
 
