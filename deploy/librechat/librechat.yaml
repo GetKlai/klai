@@ -11,7 +11,7 @@ balance:
 # ── Web search ────────────────────────────────────────────────────────────────
 # Search:   SearXNG (self-hosted, klai-net) — Startpage + DuckDuckGo engines
 # Scraper:  firecrawl-api (self-hosted, klai-net) — full-page content extraction
-# Reranker: infinity-reranker (self-hosted, klai-net) — bge-reranker-v2-m3 (CPU)
+# Reranker: Infinity (gpu-01 via SSH tunnel at 172.18.0.1:7998) — bge-reranker-v2-m3 (GPU)
 #           Exposed as Jina-compatible /v1/rerank; no auth needed (network-isolated)
 webSearch:
   searchProvider: "searxng"
