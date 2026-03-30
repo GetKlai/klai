@@ -956,6 +956,8 @@
   "admin_connectors_field_name_placeholder": "E.g. Company documentation",
   "admin_connectors_field_type": "Connector type",
   "admin_connectors_field_schedule": "Sync schedule (optional)",
+  "admin_connectors_assertion_modes_label": "Content type (optional)",
+  "admin_connectors_assertion_modes_placeholder": "E.g. Fact, Procedure...",
   "admin_connectors_field_schedule_placeholder": "E.g. 0 2 * * *",
   "admin_connectors_field_schedule_hint": "Cron expression for automatic sync. Leave empty for manual sync only.",
 

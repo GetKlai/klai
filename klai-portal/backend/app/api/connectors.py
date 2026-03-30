@@ -40,12 +40,16 @@ CONTENT_TYPE_DEFAULTS: dict[str, str] = {
 # -- Pydantic schemas --------------------------------------------------------
 
 
+VALID_ASSERTION_MODES = frozenset({"fact", "claim", "speculation", "procedural", "quoted", "unknown"})
+
+
 class ConnectorCreateRequest(BaseModel):
     name: str
     connector_type: ConnectorType
     config: dict = Field(default_factory=dict)
     schedule: str | None = None
     content_type: str | None = None
+    allowed_assertion_modes: list[str] | None = None
 
 
 class ConnectorUpdateRequest(BaseModel):
@@ -54,6 +58,7 @@ class ConnectorUpdateRequest(BaseModel):
     schedule: str | None = None
     is_enabled: bool | None = None
     content_type: str | None = None
+    allowed_assertion_modes: list[str] | None = None
 
 
 class ConnectorOut(BaseModel):
@@ -69,6 +74,7 @@ class ConnectorOut(BaseModel):
     created_at: datetime
     created_by: str
     content_type: str | None
+    allowed_assertion_modes: list[str] | None
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -126,6 +132,7 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         created_at=c.created_at,
         created_by=c.created_by,
         content_type=c.content_type,
+        allowed_assertion_modes=c.allowed_assertion_modes,
     )
 
 
@@ -156,6 +163,13 @@ async def create_connector(
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_with_owner_check(kb_slug, caller_id, org.id, db)
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
+    if body.allowed_assertion_modes is not None:
+        invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
+            )
     connector = PortalConnector(
         kb_id=kb.id,
         org_id=org.id,
@@ -164,6 +178,7 @@ async def create_connector(
         config=body.config,
         schedule=body.schedule,
         content_type=resolved_content_type,
+        allowed_assertion_modes=body.allowed_assertion_modes,
         created_by=caller_id,
     )
     db.add(connector)
@@ -205,6 +220,14 @@ async def update_connector(
         connector.is_enabled = body.is_enabled
     if body.content_type is not None:
         connector.content_type = body.content_type
+    if body.allowed_assertion_modes is not None:
+        invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
+            )
+        connector.allowed_assertion_modes = body.allowed_assertion_modes
     await db.commit()
     await db.refresh(connector)
     return _connector_out(connector)

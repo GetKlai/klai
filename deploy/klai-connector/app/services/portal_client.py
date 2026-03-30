@@ -34,6 +34,7 @@ class PortalConnectorConfig:
     config: dict[str, Any]
     schedule: str | None
     is_enabled: bool
+    allowed_assertion_modes: list[str] | None = None
 
 
 class PortalClient:
@@ -78,6 +79,7 @@ class PortalClient:
                 config=data["config"],
                 schedule=data.get("schedule"),
                 is_enabled=data["is_enabled"],
+                allowed_assertion_modes=data.get("allowed_assertion_modes"),
             )
 
     async def report_sync_status(

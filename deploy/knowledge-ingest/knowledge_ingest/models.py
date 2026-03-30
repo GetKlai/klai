@@ -18,6 +18,7 @@ class IngestRequest(BaseModel):
     extra: dict = {}  # Adapter-specific metadata (participants, source_url, etc.)
     chunks: list[str] | None = None  # Pre-computed chunks (used with skip_chunking=True)
     synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
+    allowed_assertion_modes: list[str] | None = None  # Connector-level hint: expected modes for this source
 
 
 class RetrieveRequest(BaseModel):

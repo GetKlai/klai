@@ -91,8 +91,19 @@ _ASSERTION_MODE_MIGRATION: dict[str, str] = {
 _VALID_NEW_ASSERTION_MODES = frozenset({"fact", "claim", "speculation", "procedural", "quoted", "unknown"})
 
 
-def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
-    """Extract knowledge model fields from YAML frontmatter. Returns defaults if absent."""
+def _parse_knowledge_fields(
+    content: str,
+    source_type: str | None,
+    allowed_assertion_modes: list[str] | None = None,
+) -> dict:
+    """Extract knowledge model fields from YAML frontmatter. Returns defaults if absent.
+
+    If ``allowed_assertion_modes`` is provided (connector-level hint) and the content
+    has no frontmatter assertion_mode, the hint is applied:
+    - Exactly one valid mode in the list → use it as default.
+    - Multiple modes → keep "unknown" (too ambiguous to auto-assign).
+    - Invalid values in the list are silently ignored.
+    """
     defaults: dict = {
         "provenance_type": "observed",
         "assertion_mode": "unknown",
@@ -101,6 +112,14 @@ def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
         "belief_time_start": int(time.time()),
         "belief_time_end": _SENTINEL,
     }
+
+    # Apply connector-level hint before frontmatter: hint sets the default,
+    # frontmatter can always override it.
+    if allowed_assertion_modes:
+        valid_hints = [m for m in allowed_assertion_modes if m in _VALID_NEW_ASSERTION_MODES]
+        if len(valid_hints) == 1:
+            defaults["assertion_mode"] = valid_hints[0]
+
     if not content.startswith("---"):
         return defaults
     end = content.find("\n---", 3)
@@ -122,7 +141,7 @@ def _parse_knowledge_fields(content: str, source_type: str | None) -> dict:
         result["assertion_mode"] = raw_mode
     elif raw_mode in _ASSERTION_MODE_MIGRATION:
         result["assertion_mode"] = _ASSERTION_MODE_MIGRATION[raw_mode]
-    # else: keep default "unknown"
+    # else: keep default (either "unknown" or the connector hint)
 
     if isinstance(fm.get("synthesis_depth"), int) and 0 <= fm["synthesis_depth"] <= 4:
         result["synthesis_depth"] = fm["synthesis_depth"]
@@ -194,7 +213,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     vectors = await embedder.embed(texts)
 
     title = _extract_title(req.content, req.path)
-    kf = _parse_knowledge_fields(req.content, req.source_type)
+    kf = _parse_knowledge_fields(req.content, req.source_type, req.allowed_assertion_modes)
 
     # Apply synthesis_depth override from adapter if provided
     if req.synthesis_depth is not None:

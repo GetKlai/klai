@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
 import { Select } from '@/components/ui/select'
 import {
   AlertDialog,
@@ -62,6 +63,7 @@ interface ConnectorSummary {
   is_enabled: boolean
   last_sync_status: string | null
   last_sync_at: string | null
+  allowed_assertion_modes: string[] | null
 }
 
 interface KBStats {
@@ -98,6 +100,15 @@ interface MembersResponse {
 }
 
 type ConnectorType = 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
+
+const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
+  { value: 'fact',        label: 'Feit',       description: 'Vastgesteld feit, documentatie, specs' },
+  { value: 'procedural',  label: 'Procedure',  description: "Stap-voor-stap instructies, how-to's" },
+  { value: 'claim',       label: 'Bewering',   description: 'Niet hard bewezen bewering' },
+  { value: 'quoted',      label: 'Citaat',     description: 'Letterlijk bronmateriaal' },
+  { value: 'speculation', label: 'Speculatie', description: 'Hypothesen, brainstorm' },
+  { value: 'unknown',     label: 'Onbekend',   description: 'Type niet gespecificeerd' },
+]
 
 interface GitHubConfig {
   installation_id: string
@@ -160,12 +171,15 @@ function ConnectorsSection({
     base_url: '', path_prefix: '', max_pages: '200',
   })
 
+  const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
+
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editSchedule, setEditSchedule] = useState('')
   const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200' })
   const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
+  const [editAllowedAssertionModes, setEditAllowedAssertionModes] = useState<string[]>([])
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
@@ -216,7 +230,13 @@ function ConnectorsSection({
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, connector_type: selectedType, config, schedule: schedule || null }),
+        body: JSON.stringify({
+          name,
+          connector_type: selectedType,
+          config,
+          schedule: schedule || null,
+          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
+        }),
       })
       if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
     },
@@ -226,6 +246,7 @@ function ConnectorsSection({
       setSelectedType(null)
       setName('')
       setSchedule('')
+      setAllowedAssertionModes([])
       setGithubConfig({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
       setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200' })
     },
@@ -251,7 +272,12 @@ function ConnectorsSection({
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editName, config, schedule: editSchedule || null }),
+        body: JSON.stringify({
+          name: editName,
+          config,
+          schedule: editSchedule || null,
+          allowed_assertion_modes: editAllowedAssertionModes.length > 0 ? editAllowedAssertionModes : null,
+        }),
       })
       if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
     },
@@ -265,6 +291,7 @@ function ConnectorsSection({
     setEditingId(c.id)
     setEditName(c.name)
     setEditSchedule(c.schedule ?? '')
+    setEditAllowedAssertionModes(c.allowed_assertion_modes ?? [])
     if (c.connector_type === 'web_crawler') {
       const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number }
       setEditWebcrawlerConfig({
@@ -413,6 +440,10 @@ function ConnectorsSection({
                       <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
                       <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                      <MultiSelect options={ASSERTION_MODE_OPTIONS} value={editAllowedAssertionModes} onChange={setEditAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                    </div>
                     {updateMutation.error && (
                       <p className="text-sm text-[var(--color-destructive)]">
                         {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
@@ -451,6 +482,10 @@ function ConnectorsSection({
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
                       <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                      <MultiSelect options={ASSERTION_MODE_OPTIONS} value={editAllowedAssertionModes} onChange={setEditAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
                     </div>
                     {updateMutation.error && (
                       <p className="text-sm text-[var(--color-destructive)]">
@@ -531,6 +566,10 @@ function ConnectorsSection({
                     <Label htmlFor="conn-schedule">{m.admin_connectors_field_schedule()}</Label>
                     <Input id="conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                    <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                  </div>
                   {createMutation.error && (
                     <p className="text-sm text-[var(--color-destructive)]">
                       {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
@@ -566,6 +605,10 @@ function ConnectorsSection({
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-schedule-wc">{m.admin_connectors_field_schedule()}</Label>
                     <Input id="conn-schedule-wc" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                    <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
                   </div>
                   {createMutation.error && (
                     <p className="text-sm text-[var(--color-destructive)]">
