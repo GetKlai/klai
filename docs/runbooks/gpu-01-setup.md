@@ -5,7 +5,7 @@
 **Disks:** 2× 1.7 TB NVMe (RAID1 via mdadm)
 **OS:** Ubuntu 24.04 LTS + LUKS full-disk encryption
 
-**SPEC:** SPEC-GPU-001 v2.0
+**SPEC:** SPEC-GPU-001 v2.0 → SPEC-DEVOPS-002 v1.0 (TEI/Infinity split herstel)
 
 ---
 
@@ -378,20 +378,28 @@ docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
 ```bash
 # Health checks vanuit gpu-01
-curl -sf http://127.0.0.1:7997/health   # Infinity (embeddings + reranker)
+curl -sf http://127.0.0.1:7997/health   # TEI (dense embeddings — BAAI/bge-m3)
+curl -sf http://127.0.0.1:7998/health   # Infinity (reranker — BAAI/bge-reranker-v2-m3)
 curl -sf http://127.0.0.1:8001/health   # BGE-M3 sparse
 curl -sf http://127.0.0.1:8000/health   # Whisper
 
-# Embedding test
+# Embedding test via TEI
 curl -s -X POST http://127.0.0.1:7997/v1/embeddings \
   -H 'Content-Type: application/json' \
   -d '{"model":"BAAI/bge-m3","input":"test"}' \
   | python3 -c "import json,sys; r=json.load(sys.stdin); print(len(r['data'][0]['embedding']), 'dims')"
 # Verwacht: 1024 dims
 
+# Rerank test via Infinity
+curl -s -X POST http://127.0.0.1:7998/v1/rerank \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"BAAI/bge-reranker-v2-m3","query":"test","documents":["relevant","irrelevant"]}' \
+  | python3 -c "import json,sys; r=json.load(sys.stdin); print('scores:', [x['relevance_score'] for x in r['results']])"
+# Verwacht: eerste score >> tweede score
+
 # VRAM gebruik
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits
-# Verwacht: ~5400 van 20475 MB (~27%)
+# Verwacht: ~3000 van 20475 MB (~15%) — TEI (bge-m3) ~2 GB + Infinity (reranker) ~1 GB
 ```
 
 ---
@@ -455,6 +463,7 @@ ExecStart=/usr/bin/autossh -M 0 \
   -i /opt/klai/gpu-tunnel-key \
   -N \
   -L 172.18.0.1:7997:127.0.0.1:7997 \
+  -L 172.18.0.1:7998:127.0.0.1:7998 \
   -L 172.18.0.1:8001:127.0.0.1:8001 \
   -L 172.18.0.1:8000:127.0.0.1:8000 \
   root@5.9.10.215
@@ -491,8 +500,9 @@ ssh core-01 "
 # Tunnel ports gebonden op 172.18.0.1?
 sudo ss -tlnp | grep 172.18.0.1
 
-# Alle drie services bereikbaar?
-curl -sf http://172.18.0.1:7997/health   # Infinity
+# Alle vier services bereikbaar?
+curl -sf http://172.18.0.1:7997/health   # TEI (dense embeddings)
+curl -sf http://172.18.0.1:7998/health   # Infinity (reranker)
 curl -sf http://172.18.0.1:8001/health   # BGE-M3 sparse
 curl -sf http://172.18.0.1:8000/health   # Whisper
 "
@@ -506,22 +516,18 @@ curl -sf http://172.18.0.1:8000/health   # Whisper
 
 #### URL mapping
 
-| Variabele | Oud | Nieuw |
+| Variabele | Service | Waarde |
 |---|---|---|
-| `TEI_URL` | `http://tei:8080` | `http://172.18.0.1:7997` |
-| `TEI_RERANKER_URL` | `http://infinity-reranker:7997` | `http://172.18.0.1:7997` |
-| `SPARSE_SIDECAR_URL` | `http://bge-m3-sparse:8001` | `http://172.18.0.1:8001` |
-| `WHISPER_SERVER_URL` | `http://whisper-server:8000` | `http://172.18.0.1:8000` |
-| `TRANSCRIBER_URL` | `http://whisper-server:8000/...` | `http://172.18.0.1:8000/...` |
-| `JINA_API_URL` | `http://infinity-reranker:7997/v1/rerank` | `http://172.18.0.1:7997/v1/rerank` |
+| `TEI_URL` | knowledge-ingest, retrieval-api, research-api | `http://172.18.0.1:7997` |
+| `TEI_RERANKER_URL` | retrieval-api | `http://172.18.0.1:7998` |
+| `SPARSE_SIDECAR_URL` | knowledge-ingest, retrieval-api | `http://172.18.0.1:8001` |
+| `WHISPER_SERVER_URL` | scribe-api | `http://172.18.0.1:8000` |
+| `TRANSCRIBER_URL` | vexa-bot-manager | `http://172.18.0.1:8000/...` |
+| `JINA_API_URL` | librechat-klai | `http://172.18.0.1:7998/v1/rerank` |
 
 #### Stap 3.1 — Consumer code deployen
 
-De volgende bestanden zijn al bijgewerkt voor de Infinity OpenAI API (`/v1/embeddings`) in plaats van de TEI API (`/embed`):
-
-- `klai-retrieval-api/retrieval_api/services/tei.py`
-- `klai-knowledge-ingest/knowledge_ingest/embedder.py`
-- `klai-focus/research-api/app/services/tei.py`
+Consumer-services gebruiken de OpenAI-compatible embedding API (`POST /v1/embeddings`), die zowel TEI als Infinity ondersteunt. Geen code-wijzigingen nodig — alleen de URL env vars hoeven bijgewerkt te worden (zie stap 3.2).
 
 Build en push de images via de normale CI workflows.
 
@@ -535,21 +541,17 @@ ssh core-01 "cp /opt/klai/docker-compose.yml /opt/klai/docker-compose.yml.bak-$(
 scp deploy/docker-compose.yml core-01:/opt/klai/docker-compose.yml
 ```
 
-De compose file heeft de oude GPU services op `profiles: [gpu-disabled]` staan (ze draaien niet meer).
-De URL env vars zijn bijgewerkt naar 172.18.0.1.
+De oude GPU service-definities (`tei`, `bge-m3-sparse`, `whisper-server`, `infinity-reranker`) zijn verwijderd uit de compose file.
+De URL env vars verwijzen naar 172.18.0.1 (SSH tunnel naar gpu-01).
 
-#### Stap 3.3 — Oude GPU services stoppen + consumers herstarten
+#### Stap 3.3 — Consumers herstarten
 
 ```bash
 ssh core-01 "
 cd /opt/klai
 
-# Oude CPU GPU containers verwijderen (staan al op gpu-disabled, maar voor zekerheid)
-docker compose stop tei bge-m3-sparse whisper-server infinity-reranker 2>/dev/null || true
-docker compose rm -f tei bge-m3-sparse whisper-server infinity-reranker 2>/dev/null || true
-
 # Consumer services herstarten met nieuwe config
-docker compose up -d retrieval-api knowledge-ingest scribe-api vexa-bot-manager librechat-klai
+docker compose up -d retrieval-api knowledge-ingest scribe-api vexa-bot-manager librechat-klai research-api
 "
 ```
 
@@ -665,26 +667,25 @@ ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64 \
 
 ## Rollback Procedure
 
-Als de migratie ongedaan gemaakt moet worden (terugvallen op core-01 CPU containers):
+Bij een volledige gpu-01 uitval (hardware, tunnel, of service crash) waarbij terugvallen op CPU tijdelijk nodig is:
+
+> De oude CPU service-definities (`tei`, `bge-m3-sparse`, `whisper-server`, `infinity-reranker`) zijn verwijderd uit `deploy/docker-compose.yml` (SPEC-DEVOPS-002). Rollback vereist het handmatig terugzetten van de compose file via git.
 
 ```bash
 # Stap 1: Stop tunnel
 ssh core-01 "sudo systemctl stop gpu-tunnel.service"
 
-# Stap 2: Herstel backup compose
-BACKUP=$(ssh core-01 "ls -t /opt/klai/docker-compose.yml.bak-* | head -1")
-ssh core-01 "cp $BACKUP /opt/klai/docker-compose.yml"
+# Stap 2: Herstel docker-compose.yml vóór SPEC-DEVOPS-002
+# Commit vóór de wijziging: e3c1697 (refactor: promote klai-knowledge-mcp)
+ssh core-01 "cp /opt/klai/docker-compose.yml.bak-<timestamp> /opt/klai/docker-compose.yml"
+# Of via git: git show e3c1697:deploy/docker-compose.yml > deploy/docker-compose.yml
 
-# Stap 3: Start oude GPU services opnieuw
-ssh core-01 "cd /opt/klai && docker compose --profile gpu-disabled up -d \
-  tei bge-m3-sparse whisper-server infinity-reranker"
-
-# Stap 4: Herstart consumers
+# Stap 3: Herstart consumers
 ssh core-01 "cd /opt/klai && docker compose up -d \
-  retrieval-api knowledge-ingest scribe-api vexa-bot-manager"
+  retrieval-api knowledge-ingest scribe-api vexa-bot-manager research-api"
 ```
 
-Rollback tijd: ~5-10 minuten (model warmup 2-3 min).
+> **Opmerking:** Na gpu-01 herstel: `sudo systemctl start gpu-tunnel.service` en verifieer health checks. Geen rollback van docker-compose nodig als de tunnel gewoon weer werkt.
 
 ---
 
@@ -726,9 +727,10 @@ ssh root@5.9.10.215 "cd /opt/klai-gpu && docker compose restart"
 
 # Wacht op warmup (~2 min), dan verificeer
 ssh root@5.9.10.215 "
-  curl -sf http://127.0.0.1:7997/health
-  curl -sf http://127.0.0.1:8001/health
-  curl -sf http://127.0.0.1:8000/health
+  curl -sf http://127.0.0.1:7997/health   # TEI
+  curl -sf http://127.0.0.1:7998/health   # Infinity reranker
+  curl -sf http://127.0.0.1:8001/health   # BGE-M3 sparse
+  curl -sf http://127.0.0.1:8000/health   # Whisper
 "
 ```
 
@@ -808,13 +810,17 @@ ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64 \
 
 ### Docker + GPU valkuilen
 
-**Infinity API ≠ TEI API:** Infinity (v2) ondersteunt alleen de OpenAI-compatible API (`POST /v1/embeddings` met `{"input": ..., "model": ...}`). De TEI API (`POST /embed` met `{"inputs": ...}`) werkt niet op Infinity. Let ook op het response formaat:
-- TEI: `[[0.1, 0.2, ...]]` (array of arrays)
-- Infinity: `{"data": [{"embedding": [0.1, ...], "index": 0}]}` — sorteer op `index`, resultaten kunnen out-of-order zijn.
+**TEI en Infinity draaien nu op aparte poorten (SPEC-DEVOPS-002):** TEI (HuggingFace text-embeddings-inference) draait op poort 7997 voor dense embeddings; Infinity draait op poort 7998 uitsluitend voor reranking. Beide ondersteunen de OpenAI-compatible API:
+- Embeddings via TEI: `POST http://172.18.0.1:7997/v1/embeddings` — response: `{"data": [{"embedding": [...]}]}`
+- Reranking via Infinity: `POST http://172.18.0.1:7998/v1/rerank` — response: `{"results": [{"relevance_score": ...}]}`
+
+**Waarom TEI voor embeddings, Infinity voor reranking:**
+- TEI: Rust + cuBLASLt, native HuggingFace support voor bge-m3, stabiel VRAM gebruik, Prometheus metrics
+- Infinity: Python + PyTorch, native `/v1/rerank` endpoint (Cohere-compatible), benodigd voor LiteLLM/LibreChat jinaApiUrl integratie. Niet geschikt voor embeddings vanwege bekende GPU memory leak (issue #517).
 
 **GHCR auth op gpu-01:** `ghcr.io/getklai/*` images zijn private. Credentials ophalen via `core-01:~/.docker/config.json` en dan `docker login ghcr.io`.
 
-**VRAM verdeling:** Infinity met bge-m3 + bge-reranker-v2-m3 + Whisper large-v3-turbo = ~5.4 GB van 20 GB VRAM. BGE-M3 sparse draait op CPU (spaart ~1 GB VRAM, doet het goed op CPU).
+**VRAM verdeling:** TEI (bge-m3) ~2 GB + Infinity (bge-reranker-v2-m3) ~1 GB + Whisper large-v3-turbo ~3 GB = ~6 GB van 20 GB VRAM. BGE-M3 sparse draait op CPU (spaart ~1 GB VRAM, doet het goed op CPU).
 
 ### Monitoring valkuilen
 
