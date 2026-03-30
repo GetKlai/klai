@@ -27,6 +27,10 @@ class ChunkResult(BaseModel):
     scope: str | None = None
     valid_at: str | None = None
     invalid_at: str | None = None
+    ingested_at: int | None = None
+    assertion_mode: str | None = None
+    final_score: float | None = None
+    evidence_tier_metadata: dict | None = None
 
 
 class RetrieveMetadata(BaseModel):
