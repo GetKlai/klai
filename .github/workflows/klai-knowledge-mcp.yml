@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'deploy/klai-knowledge-mcp/**'
+      - 'klai-knowledge-mcp/**'
       - '.github/workflows/klai-knowledge-mcp.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push klai-knowledge-mcp
         uses: docker/build-push-action@v7
         with:
-          context: ./deploy/klai-knowledge-mcp
+          context: ./klai-knowledge-mcp
           push: true
           tags: |
             ghcr.io/getklai/klai-knowledge-mcp:latest

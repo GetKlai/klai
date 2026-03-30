@@ -72,7 +72,7 @@ This section captures what is running in production (core-01) as of March 2026. 
 | `bge-m3-sparse` | BGE-M3 sparse sidecar | FlagEmbedding-based; `http://bge-m3-sparse:8001`; batch sparse embedding |
 | `knowledge-ingest` | Unified ingest API | `/ingest/v1/document`, `/ingest/v1/webhook/gitea`, `/ingest/v1/crawl`, `/knowledge/v1/personal/items` |
 | `retrieval-api` | Retrieval service | `POST /retrieve`; 3-leg RRF (dense + question + sparse); called by research-api and LiteLLM hook |
-| `klai-knowledge-mcp` | MCP write server | `save_personal_knowledge`, `save_org_knowledge`, `save_to_docs` — `deploy/klai-knowledge-mcp/main.py` |
+| `klai-knowledge-mcp` | MCP write server | `save_personal_knowledge`, `save_org_knowledge`, `save_to_docs` — `klai-knowledge-mcp/main.py` |
 | Qdrant | Vector store | `klai_knowledge` collection (org + personal KB); `klai_focus` collection (research-api) |
 | `gitea` | Self-hosted Git | One repo per org KB; content store for klai-docs |
 | `whisper-server` | Audio transcription | Used by klai-portal Scribe/Transcribe features |
@@ -936,8 +936,8 @@ mcpServers:
         - klai-knowledge-mcp
 ```
 
-Implementation: `deploy/klai-knowledge-mcp/main.py`
-Agent system prompt: `deploy/klai-knowledge-mcp/agent-system-prompt.md`
+Implementation: `klai-knowledge-mcp/main.py`
+Agent system prompt: `klai-knowledge-mcp/agent-system-prompt.md`
 
 This design is model-agnostic — the write layer is independent of which model drives the agent.
 
