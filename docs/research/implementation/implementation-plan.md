@@ -3,7 +3,7 @@
 > Aangemaakt: 2026-03-29
 > Gebaseerd op: [Evidence-Weighted Knowledge Research](../foundations/evidence-weighted-knowledge.md) + [ThetaOS & Klai Comparison](../foundations/thetaos-klai-comparison.md)
 > Status: voorstel — nog niet geïmplementeerd
-> Scope: `retrieval-api/` en `deploy/knowledge-ingest/`
+> Scope: `retrieval-api/` en `klai-knowledge-ingest/`
 > Onderdeel van: [Research Synthesis](../README.md)
 > Gerelateerd: [Assertion Mode Weights](../assertion-modes/assertion-mode-weights.md) (nuanceert de gewichten in dit document), [Corroboration Scoring](../corroboration/corroboration-scoring.md) (deferred corroboratie), [RAG Evaluation Framework](../evaluation/rag-evaluation-framework.md) (meetmethode)
 

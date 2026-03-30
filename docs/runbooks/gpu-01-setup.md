@@ -520,7 +520,7 @@ curl -sf http://172.18.0.1:8000/health   # Whisper
 De volgende bestanden zijn al bijgewerkt voor de Infinity OpenAI API (`/v1/embeddings`) in plaats van de TEI API (`/embed`):
 
 - `klai-retrieval-api/retrieval_api/services/tei.py`
-- `deploy/knowledge-ingest/knowledge_ingest/embedder.py`
+- `klai-knowledge-ingest/knowledge_ingest/embedder.py`
 - `klai-focus/research-api/app/services/tei.py`
 
 Build en push de images via de normale CI workflows.
