@@ -1,16 +1,17 @@
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 
 from knowledge_ingest import db, kb_config, org_config, qdrant_store
 from knowledge_ingest.config import settings
+from knowledge_ingest.logging_setup import setup_logging
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
 from knowledge_ingest.routes import crawl, ingest, knowledge, personal, stats
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+setup_logging("knowledge-ingest")
+logger = structlog.get_logger()
 
 
 @asynccontextmanager

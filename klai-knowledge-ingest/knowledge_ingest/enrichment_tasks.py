@@ -19,15 +19,16 @@ in test environments where psycopg/libpq is not available.
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from typing import Any
+
+import structlog
 
 from knowledge_ingest import embedder, enrichment, kb_config, qdrant_store, sparse_embedder
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _procrastinate_app: Any = None
 
@@ -128,6 +129,7 @@ async def _enrich_document(
     Uses content-type profiles for HyPE decisions and context strategy.
     Errors are logged but do not raise -- raw vectors remain in Qdrant.
     """
+    t_total = time.monotonic()
     try:
         profile = get_profile(content_type)
 
@@ -146,6 +148,8 @@ async def _enrich_document(
                     "Gebruik de deelnemerslijst om voornaamwoorden op te lossen waar mogelijk.\n"
                 )
 
+        # Step 1: LLM enrichment (context prefix + HyPE questions per chunk)
+        t0 = time.monotonic()
         enriched_chunks = await enrichment.enrich_chunks(
             document_text=document_text,
             chunks=chunks,
@@ -156,17 +160,18 @@ async def _enrich_document(
             context_strategy=profile.context_strategy,
             context_tokens=profile.context_tokens_max,
         )
+        llm_ms = int((time.monotonic() - t0) * 1000)
 
-        # Embed dense + sparse in parallel
+        # Step 2: Embed dense (TEI) + sparse (BGE-M3 GPU sidecar) in parallel
         enriched_texts = [ec.enriched_text for ec in enriched_chunks]
         t0 = time.monotonic()
         chunk_vectors, sparse_vectors = await asyncio.gather(
             embedder.embed(enriched_texts),
             sparse_embedder.embed_sparse_batch(enriched_texts),
         )
-        sparse_embed_ms = int((time.monotonic() - t0) * 1000)
+        embed_ms = int((time.monotonic() - t0) * 1000)
 
-        # Embed questions based on profile (vector_questions)
+        # Step 3: Embed questions based on profile (vector_questions)
         question_vectors: list[list[float] | None]
         if profile.hype_enabled(synthesis_depth):
             question_strings = [
@@ -183,6 +188,8 @@ async def _enrich_document(
         pool = await get_pool()
         extra_payload["visibility"] = await kb_config.get_kb_visibility(org_id, kb_slug, pool)
 
+        # Step 4: Upsert enriched chunks to Qdrant
+        t0 = time.monotonic()
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
             kb_slug=kb_slug,
@@ -198,20 +205,37 @@ async def _enrich_document(
             belief_time_start=extra_payload.get("belief_time_start") if extra_payload else None,
             belief_time_end=extra_payload.get("belief_time_end") if extra_payload else None,
         )
+        qdrant_ms = int((time.monotonic() - t0) * 1000)
 
+        total_ms = int((time.monotonic() - t_total) * 1000)
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
         sparse_success_count = sum(1 for sv in sparse_vectors if sv is not None)
         logger.info(
-            "Enrichment complete for %s/%s (org=%s, artifact=%s, chunks=%d, enriched=%d, "
-            "depth=%d, type=%s, sparse_ok=%d, sparse_ms=%d)",
-            kb_slug, path, org_id, artifact_id, len(chunks), enriched_count,
-            synthesis_depth, content_type, sparse_success_count, sparse_embed_ms,
+            "enrichment_complete",
+            kb_slug=kb_slug,
+            path=path,
+            org_id=org_id,
+            artifact_id=artifact_id,
+            chunks=len(chunks),
+            enriched=enriched_count,
+            depth=synthesis_depth,
+            type=content_type,
+            sparse_ok=sparse_success_count,
+            llm_ms=llm_ms,
+            embed_ms=embed_ms,
+            qdrant_ms=qdrant_ms,
+            total_ms=total_ms,
         )
 
     except Exception as exc:
+        total_ms = int((time.monotonic() - t_total) * 1000)
         logger.error(
-            "Enrichment failed for %s/%s (org=%s, artifact=%s): %s",
-            kb_slug, path, org_id, artifact_id, exc,
+            "enrichment_failed",
+            kb_slug=kb_slug,
+            path=path,
+            org_id=org_id,
+            artifact_id=artifact_id,
+            total_ms=total_ms,
             exc_info=True,
         )
         # Raw vectors remain in Qdrant -- document is still searchable
