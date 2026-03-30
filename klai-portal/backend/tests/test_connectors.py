@@ -1,12 +1,13 @@
 """Tests for connector content_type field (SPEC-EVIDENCE-001, R10)."""
 
+from datetime import UTC
+
 from app.api.connectors import (
     ConnectorCreateRequest,
     ConnectorOut,
     ConnectorUpdateRequest,
     _connector_out,
 )
-
 
 # -- Schema tests --------------------------------------------------------------
 
@@ -47,7 +48,7 @@ class TestConnectorUpdateRequest:
 class TestConnectorOut:
     def test_includes_content_type(self):
         """ConnectorOut includes content_type field."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         out = ConnectorOut(
             id="abc-123",
@@ -59,7 +60,7 @@ class TestConnectorOut:
             is_enabled=True,
             last_sync_at=None,
             last_sync_status=None,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             created_by="user-1",
             content_type="kb_article",
         )
@@ -67,7 +68,7 @@ class TestConnectorOut:
 
     def test_content_type_nullable(self):
         """ConnectorOut allows None content_type."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         out = ConnectorOut(
             id="abc-123",
@@ -79,7 +80,7 @@ class TestConnectorOut:
             is_enabled=True,
             last_sync_at=None,
             last_sync_status=None,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             created_by="user-1",
             content_type=None,
         )
