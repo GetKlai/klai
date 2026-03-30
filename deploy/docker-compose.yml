@@ -50,10 +50,7 @@ volumes:
   victoriametrics-data:
   victorialogs-data:
   grafana-data:
-  tei-models:
-  whisper-models:
   gitea-data:
-  infinity-models:
   qdrant-data:
   vexa-recordings-data:
 
@@ -256,7 +253,7 @@ services:
       SEARXNG_INSTANCE_URL: "http://searxng:8080"
       FIRECRAWL_API_URL: "http://firecrawl-api:3002"
       FIRECRAWL_API_KEY: ${FIRECRAWL_INTERNAL_KEY}
-      JINA_API_URL: "http://infinity-reranker:7997/v1/rerank"
+      JINA_API_URL: "http://172.18.0.1:7998/v1/rerank"
       JINA_API_KEY: "klai-internal"
     depends_on:
       mongodb:
@@ -561,39 +558,6 @@ services:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
 
-  tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
-    restart: unless-stopped
-    command: --model-id BAAI/bge-m3 --port 8080
-    volumes:
-      - tei-models:/data
-    networks:
-      - klai-net
-    # NOT exposed via Caddy — internal Docker network only
-
-  bge-m3-sparse:
-    build: ./bge-m3-sparse
-    restart: unless-stopped
-    environment:
-      MODEL_NAME: BAAI/bge-m3
-      HF_HOME: /models
-    volumes:
-      - tei-models:/models
-    networks:
-      - klai-net
-    # NOT exposed via Caddy — internal Docker network only
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
-
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
@@ -618,7 +582,7 @@ services:
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       RETRIEVAL_API_URL: http://retrieval-api:8040
       DOCLING_URL: http://docling-serve:5001
-      TEI_URL: http://tei:8080
+      TEI_URL: http://172.18.0.1:7997
       LITELLM_URL: http://litellm:4000
       SEARXNG_URL: http://searxng:8080
     volumes:
@@ -628,7 +592,6 @@ services:
       - net-postgres
     depends_on:
       - docling-serve
-      - tei
       - searxng
       - postgres
       - qdrant
@@ -641,8 +604,8 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
-      TEI_URL: http://tei:8080
-      TEI_RERANKER_URL: http://infinity-reranker:7997
+      TEI_URL: http://172.18.0.1:7997
+      TEI_RERANKER_URL: http://172.18.0.1:7998
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
@@ -652,12 +615,11 @@ services:
       RERANKER_ENABLED: "false"
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
-      SPARSE_SIDECAR_URL: http://bge-m3-sparse:8001
+      SPARSE_SIDECAR_URL: http://172.18.0.1:8001
     networks:
       - klai-net
     depends_on:
       - qdrant
-      - tei
       - falkordb
 
   # ─── Klai Docs ────────────────────────────────────────────────────────────
@@ -741,33 +703,18 @@ services:
     # NOT exposed via Caddy — internal Docker network only
 
   # ─── Scribe: transcription service ───────────────────────────────────────
-  whisper-server:
-    image: ghcr.io/getklai/whisper-server:latest
-    restart: unless-stopped
-    environment:
-      WHISPER_MODEL: large-v3-turbo
-      WHISPER_DEVICE: cpu
-      WHISPER_COMPUTE_TYPE: int8
-      WHISPER_DOWNLOAD_ROOT: /models
-    volumes:
-      - whisper-models:/models
-    networks:
-      - klai-net
-    # NOT exposed via Caddy — internal Docker network only
-
   scribe-api:
     image: ghcr.io/getklai/scribe-api:latest
     restart: unless-stopped
     env_file: .env
     environment:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
-      WHISPER_SERVER_URL: http://whisper-server:8000
+      WHISPER_SERVER_URL: http://172.18.0.1:8000
       ZITADEL_ISSUER: https://auth.${DOMAIN}
     networks:
       - klai-net
       - net-postgres
     depends_on:
-      - whisper-server
       - postgres
 
   # ─── Vexa meeting bot manager ───────────────────────────────────────────
@@ -790,7 +737,7 @@ services:
       DB_PASSWORD: ${VEXA_DB_PASSWORD}
       # We transcribe in portal-api, not in vexa-bot-manager
       SKIP_TRANSCRIPTION_CHECK: "true"
-      TRANSCRIBER_URL: http://whisper-server:8000/v1/audio/transcriptions
+      TRANSCRIBER_URL: http://172.18.0.1:8000/v1/audio/transcriptions
       TRANSCRIBER_API_KEY: internal
       ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
     volumes:
@@ -856,8 +803,8 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
-      TEI_URL: http://tei:8080
-      SPARSE_SIDECAR_URL: http://bge-m3-sparse:8001
+      TEI_URL: http://172.18.0.1:7997
+      SPARSE_SIDECAR_URL: http://172.18.0.1:8001
       GITEA_URL: http://gitea:3000
       GITEA_TOKEN: ${GITEA_ADMIN_TOKEN}
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
@@ -872,8 +819,6 @@ services:
       - net-postgres
     depends_on:
       - qdrant
-      - tei
-      - bge-m3-sparse
       - postgres
       - falkordb
 
@@ -917,32 +862,6 @@ services:
           memory: 2G
 
   # ─── Web search stack (LibreChat web mode) ───────────────────────────────────
-
-  # Infinity: self-hosted Jina-compatible reranker using bge-reranker-v2-m3 (CPU).
-  # Shared with the Knowledge retrieval pipeline once that is deployed (§7.1).
-  # Endpoint: http://infinity-reranker:7997/v1/rerank
-  # Request format: {"query": "...", "documents": [...], "model": "BAAI/bge-reranker-v2-m3"}
-  infinity-reranker:
-    image: michaelf34/infinity:latest
-    restart: unless-stopped
-    command: >
-      v2
-      --model-id BAAI/bge-reranker-v2-m3
-      --device cpu
-      --engine torch
-      --url-prefix /v1
-      --port 7997
-    volumes:
-      - infinity-models:/app/.cache
-    networks:
-      - klai-net
-    # NOT exposed via Caddy — internal Docker network only
-    # Memory: warmup benchmark peaks at ~5GB, runtime settles at ~1.3GB. Minimum 6G.
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
 
   # Firecrawl v1.x: self-hosted web scraper for LibreChat full-page content extraction.
   # Requires dedicated Postgres (NUQ job queue) and RabbitMQ (worker coordination).
