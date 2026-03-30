@@ -65,7 +65,12 @@ export async function createRepo(orgName: string, repoSlug: string, description 
 }
 
 export async function deleteRepo(orgName: string, repoSlug: string) {
-  return giteaFetch(`/repos/${orgName}/${repoSlug}`, { method: "DELETE" });
+  try {
+    return await giteaFetch(`/repos/${orgName}/${repoSlug}`, { method: "DELETE" });
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("→ 404:")) return null;
+    throw e;
+  }
 }
 
 export async function createRepoWebhook(
