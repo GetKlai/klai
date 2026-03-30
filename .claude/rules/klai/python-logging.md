@@ -1,7 +1,7 @@
 ---
 paths:
   - "klai-portal/backend/**/*.py"
-  - "deploy/klai-connector/**/*.py"
+  - "klai-connector/**/*.py"
   - "deploy/klai-knowledge-mcp/**/*.py"
   - "deploy/klai-mailer/**/*.py"
   - "klai-retrieval-api/**/*.py"

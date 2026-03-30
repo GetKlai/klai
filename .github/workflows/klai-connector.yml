@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'deploy/klai-connector/**'
+      - 'klai-connector/**'
       - '.github/workflows/klai-connector.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push klai-connector
         uses: docker/build-push-action@v7
         with:
-          context: ./deploy/klai-connector
+          context: ./klai-connector
           push: true
           tags: |
             ghcr.io/getklai/klai-connector:latest

@@ -145,7 +145,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Klai Connector (deploy/klai-connector/)
+## Klai Connector (klai-connector/)
 
 **Framework:** FastAPI on Python 3.12
 
@@ -184,7 +184,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Knowledge Ingest (deploy/knowledge-ingest/)
+## Knowledge Ingest (klai-knowledge-ingest/)
 
 **Framework:** FastAPI on Python 3.12
 

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'deploy/knowledge-ingest/**'
+      - 'klai-knowledge-ingest/**'
       - '.github/workflows/knowledge-ingest.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push knowledge-ingest
         uses: docker/build-push-action@v7
         with:
-          context: ./deploy/knowledge-ingest
+          context: ./klai-knowledge-ingest
           push: true
           tags: |
             ghcr.io/getklai/knowledge-ingest:latest
