@@ -24,6 +24,7 @@ paths:
 | [devops-alembic-multiple-heads](#devops-alembic-multiple-heads) | HIGH | Run `alembic heads` after merging branches with migrations |
 | [devops-alembic-duplicate-object-on-rerun](#devops-alembic-duplicate-object-on-rerun) | HIGH | Use `IF NOT EXISTS` in all migration DDL statements |
 | [devops-recover-secrets-from-running-containers](#devops-recover-secrets-from-running-containers) | HIGH | Recover lost env vars from running containers before restarting |
+| [devops-no-manual-server-edits](#devops-no-manual-server-edits) | CRIT | Never edit compose/env on server — repo is source of truth |
 
 ---
 
@@ -358,6 +359,31 @@ docker exec <container> printenv VAR_NAME
 
 **IMPORTANT — non-container vars are invisible to this method:**
 `KUMA_TOKEN_*` vars (monitoring tokens), `GRAFANA_CADDY_HASH`, and any other vars only used by scripts in `/opt/klai/scripts/` are NOT in any container's environment. They cannot be recovered with `docker exec printenv`. Recover these from Uptime Kuma's SQLite DB or other external sources. See `pitfalls/infrastructure.md#infra-kuma-tokens-not-in-containers`.
+
+---
+
+## devops-no-manual-server-edits
+
+**Severity:** CRIT
+
+**Trigger:** Wanting to change a config value (env var, compose setting) on core-01
+
+NEVER edit `docker-compose.yml` or `.env` directly on the server for values that are managed by the repo. CI workflows (`sync-env.yml`, deploy steps) overwrite server files with the repo version on every push, silently reverting manual changes.
+
+**What happened (March 2026):**
+`GRAPHITI_LLM_MODEL` was changed manually on core-01 from `klai-fast` to `klai-large`. The next CI deploy of knowledge-ingest pulled a fresh image and ran `docker compose up -d`, which read the server's compose file — but a separate `Sync docker-compose.yml` workflow then overwrote the compose file with the repo version (still `klai-fast`), reverting the change.
+
+**What to do:**
+1. Edit `deploy/docker-compose.yml` in the repo
+2. Commit and push
+3. Let CI sync the file to the server and restart the service
+
+**What NOT to do:**
+- SSH into core-01 and edit docker-compose.yml directly
+- Use `sed` to change values on the server
+- Assume manual changes will persist across deploys
+
+**Rule:** The repo is the single source of truth for all config. Server-side manual edits are always temporary and will be overwritten by CI.
 
 **Rule:** During an env wipe incident, the first priority is recovering values from running containers. Never restart or `docker compose up -d` any service until you have recovered all critical vars. A restart reads the broken `.env` and permanently loses the in-memory values. After container recovery, also check for non-container vars by running `push-health.sh` and comparing against the script's expected variables.
 
