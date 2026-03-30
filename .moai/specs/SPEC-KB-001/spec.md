@@ -2,7 +2,7 @@
 
 > Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md`
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md`
 > Related: `klai-portal/backend/app/models/knowledge_bases.py`, `klai-portal/backend/app/models/docs.py`
 > Implementation commits: `e56e25c` (Phase 1–3 core), `16f4b18` (Phase 3 admin cleanup + Sources tab)
 

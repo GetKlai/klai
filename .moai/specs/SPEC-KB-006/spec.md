@@ -3,7 +3,7 @@
 > Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-004 (knowledge schema), SPEC-KB-005 (contextual retrieval)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md` SS4.2, SS12
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md` SS4.2, SS12
 > Created: 2026-03-26
 > Completed: 2026-03-26 — PR #32 merged (GetKlai/klai)
 

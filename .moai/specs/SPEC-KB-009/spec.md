@@ -3,7 +3,7 @@
 > Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-006 (content-type adapters), SPEC-KB-007 (hybrid search)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md`
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md`
 > Created: 2026-03-26
 > Completed: 2026-03-26
 > PR: #35 — feat(knowledge): Docs → Qdrant sync via Gitea webhooks

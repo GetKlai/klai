@@ -1,7 +1,7 @@
 # SPEC: Web Crawler Connector (Crawl4AI)
 
 > Status: COMPLETED — 2026-03-26
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md` §4.1, §14
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md` §4.1, §14
 > Related: `deploy/docker-compose.yml`
 
 ---
@@ -226,7 +226,7 @@ Portal backend slaat `type: "web_crawler"` op in de `connectors` tabel.
 
 ## Phase 5 — Architectuurdoc bijwerken
 
-`claude-docs/klai-knowledge-architecture.md §14`: "Crawl4AI" is al correct —
+`docs/architecture/klai-knowledge-architecture.md §14`: "Crawl4AI" is al correct —
 alleen toevoegen dat Firecrawl er apart naast staat voor LibreChat.
 
 ---
@@ -242,7 +242,7 @@ alleen toevoegen dat Firecrawl er apart naast staat voor LibreChat.
 | 5 | Adapter factory in `main.py` | `klai-connector/app/main.py` |
 | 6 | Portal frontend: "Website" connector type | `klai-portal/frontend/` |
 | 7 | Portal backend: `web_crawler` type accepteren | `klai-portal/backend/app/api/connectors.py` |
-| 8 | Architectuurdoc bijwerken | `claude-docs/klai-knowledge-architecture.md` |
+| 8 | Architectuurdoc bijwerken | `docs/architecture/klai-knowledge-architecture.md` |
 | 9 | Integratietest: crawl → ingest → retrieve | `klai-connector/tests/` |
 
 ---

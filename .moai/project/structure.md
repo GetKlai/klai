@@ -2,7 +2,7 @@
 
 ## Architecture Pattern
 
-**Monorepo.** All Klai products live in a single git repo (`GetKlai/klai`). Shared Claude Code assets are managed via `.claude/` at the root, synced from the canonical source `klai-claude` (separate repo: `GetKlai/klai-claude`).
+**Monorepo.** All Klai products live in a single git repo (`GetKlai/klai`). Shared Claude Code assets (agents, rules, commands, skills) live in `.claude/` at the root.
 
 ```
 klai-mono/                     # Monorepo root (GetKlai/klai)
@@ -22,11 +22,11 @@ klai-mono/                     # Monorepo root (GetKlai/klai)
 │   └── research-api/          # Deep research API
 ├── klai-retrieval-api/             # Hybrid retrieval service (vector + graph)
 ├── scripts/                   # Shared utilities and deploy scripts
-├── claude-docs/               # Knowledge base (patterns, pitfalls, architecture docs)
-├── .claude/                   # Claude Code assets (synced from klai-claude)
-│   ├── agents/                # MoAI + Klai agents
+├── docs/                      # Project documentation (specs, architecture, runbooks)
+├── .claude/                   # Claude Code assets (agents, rules, commands, skills)
+│   ├── agents/                # MoAI + Klai + GTM agents
 │   ├── commands/              # Slash commands (/plan, /run, /sync, /retro, etc.)
-│   ├── rules/                 # Auto-loaded rules
+│   ├── rules/                 # Auto-loaded rules + knowledge base (patterns, pitfalls)
 │   └── skills/                # MoAI skills
 ├── .moai/                     # MoAI orchestration config
 │   ├── project/               # This documentation (product.md, structure.md, tech.md)
@@ -229,14 +229,14 @@ User Browser
 
 ---
 
-## Repo Layout (Multi-Repo Workspace)
+## Repo Layout
 
-| What | Local path | GitHub remote |
-|------|-----------|---------------|
-| **This monorepo** | `C:\Users\markv\stack\02 - Voys\Code\klai-mono` | `GetKlai/klai` |
-| Claude assets source | `C:\Users\markv\stack\02 - Voys\Code\klai\klai-claude` | `GetKlai/klai-claude` |
-| Infrastructure secrets | `C:\Users\markv\stack\02 - Voys\Code\klai\klai-infra` | `GetKlai/klai-infra` (private) |
-| Website | `C:\Users\markv\stack\02 - Voys\Code\klai\klai-website` | `GetKlai/klai-website` |
+| What | GitHub remote | Local |
+|------|---------------|-------|
+| **This monorepo** | `GetKlai/klai` | `/Users/mark/Server/projects/klai` |
+| Infrastructure secrets | `GetKlai/klai-infra` (private) | `klai-infra/` (gitignored, separate repo) |
+| Website | `GetKlai/klai-website` | `klai-website/` (gitignored, separate repo) |
+| Private docs | `GetKlai/klai-private` | `klai-private/` (git submodule) |
 
 ---
 

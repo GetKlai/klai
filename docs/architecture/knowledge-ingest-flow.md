@@ -4,7 +4,7 @@
 > Verified against `deploy/knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-03-27).
 >
 > For the research backing these design decisions, see
-> [klai-mono/claude-docs/knowledge-system-fundamentals.md](../../../klai-mono/claude-docs/knowledge-system-fundamentals.md).
+> [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
 
 ---
 

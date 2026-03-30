@@ -3,7 +3,7 @@
 > Status: COMPLETED (2026-03-26)
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Builds on: SPEC-KB-002 (ingest pipeline), SPEC-KB-003 (app layer)
-> Architecture reference: `claude-docs/klai-knowledge-architecture.md` §3, §5.2
+> Architecture reference: `docs/architecture/klai-knowledge-architecture.md` §3, §5.2
 > Created: 2026-03-25
 
 ---
