@@ -103,6 +103,7 @@ export function MultiSelect({
                     key={option.value}
                     value={option.value}
                     onSelect={() => toggle(option.value)}
+                    className="group"
                   >
                     <div className={cn(
                       'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-[var(--color-border)]',
@@ -113,7 +114,7 @@ export function MultiSelect({
                     <div className="flex flex-col">
                       <span>{option.label}</span>
                       {option.description && (
-                        <span className="text-xs text-[var(--color-muted-foreground)]">
+                        <span className="text-xs text-[var(--color-muted-foreground)] group-data-[selected=true]:text-white/70">
                           {option.description}
                         </span>
                       )}
