@@ -66,9 +66,20 @@ export async function POST(
   const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo);
 
   // Register Gitea webhook via knowledge-ingest (owns the HMAC secret and webhook lifecycle)
-  await ki.registerKBWebhook(org.id, slug, giteaRepo);
+  // Use zitadel_org_id — knowledge-ingest uses Zitadel org ID as the org namespace in Qdrant.
+  try {
+    await ki.registerKBWebhook(org.zitadel_org_id, slug, giteaRepo);
+  } catch (e) {
+    console.error(`[ki] registerKBWebhook ${slug}: ${e instanceof Error ? e.message : e}`);
+    throw e; // Fatal: without webhook registration the KB will not be indexed on push
+  }
   // Trigger initial index in case the repo already has content (no-op for empty repos)
-  await ki.bulkSyncKB(org.id, slug, giteaRepo);
+  try {
+    await ki.bulkSyncKB(org.zitadel_org_id, slug, giteaRepo);
+  } catch (e) {
+    console.error(`[ki] bulkSyncKB ${slug}: ${e instanceof Error ? e.message : e}`);
+    // Non-fatal: KB is created and webhook is registered; sync can be retried manually
+  }
 
   return NextResponse.json(kb, { status: 201 });
 }

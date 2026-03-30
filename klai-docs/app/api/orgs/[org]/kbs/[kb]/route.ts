@@ -19,7 +19,12 @@ export async function DELETE(
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // De-register Gitea webhook before deleting the repo
-  await ki.deregisterKBWebhook(org.zitadel_org_id, kbSlug, kb.gitea_repo);
+  try {
+    await ki.deregisterKBWebhook(org.zitadel_org_id, kbSlug, kb.gitea_repo);
+  } catch (e) {
+    console.error(`[ki] deregisterKBWebhook ${kbSlug}: ${e instanceof Error ? e.message : e}`);
+    // Non-fatal: the Gitea repo is deleted below, stopping future pushes regardless
+  }
 
   // Delete Gitea repo
   await gitea.deleteRepo(`org-${orgSlug}`, kbSlug);
@@ -27,8 +32,14 @@ export async function DELETE(
   // Delete from DB (cascades to knowledge_bases, page_edit_restrictions)
   await db.query("DELETE FROM docs.knowledge_bases WHERE id = $1", [kb.id]);
 
-  // Remove all Qdrant chunks for this KB (non-fatal if knowledge-ingest is unavailable)
-  await ki.deleteKB(org.zitadel_org_id, kbSlug);
+  // Remove all Qdrant chunks for this KB.
+  // Non-fatal: the KB is already gone from DB+Gitea; Qdrant is a derived search index.
+  // Log as error so orphaned vectors are detectable in monitoring.
+  try {
+    await ki.deleteKB(org.zitadel_org_id, kbSlug);
+  } catch (e) {
+    console.error(`[ki] deleteKB ${kbSlug}: ${e instanceof Error ? e.message : e} — Qdrant chunks may be orphaned`);
+  }
 
   return NextResponse.json({ ok: true });
 }
@@ -65,9 +76,13 @@ export async function PATCH(
     [newName, newVisibility, kb.id]
   );
 
-  // Propagate visibility change to Qdrant (non-fatal)
+  // Propagate visibility change to Qdrant
   if (visibility !== undefined && visibility !== kb.visibility) {
-    await ki.updateKBVisibility(org.zitadel_org_id, kbSlug, newVisibility);
+    try {
+      await ki.updateKBVisibility(org.zitadel_org_id, kbSlug, newVisibility);
+    } catch (e) {
+      console.error(`[ki] updateKBVisibility ${kbSlug}: ${e instanceof Error ? e.message : e} — Qdrant visibility may be stale`);
+    }
   }
 
   return NextResponse.json(rows[0]);
