@@ -169,7 +169,7 @@ class TestIncomingAuth:
         result = await save_personal_knowledge(
             title="Test",
             content="content",
-            assertion_mode="note",
+            assertion_mode="fact",
             tags=["test"],
             ctx=ctx,
         )
@@ -188,7 +188,7 @@ class TestIncomingAuth:
         result = await save_org_knowledge(
             title="Test",
             content="content",
-            assertion_mode="note",
+            assertion_mode="fact",
             tags=["test"],
             ctx=ctx,
         )
@@ -207,7 +207,7 @@ class TestIncomingAuth:
             result = await save_personal_knowledge(
                 title="Test",
                 content="content",
-                assertion_mode="note",
+                assertion_mode="fact",
                 tags=["test"],
                 ctx=ctx,
             )

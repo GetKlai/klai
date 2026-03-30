@@ -270,6 +270,7 @@ _ALLOWED_METADATA_FIELDS = frozenset({
     "title", "kb_slug", "chunk_index", "created_at",
     "source_type", "visibility", "tags", "provenance_type", "confidence",
     "artifact_id", "content_type", "valid_from", "valid_until", "ingested_at",
+    "assertion_mode",
 })
 
 

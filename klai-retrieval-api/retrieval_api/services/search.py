@@ -147,6 +147,8 @@ async def _search_notebook(
             "scope": "notebook",
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
+            "ingested_at": r.payload.get("ingested_at"),
+            "assertion_mode": r.payload.get("assertion_mode"),
         }
         for r in result.points
     ]
@@ -219,6 +221,8 @@ async def _search_knowledge(
             "scope": r.payload.get("scope"),
             "valid_at": r.payload.get("valid_at"),
             "invalid_at": r.payload.get("invalid_at"),
+            "ingested_at": r.payload.get("ingested_at"),
+            "assertion_mode": r.payload.get("assertion_mode"),
         }
         for r in result.points
     ]

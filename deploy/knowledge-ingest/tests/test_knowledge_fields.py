@@ -16,7 +16,7 @@ class TestParseKnowledgeFieldsDefaults:
     def test_no_frontmatter_returns_defaults(self):
         result = _parse_knowledge_fields("# Plain document\n\nNo frontmatter here.", None)
         assert result["provenance_type"] == "observed"
-        assert result["assertion_mode"] == "factual"
+        assert result["assertion_mode"] == "unknown"
         assert result["synthesis_depth"] == 0
         assert result["confidence"] is None
         assert result["belief_time_end"] == _SENTINEL
@@ -51,13 +51,18 @@ class TestParseKnowledgeFieldsFromFrontmatter:
         assert _parse_knowledge_fields(content, None)["provenance_type"] == "observed"
 
     def test_valid_assertion_mode(self):
-        for mode in ("factual", "procedural", "quoted", "belief", "hypothesis"):
+        for mode in ("fact", "claim", "speculation", "procedural", "quoted", "unknown"):
             content = f"---\nassertion_mode: {mode}\n---\n# Doc"
             assert _parse_knowledge_fields(content, None)["assertion_mode"] == mode
 
+    def test_old_assertion_mode_mapped(self):
+        for old, new in [("factual", "fact"), ("belief", "claim"), ("hypothesis", "speculation")]:
+            content = f"---\nassertion_mode: {old}\n---\n# Doc"
+            assert _parse_knowledge_fields(content, None)["assertion_mode"] == new
+
     def test_invalid_assertion_mode_falls_back(self):
         content = "---\nassertion_mode: opinion\n---\n# Doc"
-        assert _parse_knowledge_fields(content, None)["assertion_mode"] == "factual"
+        assert _parse_knowledge_fields(content, None)["assertion_mode"] == "unknown"
 
     def test_synthesis_depth_range(self):
         for depth in range(5):

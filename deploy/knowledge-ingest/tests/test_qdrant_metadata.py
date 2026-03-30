@@ -118,3 +118,35 @@ async def test_search_without_user_id_no_extra_filter():
         await search("org1", [0.1] * 1024)
 
         mock_query.assert_called_once()
+
+
+def test_allowed_metadata_fields_includes_assertion_mode():
+    """assertion_mode must be in _ALLOWED_METADATA_FIELDS (SPEC-EVIDENCE-001, R4)."""
+    from knowledge_ingest.qdrant_store import _ALLOWED_METADATA_FIELDS
+
+    assert "assertion_mode" in _ALLOWED_METADATA_FIELDS
+
+
+@pytest.mark.asyncio
+async def test_metadata_contains_assertion_mode():
+    """assertion_mode should pass through metadata when present in payload."""
+    mock_point = _make_query_point({
+        "text": "some text",
+        "kb_slug": "org",
+        "path": "doc.md",
+        "org_id": "org1",
+        "assertion_mode": "fact",
+        "content_type": "kb_article",
+        "ingested_at": 1711843200,
+    })
+
+    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
+        mock_client.return_value.query_points = AsyncMock(
+            return_value=_make_query_response([mock_point])
+        )
+        results = await search("org1", [0.1] * 1024)
+
+    meta = results[0]["metadata"]
+    assert meta["assertion_mode"] == "fact"
+    assert meta["content_type"] == "kb_article"
+    assert meta["ingested_at"] == 1711843200

@@ -19,6 +19,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal, get_args
 
 import httpx
 from logging_setup import setup_logging
@@ -40,7 +41,8 @@ DEFAULT_ORG_SLUG = os.getenv("DEFAULT_ORG_SLUG", "")
 # Path validation patterns
 _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-VALID_ASSERTION_MODES: frozenset[str] = frozenset({"fact", "claim", "note"})
+AssertionMode = Literal["fact", "claim", "speculation", "procedural", "quoted", "unknown"]
+VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 
 # Error messages (bilingual NL/EN)
 _ERR_SAVE = (
@@ -198,7 +200,8 @@ something for their own reference.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "fact", "claim", or "note"
+  assertion_mode - pick the best fit: "fact", "claim", "speculation",
+                   "procedural", "quoted", or "unknown"
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -217,8 +220,10 @@ async def save_personal_knowledge(
     except ValueError as exc:
         return f"Error: {exc}"
 
-    if assertion_mode not in VALID_ASSERTION_MODES:
-        assertion_mode = "note"
+    if not assertion_mode:
+        assertion_mode = "unknown"
+    elif assertion_mode not in VALID_ASSERTION_MODES:
+        return f"Error: invalid assertion_mode '{assertion_mode}'. Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
 
     ok = await _save_to_ingest(
         org_id=identity.org_id,
@@ -247,7 +252,8 @@ or expresses intent to share knowledge with the whole organisation.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "fact", "claim", or "note"
+  assertion_mode - pick the best fit: "fact", "claim", "speculation",
+                   "procedural", "quoted", or "unknown"
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -266,8 +272,10 @@ async def save_org_knowledge(
     except ValueError as exc:
         return f"Error: {exc}"
 
-    if assertion_mode not in VALID_ASSERTION_MODES:
-        assertion_mode = "note"
+    if not assertion_mode:
+        assertion_mode = "unknown"
+    elif assertion_mode not in VALID_ASSERTION_MODES:
+        return f"Error: invalid assertion_mode '{assertion_mode}'. Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
 
     ok = await _save_to_ingest(
         org_id=identity.org_id,
@@ -378,7 +386,7 @@ async def save_to_docs(
         "edit_access": "owner",
         "frontmatter": {
             "provenance_type": "synthesized",
-            "assertion_mode": "note",
+            "assertion_mode": "unknown",
             "synthesis_depth": 1,
             "belief_time_start": today,
             "belief_time_end": None,
