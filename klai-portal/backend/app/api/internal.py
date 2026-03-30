@@ -103,6 +103,7 @@ class ConnectorConfigResponse(BaseModel):
     config: dict
     schedule: str | None
     is_enabled: bool
+    allowed_assertion_modes: list[str] | None
 
 
 @router.get("/connectors/{connector_id}", response_model=ConnectorConfigResponse)
@@ -140,6 +141,7 @@ async def get_connector_config(
         config=connector.config,
         schedule=connector.schedule,
         is_enabled=connector.is_enabled,
+        allowed_assertion_modes=connector.allowed_assertion_modes,
     )
 
 

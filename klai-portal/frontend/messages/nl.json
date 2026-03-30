@@ -956,6 +956,8 @@
   "admin_connectors_field_name_placeholder": "Bijv. Bedrijfsdocumentatie",
   "admin_connectors_field_type": "Connectortype",
   "admin_connectors_field_schedule": "Synchronisatieschema (optioneel)",
+  "admin_connectors_assertion_modes_label": "Type informatie (optioneel)",
+  "admin_connectors_assertion_modes_placeholder": "Bijv. Feit, Procedure...",
   "admin_connectors_field_schedule_placeholder": "Bijv. 0 2 * * *",
   "admin_connectors_field_schedule_hint": "Cron-expressie voor automatische synchronisatie. Leeg laten voor alleen handmatig.",
 
