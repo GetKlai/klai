@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     postgres_dsn: str  # postgresql+asyncpg://...
 
     # whisper-server
-    whisper_server_url: str = "http://whisper-server:8000"
+    whisper_server_url: str = "http://172.18.0.1:8000"
     stt_provider: str = "whisper_http"
     # Provider label stored in audit column — update to "whisper-gpu" when moving to Phase 3+
     whisper_provider_name: str = "whisper-cpu"

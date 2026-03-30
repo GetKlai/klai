@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
     qdrant_focus_collection: str = "klai_focus"
 
-    tei_url: str = "http://tei:8080"
-    tei_reranker_url: str = "http://tei-reranker:8080"
+    tei_url: str = "http://172.18.0.1:7997"
+    tei_reranker_url: str = "http://172.18.0.1:7998"
 
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     retrieval_candidates: int = 60
     reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
 
-    sparse_sidecar_url: str = ""
+    sparse_sidecar_url: str = "http://172.18.0.1:8001"
     sparse_sidecar_timeout: float = 5.0
 
     reranker_enabled: bool = False  # CPU reranker too slow (~83s/20 docs); enable when GPU available
