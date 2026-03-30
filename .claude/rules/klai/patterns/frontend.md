@@ -1,3 +1,6 @@
+---
+paths: "**/*.tsx,**/*.ts,**/*.css,**/*.astro"
+---
 # Frontend Patterns
 
 > Copy-paste solutions for frontend projects (portal, website).

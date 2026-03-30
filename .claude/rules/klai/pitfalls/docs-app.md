@@ -1,3 +1,6 @@
+---
+paths: "klai-docs/**"
+---
 # Docs-App Pitfalls
 
 > klai-docs (Next.js) integration from portal-api (`docs_client.py`).

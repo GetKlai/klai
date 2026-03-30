@@ -1,3 +1,6 @@
+---
+paths: "**/.env*,.github/**/*.yml,**/docker-compose*.yml,klai-infra/**"
+---
 # Infrastructure Patterns
 
 > Hetzner, SOPS secrets, env management, DNS, SSH

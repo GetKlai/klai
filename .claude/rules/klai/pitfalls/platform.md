@@ -1,3 +1,6 @@
+---
+paths: "**/*.py,**/litellm*.yml,**/docker-compose*.yml,klai-portal/backend/**"
+---
 # Platform Pitfalls
 
 > LiteLLM, LibreChat, vLLM, Zitadel, Caddy, Meilisearch — Klai AI stack.

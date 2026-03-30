@@ -1,3 +1,6 @@
+---
+paths: "**/*.py,**/pyproject.toml"
+---
 # Backend Patterns
 
 > Copy-paste solutions for Python/FastAPI services in klai-mono.

@@ -1,3 +1,6 @@
+---
+paths: "**/*.py,**/*.ts,**/*.tsx,**/pyproject.toml,**/package.json,**/eslint.config*"
+---
 # Code Quality
 
 > Per-project quality tooling reference. What runs, where, and how to invoke it.

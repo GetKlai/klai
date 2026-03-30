@@ -1,3 +1,6 @@
+---
+paths: "**/.env*,.github/**/*.yml,klai-infra/**"
+---
 # Infrastructure Pitfalls
 
 > Hetzner, SOPS, environment variables, DNS, SSH
