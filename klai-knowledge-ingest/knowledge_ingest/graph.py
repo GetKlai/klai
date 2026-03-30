@@ -31,6 +31,11 @@ from knowledge_ingest.config import settings
 
 logger = structlog.get_logger()
 
+# Rate-limit Graphiti episodes: each add_episode() makes ~5 LLM calls internally.
+# With Mistral rate limits (60 req/min for klai-large), concurrent episodes cause timeouts.
+_episode_semaphore = asyncio.Semaphore(1)
+EPISODE_DELAY = 5  # seconds between episodes — prevents LLM rate-limit bursts
+
 _graphiti_client: Graphiti | None = None
 
 
@@ -94,54 +99,60 @@ async def ingest_episode(
     reference_time = datetime.fromtimestamp(belief_time_start, tz=timezone.utc)
 
     max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            t0 = time.perf_counter()
-            result = await graphiti.add_episode(
-                name=artifact_id,
-                episode_body=document_text,
-                source=EpisodeType.text,
-                source_description=content_type,
-                reference_time=reference_time,
-                group_id=org_id,
-            )
-            ingest_ms = (time.perf_counter() - t0) * 1000
+    episode_result: str | None = None
 
-            # Extract episode_id — graphiti returns an EpisodeNode with .uuid
-            episode_id: str | None = None
-            if result is not None:
-                episode_id = str(getattr(result, "uuid", None) or getattr(result, "id", ""))
-                episode_id = episode_id or None
-
-            logger.info(
-                "graphiti_episode_ingested",
-                artifact_id=artifact_id,
-                org_id=org_id,
-                episode_id=episode_id,
-                entity_count=getattr(result, "entity_count", 0),
-                edge_count=getattr(result, "edge_count", 0),
-                ingest_ms=round(ingest_ms, 1),
-            )
-            return episode_id
-
-        except Exception as exc:
-            if attempt < max_attempts - 1:
-                wait = 2**attempt  # 1s, 2s
-                logger.warning(
-                    "graphiti_ingest_retry",
-                    attempt=attempt + 1,
-                    max_attempts=max_attempts,
-                    artifact_id=artifact_id,
-                    error=str(exc),
-                    wait_s=wait,
+    async with _episode_semaphore:
+        for attempt in range(max_attempts):
+            try:
+                t0 = time.perf_counter()
+                result = await graphiti.add_episode(
+                    name=artifact_id,
+                    episode_body=document_text,
+                    source=EpisodeType.text,
+                    source_description=content_type,
+                    reference_time=reference_time,
+                    group_id=org_id,
                 )
-                await asyncio.sleep(wait)
-            else:
-                logger.warning(
-                    "graphiti_ingest_failed",
-                    artifact_id=artifact_id,
-                    attempts=max_attempts,
-                    error=str(exc),
-                )
+                ingest_ms = (time.perf_counter() - t0) * 1000
 
-    return None
+                # Extract episode_id — graphiti returns an EpisodeNode with .uuid
+                episode_id: str | None = None
+                if result is not None:
+                    episode_id = str(getattr(result, "uuid", None) or getattr(result, "id", ""))
+                    episode_id = episode_id or None
+
+                logger.info(
+                    "graphiti_episode_ingested",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    episode_id=episode_id,
+                    entity_count=getattr(result, "entity_count", 0),
+                    edge_count=getattr(result, "edge_count", 0),
+                    ingest_ms=round(ingest_ms, 1),
+                )
+                episode_result = episode_id
+                break
+
+            except Exception as exc:
+                if attempt < max_attempts - 1:
+                    wait = 2**attempt  # 1s, 2s
+                    logger.warning(
+                        "graphiti_ingest_retry",
+                        attempt=attempt + 1,
+                        max_attempts=max_attempts,
+                        artifact_id=artifact_id,
+                        error=str(exc),
+                        wait_s=wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.warning(
+                        "graphiti_ingest_failed",
+                        artifact_id=artifact_id,
+                        attempts=max_attempts,
+                        error=str(exc),
+                    )
+
+    # Delay after releasing semaphore to space out LLM calls across episodes
+    await asyncio.sleep(EPISODE_DELAY)
+    return episode_result
