@@ -20,6 +20,7 @@ try:
     from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
     from graphiti_core.llm_client.config import LLMConfig
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+    from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
     from graphiti_core.nodes import EpisodeType
     _GRAPHITI_AVAILABLE = True
 except ImportError:
@@ -40,13 +41,12 @@ def _get_graphiti() -> "Graphiti":
     if _graphiti_client is None:
         api_key = settings.litellm_api_key or "dummy"
         litellm_base_url = f"{settings.litellm_url}/v1"
-        llm_client = OpenAIGenericClient(
-            config=LLMConfig(
-                base_url=litellm_base_url,
-                model=settings.graphiti_llm_model,
-                api_key=api_key,
-            )
+        llm_config = LLMConfig(
+            base_url=litellm_base_url,
+            model=settings.graphiti_llm_model,
+            api_key=api_key,
         )
+        llm_client = OpenAIGenericClient(config=llm_config)
         embedder = OpenAIEmbedder(
             config=OpenAIEmbedderConfig(
                 base_url=f"{settings.tei_url}/v1",
@@ -62,6 +62,7 @@ def _get_graphiti() -> "Graphiti":
         _graphiti_client = Graphiti(
             llm_client=llm_client,
             embedder=embedder,
+            cross_encoder=OpenAIRerankerClient(client=llm_client, config=llm_config),
             graph_driver=driver,
         )
     return _graphiti_client
