@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scribe/scribe-api/**'
+      - 'klai-scribe/scribe-api/**'
       - '.github/workflows/scribe-api.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push scribe-api
         uses: docker/build-push-action@v7
         with:
-          context: ./scribe/scribe-api
+          context: ./klai-scribe/scribe-api
           push: true
           tags: |
             ghcr.io/getklai/scribe-api:latest

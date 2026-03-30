@@ -204,3 +204,10 @@ dist-ssr/
 .vercel/
 .netlify/
 .firebase/
+
+# Separate repos inside monorepo directory (not submodules)
+klai-website/
+klai-infra/
+
+# Playwright MCP screenshots
+.playwright-mcp/

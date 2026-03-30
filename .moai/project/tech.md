@@ -6,7 +6,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Portal Backend (portal/backend/)
+## Portal Backend (klai-portal/backend/)
 
 **Framework:** FastAPI on Python 3.12
 **Package manager:** uv
@@ -32,7 +32,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Portal Frontend (portal/frontend/)
+## Portal Frontend (klai-portal/frontend/)
 
 **Framework:** React 19 SPA with Vite
 **Package manager:** npm
@@ -65,7 +65,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Docs App (docs/)
+## Docs App (klai-docs/)
 
 **Framework:** Next.js 15 with React 19
 
@@ -84,7 +84,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Scribe API (scribe/scribe-api/)
+## Scribe API (klai-scribe/scribe-api/)
 
 **Framework:** FastAPI on Python 3.12
 
@@ -99,7 +99,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Whisper Server (scribe/whisper-server/)
+## Whisper Server (klai-scribe/whisper-server/)
 
 **Framework:** FastAPI on Python 3.12
 
@@ -112,7 +112,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Research API (focus/research-api/)
+## Research API (klai-focus/research-api/)
 
 **Framework:** FastAPI on Python 3.12
 
@@ -128,7 +128,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 
 ---
 
-## Retrieval API (retrieval-api/)
+## Retrieval API (klai-retrieval-api/)
 
 **Framework:** FastAPI on Python 3.12
 

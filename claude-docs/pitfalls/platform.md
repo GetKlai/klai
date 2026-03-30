@@ -841,7 +841,7 @@ Most modern LLMs accept multiple system messages without breaking, but the behav
 
 **Severity:** CRIT
 
-**Trigger:** `docker compose up -d portal-api` after a code change that adds new required fields to `portal/backend/app/core/config.py`
+**Trigger:** `docker compose up -d portal-api` after a code change that adds new required fields to `klai-portal/backend/app/core/config.py`
 
 Portal-api validates ALL required env vars at startup. If a new required field has no value in `.env`, the container crashes immediately. Because **all auth goes through portal-api** (Login V2 routes Zitadel's login through the portal), a portal-api crash creates a total auth outage — no one can log in, including to the Zitadel console.
 

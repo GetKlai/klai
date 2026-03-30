@@ -47,9 +47,9 @@ Het groepsgebaseerde entitlement-systeem wordt in vier fasen gebouwd: (1) databa
 7. Unit tests voor alle drie endpoints inclusief plan-plafond enforcement
 
 **Reference implementations:**
-- `portal/backend/app/models/products.py` -- PortalUserProduct model patroon
-- `portal/backend/app/api/groups.py` -- bestaande groep endpoint structuur
-- `portal/backend/app/api/admin.py:449-601` -- bestaande product endpoint patroon
+- `klai-portal/backend/app/models/products.py` -- PortalUserProduct model patroon
+- `klai-portal/backend/app/api/groups.py` -- bestaande groep endpoint structuur
+- `klai-portal/backend/app/api/admin.py:449-601` -- bestaande product endpoint patroon
 
 ---
 
@@ -76,9 +76,9 @@ Het groepsgebaseerde entitlement-systeem wordt in vier fasen gebouwd: (1) databa
 7. Integratie tests voor JWT enrichment met groepsgebaseerde producten
 
 **Reference implementations:**
-- `portal/backend/app/api/dependencies.py` -- `require_product()` patroon
-- `portal/backend/app/api/internal.py:66-82` -- JWT enrichment endpoint
-- `portal/backend/app/api/admin.py:604-640` -- plan downgrade logica
+- `klai-portal/backend/app/api/dependencies.py` -- `require_product()` patroon
+- `klai-portal/backend/app/api/internal.py:66-82` -- JWT enrichment endpoint
+- `klai-portal/backend/app/api/admin.py:604-640` -- plan downgrade logica
 
 ---
 
@@ -99,8 +99,8 @@ Het groepsgebaseerde entitlement-systeem wordt in vier fasen gebouwd: (1) databa
 6. Optimistic updates via TanStack Query mutation + invalidation
 
 **Reference implementations:**
-- `portal/frontend/src/routes/admin/users/$userId/edit.tsx` -- bestaande product toggle UI
-- `portal/frontend/src/routes/admin/groups/$groupId/index.tsx` -- groep-detailpagina structuur
+- `klai-portal/frontend/src/routes/admin/users/$userId/edit.tsx` -- bestaande product toggle UI
+- `klai-portal/frontend/src/routes/admin/groups/$groupId/index.tsx` -- groep-detailpagina structuur
 
 ---
 

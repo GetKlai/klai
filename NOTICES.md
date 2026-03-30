@@ -11,9 +11,9 @@ The following packages are licensed under MPL-2.0:
 
 | Package | Version | Used in |
 |---------|---------|---------|
-| `@blocknote/core` | ^0.47.1 | portal/frontend |
-| `@blocknote/mantine` | ^0.47.1 | portal/frontend |
-| `@blocknote/react` | ^0.47.1 | portal/frontend |
+| `@blocknote/core` | ^0.47.1 | klai-portal/frontend |
+| `@blocknote/mantine` | ^0.47.1 | klai-portal/frontend |
+| `@blocknote/react` | ^0.47.1 | klai-portal/frontend |
 
 **Source:** https://github.com/TypeCellOS/BlockNote
 
@@ -40,9 +40,9 @@ The following font packages are licensed under OFL-1.1:
 
 | Package | Font | Used in |
 |---------|------|---------|
-| `@fontsource-variable/inter` | Inter | portal/frontend |
-| `@fontsource-variable/manrope` | Manrope | portal/frontend |
-| `@fontsource/libre-baskerville` | Libre Baskerville | portal/frontend |
+| `@fontsource-variable/inter` | Inter | klai-portal/frontend |
+| `@fontsource-variable/manrope` | Manrope | klai-portal/frontend |
+| `@fontsource/libre-baskerville` | Libre Baskerville | klai-portal/frontend |
 
 OFL-1.1 permits free use, modification, and distribution of the fonts. The fonts may not
 be sold on their own. No action is required when using them as web fonts in an application.
@@ -55,11 +55,11 @@ The following packages are licensed under Apache-2.0:
 
 | Package | Used in |
 |---------|---------|
-| `class-variance-authority` | portal/frontend |
-| `oidc-client-ts` | portal/frontend |
-| `asyncpg` | portal/backend |
-| `python-multipart` | portal/backend |
-| `docker` (Python SDK) | portal/backend |
+| `class-variance-authority` | klai-portal/frontend |
+| `oidc-client-ts` | klai-portal/frontend |
+| `asyncpg` | klai-portal/backend |
+| `python-multipart` | klai-portal/backend |
+| `docker` (Python SDK) | klai-portal/backend |
 
 Apache-2.0 is compatible with MIT. No additional obligations beyond attribution, which is
 satisfied by this file.
@@ -70,10 +70,10 @@ satisfied by this file.
 
 | Package | License | Used in |
 |---------|---------|---------|
-| `uvicorn` | BSD-3-Clause | portal/backend |
-| `httpx` | BSD-3-Clause | portal/backend |
+| `uvicorn` | BSD-3-Clause | klai-portal/backend |
+| `httpx` | BSD-3-Clause | klai-portal/backend |
 
 ---
 
-*This file was last reviewed against `portal/frontend/package.json` and
-`portal/backend/pyproject.toml`. Update after adding new dependencies.*
+*This file was last reviewed against `klai-portal/frontend/package.json` and
+`klai-portal/backend/pyproject.toml`. Update after adding new dependencies.*

@@ -17,7 +17,7 @@ After KB-006 is implemented, the `klai_knowledge_v2` collection holds two named 
 
 The `bge-m3-sparse` FlagEmbedding sidecar is deployed as a Docker service (port 8001, internal network only, from KB-006 D12). A `sparse_embedder.py` client module exists. However, neither the ingest pipeline nor the retrieval pipeline is wired to the sidecar yet -- KB-006 captured the design decision and deployed the service; the collection schema change, ingest wiring, and retrieval integration are the scope of this SPEC.
 
-Retrieval in `portal/backend/app/api/knowledge.py` issues a two-leg Qdrant prefetch (`vector_chunk` + `vector_questions`) fused via RRF.
+Retrieval in `klai-portal/backend/app/api/knowledge.py` issues a two-leg Qdrant prefetch (`vector_chunk` + `vector_questions`) fused via RRF.
 
 **The gap**: dense-only retrieval systematically misses exact lexical matches for terms that appear infrequently in general text:
 
@@ -253,7 +253,7 @@ For each chunk, the Qdrant point's `vectors` dict gains `"vector_sparse": sparse
 
 ### Updated: `retrieve.py` -- three-leg hybrid query
 
-Changes to `portal/backend/app/api/knowledge.py` (or wherever `retrieve.py` lives):
+Changes to `klai-portal/backend/app/api/knowledge.py` (or wherever `retrieve.py` lives):
 
 ```python
 async def search(

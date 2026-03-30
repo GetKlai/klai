@@ -6,9 +6,9 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 
 | Directory | Contents |
 |-----------|----------|
-| `portal/backend/` | FastAPI API — auth, tenant provisioning, knowledge base |
-| `portal/frontend/` | React 19 + Vite + TanStack Router — portal UI |
-| `docs/` | Next.js 15 documentation site |
+| `klai-portal/backend/` | FastAPI API — auth, tenant provisioning, knowledge base |
+| `klai-portal/frontend/` | React 19 + Vite + TanStack Router — portal UI |
+| `klai-docs/` | Next.js 15 documentation site |
 | `deploy/` | Self-hosting templates — Docker Compose, Caddy, LiteLLM, Zitadel |
 | `.claude/` | Shared Claude Code tooling — agents, rules, commands, skills |
 | `claude-docs/` | Klai knowledge base — patterns, pitfalls, styleguide |
@@ -19,7 +19,7 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 
 Before working on a specific package, read its CLAUDE.md:
 
-@portal/CLAUDE.md
+@klai-portal/CLAUDE.md
 @klai-docs/CLAUDE.md
 
 ## Knowledge base

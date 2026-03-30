@@ -83,10 +83,10 @@ For workflows that deploy to a server (e.g. `portal-frontend`, `portal-api`), ve
 
 ```bash
 # Check that the new JS bundle is on the server in the directory Caddy serves
-ssh core-01 "ls -lt /srv/portal/assets/*.js | head -3"
+ssh core-01 "ls -lt /srv/klai-portal/assets/*.js | head -3"
 
 # Verify the bundle contains expected code (e.g. a new feature keyword)
-ssh core-01 "grep -l 'expected_keyword' /srv/portal/assets/*.js"
+ssh core-01 "grep -l 'expected_keyword' /srv/klai-portal/assets/*.js"
 ```
 
 The timestamp of the newest `.js` file must match the deploy time. If it is old, the rsync target may be wrong (see pitfall `devops-deploy-path-mismatch`).
@@ -112,8 +112,8 @@ All klai projects where a GitHub Action runs on push:
 
 | Project | Action | Deploys to |
 |---------|--------|------------|
-| `portal/frontend` | `Build and deploy portal-frontend` | core-01 `/srv/portal/` |
-| `portal/backend` | `Build and deploy portal-api` | core-01 Docker (portal-api) |
+| `klai-portal/frontend` | `Build and deploy portal-frontend` | core-01 `/srv/klai-portal/` |
+| `klai-portal/backend` | `Build and deploy portal-api` | core-01 Docker (portal-api) |
 | Any project with `.github/workflows/` | Check the workflow file | See workflow |
 
 ## In the sync workflow

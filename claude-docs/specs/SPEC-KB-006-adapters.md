@@ -606,7 +606,7 @@ async def ingest_scribe_transcript(
     return await ingest_document(IngestRequest(
         org_id=org_id,
         kb_slug=kb_slug,
-        path=f"scribe/{transcription_id}",
+        path=f"klai-scribe/{transcription_id}",
         content=full_text,
         title=transcription.get("title", "Untitled recording"),
         source_type="connector",
@@ -936,8 +936,8 @@ PR #32 (`feat/kb-006-content-type-adapters`) was merged on 2026-03-26. Implement
 - `context_strategies.py` — all 4 named strategy functions (`first_n`, `rolling_window`, `most_recent`, `front_matter`)
 - `sparse_embedder.py` — async HTTP client to the BGE-M3 FlagEmbedding sidecar; dense-only fallback on sidecar unavailability
 - DB migrations 005 (`content_type`, `extra` columns on `knowledge.artifacts`) and 006 (`knowledge.crawl_jobs` table)
-- Scribe adapter (`scribe/scribe-api/app/services/knowledge_adapter.py`) — `recording_type`-based content_type detection, segment clustering, paragraph-split fallback
-- Portal meeting adapter (`portal/backend/app/services/knowledge_adapter.py`) — Vexa speaker-turn clustering, participant metadata, `POST /api/bots/{meeting_id}/ingest` trigger endpoint
+- Scribe adapter (`klai-scribe/scribe-api/app/services/knowledge_adapter.py`) — `recording_type`-based content_type detection, segment clustering, paragraph-split fallback
+- Portal meeting adapter (`klai-portal/backend/app/services/knowledge_adapter.py`) — Vexa speaker-turn clustering, participant metadata, `POST /api/bots/{meeting_id}/ingest` trigger endpoint
 - Crawler adapter (`adapters/crawler.py`) using `crawl4ai`, with `crawl_tasks.py` Procrastinate integration and `POST /knowledge/v1/crawl` endpoint
 - Qdrant `upsert` updated for temporal payload fields (`content_type`, `valid_from`, `valid_until`, `ingested_at`) and sparse named vector
 - Whisper-server updated to return `segments` array alongside `text` (D13)
@@ -947,7 +947,7 @@ PR #32 (`feat/kb-006-content-type-adapters`) was merged on 2026-03-26. Implement
 
 **Deviation: meeting summary schema (D14/AC-22–24)**
 
-The enriched meeting extraction schema (D14 — `commitments`, `key_quotes`, enriched `decisions`, `deadline` on action items) was partially implemented in `summarizer.py`. The structured extraction prompt was updated but `commitments` and `key_quotes` were added as optional fields rather than always-present arrays per AC-24. Frontend backward-compat handling was deferred: the frontend summary renderer still uses the old schema shape. This is noted as a follow-up in `portal/backend` — a separate small PR is expected before the staging deploy.
+The enriched meeting extraction schema (D14 — `commitments`, `key_quotes`, enriched `decisions`, `deadline` on action items) was partially implemented in `summarizer.py`. The structured extraction prompt was updated but `commitments` and `key_quotes` were added as optional fields rather than always-present arrays per AC-24. Frontend backward-compat handling was deferred: the frontend summary renderer still uses the old schema shape. This is noted as a follow-up in `klai-portal/backend` — a separate small PR is expected before the staging deploy.
 
 **Deviation: three-leg RRF retrieval (D16/AC-28–29)**
 
@@ -963,9 +963,9 @@ Beyond what was specced (adding `segments` to the Whisper response), the whisper
 
 ### Key decisions made during implementation
 
-1. **Scribe adapter lives in `scribe-api`, not `knowledge-ingest`**: The adapter that reads from `scribe.transcriptions` was placed in `scribe/scribe-api/app/services/knowledge_adapter.py` rather than in `knowledge-ingest`. This keeps the data access boundary clean — knowledge-ingest has no DB dependency on the scribe schema. The adapter fetches data internally and calls the knowledge-ingest HTTP endpoint.
+1. **Scribe adapter lives in `scribe-api`, not `knowledge-ingest`**: The adapter that reads from `scribe.transcriptions` was placed in `klai-scribe/scribe-api/app/services/knowledge_adapter.py` rather than in `knowledge-ingest`. This keeps the data access boundary clean — knowledge-ingest has no DB dependency on the scribe schema. The adapter fetches data internally and calls the knowledge-ingest HTTP endpoint.
 
-2. **Portal meeting adapter follows the same pattern**: `portal/backend/app/services/knowledge_adapter.py` — portal owns the Vexa meeting data and calls knowledge-ingest over HTTP. No cross-service DB access.
+2. **Portal meeting adapter follows the same pattern**: `klai-portal/backend/app/services/knowledge_adapter.py` — portal owns the Vexa meeting data and calls knowledge-ingest over HTTP. No cross-service DB access.
 
 3. **`crawl4ai` dependency pinned**: `crawl4ai` was added to `knowledge-ingest` requirements. It brought in several async dependencies that were already in the image; no Dockerfile changes required beyond the `requirements.txt` pin.
 

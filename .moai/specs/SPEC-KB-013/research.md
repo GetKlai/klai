@@ -36,7 +36,7 @@ The `KlaiKnowledgeHook.async_pre_call_hook` runs before every LiteLLM completion
 
 **Key observation:** The hook HARDCODES `scope="both"` and does NOT pass `kb_slugs`. There is no pre-step — the retrieval-api call always fires for eligible users.
 
-### 2.2 The `RetrieveRequest` model (`retrieval-api/retrieval_api/models.py:8`)
+### 2.2 The `RetrieveRequest` model (`klai-retrieval-api/retrieval_api/models.py:8`)
 
 ```python
 class RetrieveRequest(BaseModel):
@@ -52,7 +52,7 @@ class RetrieveRequest(BaseModel):
 
 **Finding:** `kb_slugs` filtering in `retrieval-api` is already implemented. The gap is exclusively in the hook and the user-facing interface to control it.
 
-### 2.3 Portal internal API (`portal/backend/app/api/internal.py:181`)
+### 2.3 Portal internal API (`klai-portal/backend/app/api/internal.py:181`)
 
 The feature gate endpoint `/internal/v1/users/{librechat_user_id}/feature/knowledge` currently returns only `{"enabled": bool}`. This is the one portal call the hook already makes per request (cached 300s). Extending this response to include KB scope preference costs nothing extra — the cache TTL already absorbs the cost.
 
@@ -73,7 +73,7 @@ LibreChat sends a standard OpenAI-compatible API request to LiteLLM. The hook re
 
 LibreChat's `addParams` in `librechat.yaml` custom endpoints can add arbitrary body parameters to every API call. These appear directly in `data`. However, `addParams` is STATIC per endpoint config — not dynamic per conversation.
 
-### 2.5 PortalUser model (`portal/backend/app/models/portal.py:41`)
+### 2.5 PortalUser model (`klai-portal/backend/app/models/portal.py:41`)
 
 Current fields: `zitadel_user_id`, `org_id`, `role`, `preferred_language`, `status`, `display_name`, `email`, `librechat_user_id`.
 
@@ -156,12 +156,12 @@ The hook priority order:
 | File | Change |
 |------|--------|
 | `deploy/litellm/klai_knowledge.py` | Parse system prompt tag, read KB pref from extended feature gate, pre-step skip |
-| `portal/backend/app/models/portal.py` | Add `kb_retrieval_enabled`, `kb_slugs_filter` to `PortalUser` |
-| `portal/backend/alembic/versions/{hash}_add_kb_pref.py` | Migration |
-| `portal/backend/app/api/internal.py` | Extend feature gate endpoint to return KB preference |
-| `portal/backend/app/api/app_account.py` | PATCH /api/app/account/kb-preference endpoint |
-| `portal/frontend/src/routes/app/account.tsx` | KB preference section in account settings |
-| `portal/frontend/messages/en.json` + `nl.json` | i18n keys |
+| `klai-portal/backend/app/models/portal.py` | Add `kb_retrieval_enabled`, `kb_slugs_filter` to `PortalUser` |
+| `klai-portal/backend/alembic/versions/{hash}_add_kb_pref.py` | Migration |
+| `klai-portal/backend/app/api/internal.py` | Extend feature gate endpoint to return KB preference |
+| `klai-portal/backend/app/api/app_account.py` | PATCH /api/app/account/kb-preference endpoint |
+| `klai-portal/frontend/src/routes/app/account.tsx` | KB preference section in account settings |
+| `klai-portal/frontend/messages/en.json` + `nl.json` | i18n keys |
 | `deploy/litellm/tests/test_klai_knowledge_hook.py` | Tests for new behavior |
 | `deploy/librechat/librechat.yaml` | Optional: add model spec variants |
 

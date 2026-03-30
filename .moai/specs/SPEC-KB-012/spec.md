@@ -17,12 +17,12 @@
 
 ### 1.1 System Context
 
-Klai is a privacy-first, EU-only AI platform. The portal (`portal/`) provides a knowledge base management interface where organizations create, populate, and query knowledge bases. Documents are ingested via connectors (GitHub, web crawlers, etc.), embedded into Qdrant, and served through a retrieval API.
+Klai is a privacy-first, EU-only AI platform. The portal (`klai-portal/`) provides a knowledge base management interface where organizations create, populate, and query knowledge bases. Documents are ingested via connectors (GitHub, web crawlers, etc.), embedded into Qdrant, and served through a retrieval API.
 
 ### 1.2 Current Architecture
 
-- **Frontend:** React 19 + Vite + TanStack Router. KB detail page at `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` with tab system (`overview | connectors | members | items`).
-- **Backend:** FastAPI + SQLAlchemy (async) + Alembic. API routers in `portal/backend/app/api/`, models in `portal/backend/app/models/`.
+- **Frontend:** React 19 + Vite + TanStack Router. KB detail page at `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` with tab system (`overview | connectors | members | items`).
+- **Backend:** FastAPI + SQLAlchemy (async) + Alembic. API routers in `klai-portal/backend/app/api/`, models in `klai-portal/backend/app/models/`.
 - **Database:** PostgreSQL with org-scoped isolation. KB model `portal_knowledge_bases` with access control via `portal_user_kb_access` and `portal_group_kb_access`.
 - **Auth:** Zitadel OIDC. Token via `auth.user?.access_token`, org isolation via subdomain.
 - **AI Pipeline:** BERTopic runs externally (knowledge-ingest service) for document classification and taxonomy proposal generation.

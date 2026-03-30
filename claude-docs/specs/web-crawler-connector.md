@@ -240,8 +240,8 @@ alleen toevoegen dat Firecrawl er apart naast staat voor LibreChat.
 | 3 | `WebCrawlerConfig` Pydantic model | `klai-connector/app/models/` |
 | 4 | Settings uitbreiden | `klai-connector/app/settings.py` |
 | 5 | Adapter factory in `main.py` | `klai-connector/app/main.py` |
-| 6 | Portal frontend: "Website" connector type | `portal/frontend/` |
-| 7 | Portal backend: `web_crawler` type accepteren | `portal/backend/app/api/connectors.py` |
+| 6 | Portal frontend: "Website" connector type | `klai-portal/frontend/` |
+| 7 | Portal backend: `web_crawler` type accepteren | `klai-portal/backend/app/api/connectors.py` |
 | 8 | Architectuurdoc bijwerken | `claude-docs/klai-knowledge-architecture.md` |
 | 9 | Integratietest: crawl → ingest → retrieve | `klai-connector/tests/` |
 

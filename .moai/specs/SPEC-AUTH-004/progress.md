@@ -7,9 +7,9 @@
 
 ### Backend
 - `portal_group_products` table + Alembic migration
-- `PortalGroupProduct` model (`portal/backend/app/models/groups.py`)
+- `PortalGroupProduct` model (`klai-portal/backend/app/models/groups.py`)
 - Group product CRUD endpoints: `GET/POST/DELETE /api/admin/groups/{group_id}/products`
-- `get_effective_products()` service (`portal/backend/app/services/entitlements.py`)
+- `get_effective_products()` service (`klai-portal/backend/app/services/entitlements.py`)
 - `GET /api/admin/users/{user_id}/effective-products` with source attribution
 - `require_product()` and `/internal/user-products` updated to use effective products (dual-mode)
 - `change_plan` extended to clean up `PortalGroupProduct` rows exceeding plan ceiling

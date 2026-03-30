@@ -12,7 +12,7 @@
 
 ## Summary
 
-This SPEC covers the remaining NEN 7510 security fixes for the Klai portal, split across two releases. R2 addresses backend code changes in `portal/backend/`: audit logging for authentication events, MFA policy enforcement at login, and middleware ordering. R3 addresses database migrations (append-only audit log, RLS on audit table) and infrastructure (automated PostgreSQL backups with offsite storage). The P0 fix (FalkorDB port binding) is already completed and out of scope.
+This SPEC covers the remaining NEN 7510 security fixes for the Klai portal, split across two releases. R2 addresses backend code changes in `klai-portal/backend/`: audit logging for authentication events, MFA policy enforcement at login, and middleware ordering. R3 addresses database migrations (append-only audit log, RLS on audit table) and infrastructure (automated PostgreSQL backups with offsite storage). The P0 fix (FalkorDB port binding) is already completed and out of scope.
 
 ## Background / Motivation
 
@@ -34,7 +34,7 @@ A security review identified six fixes. The P0 item (FalkorDB port exposure) is 
 
 **Problem Statement**
 
-Authentication events are currently sent to analytics only via `emit_event("login", ...)` in `portal/backend/app/api/auth.py`. The `audit.log_event()` function exists in `portal/backend/app/services/audit.py` but is not called from any authentication endpoint. NEN 7510 requires an immutable audit trail of all authentication events.
+Authentication events are currently sent to analytics only via `emit_event("login", ...)` in `klai-portal/backend/app/api/auth.py`. The `audit.log_event()` function exists in `klai-portal/backend/app/services/audit.py` but is not called from any authentication endpoint. NEN 7510 requires an immutable audit trail of all authentication events.
 
 **Current State**
 
@@ -108,7 +108,7 @@ The `portal_orgs` table has an `mfa_policy` column with values `"optional"`, `"r
 
 **Problem Statement**
 
-`LoggingContextMiddleware` in `portal/backend/app/middleware/logging_context.py` reads `request.state.org_id` and `request.state.user_id` BEFORE calling `call_next()`. FastAPI route dependencies (which set `request.state` via `_get_caller_org()`) run DURING `call_next()`. This means `org_id` and `user_id` are always `None` when bound to structlog context, making all log entries missing tenant/user context.
+`LoggingContextMiddleware` in `klai-portal/backend/app/middleware/logging_context.py` reads `request.state.org_id` and `request.state.user_id` BEFORE calling `call_next()`. FastAPI route dependencies (which set `request.state` via `_get_caller_org()`) run DURING `call_next()`. This means `org_id` and `user_id` are always `None` when bound to structlog context, making all log entries missing tenant/user context.
 
 **Current State**
 
@@ -238,11 +238,11 @@ CREATE POLICY tenant_isolation ON portal_audit_log
 
 | Dependency | Location | Used By |
 |---|---|---|
-| `audit.log_event()` | `portal/backend/app/services/audit.py` | Fix 1 (call from auth.py) |
-| `PortalAuditLog` model | `portal/backend/app/models/audit.py` | Fix 4, Fix 5 (migration target) |
-| `zitadel.has_totp()` | `portal/backend/app/services/zitadel.py` | Fix 2 (existing, reuse) |
-| `zitadel.list_passkeys()` | `portal/backend/app/services/zitadel.py` | Fix 2 (may need to add) |
-| `portal_users` / `portal_orgs` models | `portal/backend/app/models/portal.py` | Fix 2 (org lookup) |
+| `audit.log_event()` | `klai-portal/backend/app/services/audit.py` | Fix 1 (call from auth.py) |
+| `PortalAuditLog` model | `klai-portal/backend/app/models/audit.py` | Fix 4, Fix 5 (migration target) |
+| `zitadel.has_totp()` | `klai-portal/backend/app/services/zitadel.py` | Fix 2 (existing, reuse) |
+| `zitadel.list_passkeys()` | `klai-portal/backend/app/services/zitadel.py` | Fix 2 (may need to add) |
+| `portal_users` / `portal_orgs` models | `klai-portal/backend/app/models/portal.py` | Fix 2 (org lookup) |
 | RLS migration pattern | `alembic/versions/c5d6e7f8a9b0_add_rls_policies.py` | Fix 5 (follow same pattern) |
 | Audit log migration | `alembic/versions/v2w3x4y5z6a7_add_audit_log.py` | Fix 4 (depends_on) |
 | `deploy/scripts/backup.sh` | `deploy/scripts/backup.sh` | Fix 6 (schedule + extend) |

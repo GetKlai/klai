@@ -1,12 +1,12 @@
 ---
 paths:
-  - "portal/backend/**/*.py"
+  - "klai-portal/backend/**/*.py"
   - "deploy/klai-connector/**/*.py"
   - "deploy/klai-knowledge-mcp/**/*.py"
   - "deploy/klai-mailer/**/*.py"
-  - "retrieval-api/**/*.py"
-  - "scribe/**/*.py"
-  - "focus/**/*.py"
+  - "klai-retrieval-api/**/*.py"
+  - "klai-scribe/**/*.py"
+  - "klai-focus/**/*.py"
 ---
 
 # Python Logging Standards
@@ -77,7 +77,7 @@ IDs, counts, and status values as separate kwargs make logs queryable in Victori
 ## Adding logging to a new service
 
 1. Add `structlog>=25.0` to `pyproject.toml` (or `requirements.txt` for simple services)
-2. Copy `logging_setup.py` from `portal/backend/app/logging_setup.py`
+2. Copy `logging_setup.py` from `klai-portal/backend/app/logging_setup.py`
 3. Change the `service_name` default to the Docker service name
 4. Call `setup_logging("my-service-name")` at module level in `main.py` (before any imports that log)
 5. Use `structlog.get_logger()` everywhere

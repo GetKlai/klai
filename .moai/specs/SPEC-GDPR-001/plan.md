@@ -22,11 +22,11 @@ De SAR-functionaliteit is geimplementeerd als **brownfield enhancement**: toegev
 
 | Bestand                                          | Wijziging                                                         |
 |--------------------------------------------------|-------------------------------------------------------------------|
-| `portal/backend/app/api/me.py`                   | SAR response-modellen + `POST /api/me/sar-export` endpoint       |
-| `portal/backend/tests/test_sar_export.py`        | Unit tests: happy path, MFA-status, Moneybird contact_id         |
-| `portal/frontend/src/routes/app/account.tsx`     | SAR download Card-sectie met `useMutation` + Blob-download       |
-| `portal/frontend/messages/nl.json`               | i18n-keys: `account_sar_title`, `_description`, `_button`, `_downloading`, `_error` |
-| `portal/frontend/messages/en.json`               | Engelse vertalingen van dezelfde i18n-keys                        |
+| `klai-portal/backend/app/api/me.py`                   | SAR response-modellen + `POST /api/me/sar-export` endpoint       |
+| `klai-portal/backend/tests/test_sar_export.py`        | Unit tests: happy path, MFA-status, Moneybird contact_id         |
+| `klai-portal/frontend/src/routes/app/account.tsx`     | SAR download Card-sectie met `useMutation` + Blob-download       |
+| `klai-portal/frontend/messages/nl.json`               | i18n-keys: `account_sar_title`, `_description`, `_button`, `_downloading`, `_error` |
+| `klai-portal/frontend/messages/en.json`               | Engelse vertalingen van dezelfde i18n-keys                        |
 
 ---
 

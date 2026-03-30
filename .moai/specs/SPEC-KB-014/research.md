@@ -55,7 +55,7 @@ The `KlaiKnowledgeHook.async_pre_call_hook()` method follows this flow:
 
 ## 2. Internal API Pattern
 
-**File:** `portal/backend/app/api/internal.py`
+**File:** `klai-portal/backend/app/api/internal.py`
 
 The existing internal API uses a shared secret pattern:
 
@@ -70,7 +70,7 @@ The existing internal API uses a shared secret pattern:
 
 ## 3. Portal Frontend KB Stats
 
-**File:** `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` (1819 lines)
+**File:** `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` (1819 lines)
 
 The `KBStats` interface (line 66):
 ```typescript
@@ -91,7 +91,7 @@ Stats are fetched via `useQuery<KBStats>` at line 1600 from an inline `queryFn`.
 
 ## 4. App Navigation Structure
 
-**File:** `portal/frontend/src/routes/app/route.tsx`
+**File:** `klai-portal/frontend/src/routes/app/route.tsx`
 
 Navigation items defined in `allNavItems` array (line 37-43):
 ```typescript
@@ -171,14 +171,14 @@ Based on the retrieval-api's reranker (Cohere rerank-multilingual-v3.0):
 |---|---|---|
 | LiteLLM hook | `deploy/litellm/klai_knowledge.py` | Yes (242 lines) |
 | Hook tests | `deploy/litellm/tests/test_klai_knowledge_hook.py` | Needs verification |
-| KB models | `portal/backend/app/models/knowledge_bases.py` | Yes (74 lines) |
-| Internal API | `portal/backend/app/api/internal.py` | Yes (259 lines) |
-| KB admin API | `portal/backend/app/api/knowledge_bases.py` | Yes (307 lines) |
-| KB detail page | `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Yes (1819 lines) |
-| App layout/nav | `portal/frontend/src/routes/app/route.tsx` | Yes (92 lines) |
-| EN messages | `portal/frontend/messages/en.json` | Yes |
-| NL messages | `portal/frontend/messages/nl.json` | Yes |
-| Sidebar component | `portal/frontend/src/components/layout/Sidebar.tsx` | Yes |
+| KB models | `klai-portal/backend/app/models/knowledge_bases.py` | Yes (74 lines) |
+| Internal API | `klai-portal/backend/app/api/internal.py` | Yes (259 lines) |
+| KB admin API | `klai-portal/backend/app/api/knowledge_bases.py` | Yes (307 lines) |
+| KB detail page | `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Yes (1819 lines) |
+| App layout/nav | `klai-portal/frontend/src/routes/app/route.tsx` | Yes (92 lines) |
+| EN messages | `klai-portal/frontend/messages/en.json` | Yes |
+| NL messages | `klai-portal/frontend/messages/nl.json` | Yes |
+| Sidebar component | `klai-portal/frontend/src/components/layout/Sidebar.tsx` | Yes |
 
 ---
 

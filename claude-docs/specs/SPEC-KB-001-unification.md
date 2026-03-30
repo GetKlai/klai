@@ -3,7 +3,7 @@
 > Status: COMPLETED — 2026-03-26
 > Author: Mark Vletter (design) + Claude (SPEC)
 > Architecture reference: `claude-docs/klai-knowledge-architecture.md`
-> Related: `portal/backend/app/models/knowledge_bases.py`, `portal/backend/app/models/docs.py`
+> Related: `klai-portal/backend/app/models/knowledge_bases.py`, `klai-portal/backend/app/models/docs.py`
 > Implementation commits: `e56e25c` (Phase 1–3 core), `16f4b18` (Phase 3 admin cleanup + Sources tab)
 
 ---
@@ -253,7 +253,7 @@ This table lives in the klai-docs service (PostgreSQL `docs` schema) and is not 
 
 ## Visual design reference
 
-The existing `/app/knowledge` page (see `portal/frontend/src/routes/app/knowledge/index.tsx`) has the right visual pattern:
+The existing `/app/knowledge` page (see `klai-portal/frontend/src/routes/app/knowledge/index.tsx`) has the right visual pattern:
 - Full-width card per scope
 - Icon (rounded bg) + heading + description + stat line
 - Clean, no table, no list — one card per thing
@@ -327,9 +327,9 @@ Implementation spanned two commits on 2026-03-25:
 
 **`e56e25c` — Core unification (Phases 1, 2, 3 foundations)**
 - Alembic migration `a3b4c5d6e7f8_unify_kb_and_docs.py`: added `visibility`, `docs_enabled`, `gitea_repo_slug`, `owner_type`, `owner_user_id` to `portal_knowledge_bases`; added `role` to `portal_group_kb_access`; migrated data and dropped `portal_docs_libraries` and `portal_group_docs_access` — matching AC-1 exactly.
-- New `portal/backend/app/api/app_knowledge_bases.py`: app-scoped `GET/POST /api/app/knowledge-bases` endpoints (any org member, not admin-only) — matching Phase 2 spec.
-- Removed `portal/backend/app/api/docs_libraries.py` and its admin routes.
-- Updated `portal/backend/app/models/knowledge_bases.py` to reflect new columns.
+- New `klai-portal/backend/app/api/app_knowledge_bases.py`: app-scoped `GET/POST /api/app/knowledge-bases` endpoints (any org member, not admin-only) — matching Phase 2 spec.
+- Removed `klai-portal/backend/app/api/docs_libraries.py` and its admin routes.
+- Updated `klai-portal/backend/app/models/knowledge_bases.py` to reflect new columns.
 - `/app/knowledge/index.tsx`: extended with real named KB cards (icon + name + stat "N items · visibility"), empty state CTA, and kept Personal card unchanged — matching AC-3 and visual design spec exactly.
 - `/app/knowledge/new.tsx`: create KB form (name, slug, visibility) — matching Phase 3.
 - `/app/knowledge/$kbSlug.tsx`: detail page scaffolded with Docs / Sources / Stats tab structure — matching AC-3b.

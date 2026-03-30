@@ -30,7 +30,7 @@ Python service (structlog JSON)
 Two Alloy instances collect logs:
 
 - **core-01**: `klai-core-alloy-1` — all core-01 containers, tags `host=core-01`
-- **public-01**: separate Alloy — scribe/whisper containers, tags `host=public-01`
+- **public-01**: separate Alloy — klai-scribe/whisper containers, tags `host=public-01`
 
 ## Log fields
 
@@ -84,7 +84,7 @@ structlog.contextvars.unbind_contextvars("org_id", "connector_id")
 ## Adding logging to a new service {#logging-new-service}
 
 1. Add `structlog>=25.0` to `pyproject.toml`
-2. Copy `logging_setup.py` from an existing service (e.g. `portal/backend/app/logging_setup.py`)
+2. Copy `logging_setup.py` from an existing service (e.g. `klai-portal/backend/app/logging_setup.py`)
 3. Change the `service_name` default to match the Docker service name
 4. Call `setup_logging("my-service-name")` at module level in `main.py`, before any logger usage
 5. Use `structlog.get_logger()` everywhere

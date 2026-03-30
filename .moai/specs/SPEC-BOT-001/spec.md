@@ -185,7 +185,7 @@ As a portal user, I want to invite `meet@getklai.com` to any Google Meet, Zoom, 
 
 ### New Components
 
-#### `portal/backend/app/services/imap_listener.py`
+#### `klai-portal/backend/app/services/imap_listener.py`
 
 Responsibilities:
 - Connect to IMAP server using `imaplib.IMAP4_SSL`
@@ -200,7 +200,7 @@ Key design:
 - Maintains persistent IMAP connection, reconnects on failure
 - Processes emails sequentially to avoid race conditions on duplicate checks
 
-#### `portal/backend/app/services/ical_parser.py`
+#### `klai-portal/backend/app/services/ical_parser.py`
 
 Responsibilities:
 - Parse iCal bytes using `icalendar.Calendar.from_ical()`
@@ -225,7 +225,7 @@ class ParsedInvite:
     is_cancellation: bool
 ```
 
-#### `portal/backend/app/services/invite_scheduler.py`
+#### `klai-portal/backend/app/services/invite_scheduler.py`
 
 Responsibilities:
 - Schedule bot joins using `asyncio` tasks with `asyncio.sleep()` until join time
@@ -234,7 +234,7 @@ Responsibilities:
 - On cancellation: cancel asyncio task, update VexaMeeting status
 - Handle edge case: if portal restarts, any scheduled-but-not-yet-triggered joins are lost (acceptable for MVP; future: persist scheduled joins to DB)
 
-#### `portal/backend/app/services/tenant_matcher.py`
+#### `klai-portal/backend/app/services/tenant_matcher.py`
 
 Responsibilities:
 - Query Zitadel Management API to find user by email
@@ -244,7 +244,7 @@ Responsibilities:
 
 ### Configuration
 
-Add to `portal/backend/app/core/config.py` (Settings model):
+Add to `klai-portal/backend/app/core/config.py` (Settings model):
 
 ```python
 imap_host: str | None = None
@@ -272,7 +272,7 @@ IMAP_PASSWORD: ${PORTAL_API_IMAP_PASSWORD}
 
 ### Startup Integration
 
-In `portal/backend/app/main.py` lifespan:
+In `klai-portal/backend/app/main.py` lifespan:
 
 ```python
 if settings.imap_host and settings.imap_username:
@@ -282,7 +282,7 @@ if settings.imap_host and settings.imap_username:
 
 ### Internal Test Endpoint (Optional)
 
-`portal/backend/app/api/internal_invites.py`:
+`klai-portal/backend/app/api/internal_invites.py`:
 
 - `POST /api/internal/invites/test` -- accepts raw iCal text, runs the full pipeline (parse, match, schedule). Protected by internal API key. For development and integration testing only.
 

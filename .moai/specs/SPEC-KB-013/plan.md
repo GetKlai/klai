@@ -41,12 +41,12 @@
 **Scope:** DB migration, extended internal API response, new account preference endpoints.
 
 **Files to create:**
-- `portal/backend/alembic/versions/{hash}_add_user_kb_preference.py`
+- `klai-portal/backend/alembic/versions/{hash}_add_user_kb_preference.py`
 
 **Files to modify:**
-- `portal/backend/app/models/portal.py` — add 4 columns to `PortalUser`
-- `portal/backend/app/api/internal.py` — extend `KnowledgeFeatureResponse`, read new columns
-- `portal/backend/app/api/app_account.py` — add GET + PATCH `/api/app/account/kb-preference`
+- `klai-portal/backend/app/models/portal.py` — add 4 columns to `PortalUser`
+- `klai-portal/backend/app/api/internal.py` — extend `KnowledgeFeatureResponse`, read new columns
+- `klai-portal/backend/app/api/app_account.py` — add GET + PATCH `/api/app/account/kb-preference`
 
 **Dependencies:** None (can be implemented independently).
 
@@ -67,13 +67,13 @@
 **Scope:** `KBScopeBar` control bar rendered above the LibreChat iframe in the chat route.
 
 **Files to create:**
-- `portal/frontend/src/routes/app/_components/KBScopeBar.tsx`
+- `klai-portal/frontend/src/routes/app/_components/KBScopeBar.tsx`
 
 **Files to modify:**
-- `portal/frontend/src/routes/app/chat.tsx` — add `KBScopeBar` above the iframe
-- `portal/frontend/src/lib/logger.ts` — add `chatKbLogger`
-- `portal/frontend/messages/en.json` — add `chat_kb_*` keys
-- `portal/frontend/messages/nl.json` — add `chat_kb_*` keys (Dutch)
+- `klai-portal/frontend/src/routes/app/chat.tsx` — add `KBScopeBar` above the iframe
+- `klai-portal/frontend/src/lib/logger.ts` — add `chatKbLogger`
+- `klai-portal/frontend/messages/en.json` — add `chat_kb_*` keys
+- `klai-portal/frontend/messages/nl.json` — add `chat_kb_*` keys (Dutch)
 
 **Dependencies:** M2 (API must exist).
 
@@ -288,8 +288,8 @@ When the user saves a new preference via the control bar:
 
 | File | Module |
 |------|--------|
-| `portal/backend/alembic/versions/{hash}_add_user_kb_preference.py` | M2 |
-| `portal/frontend/src/routes/app/_components/KBScopeBar.tsx` | M3 |
+| `klai-portal/backend/alembic/versions/{hash}_add_user_kb_preference.py` | M2 |
+| `klai-portal/frontend/src/routes/app/_components/KBScopeBar.tsx` | M3 |
 
 ### Modified Files (8)
 
@@ -297,12 +297,12 @@ When the user saves a new preference via the control bar:
 |------|--------|--------|
 | `deploy/litellm/klai_knowledge.py` | M1 | Version-based cache, pre-step skip, `kb_slugs` passthrough |
 | `deploy/litellm/tests/test_klai_knowledge_hook.py` | M1 | New tests for all hook behaviors |
-| `portal/backend/app/models/portal.py` | M2 | Add 4 columns to `PortalUser` |
-| `portal/backend/app/api/internal.py` | M2 | Extend `KnowledgeFeatureResponse` with KB preference fields |
-| `portal/backend/app/api/app_account.py` | M2 | Add GET + PATCH `/api/app/account/kb-preference` |
-| `portal/frontend/src/routes/app/chat.tsx` | M3 | Add `<KBScopeBar />` above iframe, flex-col layout |
-| `portal/frontend/src/lib/logger.ts` | M3 | Add `chatKbLogger` |
-| `portal/frontend/messages/en.json` + `nl.json` | M3 | Add `chat_kb_*` keys |
+| `klai-portal/backend/app/models/portal.py` | M2 | Add 4 columns to `PortalUser` |
+| `klai-portal/backend/app/api/internal.py` | M2 | Extend `KnowledgeFeatureResponse` with KB preference fields |
+| `klai-portal/backend/app/api/app_account.py` | M2 | Add GET + PATCH `/api/app/account/kb-preference` |
+| `klai-portal/frontend/src/routes/app/chat.tsx` | M3 | Add `<KBScopeBar />` above iframe, flex-col layout |
+| `klai-portal/frontend/src/lib/logger.ts` | M3 | Add `chatKbLogger` |
+| `klai-portal/frontend/messages/en.json` + `nl.json` | M3 | Add `chat_kb_*` keys |
 
 ---
 

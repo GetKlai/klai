@@ -347,11 +347,11 @@ This table is append-only. No rows are ever deleted from it.
 
 | File | Change |
 |------|--------|
-| `portal/backend/app/models/knowledge_bases.py` | Add `PortalKBTombstone` model |
-| `portal/backend/app/api/app_knowledge_bases.py` | Rewrite `delete_app_knowledge_base` to execute full cascade |
-| `portal/backend/app/api/app_knowledge_bases.py` | Add tombstone check to `POST /knowledge-bases` |
-| `portal/backend/app/services/docs_client.py` | Add `deprovision_kb(org_slug, kb_slug)` function |
-| `portal/backend/alembic/versions/` | Migration: create `portal_kb_tombstones` table |
+| `klai-portal/backend/app/models/knowledge_bases.py` | Add `PortalKBTombstone` model |
+| `klai-portal/backend/app/api/app_knowledge_bases.py` | Rewrite `delete_app_knowledge_base` to execute full cascade |
+| `klai-portal/backend/app/api/app_knowledge_bases.py` | Add tombstone check to `POST /knowledge-bases` |
+| `klai-portal/backend/app/services/docs_client.py` | Add `deprovision_kb(org_slug, kb_slug)` function |
+| `klai-portal/backend/alembic/versions/` | Migration: create `portal_kb_tombstones` table |
 
 ### docs-app
 
@@ -363,8 +363,8 @@ This table is append-only. No rows are ever deleted from it.
 
 | File | Change |
 |------|--------|
-| `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Add delete button (owner-only), open confirmation modal |
-| `portal/frontend/src/components/ui/` | New `DeleteKbModal` component (text-validation modal) |
+| `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Add delete button (owner-only), open confirmation modal |
+| `klai-portal/frontend/src/components/ui/` | New `DeleteKbModal` component (text-validation modal) |
 
 ---
 

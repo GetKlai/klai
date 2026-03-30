@@ -23,12 +23,12 @@ No new infrastructure components are needed. Alloy already shares `klai-net` wit
 ### Milestone 1: Backend Metrics Pipeline (Primary Goal)
 
 **T1: Add `prometheus-client` dependency**
-- File: `portal/backend/requirements.txt`
+- File: `klai-portal/backend/requirements.txt`
 - Add: `prometheus-client>=0.21,<1.0`
 - Dependency: None
 
 **T2: Create vitals router with POST /api/vitals and GET /metrics**
-- File: `portal/backend/app/api/vitals.py` (new)
+- File: `klai-portal/backend/app/api/vitals.py` (new)
 - Create Pydantic model `VitalMetric` with validation (name, value, rating, page)
 - Create request model as `list[VitalMetric]` with max 10 items
 - Instantiate 5 Histogram objects at module level with metric-specific buckets
@@ -38,7 +38,7 @@ No new infrastructure components are needed. Alloy already shares `klai-net` wit
 - Return 204 for POST, text response for GET
 
 **T3: Register vitals router in main.py**
-- File: `portal/backend/app/main.py`
+- File: `klai-portal/backend/app/main.py`
 - Add import: `from app.api.vitals import router as vitals_router`
 - Add: `app.include_router(vitals_router)`
 - Place after existing router registrations
@@ -46,16 +46,16 @@ No new infrastructure components are needed. Alloy already shares `klai-net` wit
 ### Milestone 2: Frontend Vitals Collection (Primary Goal)
 
 **T4: Add `web-vitals` dependency**
-- File: `portal/frontend/package.json`
+- File: `klai-portal/frontend/package.json`
 - Run: `npm install web-vitals`
 - Dependency: None
 
 **T5: Add `perfLogger` to logger.ts**
-- File: `portal/frontend/src/lib/logger.ts`
+- File: `klai-portal/frontend/src/lib/logger.ts`
 - Add: `export const perfLogger = logger.withTag('perf')`
 
 **T6: Create vitals.ts collection module**
-- File: `portal/frontend/src/lib/vitals.ts` (new)
+- File: `klai-portal/frontend/src/lib/vitals.ts` (new)
 - Import `onLCP`, `onFCP`, `onINP`, `onCLS`, `onTTFB` from `web-vitals`
 - Import `perfLogger` from `@/lib/logger`
 - Maintain a module-level `metrics: VitalPayload[]` buffer
@@ -67,7 +67,7 @@ No new infrastructure components are needed. Alloy already shares `klai-net` wit
 - Dependency: T4, T5
 
 **T7: Initialize vitals from main.tsx and bump tracesSampleRate**
-- File: `portal/frontend/src/main.tsx`
+- File: `klai-portal/frontend/src/main.tsx`
 - Import `initVitals` from `@/lib/vitals`
 - Call `initVitals()` after `createRoot(...).render(...)` (outside React tree, module-level side effect)
 - Change `tracesSampleRate: 0.05` to `tracesSampleRate: 0.3` (line 70)

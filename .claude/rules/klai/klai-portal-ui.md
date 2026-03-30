@@ -1,10 +1,10 @@
 ---
-paths: ["portal/frontend/src/**/*.tsx", "portal/frontend/src/**/*.ts"]
+paths: ["klai-portal/frontend/src/**/*.tsx", "klai-portal/frontend/src/**/*.ts"]
 ---
 
 # Portal admin UI
 
-> Applies to `portal/frontend/src/routes/admin/` and `portal/frontend/src/routes/app/`.
+> Applies to `klai-portal/frontend/src/routes/admin/` and `klai-portal/frontend/src/routes/app/`.
 > Common design system (colors, typography, buttons): auto-loaded via `klai-ui-styleguide.md`.
 
 ## Form fields

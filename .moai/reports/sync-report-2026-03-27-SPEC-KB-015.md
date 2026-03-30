@@ -33,7 +33,7 @@
 
 ### No CHANGELOG Found
 
-No project-level `CHANGELOG.md` exists at the monorepo root or in `portal/`. No changelog update performed.
+No project-level `CHANGELOG.md` exists at the monorepo root or in `klai-portal/`. No changelog update performed.
 
 ---
 

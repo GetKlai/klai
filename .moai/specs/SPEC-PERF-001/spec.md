@@ -17,7 +17,7 @@ priority: high
 - **Monitoring stack:** Alloy (scraper) on `klai-net` + `monitoring` networks, VictoriaMetrics on `monitoring` network, Grafana for dashboards
 - **Existing scrape pattern:** Alloy scrapes `retrieval-api:8040/metrics` every 30s and forwards to VictoriaMetrics via `prometheus.remote_write`
 - **Error tracking:** GlitchTip (Sentry-compatible) with `@sentry/react`, `tracesSampleRate: 0.05`
-- **Logging:** consola tagged loggers in `portal/frontend/src/lib/logger.ts` with Sentry reporter
+- **Logging:** consola tagged loggers in `klai-portal/frontend/src/lib/logger.ts` with Sentry reporter
 - **Rate limiting:** Caddy applies 60 req/min/IP on `/api/*` routes
 - **Existing dashboards:** `klai-health.json`, `klai-product.json`, `node-metrics.json`, `container-metrics.json`, `logs.json` — all provisioned via JSON at `deploy/grafana/provisioning/dashboards/`
 
@@ -41,8 +41,8 @@ priority: high
 
 **Details:**
 
-- New file: `portal/frontend/src/lib/vitals.ts`
-- New tagged logger: `perfLogger` in `portal/frontend/src/lib/logger.ts`
+- New file: `klai-portal/frontend/src/lib/vitals.ts`
+- New tagged logger: `perfLogger` in `klai-portal/frontend/src/lib/logger.ts`
 - The beacon payload is a JSON array of metric objects:
   ```json
   [
@@ -67,8 +67,8 @@ priority: high
 
 **Details:**
 
-- New file: `portal/backend/app/api/vitals.py`
-- New router registered in `portal/backend/app/main.py` via `app.include_router(vitals_router)`
+- New file: `klai-portal/backend/app/api/vitals.py`
+- New router registered in `klai-portal/backend/app/main.py` via `app.include_router(vitals_router)`
 - **Unauthenticated** — no Bearer token required (browser sends via sendBeacon which cannot set headers)
 - Request body schema (Pydantic):
   ```python
@@ -104,7 +104,7 @@ priority: high
 
 **Details:**
 
-- New endpoint added to `portal/backend/app/api/vitals.py` (or a dedicated `metrics.py`)
+- New endpoint added to `klai-portal/backend/app/api/vitals.py` (or a dedicated `metrics.py`)
 - Uses `prometheus_client.generate_latest()` to produce the response body
 - Content-Type: `text/plain; version=0.0.4; charset=utf-8`
 - **Unauthenticated** — Alloy scrapes from within `klai-net`, no external access
@@ -200,7 +200,7 @@ Shows reports per minute — operational health indicator.
 
 **Details:**
 
-- File: `portal/frontend/src/main.tsx`, line 70
+- File: `klai-portal/frontend/src/main.tsx`, line 70
 - Change `tracesSampleRate: 0.05` to `tracesSampleRate: 0.3`
 - At current user volume, 30% sampling provides meaningful performance data without exceeding GlitchTip quota
 
@@ -210,27 +210,27 @@ Shows reports per minute — operational health indicator.
 
 | Package | Location | Version |
 |---|---|---|
-| `web-vitals` | `portal/frontend/package.json` | `^4.0.0` (latest stable) |
-| `prometheus-client` | `portal/backend/requirements.txt` | `>=0.21,<1.0` |
+| `web-vitals` | `klai-portal/frontend/package.json` | `^4.0.0` (latest stable) |
+| `prometheus-client` | `klai-portal/backend/requirements.txt` | `>=0.21,<1.0` |
 
 ### Files Created
 
 | File | Purpose |
 |---|---|
-| `portal/frontend/src/lib/vitals.ts` | Web Vitals collection and beacon sending |
-| `portal/backend/app/api/vitals.py` | POST /api/vitals + GET /metrics endpoints |
+| `klai-portal/frontend/src/lib/vitals.ts` | Web Vitals collection and beacon sending |
+| `klai-portal/backend/app/api/vitals.py` | POST /api/vitals + GET /metrics endpoints |
 | `deploy/grafana/provisioning/dashboards/web-performance.json` | Grafana dashboard JSON |
 
 ### Files Modified
 
 | File | Change |
 |---|---|
-| `portal/frontend/src/main.tsx` | Import and initialize vitals module; bump tracesSampleRate to 0.3 |
-| `portal/frontend/src/lib/logger.ts` | Add `perfLogger` tagged logger |
-| `portal/backend/app/main.py` | Register vitals router |
+| `klai-portal/frontend/src/main.tsx` | Import and initialize vitals module; bump tracesSampleRate to 0.3 |
+| `klai-portal/frontend/src/lib/logger.ts` | Add `perfLogger` tagged logger |
+| `klai-portal/backend/app/main.py` | Register vitals router |
 | `deploy/alloy/config.alloy` | Add portal-api scrape block |
-| `portal/frontend/package.json` | Add `web-vitals` dependency |
-| `portal/backend/requirements.txt` | Add `prometheus-client` dependency |
+| `klai-portal/frontend/package.json` | Add `web-vitals` dependency |
+| `klai-portal/backend/requirements.txt` | Add `prometheus-client` dependency |
 
 ### Architecture Decisions
 

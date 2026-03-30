@@ -1,89 +1,221 @@
 ---
 id: SPEC-GPU-001
 document: plan
-version: "1.0.0"
+version: "2.0.0"
 status: draft
 created: "2026-03-27"
-updated: "2026-03-27"
+updated: "2026-03-29"
 ---
 
-# SPEC-GPU-001: Implementation Plan -- GPU Inference Service Migration
+# SPEC-GPU-001: Implementation Plan — GPU Inference Service Migration to gpu-01
 
 ## Overview
 
-Four-phase migration of GPU inference services from core-01 to a Vast.ai GPU box, secured by SSH tunnels with zero code changes to consumer services.
+Five-phase migration of GPU inference services from core-01 to a dedicated Hetzner server (gpu-01, GEX44, `5.9.10.215`). Starts with OS installation including LUKS full-disk encryption, then Docker setup, SSH tunnel configuration, consumer migration, and monitoring.
 
 ---
 
-## Phase 1: GPU Box Setup (Vast.ai)
+## Phase 0: OS Installation with LUKS Encryption (gpu-01)
 
-**Priority: High -- Primary Goal**
+**Priority: MUST COMPLETE FIRST — gates everything else**
 
-### Milestone 1.1: Vast.ai Instance Provisioning
+### Milestone 0.1: Boot into Rescue System
 
-- Create Vast.ai instance: RTX 3090, 24GB VRAM, Belgium datacenter
-- Verify SSH access is enabled and accessible from core-01
-- Confirm CUDA driver availability and GPU health
+```bash
+# In Hetzner Robot: Servers → #2963286 → Rescue → Linux 64-bit → Activate
+# Then reboot the server
+# SSH into rescue system:
+ssh root@5.9.10.215
+```
 
-### Milestone 1.2: Onstart Script Development
+### Milestone 0.2: Run Installimage with LUKS
 
-Write an onstart.sh script (~4000 chars max) that:
+```bash
+installimage
+```
 
-1. Installs supervisord via pip (Vast.ai images typically have Python)
-2. Writes supervisord.conf with three program sections:
-   - **infinity**: Runs Infinity server with bge-m3 and bge-reranker-v2-m3 models, binding to 127.0.0.1:7997
-   - **bge-sparse**: Runs BGE-M3 sparse sidecar, binding to 127.0.0.1:8001
-   - **whisper**: Runs faster-whisper server, binding to 127.0.0.1:8000
-3. Starts supervisord in foreground mode
-4. All services configured with autorestart=true
+In the Installimage TUI, configure:
+- **OS**: Ubuntu 24.04 LTS (or Debian 12)
+- **Partitioning**: Enable encryption (LUKS) — Installimage will prompt for passphrase
+- **Root partition**: encrypted LUKS container
+- Recommended partition layout:
+  ```
+  PART  /boot  ext4   1G      # unencrypted (boot loader)
+  PART  lvm    lvm    all     # LUKS-encrypted LVM PV
+  LV    vg0    root   /       # root filesystem
+  LV    vg0    swap   4G      # swap (also encrypted)
+  ```
 
-### Milestone 1.3: Service Validation on GPU Box
+**Record the LUKS passphrase in the team password manager immediately.** Do not write it to disk anywhere.
 
-- SSH into the instance and verify all three services are running
-- Confirm each service binds to 127.0.0.1 only (verify with `ss -tlnp`)
-- Run test inference calls locally on the GPU box:
-  - Infinity: embedding request + reranking request
-  - BGE-M3 sparse: sparse embedding request
-  - faster-whisper: transcription request with test audio
-- Confirm VRAM usage is within budget (~10GB of 24GB)
+### Milestone 0.3: Install Dropbear in initramfs
 
-### Technical Approach
+After first boot (in rescue mode or after login via LUKS unlock):
 
-The onstart script must fit within Vast.ai's ~4000 char limit. Strategy:
-- Inline the supervisord config as a heredoc
-- Use pip to install supervisor (avoid apt for speed)
-- Pull model weights at first boot (cached in persistent storage on subsequent boots)
-- Keep the script minimal -- complex logic goes into the supervisord config
+```bash
+# Install Dropbear for remote LUKS unlock
+apt install dropbear-initramfs
+
+# Configure Dropbear port (use 2222, separate from main sshd on 22)
+echo 'DROPBEAR_OPTIONS="-p 2222 -s"' >> /etc/dropbear/initramfs/dropbear.conf
+
+# Add unlock SSH key to initramfs authorized_keys
+mkdir -p /etc/dropbear/initramfs
+echo "ssh-ed25519 AAAA... klai-gpu-unlock" > /etc/dropbear/initramfs/authorized_keys
+chmod 600 /etc/dropbear/initramfs/authorized_keys
+
+# Rebuild initramfs
+update-initramfs -u
+
+# Verify: check that dropbear binary is in initramfs
+lsinitramfs /boot/initrd.img-$(uname -r) | grep dropbear
+```
+
+### Milestone 0.4: Validate Encrypted Boot
+
+1. Reboot gpu-01
+2. SSH into Dropbear on port 2222: `ssh -p 2222 root@5.9.10.215`
+3. Run unlock command: `cryptroot-unlock` (enter LUKS passphrase)
+4. Wait for full boot, then SSH normally: `ssh gpu-01` (configure in `~/.ssh/config`)
+5. Verify: `lsblk` shows dm-crypt devices; `df -h` shows encrypted root mounted
+
+### Technical Notes
+
+- **Why Dropbear over auto-unlock**: Auto-unlock (TPM, Tang) requires network binding or TPM attestation. Dropbear is simpler, more transparent, and requires explicit operator action per reboot. For a server that rarely reboots, this is acceptable.
+- **Boot partition**: `/boot` must remain unencrypted (GRUB needs to read it). Everything else is encrypted.
+- **Dropbear key**: Use a separate keypair for initramfs unlock — not the same as the regular admin key. This key only exists to run `cryptroot-unlock`.
 
 ### Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Onstart script exceeds 4000 chars | Medium | High | Pre-install supervisor in custom template; minimize script to config only |
-| Model download takes too long on first boot | Medium | Medium | Use Vast.ai persistent storage; pre-cache models in template |
-| VRAM contention between services | Low | High | Monitor with nvidia-smi; reduce batch sizes if needed |
+| LUKS passphrase lost | Low | Critical | Store in team password manager immediately; verify before completing Phase 0 |
+| Dropbear misconfigured — no remote unlock possible | Medium | High | Test unlock from a different machine before declaring Phase 0 complete |
+| Boot fails after encryption setup | Low | High | Keep rescue SSH session open during first reboot; Hetzner KVM console as fallback |
+
+---
+
+## Phase 1: Docker Setup (gpu-01)
+
+**Priority: High — depends on Phase 0**
+
+### Milestone 1.1: Base System Setup
+
+```bash
+ssh gpu-01
+
+# Update system
+apt update && apt upgrade -y
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+usermod -aG docker $USER
+
+# Create working directory
+mkdir -p /opt/klai-gpu
+```
+
+### Milestone 1.2: GPU Docker Compose
+
+Create `/opt/klai-gpu/docker-compose.yml`:
+
+```yaml
+services:
+  infinity:
+    image: michaelf34/infinity:latest
+    ports:
+      - "127.0.0.1:7997:7997"
+    environment:
+      - INFINITY_MODEL_ID=BAAI/bge-m3
+      - INFINITY_RERANKER_MODEL_ID=BAAI/bge-reranker-v2-m3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    restart: unless-stopped
+
+  bge-sparse:
+    build:
+      context: ./bge-m3-sparse
+    ports:
+      - "127.0.0.1:8001:8001"
+    restart: unless-stopped
+
+  whisper:
+    image: ghcr.io/getklai/whisper-server:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - WHISPER_MODEL=large-v3-turbo
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    restart: unless-stopped
+```
+
+**Note**: All `ports` bindings use `127.0.0.1:PORT:PORT` — never `PORT:PORT` (which binds to 0.0.0.0).
+
+### Milestone 1.3: Service Validation on gpu-01
+
+```bash
+cd /opt/klai-gpu && docker compose up -d
+
+# Check all services running
+docker compose ps
+
+# Verify localhost-only binding (SECURITY CHECK)
+ss -tlnp | grep -E '7997|8001|8000'
+# Expected: all lines show 127.0.0.1:PORT, NOT 0.0.0.0:PORT
+
+# Test each service locally
+curl -s http://127.0.0.1:7997/health     # Infinity
+curl -s http://127.0.0.1:8001/health     # BGE-M3 sparse
+curl -s http://127.0.0.1:8000/health     # faster-whisper
+
+# Check GPU usage
+nvidia-smi
+```
+
+### Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| GPU driver not installed | Medium | High | Install nvidia-driver + nvidia-docker2 before starting containers |
+| VRAM insufficient for all three services | Low | High | Start services one by one, monitor nvidia-smi; adjust batch sizes if needed |
+| bge-m3-sparse build context not on gpu-01 | Medium | Medium | Copy or clone the build context from core-01 first |
 
 ---
 
 ## Phase 2: SSH Tunnel Setup (core-01)
 
-**Priority: High -- Primary Goal**
+**Priority: High — depends on Phase 1**
 
-### Milestone 2.1: SSH Key Generation
+### Milestone 2.1: Generate Dedicated SSH Keypair
 
-- Generate a dedicated Ed25519 keypair on core-01: `ssh-keygen -t ed25519 -f /opt/klai/gpu-tunnel-key -N ""`
-- Add the public key to the Vast.ai instance's `~/.ssh/authorized_keys`
-- Verify SSH connectivity: `ssh -i /opt/klai/gpu-tunnel-key -p <vast-port> root@<vast-ip>`
-- Store private key with restricted permissions (600) owned by root
+```bash
+# On core-01 — dedicated keypair for GPU tunnel only
+ssh-keygen -t ed25519 -f /opt/klai/gpu-tunnel-key -N "" -C "klai-gpu-tunnel"
 
-### Milestone 2.2: autossh Configuration
+# Copy public key to gpu-01
+ssh-copy-id -i /opt/klai/gpu-tunnel-key.pub gpu-01
+# Or manually: cat /opt/klai/gpu-tunnel-key.pub | ssh gpu-01 "cat >> ~/.ssh/authorized_keys"
 
-Install autossh on core-01 (if not present) and create a systemd service:
-
+# Set correct permissions
+chmod 600 /opt/klai/gpu-tunnel-key
+chmod 644 /opt/klai/gpu-tunnel-key.pub
 ```
-# /etc/systemd/system/gpu-tunnel.service
+
+### Milestone 2.2: Create Systemd Tunnel Service
+
+Create `/etc/systemd/system/gpu-tunnel.service` on core-01:
+
+```ini
 [Unit]
-Description=GPU Inference SSH Tunnels (Vast.ai)
+Description=GPU Inference SSH Tunnels (gpu-01)
 After=network-online.target
 Wants=network-online.target
 
@@ -95,180 +227,233 @@ ExecStart=/usr/bin/autossh -M 0 \
   -o "ExitOnForwardFailure yes" \
   -o "StrictHostKeyChecking accept-new" \
   -N \
-  -L 7997:127.0.0.1:7997 \
-  -L 8001:127.0.0.1:8001 \
-  -L 8000:127.0.0.1:8000 \
+  -L 127.0.0.1:7997:127.0.0.1:7997 \
+  -L 127.0.0.1:8001:127.0.0.1:8001 \
+  -L 127.0.0.1:8000:127.0.0.1:8000 \
   -i /opt/klai/gpu-tunnel-key \
-  -p <VAST_SSH_PORT> \
-  root@<VAST_IP>
+  root@5.9.10.215
 Restart=always
 RestartSec=10
+User=root
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Milestone 2.3: Tunnel Validation
+```bash
+# Enable and start
+systemctl daemon-reload
+systemctl enable --now gpu-tunnel
 
-- Start the systemd service: `systemctl enable --now gpu-tunnel`
-- Verify all three tunnels are up: `curl -s http://localhost:7997/health`, `curl -s http://localhost:8001/health`, `curl -s http://localhost:8000/health`
-- Test tunnel recovery: kill the SSH process, verify autossh reconnects within 60 seconds
+# Verify tunnels are up
+systemctl status gpu-tunnel
+curl -s http://localhost:7997/health
+curl -s http://localhost:8001/health
+curl -s http://localhost:8000/health
+```
 
-### Technical Approach
+### Milestone 2.3: Test Auto-Reconnection
 
-Single autossh process with three `-L` flags (one per tunnel) is simpler and more reliable than three separate autossh processes. The `-M 0` flag disables the autossh monitoring port and relies on SSH `ServerAliveInterval` for liveness detection, which is more robust.
+```bash
+# Kill the SSH process
+kill $(pgrep -f 'ssh.*gpu-tunnel-key')
+
+# Wait and verify autossh reconnects
+sleep 70
+curl -s http://localhost:7997/health   # Should succeed
+```
+
+### Technical Notes
+
+- **Local forward binds to 127.0.0.1 on both ends**: `-L 127.0.0.1:PORT:127.0.0.1:PORT` — the tunnel is only accessible from localhost on core-01, not from other containers on `klai-net`.
+- **Implication**: consumer services (retrieval-api, knowledge-ingest, scribe-api) in Docker containers cannot reach `localhost` directly. Use `network_mode: host` OR `extra_hosts: ["host.docker.internal:host-gateway"]` for each consumer service.
 
 ### Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Vast.ai IP changes on instance restart | Medium | High | Store IP in env file; update systemd unit; script to automate |
-| SSH tunnel drops under load | Low | Medium | autossh auto-reconnects; ServerAliveInterval detects drops |
-| Port conflict on core-01 (7997/8001/8000 already in use) | Medium | High | Stop old GPU services first (Phase 3); verify ports free before tunnel start |
+| Docker containers cannot reach localhost:PORT | High | High | Add `extra_hosts: ["host.docker.internal:host-gateway"]` to consumer services; update URLs to use `host.docker.internal` |
+| Port conflict (7997/8001/8000 in use on core-01) | Medium | High | Stop old GPU services first; verify with `lsof -i :7997` |
 
 ---
 
 ## Phase 3: Core-01 Consumer Migration
 
-**Priority: High -- Primary Goal**
+**Priority: High — depends on Phase 2**
 
-### Milestone 3.1: Disable Old GPU Services
+### Milestone 3.1: Stop Old GPU Services on core-01
 
-- Edit `deploy/docker-compose.yml`: comment out or add `profiles: ["gpu-local"]` to the old GPU service definitions (TEI, BGE-M3 sparse, faster-whisper)
-- Stop old containers: `docker compose stop tei bge-sparse whisper` (use actual service names)
-- Verify ports 7997, 8001, 8000 are free on core-01
+```bash
+cd /opt/klai
 
-### Milestone 3.2: Update Consumer Environment Variables
+# Stop GPU containers
+docker compose stop tei bge-sparse whisper
 
-Update environment sections in `deploy/docker-compose.yml` or `deploy/.env`:
+# Verify ports are free
+lsof -nP -iTCP:8080 -sTCP:LISTEN   # TEI port
+lsof -nP -iTCP:8001 -sTCP:LISTEN   # sparse port
+lsof -nP -iTCP:8000 -sTCP:LISTEN   # whisper port
+# All should return empty (or show tunnel processes, not old containers)
+```
 
-| Variable | Old Value | New Value |
-|----------|----------|-----------|
-| `TEI_URL` | `http://tei:8080` (or similar Docker name) | `http://localhost:7997` |
-| `SPARSE_URL` | `http://bge-sparse:8001` (or similar) | `http://localhost:8001` |
-| `WHISPER_URL` | `http://whisper:8000` (or similar) | `http://localhost:8000` |
-| `RERANKER_URL` | `http://tei:8080` (or similar) | `http://localhost:7997` |
+### Milestone 3.2: Update docker-compose.yml
 
-Note: `TEI_URL` and `RERANKER_URL` both point to the same Infinity instance (port 7997) since Infinity handles both dense embeddings and reranking.
+In `deploy/docker-compose.yml`:
 
-### Milestone 3.3: Restart Consumer Services
+1. Comment out or profile-gate old GPU services (TEI, bge-sparse, whisper on core-01)
+2. Add `extra_hosts` or check networking for consumer services
+3. Update consumer environment variables:
 
-- Restart consumers: `docker compose restart retrieval-api knowledge-ingest scribe-api`
-- Verify each consumer can reach its inference service through the tunnel
-- Run end-to-end test flows:
-  - Upload a document to knowledge-ingest (triggers embedding + sparse)
-  - Run a search query on retrieval-api (triggers embedding + reranking)
-  - Upload an audio file to scribe-api (triggers whisper transcription)
+```yaml
+# retrieval-api
+environment:
+  - TEI_URL=http://host.docker.internal:7997        # was http://tei:8080
+  - SPARSE_URL=http://host.docker.internal:8001      # was http://bge-sparse:8001
+  - RERANKER_URL=http://host.docker.internal:7997    # was http://tei:8080 or separate
 
-### Technical Approach
+# knowledge-ingest
+environment:
+  - TEI_URL=http://host.docker.internal:7997
+  - SPARSE_URL=http://host.docker.internal:8001
 
-Consumer services use `host.docker.internal` or Docker `network_mode: host` to reach localhost tunnels. Verify which networking mode the consumers use. If they use Docker bridge networking, `localhost` inside the container refers to the container itself -- may need `extra_hosts: ["host.docker.internal:host-gateway"]` or `network_mode: host`.
+# scribe-api
+environment:
+  - WHISPER_URL=http://host.docker.internal:8000    # was http://whisper:8000
+```
+
+Also add to each consumer service:
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+### Milestone 3.3: Restart Consumers and Validate
+
+```bash
+docker compose restart retrieval-api knowledge-ingest scribe-api
+
+# Check logs for successful connections
+docker logs --tail 20 klai-core-retrieval-api-1
+docker logs --tail 20 klai-core-knowledge-ingest-1
+docker logs --tail 20 klai-core-scribe-api-1
+
+# End-to-end test: ingest a test document
+# End-to-end test: run a search query
+# End-to-end test: transcribe a test audio file
+```
 
 ### Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Docker container cannot reach localhost tunnels | High | High | Use `network_mode: host` or `extra_hosts` mapping |
-| Consumer service expects different API format from Infinity vs TEI | Medium | High | Test Infinity API compatibility with TEI clients; adjust if needed |
-| Rollback needed during migration | Low | Medium | Keep old service definitions commented (not deleted); quick re-enable |
+| Infinity API different from TEI | Medium | High | Test embedding API format; Infinity uses OpenAI-compatible `/v1/embeddings` |
+| `host.docker.internal` not resolving | Low | Medium | Add `extra_hosts: ["host.docker.internal:host-gateway"]` to compose |
+| SOPS env update needed | Medium | Medium | Update `core-01/.env.sops` if URLs are in SOPS; follow sops-env-sync pattern |
 
 ---
 
 ## Phase 4: Monitoring and Rollback
 
-**Priority: Medium -- Secondary Goal**
+**Priority: Medium — completes the migration**
 
 ### Milestone 4.1: Health Check Script
 
 Create `/opt/klai/scripts/gpu-health.sh`:
-- Check tunnel connectivity to all three services via HTTP health endpoints
-- Report status to Uptime Kuma via push token
-- Run via cron every 60 seconds
 
-### Milestone 4.2: Uptime Kuma Integration
+```bash
+#!/bin/bash
+set -euo pipefail
 
-- Add push monitor for GPU tunnel health (follow `claude-docs/patterns/devops.md#uptime-kuma-add-monitor`)
-- Add to status page if customer-facing (probably not for test/staging)
-- Integrate into `push-health.sh` on core-01
+PUSH_URL="https://uptime.getklai.com/api/push/GPU_PUSH_TOKEN"
+SERVICES=("7997:infinity" "8001:bge-sparse" "8000:whisper")
 
-### Milestone 4.3: Rollback Procedure Documentation
+for service in "${SERVICES[@]}"; do
+  port="${service%%:*}"
+  name="${service##*:}"
+  if ! curl --connect-timeout 2 --max-time 3 -sf "http://localhost:${port}/health" > /dev/null; then
+    curl -sf "${PUSH_URL}?status=down&msg=${name}+unreachable" > /dev/null
+    exit 1
+  fi
+done
 
-Document the rollback procedure:
+curl -sf "${PUSH_URL}?status=up&msg=all+services+healthy" > /dev/null
+```
 
-1. Stop the GPU tunnel service: `systemctl stop gpu-tunnel`
+Add cron entry on core-01:
+```
+* * * * * /opt/klai/scripts/gpu-health.sh >> /var/log/gpu-health.log 2>&1
+```
+
+### Milestone 4.2: Uptime Kuma Monitor
+
+Follow `claude-docs/patterns/devops.md#uptime-kuma-add-monitor`:
+- Type: Push
+- Name: "GPU Tunnel Health"
+- Token: GPU_PUSH_TOKEN (generate in Uptime Kuma)
+- Alert threshold: 2 missed heartbeats
+
+### Milestone 4.3: Rollback Procedure
+
+Document and test the following rollback procedure:
+
+1. Stop GPU tunnel: `systemctl stop gpu-tunnel`
 2. Uncomment old GPU services in `deploy/docker-compose.yml`
-3. Revert consumer environment variables to Docker service names
+3. Revert consumer env vars to Docker service names
 4. Start old GPU services: `docker compose up -d tei bge-sparse whisper`
-5. Restart consumer services: `docker compose restart retrieval-api knowledge-ingest scribe-api`
-6. Verify end-to-end functionality
+5. Restart consumers: `docker compose restart retrieval-api knowledge-ingest scribe-api`
+6. Verify: `curl http://localhost:7997/health` fails (tunnel down), but consumers work via Docker names
+7. Run end-to-end tests
 
-Target: rollback completes within 15 minutes.
-
-### Milestone 4.4: Rollback Drill
-
-- Practice the rollback procedure at least once before declaring migration complete
-- Time the procedure to verify it meets the 15-minute target
-- Document any issues encountered during the drill
-
-### Risks
-
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| Health check false positives | Low | Medium | Test health check script thoroughly; use conservative thresholds |
-| Rollback takes longer than 15 minutes | Low | High | Practice rollback drill; pre-stage old config as commented blocks |
+Target: complete within 15 minutes. Practice at least once.
 
 ---
 
 ## Dependencies
 
 ```
-Phase 1 (GPU Box Setup)
+Phase 0 (LUKS OS install)
     │
-    ├── Phase 2 (SSH Tunnels) ── depends on Phase 1 (needs running GPU box)
-    │       │
-    │       └── Phase 3 (Consumer Migration) ── depends on Phase 2 (needs working tunnels)
-    │               │
-    │               └── Phase 4 (Monitoring) ── depends on Phase 3 (needs full system running)
-    │
-    └── Phase 4.3 (Rollback Docs) ── can start in parallel with Phase 2
+    └── Phase 1 (Docker setup on gpu-01)
+            │
+            └── Phase 2 (SSH Tunnels on core-01)
+                    │
+                    └── Phase 3 (Consumer migration)
+                            │
+                            └── Phase 4 (Monitoring + rollback drill)
+
+Phase 4.3 (Rollback docs) — can be written in parallel with Phase 2
 ```
 
 ---
 
 ## Architecture Decisions
 
-### AD-001: SSH Tunnels over WireGuard VPN
+### AD-001: Dedicated Hetzner Server over Vast.ai
 
-**Decision**: Use SSH tunnels instead of WireGuard VPN.
-**Rationale**: Vast.ai instances are Docker containers without kernel module support. WireGuard requires kernel modules. SSH tunnels work in any environment and need no special privileges.
-**Trade-off**: Slightly higher overhead per connection vs. WireGuard, but acceptable for three services.
+**Decision**: Use gpu-01 (Hetzner GEX44) instead of Vast.ai marketplace.
+**Rationale**: Known host operator, physical hardware under Klai control, static IP, full OS control, Docker Compose available, customer data allowed.
+**Trade-off**: Higher fixed cost vs. Vast.ai pay-per-use; justified by security posture.
 
-### AD-002: Single autossh Process
+### AD-002: LUKS + Dropbear over Auto-Unlock
 
-**Decision**: Use one autossh process with three `-L` forward flags.
-**Rationale**: Simpler to manage than three separate processes. Single point of monitoring. All tunnels reconnect together.
-**Trade-off**: If one tunnel fails, all tunnels restart -- but this is acceptable since partial connectivity is not useful.
+**Decision**: Manual LUKS unlock via Dropbear SSH, not TPM/Tang auto-unlock.
+**Rationale**: Simpler setup, no additional trust dependencies, explicit operator action per reboot ensures awareness.
+**Trade-off**: Requires manual intervention after unplanned reboots; acceptable for a GPU inference server that rarely reboots.
 
-### AD-003: Infinity Replaces TEI
+### AD-003: SSH Tunnels over WireGuard
 
-**Decision**: Replace TEI with Infinity for both dense embeddings and reranking.
-**Rationale**: Infinity handles both tasks in a single process, reducing VRAM usage and operational complexity. TEI served only embeddings; reranking was a separate service.
-**Trade-off**: Single point of failure for two capabilities -- mitigated by supervisord autorestart and monitoring.
+**Decision**: SSH tunnels instead of WireGuard VPN.
+**Rationale**: Simpler to set up and maintain. WireGuard is viable on Hetzner (full kernel access) but adds operational complexity for a two-server setup. SSH tunnels are self-contained and use existing SSH keypair infrastructure.
+**Trade-off**: Slightly higher per-connection overhead vs. WireGuard; acceptable for inference workloads.
 
-### AD-004: Test/Staging Only -- No Customer Data
+### AD-004: Infinity Replaces TEI
 
-**Decision**: Vast.ai is explicitly test/staging only; no customer data permitted.
-**Rationale**: Vast.ai is a marketplace with unknown host operators. RTX 3090 lacks hardware confidential computing. The security posture is acceptable only for test data.
-**Trade-off**: Must maintain separate infrastructure for production (Hetzner dedicated GPU).
+**Decision**: Infinity handles both dense embeddings (bge-m3) and reranking (bge-reranker-v2-m3) in one container.
+**Rationale**: Reduces container count from 4 to 3, simplifies VRAM budgeting, single health endpoint.
+**Trade-off**: Single failure point for two capabilities — mitigated by Docker `restart: unless-stopped`.
 
----
+### AD-005: localhost Tunnel Binding on Both Ends
 
-## Production Migration Path (Future)
-
-When moving from Vast.ai to dedicated Hetzner GPU hardware:
-
-1. Same supervisord + service setup (onstart script becomes a deployment script)
-2. SSH tunnel endpoints updated to Hetzner IP (or replaced with WireGuard VPN)
-3. Customer data processing enabled
-4. Enhanced monitoring with GPU metrics (temperature, utilization, VRAM)
-5. Consider redundancy (second GPU box as failover)
+**Decision**: SSH tunnel binds to `127.0.0.1` on both core-01 and gpu-01.
+**Rationale**: Zero public exposure. Consumer services access via `host.docker.internal` from Docker bridge network.
+**Trade-off**: Requires `extra_hosts` or `network_mode: host` for Docker consumers.

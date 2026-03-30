@@ -35,7 +35,7 @@ for url in urls:
 results = await asyncio.gather(*[fetch(url) for url in urls])
 ```
 
-**Seen in:** `focus/research-api` web mode — 5 sequential docling URL fetches caused 25-50s latency. After parallelising: ~5-10s.
+**Seen in:** `klai-focus/research-api` web mode — 5 sequential docling URL fetches caused 25-50s latency. After parallelising: ~5-10s.
 
 ---
 
@@ -67,7 +67,7 @@ results = await asyncio.gather(*[_fetch(url) for url in urls])
 
 The outer httpx/service timeout (e.g. 120s) is a safety net — the `wait_for` is the real deadline.
 
-**Seen in:** `focus/research-api` web mode — added `_WEB_URL_TIMEOUT = 15.0` after parallelising.
+**Seen in:** `klai-focus/research-api` web mode — added `_WEB_URL_TIMEOUT = 15.0` after parallelising.
 
 ---
 
@@ -84,7 +84,7 @@ searxng_url: str = "http://searxng:8888"
 
 **Fix:** Always set the default to the real production value. Verify by checking the actual service port (`docker ps`) before writing the default.
 
-**Seen in:** `focus/research-api` config — default port was 8888, actual container port 8080.
+**Seen in:** `klai-focus/research-api` config — default port was 8888, actual container port 8080.
 
 ---
 
@@ -133,7 +133,7 @@ def _fresh_metrics():
         yield
 ```
 
-**Seen in:** `portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
+**Seen in:** `klai-portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
 
 ---
 
@@ -172,7 +172,7 @@ async def ingest_vitals(
     ...
 ```
 
-**Seen in:** `portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
+**Seen in:** `klai-portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
 
 **See also:** MDN sendBeacon docs, `patterns/platform.md#platform-caddy-tenant-routing` for Caddy config
 

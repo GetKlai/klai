@@ -198,12 +198,12 @@ Compare to the CI build time.
 
 A CI job may rsync the build output to one directory while the web server (Caddy, Nginx) serves from a different directory. The deploy reports success, but production stays on the old bundle.
 
-**What happened:** The `portal-frontend` GitHub Action rsynced to `/opt/klai/portal-dist/` but Caddy serves from `/srv/portal/`. The new JS bundle sat in the staging directory for weeks while users saw the old version. The Action exit code was 0.
+**What happened:** The `portal-frontend` GitHub Action rsynced to `/opt/klai/portal-dist/` but Caddy serves from `/srv/klai-portal/`. The new JS bundle sat in the staging directory for weeks while users saw the old version. The Action exit code was 0.
 
 **How to detect:**
 ```bash
 # Check the file timestamps in the directory the web server actually serves
-ssh core-01 "ls -lt /srv/portal/assets/*.js | head -3"
+ssh core-01 "ls -lt /srv/klai-portal/assets/*.js | head -3"
 
 # If the newest file is days/weeks old, the deploy target is wrong
 # Compare with the staging directory

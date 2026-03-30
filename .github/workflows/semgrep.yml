@@ -4,14 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'portal/backend/**'
-      - 'portal/frontend/**'
+      - 'klai-portal/backend/**'
+      - 'klai-portal/frontend/**'
       - '.github/workflows/semgrep.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'portal/backend/**'
-      - 'portal/frontend/**'
+      - 'klai-portal/backend/**'
+      - 'klai-portal/frontend/**'
 
 permissions:
   contents: read

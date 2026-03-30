@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'portal/backend/**'
+      - 'klai-portal/backend/**'
       - '.github/workflows/portal-api.yml'
 
 permissions:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: portal/backend
+        working-directory: klai-portal/backend
 
     steps:
       - uses: actions/checkout@v6
@@ -64,7 +64,7 @@ jobs:
       - name: Build and push portal-api
         uses: docker/build-push-action@v7
         with:
-          context: ./portal/backend
+          context: ./klai-portal/backend
           push: true
           tags: |
             ghcr.io/getklai/portal-api:latest

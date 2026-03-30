@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'retrieval-api/**'
+      - 'klai-retrieval-api/**'
       - '.github/workflows/retrieval-api.yml'
   workflow_dispatch:
 

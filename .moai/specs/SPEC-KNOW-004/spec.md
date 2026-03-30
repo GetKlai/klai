@@ -23,10 +23,10 @@ modules: [M1-save-confirmation, M2-list-endpoint, M3-delete-endpoint, M4-portal-
 - **Auth**: Zitadel OIDC via portal-backend, `X-Internal-Secret` voor service-to-service
 - **MCP**: `klai-knowledge-mcp` tool + `agent-system-prompt.md`
 - **Bestaande componenten**:
-  - `DeleteConfirmButton` (`portal/frontend/src/components/ui/delete-confirm-button.tsx`)
-  - AlertDialog-patroon (`portal/frontend/src/routes/admin/users/index.tsx`)
+  - `DeleteConfirmButton` (`klai-portal/frontend/src/components/ui/delete-confirm-button.tsx`)
+  - AlertDialog-patroon (`klai-portal/frontend/src/routes/admin/users/index.tsx`)
   - Knowledge stats endpoint (`GET /api/knowledge/stats`)
-  - Bestaande knowledge pagina (`portal/frontend/src/routes/app/knowledge/index.tsx`)
+  - Bestaande knowledge pagina (`klai-portal/frontend/src/routes/app/knowledge/index.tsx`)
 
 ## Assumptions
 
@@ -101,7 +101,7 @@ Het systeem **shall niet** een admin-rol vereisen - gebruikers kunnen alleen hun
 
 Het systeem **shall** `httpx.AsyncClient` gebruiken voor service-to-service calls naar knowledge-ingest. [REQ-M4-005]
 
-**Locatie**: `portal/backend/app/api/knowledge.py` (bestaand bestand, nieuwe routes toevoegen)
+**Locatie**: `klai-portal/backend/app/api/knowledge.py` (bestaand bestand, nieuwe routes toevoegen)
 
 ### Module M5: Portal Frontend
 
@@ -121,7 +121,7 @@ Het systeem **shall** React Query gebruiken voor ophalen en `useMutation` voor v
 
 Het systeem **shall** i18n ondersteunen via Paraglide met nieuwe message keys (Nederlands eerst, Engels tweede). [REQ-M5-008]
 
-**Locatie**: Nieuw `ItemsSection` component in `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`. Geen nieuwe route nodig — de personal KB is al bereikbaar op `/app/knowledge/personal` via de bestaande `$kbSlug` route. De tab wordt toegevoegd aan het bestaande tab-systeem op regels 940-961.
+**Locatie**: Nieuw `ItemsSection` component in `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`. Geen nieuwe route nodig — de personal KB is al bereikbaar op `/app/knowledge/personal` via de bestaande `$kbSlug` route. De tab wordt toegevoegd aan het bestaande tab-systeem op regels 940-961.
 
 ## Specifications
 
@@ -190,5 +190,5 @@ DELETE /api/knowledge/personal/items/{artifact_id}
 | REQ-M1-001..003 | M1 | `deploy/klai-knowledge-mcp/agent-system-prompt.md` |
 | REQ-M2-001..005 | M2 | `knowledge-ingest: routes, pg_store` |
 | REQ-M3-001..004 | M3 | `knowledge-ingest: routes, pg_store, qdrant_store` |
-| REQ-M4-001..005 | M4 | `portal/backend/app/api/knowledge.py` |
-| REQ-M5-001..007 | M5 | `portal/frontend/src/routes/app/knowledge/` |
+| REQ-M4-001..005 | M4 | `klai-portal/backend/app/api/knowledge.py` |
+| REQ-M5-001..007 | M5 | `klai-portal/frontend/src/routes/app/knowledge/` |
