@@ -130,6 +130,16 @@ async def _enrich_document(
     Errors are logged but do not raise -- raw vectors remain in Qdrant.
     """
     t_total = time.monotonic()
+    logger.info(
+        "enrichment_started",
+        kb_slug=kb_slug,
+        path=path,
+        org_id=org_id,
+        artifact_id=artifact_id,
+        chunks=len(chunks),
+        depth=synthesis_depth,
+        type=content_type,
+    )
     try:
         profile = get_profile(content_type)
 
