@@ -90,4 +90,4 @@ If a new file in `src/lib/` exports non-component values alongside React compone
 
 - [patterns/code-quality.md](../patterns/code-quality.md) - Per-project quality tooling reference
 - [pitfalls/devops.md](devops.md) - Deployment and Docker mistakes
-- [pitfalls/process.md](../../../../docs/pitfalls/process.md) - AI dev workflow rules
+- [pitfalls/process.md](process.md) - AI dev workflow rules

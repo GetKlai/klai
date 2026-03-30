@@ -29,17 +29,13 @@ Extract patterns and pitfalls from recent work and write them to the Klai knowle
 
 ## Knowledge Base Location
 
-**Shared (klai-claude/docs/):**
-- Patterns index: `klai-claude/docs/patterns.md`
-- Pitfalls index: `klai-claude/docs/pitfalls.md`
-- DevOps patterns: `klai-claude/docs/patterns/devops.md`
-- DevOps pitfalls: `klai-claude/docs/pitfalls/devops.md`
-- Infrastructure patterns: `klai-claude/docs/patterns/infrastructure.md`
-- Infrastructure pitfalls: `klai-claude/docs/pitfalls/infrastructure.md`
-
-**Project-specific:**
-- Check `[project]/docs/patterns/` and `[project]/docs/pitfalls/`
-- Create domain files as needed (e.g., `docs/patterns/frontend.md`)
+**Shared (.claude/rules/klai/):**
+- Patterns index: `.claude/rules/klai/patterns.md`
+- Pitfalls index: `.claude/rules/klai/pitfalls.md`
+- DevOps patterns: `.claude/rules/klai/patterns/devops.md`
+- DevOps pitfalls: `.claude/rules/klai/pitfalls/devops.md`
+- Infrastructure patterns: `.claude/rules/klai/patterns/infrastructure.md`
+- Infrastructure pitfalls: `.claude/rules/klai/pitfalls/infrastructure.md`
 
 ## Workflow
 

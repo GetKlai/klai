@@ -7,7 +7,7 @@ Always consult this before working on a relevant domain.
 
 | Domain | Patterns | Pitfalls |
 |--------|----------|---------|
-| Process (AI dev workflow) | — | `docs/pitfalls/process.md` |
+| Process (AI dev workflow) | — | `.claude/rules/klai/pitfalls/process.md` |
 | Git | — | `.claude/rules/klai/pitfalls/git.md` |
 | DevOps (Coolify, Docker) | `.claude/rules/klai/patterns/devops.md` | `.claude/rules/klai/pitfalls/devops.md` |
 | Infrastructure (Hetzner, SOPS, env, DNS) | `.claude/rules/klai/patterns/infrastructure.md` | `.claude/rules/klai/pitfalls/infrastructure.md` |
@@ -25,7 +25,7 @@ Check the project's CLAUDE.md for the full list.
 
 ## When to read these files
 
-- **Before making code changes** → read `docs/pitfalls/process.md` — universal AI dev rules
+- **Before making code changes** → read `.claude/rules/klai/pitfalls/process.md` — universal AI dev rules
 - **Before committing** → check `pitfalls/git.md`
 - **Deploying or changing infrastructure** → read `pitfalls/devops.md` and `pitfalls/infrastructure.md`
 - **Writing Python async code** (httpx, asyncio.gather, external service calls) → read `pitfalls/backend.md`
