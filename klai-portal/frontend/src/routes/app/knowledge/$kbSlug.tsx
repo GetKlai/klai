@@ -1795,7 +1795,7 @@ function KnowledgeDetailPage() {
           <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
             <div className="flex gap-8 mb-5">
               <div>
-                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Volume</p>
+                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
                 <p className="text-sm font-medium text-[var(--color-foreground)]">
                   {stats?.volume != null
                     ? m.knowledge_detail_volume({ count: String(stats.volume) })
@@ -1803,7 +1803,7 @@ function KnowledgeDetailPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">Queries (30d)</p>
+                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
                 <p className="text-sm font-medium text-[var(--color-foreground)]">
                   {stats?.usage_last_30d != null
                     ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })

@@ -694,6 +694,8 @@
   "knowledge_detail_docs_not_enabled": "Docs not enabled for this knowledge base",
   "knowledge_detail_view_in_docs": "Open docs editor",
   "knowledge_detail_connectors_empty": "No connectors yet",
+  "knowledge_detail_stats_search_index": "Search index",
+  "knowledge_detail_stats_queries": "Queries (30d)",
   "knowledge_detail_volume": "{count} items indexed",
   "knowledge_detail_volume_unknown": "Volume unavailable",
   "knowledge_detail_usage": "{count} queries in the last 30 days",
