@@ -20,13 +20,12 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 Before working on a specific package, read its CLAUDE.md:
 
 @klai-portal/CLAUDE.md
-@klai-docs/CLAUDE.md
 
 ## Knowledge base
 
 Domain patterns and pitfalls live in `.claude/rules/klai/` and load automatically
 when you work on matching files (via `paths:` frontmatter). Universal rules
-(`process.md`, `git.md`) load every session.
+(`process-rules.md`, `git.md`) load every session.
 
 Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md`
 

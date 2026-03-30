@@ -15,13 +15,14 @@
 | [Backend](pitfalls/backend.md) | Python async, FastAPI, prometheus_client | 5 entries |
 | [Code Quality](pitfalls/code-quality.md) | ESLint, ruff, pyright, CI quality gates | 2 entries |
 | [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 4 entries |
+| [Vexa](pitfalls/vexa-leave-detection.md) | Meeting bot leave/end detection (Playwright DOM) | conditional (`paths:`) |
 
 ## Runbooks
 
 | Runbook | File | Contents |
 |---------|------|---------|
-| [Platform Recovery](runbooks/platform-recovery.md) | Zitadel Login V2 deadlock, PAT rotation, portal-api outage | 3 procedures |
-| [Uptime Kuma](runbooks/uptime-kuma.md) | Adding a new monitor to status.getklai.com | 7-step procedure |
+| [Platform Recovery](../../../docs/runbooks/platform-recovery.md) | Zitadel Login V2 deadlock, PAT rotation, portal-api outage | 3 procedures |
+| [Uptime Kuma](../../../docs/runbooks/uptime-kuma.md) | Adding a new monitor to status.getklai.com | 7-step procedure |
 
 ## When to read
 
