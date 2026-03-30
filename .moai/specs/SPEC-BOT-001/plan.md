@@ -77,21 +77,21 @@ Tasks:
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `portal/backend/app/models/meetings.py` | Modify | Add `ical_uid` column |
-| `portal/backend/app/services/imap_listener.py` | New | IMAP polling service |
-| `portal/backend/app/services/ical_parser.py` | New | iCal parsing and URL extraction |
-| `portal/backend/app/services/invite_scheduler.py` | New | Bot join scheduling |
-| `portal/backend/app/services/tenant_matcher.py` | New | Zitadel email-to-user lookup |
-| `portal/backend/app/core/config.py` | Modify | Add IMAP config fields |
-| `portal/backend/app/main.py` | Modify | Start IMAP listener in lifespan |
-| `portal/backend/app/api/internal_invites.py` | New (optional) | Test endpoint |
-| `portal/backend/alembic/versions/xxx_add_ical_uid.py` | New | Migration |
-| `portal/backend/pyproject.toml` | Modify | Add `icalendar` dependency |
-| `portal/backend/tests/test_ical_parser.py` | New | Parser tests |
-| `portal/backend/tests/test_invite_scheduler.py` | New | Scheduler tests |
-| `portal/backend/tests/test_tenant_matcher.py` | New | Matcher tests |
-| `portal/backend/tests/test_imap_listener.py` | New | Listener tests |
-| `portal/backend/tests/fixtures/` | New | Sample .ics files |
+| `klai-portal/backend/app/models/meetings.py` | Modify | Add `ical_uid` column |
+| `klai-portal/backend/app/services/imap_listener.py` | New | IMAP polling service |
+| `klai-portal/backend/app/services/ical_parser.py` | New | iCal parsing and URL extraction |
+| `klai-portal/backend/app/services/invite_scheduler.py` | New | Bot join scheduling |
+| `klai-portal/backend/app/services/tenant_matcher.py` | New | Zitadel email-to-user lookup |
+| `klai-portal/backend/app/core/config.py` | Modify | Add IMAP config fields |
+| `klai-portal/backend/app/main.py` | Modify | Start IMAP listener in lifespan |
+| `klai-portal/backend/app/api/internal_invites.py` | New (optional) | Test endpoint |
+| `klai-portal/backend/alembic/versions/xxx_add_ical_uid.py` | New | Migration |
+| `klai-portal/backend/pyproject.toml` | Modify | Add `icalendar` dependency |
+| `klai-portal/backend/tests/test_ical_parser.py` | New | Parser tests |
+| `klai-portal/backend/tests/test_invite_scheduler.py` | New | Scheduler tests |
+| `klai-portal/backend/tests/test_tenant_matcher.py` | New | Matcher tests |
+| `klai-portal/backend/tests/test_imap_listener.py` | New | Listener tests |
+| `klai-portal/backend/tests/fixtures/` | New | Sample .ics files |
 
 ### Risks and Mitigations
 

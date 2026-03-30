@@ -262,10 +262,10 @@ All 18 acceptance criteria (TS-001 through TS-018) were implemented as specified
 - `app/models/audit.py` -- `PortalAuditLog` model with `portal_audit_log` table
 - `app/services/access.py` -- Scoped query helpers; `get_accessible_meetings` marked `@MX:ANCHOR fan_in=3+` as the authoritative meeting query entry point
 - `app/services/audit.py` -- Non-fatal immutable audit log writer; `log_event` marked `@MX:ANCHOR fan_in=10+`
-- `portal/backend/alembic/versions/u1v2w3x4y5z6_add_meeting_group_id.py` -- Adds nullable `group_id` FK to `vexa_meetings`
-- `portal/backend/alembic/versions/v2w3x4y5z6a7_add_audit_log.py` -- Creates `portal_audit_log` table
-- `portal/backend/tests/test_access.py` -- 12 unit tests for scoped query helpers
-- `portal/backend/tests/test_audit.py` -- 5 unit tests for audit log service
+- `klai-portal/backend/alembic/versions/u1v2w3x4y5z6_add_meeting_group_id.py` -- Adds nullable `group_id` FK to `vexa_meetings`
+- `klai-portal/backend/alembic/versions/v2w3x4y5z6a7_add_audit_log.py` -- Creates `portal_audit_log` table
+- `klai-portal/backend/tests/test_access.py` -- 12 unit tests for scoped query helpers
+- `klai-portal/backend/tests/test_audit.py` -- 5 unit tests for audit log service
 
 **Files modified:**
 - `app/models/meetings.py` -- Added `group_id` FK column

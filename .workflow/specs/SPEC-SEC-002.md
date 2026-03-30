@@ -198,8 +198,8 @@ De volgende **grote items** zijn expliciet buiten scope:
 2. `.github/workflows/dependabot-automerge.yml` — auto-merge logic op basis van `dependabot/fetch-metadata`
 
 **Ecosystems voor Klai:**
-- `pip` → `portal/backend` (requirements.txt / uv)
-- `npm` → `portal/frontend` (package.json)
+- `pip` → `klai-portal/backend` (requirements.txt / uv)
+- `npm` → `klai-portal/frontend` (package.json)
 - `docker` → `deploy/` (docker-compose.yml images)
 - `github-actions` → `/` (workflow action versies)
 
@@ -325,7 +325,7 @@ De SoA-entry voor A.7.7 (Clear desk and clear screen) heeft status COVERED met r
 ### Groep 5 — Automatisch dependency-beheer
 
 **REQ-SEC-002-26: Dependabot ecosystems**
-Het repository bevat een `.github/dependabot.yml` dat Dependabot configureert voor de ecosystems `pip` (portal/backend), `npm` (portal/frontend), `docker` (deploy/), en `github-actions` (/), elk met een wekelijks update-schema.
+Het repository bevat een `.github/dependabot.yml` dat Dependabot configureert voor de ecosystems `pip` (klai-portal/backend), `npm` (klai-portal/frontend), `docker` (deploy/), en `github-actions` (/), elk met een wekelijks update-schema.
 
 **REQ-SEC-002-27: Dependabot CVE-uitzonderingen in config**
 WHERE een CVE wordt genegeerd in dependency scanning, THEN staat de uitzondering in de `ignore`-sectie van `dependabot.yml` met een commentaar dat verwijst naar het bijbehorende GitHub Issue — niet als `--ignore-vuln` flag in een CI-workflow.
@@ -346,7 +346,7 @@ WHEN Dependabot een PR opent die een CVE adresseert, THEN krijgt de PR het label
 ### REQ-SEC-002-01 t/m 03: Container scanning
 
 ```gherkin
-Given een push naar main die portal/backend/ bestanden wijzigt
+Given een push naar main die klai-portal/backend/ bestanden wijzigt
 When de portal-api CI-pipeline draait
 Then bevat de pipeline een "Container image scan" stap met Trivy
 And de stap scant het gebouwde ghcr.io/getklai/portal-api image
@@ -359,7 +359,7 @@ And het SARIF-rapport is zichtbaar in de GitHub Security tab
 ### REQ-SEC-002-04 t/m 05: SAST
 
 ```gherkin
-Given een push naar main die portal/backend/ of portal/frontend/ bestanden wijzigt
+Given een push naar main die klai-portal/backend/ of klai-portal/frontend/ bestanden wijzigt
 When de CI-pipeline draait
 Then bevat de pipeline een "SAST scan" stap met Semgrep
 And Semgrep draait met --config auto en --config p/owasp-top-ten
@@ -666,7 +666,7 @@ timedatectl timesync-status
 version: 2
 updates:
   - package-ecosystem: "pip"
-    directory: "/portal/backend"
+    directory: "/klai-portal/backend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -676,7 +676,7 @@ updates:
         update-types: ["patch"]
 
   - package-ecosystem: "npm"
-    directory: "/portal/frontend"
+    directory: "/klai-portal/frontend"
     schedule:
       interval: "weekly"
     groups:

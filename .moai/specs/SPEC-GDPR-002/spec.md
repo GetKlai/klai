@@ -119,11 +119,11 @@ De `docker-compose.yml` **SHALL NOT** een persistent volume mount toevoegen voor
 
 | Component                  | Locatie                                              | Relatie         |
 |----------------------------|------------------------------------------------------|-----------------|
-| VexaClient                 | `portal/backend/app/services/vexa.py`                | Uitbreiden      |
-| VexaMeeting model          | `portal/backend/app/models/meetings.py`              | Uitbreiden      |
-| run_transcription()        | `portal/backend/app/api/meetings.py`                 | Integratiepunt  |
-| bot_poller.poll_loop()     | `portal/backend/app/services/bot_poller.py`          | Referentiepatroon |
-| provisioning.py            | `portal/backend/app/services/provisioning.py`        | Docker exec patroon |
-| FastAPI lifespan           | `portal/backend/app/main.py`                         | Registratiepunt |
+| VexaClient                 | `klai-portal/backend/app/services/vexa.py`                | Uitbreiden      |
+| VexaMeeting model          | `klai-portal/backend/app/models/meetings.py`              | Uitbreiden      |
+| run_transcription()        | `klai-portal/backend/app/api/meetings.py`                 | Integratiepunt  |
+| bot_poller.poll_loop()     | `klai-portal/backend/app/services/bot_poller.py`          | Referentiepatroon |
+| provisioning.py            | `klai-portal/backend/app/services/provisioning.py`        | Docker exec patroon |
+| FastAPI lifespan           | `klai-portal/backend/app/main.py`                         | Registratiepunt |
 | docker-compose.yml         | `deploy/docker-compose.yml`                          | Niet wijzigen   |
-| Alembic migrations         | `portal/backend/alembic/`                            | Nieuwe migratie |
+| Alembic migrations         | `klai-portal/backend/alembic/`                            | Nieuwe migratie |

@@ -203,8 +203,8 @@ docker compose up -d service-name
     script: |
       cd /tmp && rm -rf klai-build
       git clone --depth=1 --filter=blob:none --sparse https://github.com/GetKlai/klai.git klai-build
-      cd klai-build && git sparse-checkout set focus/<service>
-      docker build -t ghcr.io/getklai/<service>:latest ./focus/<service>
+      cd klai-build && git sparse-checkout set klai-focus/<service>
+      docker build -t ghcr.io/getklai/<service>:latest ./klai-focus/<service>
       rm -rf /tmp/klai-build
       cd /opt/klai && docker compose up -d <service>
 ```

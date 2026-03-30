@@ -33,7 +33,7 @@ priority: high
 
 ### 1.1 System Context
 
-LibreChat is embedded as a full-screen iframe inside the Klai portal (`portal/frontend/src/routes/app/chat.tsx`). The portal controls the surrounding layout. The iframe has no awareness of its container.
+LibreChat is embedded as a full-screen iframe inside the Klai portal (`klai-portal/frontend/src/routes/app/chat.tsx`). The portal controls the surrounding layout. The iframe has no awareness of its container.
 
 The `KlaiKnowledgeHook` in LiteLLM intercepts every chat message and injects KB context. It currently searches all org KBs on every message. Users cannot:
 
@@ -356,5 +356,5 @@ Implemented in commit `8c15dd8` (2026-03-27). All core requirements (M1–M4) de
 
 **Additional notes:**
 
-- M0 (retrieval-api bugfix): A bugfix for `kb_slugs` filtering (org-only when `scope=both`) was included in this commit as a prerequisite, covered by 2 new tests in `retrieval-api/tests/test_scope_filter.py`.
+- M0 (retrieval-api bugfix): A bugfix for `kb_slugs` filtering (org-only when `scope=both`) was included in this commit as a prerequisite, covered by 2 new tests in `klai-retrieval-api/tests/test_scope_filter.py`.
 - The two-level version cache (`kb_ver:{org_id}:{user_id}` with 30s TTL pointing to `kb_feature:{org_id}:{user_id}:{version}` with 300s TTL) ensures preference changes propagate to the LiteLLM hook within 30 seconds without requiring a direct cache-bust API call.

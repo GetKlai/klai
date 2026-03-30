@@ -254,14 +254,14 @@ IF een push-request naar `logs-ingest.${DOMAIN}` geen geldig bearer token bevat,
 
 | Docker service       | Pad in klai-mono               | Module |
 |----------------------|--------------------------------|--------|
-| `portal-api`         | `portal/backend/`              | 1, 2   |
+| `portal-api`         | `klai-portal/backend/`              | 1, 2   |
 | `klai-connector`     | `deploy/klai-connector/`       | 1, 2   |
 | `klai-mailer`        | `deploy/klai-mailer/`          | 1, 2   |
 | `klai-knowledge-mcp` | `deploy/klai-knowledge-mcp/`   | 1, 2   |
-| `scribe-api`         | `scribe/scribe-api/`           | 1, 2   |
-| `whisper-server`     | `scribe/whisper-server/`       | 1, 2   |
-| `research-api`       | `focus/research-api/`          | 1, 2   |
-| `retrieval-api`      | `retrieval-api/`               | 1, 2   |
+| `scribe-api`         | `klai-scribe/scribe-api/`           | 1, 2   |
+| `whisper-server`     | `klai-scribe/whisper-server/`       | 1, 2   |
+| `research-api`       | `klai-focus/research-api/`          | 1, 2   |
+| `retrieval-api`      | `klai-retrieval-api/`               | 1, 2   |
 
 ---
 

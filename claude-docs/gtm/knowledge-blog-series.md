@@ -41,8 +41,8 @@ Based on code audit of retrieval-api, knowledge-ingest, and litellm hook (March 
 |---|---|---|---|
 | C1 | How to find and prioritize knowledge base gaps | litellm/klai_knowledge.py `_classify_gap`, app_gaps.py | published |
 | C2 | How to know if your knowledge base fix actually worked | gap_rescorer.py, gap_classification.py (SPEC-KB-015) | published |
-| C3 | Not every question needs the knowledge base | retrieval-api/services/gate.py `should_bypass`, cosine margin | published |
-| C4 | Three signals, one answer | retrieval-api/services/search.py 3-leg RRF, reranker.py, coreference.py | published |
+| C3 | Not every question needs the knowledge base | klai-retrieval-api/services/gate.py `should_bypass`, cosine margin | published |
+| C4 | Three signals, one answer | klai-retrieval-api/services/search.py 3-leg RRF, reranker.py, coreference.py | published |
 | C5 | Not every document is the same | knowledge-ingest/content_profiles.py, context_strategies.py (includes two-phase ingest note) | published |
 | ~~C6~~ | ~~Searchable in seconds, smart in minutes~~ | Merged into C5 as one-liner — not enough for standalone post | dropped |
 | ~~C7~~ | ~~Personal knowledge: five things your AI should remember~~ | Topic too obvious for standalone post | dropped |

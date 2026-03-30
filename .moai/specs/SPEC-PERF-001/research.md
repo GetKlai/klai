@@ -28,17 +28,17 @@ Geheugen: 256 MB - 1 GB (vs. Sentry self-hosted: 16 GB+, 40+ containers).
 
 ### Frontend SDK Integratie
 
-**portal/frontend/src/main.tsx (lines 53-77):**
+**klai-portal/frontend/src/main.tsx (lines 53-77):**
 - `@sentry/react ^10.43.0` — DSN met hyphens-strip fix voor GlitchTip
 - Integrations: `tanstackRouterBrowserTracingIntegration`, `consoleLoggingIntegration`, `breadcrumbsIntegration`
 - `tracesSampleRate: 0.05`, `sendDefaultPii: false`, IP stripping in `beforeSend`
 - `Sentry.captureException()` in TanStack Query mutation error handler
 
-**portal/frontend/src/lib/logger.ts:**
+**klai-portal/frontend/src/lib/logger.ts:**
 - 9 tagged consola loggers met `Sentry.createConsolaReporter()` in productie
 - warn/error logs vloeien automatisch naar GlitchTip
 
-**portal/frontend/vite.config.ts (lines 20-29):**
+**klai-portal/frontend/vite.config.ts (lines 20-29):**
 - `sentryVitePlugin` uploadt source maps naar `https://errors.getklai.com`
 - Maps worden verwijderd na upload (`filesToDeleteAfterUpload`)
 

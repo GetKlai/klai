@@ -10,8 +10,8 @@
 ## Environment
 
 - **Platform:** Klai Portal (SaaS meeting transcription)
-- **Backend:** FastAPI at `klai-mono/portal/backend/`
-- **Frontend:** TanStack Router + React at `klai-mono/portal/frontend/`
+- **Backend:** FastAPI at `klai-mono/klai-portal/backend/`
+- **Frontend:** TanStack Router + React at `klai-mono/klai-portal/frontend/`
 - **Database:** PostgreSQL with SQLAlchemy 2.0 async, Alembic migrations
 - **LLM gateway:** LiteLLM (already deployed on core-01, master key in `settings.litellm_master_key`)
 - **Transcription source:** Vexa bot-manager API (port 8080) for bot lifecycle; Vexa API-gateway (port 8123) for transcript segments
@@ -188,16 +188,16 @@ Add keys to `nl.json` and `en.json`:
 
 | File | Change |
 |------|--------|
-| `portal/backend/app/services/vexa.py` | Add API-gateway client, `get_transcript_segments()` |
-| `portal/backend/app/services/transcript_filter.py` | New: noise filtering logic |
-| `portal/backend/app/services/summarizer.py` | New: two-prompt summarization service |
-| `portal/backend/app/api/meetings.py` | Update `run_transcription()`, add summarize endpoint, update response model |
-| `portal/backend/app/models/meetings.py` | Add `summary_json` JSONB column |
-| `portal/backend/app/core/config.py` | Add new settings fields |
-| `portal/backend/alembic/versions/xxx_add_summary_json.py` | New migration: add `summary_json JSONB` |
-| `portal/frontend/src/routes/app/meetings/$meetingId.tsx` | Summary UI, button, loading state |
-| `portal/frontend/messages/nl.json` | New i18n keys |
-| `portal/frontend/messages/en.json` | New i18n keys |
+| `klai-portal/backend/app/services/vexa.py` | Add API-gateway client, `get_transcript_segments()` |
+| `klai-portal/backend/app/services/transcript_filter.py` | New: noise filtering logic |
+| `klai-portal/backend/app/services/summarizer.py` | New: two-prompt summarization service |
+| `klai-portal/backend/app/api/meetings.py` | Update `run_transcription()`, add summarize endpoint, update response model |
+| `klai-portal/backend/app/models/meetings.py` | Add `summary_json` JSONB column |
+| `klai-portal/backend/app/core/config.py` | Add new settings fields |
+| `klai-portal/backend/alembic/versions/xxx_add_summary_json.py` | New migration: add `summary_json JSONB` |
+| `klai-portal/frontend/src/routes/app/meetings/$meetingId.tsx` | Summary UI, button, loading state |
+| `klai-portal/frontend/messages/nl.json` | New i18n keys |
+| `klai-portal/frontend/messages/en.json` | New i18n keys |
 
 ---
 
@@ -209,7 +209,7 @@ Add keys to `nl.json` and `en.json`:
 
 All 10 planned files implemented as specified. Additional items:
 
-- `portal/backend/app/api/meetings.py` also received `_correlate_speakers()` — utility for future Whisper+speaker-event correlation (satisfies existing pre-written tests in `test_meetings.py`)
+- `klai-portal/backend/app/api/meetings.py` also received `_correlate_speakers()` — utility for future Whisper+speaker-event correlation (satisfies existing pre-written tests in `test_meetings.py`)
 - Migration filename: `o5p6q7r8s9t0_add_summary_json_to_vexa_meetings.py` (not `xxx_add_summary_json.py`)
 
 ### Deployment Checklist

@@ -1,6 +1,6 @@
 # Domain Model
 
-## Portal Core Entities (portal/backend/app/models/)
+## Portal Core Entities (klai-portal/backend/app/models/)
 
 ### PortalOrg (portal_orgs)
 - `zitadel_org_id` — links to Zitadel organisation

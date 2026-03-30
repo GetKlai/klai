@@ -1,5 +1,5 @@
 ---
-paths: ["portal/frontend/src/**/*.ts", "portal/frontend/src/**/*.tsx"]
+paths: ["klai-portal/frontend/src/**/*.ts", "klai-portal/frontend/src/**/*.tsx"]
 ---
 
 # Logging Rules for klai-portal Frontend

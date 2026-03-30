@@ -155,7 +155,7 @@ uv run pyright app/api/me.py
 
 ```bash
 # TypeScript compilatie (al bevestigd passing)
-cd portal/frontend && npm run i18n:compile && npx tsc --noEmit
+cd klai-portal/frontend && npm run i18n:compile && npx tsc --noEmit
 
 # Verwacht resultaat: 0 errors
 ```

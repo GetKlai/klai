@@ -236,7 +236,7 @@ And similar thresholds for each metric per the Web Vitals standard
 ### AC-6.1: tracesSampleRate is 0.3
 
 ```gherkin
-Given the file portal/frontend/src/main.tsx
+Given the file klai-portal/frontend/src/main.tsx
 When the Sentry.init() call is inspected
 Then tracesSampleRate is set to 0.3
   And no other Sentry configuration has changed

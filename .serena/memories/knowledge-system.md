@@ -1,7 +1,7 @@
 # Knowledge System — Verified Implementation Details
 
 > Last verified against code: 2026-03-27
-> Key source files: deploy/knowledge-ingest/knowledge_ingest/, retrieval-api/retrieval_api/
+> Key source files: deploy/knowledge-ingest/knowledge_ingest/, klai-retrieval-api/retrieval_api/
 
 ## Ingest pipeline (two phases)
 

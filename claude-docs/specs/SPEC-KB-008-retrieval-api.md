@@ -32,7 +32,7 @@ Er is geen cross-encoder reranking. Er is geen pre-retrieval gate. Multi-turn qu
 
 ## Wat deze SPEC bouwt
 
-Een nieuwe centrale `retrieval-api` service in `klai-mono/retrieval-api/` met twee endpoints:
+Een nieuwe centrale `retrieval-api` service in `klai-mono/klai-retrieval-api/` met twee endpoints:
 
 1. **`POST /retrieve`** — machine-leesbare interface voor AI-agents en MCP clients. Geeft een JSON array van chunks terug. Geen synthese. Lage latency-budget.
 
@@ -251,7 +251,7 @@ Citaties worden geëxtraheerd uit welke chunks in de synthese zijn gebruikt.
 
 ### D1: Nieuwe service vs uitbreiding van `research-api`
 
-**Gekozen: nieuwe service (`klai-mono/retrieval-api/`).**
+**Gekozen: nieuwe service (`klai-mono/klai-retrieval-api/`).**
 
 Focus en de kennislaag zijn technisch identiek: zelfde embedder, zelfde Qdrant-patroon, zelfde hybrid search pipeline. Focus is de kennislaag maar dan smal — persoonlijke, projectgebonden documenten in plaats van organisatiegeheugen. Focus is ook de upsell: gebruikers ervaren in Focus hoe krachtig de retrieval-laag is, en stappen daarna over naar de kennislaag.
 
@@ -404,7 +404,7 @@ Behoudt het endpoint maar markeert het als deprecated in de OpenAPI docs. Wordt 
 
 ## Nieuwe service: `retrieval-api`
 
-**Locatie:** `klai-mono/retrieval-api/`
+**Locatie:** `klai-mono/klai-retrieval-api/`
 
 **Port:** 8040
 

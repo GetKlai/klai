@@ -15,11 +15,11 @@
 **Scope:** SQLAlchemy models and Alembic migration for taxonomy tables.
 
 **Files to create:**
-- `portal/backend/app/models/taxonomy.py` -- `PortalTaxonomyNode` and `PortalTaxonomyProposal` models
-- `portal/backend/alembic/versions/{hash}_add_taxonomy_tables.py` -- Migration creating both tables with indexes and constraints
+- `klai-portal/backend/app/models/taxonomy.py` -- `PortalTaxonomyNode` and `PortalTaxonomyProposal` models
+- `klai-portal/backend/alembic/versions/{hash}_add_taxonomy_tables.py` -- Migration creating both tables with indexes and constraints
 
 **Files to modify:**
-- `portal/backend/app/models/__init__.py` -- Register new models for Alembic auto-detection
+- `klai-portal/backend/app/models/__init__.py` -- Register new models for Alembic auto-detection
 
 **Dependencies:** None (first module to implement).
 
@@ -38,10 +38,10 @@
 **Scope:** FastAPI router for taxonomy CRUD and proposal review.
 
 **Files to create:**
-- `portal/backend/app/api/taxonomy.py` -- Router with all taxonomy endpoints
+- `klai-portal/backend/app/api/taxonomy.py` -- Router with all taxonomy endpoints
 
 **Files to modify:**
-- `portal/backend/app/main.py` -- Register `taxonomy.router` via `app.include_router()`
+- `klai-portal/backend/app/main.py` -- Register `taxonomy.router` via `app.include_router()`
 
 **Dependencies:** M1 (models must exist).
 
@@ -75,17 +75,17 @@
 **Scope:** Taxonomy tab UI on the KB detail page.
 
 **Files to create:**
-- `portal/frontend/src/routes/app/knowledge/_components/TaxonomySection.tsx` -- Main taxonomy section component
-- `portal/frontend/src/routes/app/knowledge/_components/TaxonomyTree.tsx` -- Recursive tree view component
-- `portal/frontend/src/routes/app/knowledge/_components/ProposalQueue.tsx` -- Proposal review table
+- `klai-portal/frontend/src/routes/app/knowledge/_components/TaxonomySection.tsx` -- Main taxonomy section component
+- `klai-portal/frontend/src/routes/app/knowledge/_components/TaxonomyTree.tsx` -- Recursive tree view component
+- `klai-portal/frontend/src/routes/app/knowledge/_components/ProposalQueue.tsx` -- Proposal review table
 
 **Files to modify:**
-- `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`:
+- `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`:
   - Add `'taxonomy'` to `KBTab` type
   - Add taxonomy tab button with `FolderTree` icon
   - Add `<TaxonomySection>` render in tab content area
   - Add pending proposal count badge
-- `portal/frontend/src/lib/logger.ts` -- Add `taxonomyLogger` export
+- `klai-portal/frontend/src/lib/logger.ts` -- Add `taxonomyLogger` export
 
 **Dependencies:** M2 (API must be available), M4 (i18n keys must exist).
 
@@ -119,8 +119,8 @@ KnowledgeDetailPage
 **Scope:** Paraglide i18n keys for all taxonomy UI strings.
 
 **Files to modify:**
-- `portal/frontend/messages/en.json` -- Add English keys
-- `portal/frontend/messages/nl.json` -- Add Dutch keys
+- `klai-portal/frontend/messages/en.json` -- Add English keys
+- `klai-portal/frontend/messages/nl.json` -- Add Dutch keys
 
 **Dependencies:** None (can be done in parallel with M3).
 
@@ -281,23 +281,23 @@ Each proposal type has a distinct approval handler:
 
 | File | Module |
 |------|--------|
-| `portal/backend/app/models/taxonomy.py` | M1 |
-| `portal/backend/alembic/versions/{hash}_add_taxonomy_tables.py` | M1 |
-| `portal/backend/app/api/taxonomy.py` | M2 |
-| `portal/frontend/src/routes/app/knowledge/_components/TaxonomySection.tsx` | M3 |
-| `portal/frontend/src/routes/app/knowledge/_components/TaxonomyTree.tsx` | M3 |
-| `portal/frontend/src/routes/app/knowledge/_components/ProposalQueue.tsx` | M3 |
+| `klai-portal/backend/app/models/taxonomy.py` | M1 |
+| `klai-portal/backend/alembic/versions/{hash}_add_taxonomy_tables.py` | M1 |
+| `klai-portal/backend/app/api/taxonomy.py` | M2 |
+| `klai-portal/frontend/src/routes/app/knowledge/_components/TaxonomySection.tsx` | M3 |
+| `klai-portal/frontend/src/routes/app/knowledge/_components/TaxonomyTree.tsx` | M3 |
+| `klai-portal/frontend/src/routes/app/knowledge/_components/ProposalQueue.tsx` | M3 |
 
 ### Modified Files (5)
 
 | File | Module | Change |
 |------|--------|--------|
-| `portal/backend/app/models/__init__.py` | M1 | Import new models |
-| `portal/backend/app/main.py` | M2 | Register taxonomy router |
-| `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | M3 | Add taxonomy tab + section |
-| `portal/frontend/src/lib/logger.ts` | M3 | Add `taxonomyLogger` |
-| `portal/frontend/messages/en.json` | M4 | Add ~30 taxonomy keys |
-| `portal/frontend/messages/nl.json` | M4 | Add ~30 taxonomy keys (translated) |
+| `klai-portal/backend/app/models/__init__.py` | M1 | Import new models |
+| `klai-portal/backend/app/main.py` | M2 | Register taxonomy router |
+| `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | M3 | Add taxonomy tab + section |
+| `klai-portal/frontend/src/lib/logger.ts` | M3 | Add `taxonomyLogger` |
+| `klai-portal/frontend/messages/en.json` | M4 | Add ~30 taxonomy keys |
+| `klai-portal/frontend/messages/nl.json` | M4 | Add ~30 taxonomy keys (translated) |
 
 ---
 

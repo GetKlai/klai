@@ -95,14 +95,14 @@ Voor elke service uit de inventory:
 
 | Service              | Pad                            | Aandachtspunt                                    |
 |----------------------|--------------------------------|--------------------------------------------------|
-| `portal-api`         | `portal/backend/`              | Grootste codebase + **logging context middleware toevoegen** (org_id, user_id, request_id via `structlog.contextvars`) |
+| `portal-api`         | `klai-portal/backend/`              | Grootste codebase + **logging context middleware toevoegen** (org_id, user_id, request_id via `structlog.contextvars`) |
 | `klai-connector`     | `deploy/klai-connector/`       | Mogelijk weinig eigen logging                     |
 | `klai-mailer`        | `deploy/klai-mailer/`          | E-mail-gerelateerde context in logs               |
 | `klai-knowledge-mcp` | `deploy/klai-knowledge-mcp/`   | MCP-specifieke context                            |
-| `scribe-api`         | `scribe/scribe-api/`           | Audio-processing context                          |
-| `whisper-server`     | `scribe/whisper-server/`       | GPU/model-gerelateerde context                    |
-| `research-api`       | `focus/research-api/`          | Research-pipeline context                         |
-| `retrieval-api`      | `retrieval-api/`               | Vector search context                             |
+| `scribe-api`         | `klai-scribe/scribe-api/`           | Audio-processing context                          |
+| `whisper-server`     | `klai-scribe/whisper-server/`       | GPU/model-gerelateerde context                    |
+| `research-api`       | `klai-focus/research-api/`          | Research-pipeline context                         |
+| `retrieval-api`      | `klai-retrieval-api/`               | Vector search context                             |
 
 ### Tech stack
 

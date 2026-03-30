@@ -27,14 +27,14 @@ All 8 Python services are in `deploy/docker-compose.yml` (single compose file):
 
 | Service | Docker service name | Path | Current logging setup | log var |
 |---------|---------------------|------|-----------------------|---------|
-| Portal API | `portal-api` | `portal/backend/` | No `basicConfig` — relies on uvicorn default | `logger` |
+| Portal API | `portal-api` | `klai-portal/backend/` | No `basicConfig` — relies on uvicorn default | `logger` |
 | Klai Connector | `klai-connector` | `deploy/klai-connector/` | No `basicConfig` seen in main.py | unknown |
 | Klai Mailer | `klai-mailer` | `deploy/klai-mailer/` | `logging.basicConfig(...)` in main.py | unknown |
 | Knowledge MCP | `klai-knowledge-mcp` | `deploy/klai-knowledge-mcp/` | No `basicConfig` — only `getLogger` | `logger` |
-| Scribe API | `scribe-api` | `scribe/scribe-api/` | `logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))` | unknown |
-| Whisper Server | `whisper-server` | `scribe/whisper-server/` | `logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))` | `logger` |
-| Research API | `research-api` | `focus/research-api/` | `logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))` | unknown |
-| Retrieval API | `retrieval-api` | `retrieval-api/` | `logging.basicConfig(level=logging.INFO, ...)` | `logger` |
+| Scribe API | `scribe-api` | `klai-scribe/scribe-api/` | `logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))` | unknown |
+| Whisper Server | `whisper-server` | `klai-scribe/whisper-server/` | `logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))` | `logger` |
+| Research API | `research-api` | `klai-focus/research-api/` | `logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))` | unknown |
+| Retrieval API | `retrieval-api` | `klai-retrieval-api/` | `logging.basicConfig(level=logging.INFO, ...)` | `logger` |
 
 No service uses structlog or python-json-logger. All output is plain text.
 

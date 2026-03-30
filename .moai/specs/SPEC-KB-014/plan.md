@@ -66,21 +66,21 @@ def _get_nearest_kb_slug(chunks: list[dict]) -> str | None:
 
 **Technical Approach:**
 
-1. **Model** (`portal/backend/app/models/knowledge_bases.py` or new `portal/backend/app/models/retrieval_gaps.py`):
+1. **Model** (`klai-portal/backend/app/models/knowledge_bases.py` or new `klai-portal/backend/app/models/retrieval_gaps.py`):
    - Add `PortalRetrievalGap` SQLAlchemy model.
    - Columns: `id`, `org_id` (FK), `user_id`, `query_text`, `gap_type`, `top_score`, `chunks_retrieved`, `retrieval_ms`, `occurred_at`.
    - Indexes: `(org_id, occurred_at DESC)`, `(org_id, query_text)`.
 
-2. **Migration** (`portal/backend/alembic/versions/{hash}_add_retrieval_gaps.py`):
+2. **Migration** (`klai-portal/backend/alembic/versions/{hash}_add_retrieval_gaps.py`):
    - Standard Alembic migration with `op.create_table()` and indexes.
 
-3. **Internal endpoint** (`portal/backend/app/api/internal.py`):
+3. **Internal endpoint** (`klai-portal/backend/app/api/internal.py`):
    - Add `POST /internal/v1/gap-events` endpoint.
    - Uses existing `_require_internal_token()` guard.
    - Validates payload with Pydantic schema, inserts row, returns 201.
    - No org membership check needed -- the hook already verified the user has knowledge entitlement.
 
-4. **App API** (new file: `portal/backend/app/api/app_gaps.py` or extend `portal/backend/app/api/app_knowledge.py`):
+4. **App API** (new file: `klai-portal/backend/app/api/app_gaps.py` or extend `klai-portal/backend/app/api/app_knowledge.py`):
    - `GET /api/app/gaps` -- list gap events for caller's org, with `days`, `gap_type`, `limit` query params.
    - `GET /api/app/gaps/summary` -- aggregated counts + top query grouping.
    - Auth: require authenticated user with admin role in org (same pattern as KB management).
@@ -92,12 +92,12 @@ def _get_nearest_kb_slug(chunks: list[dict]) -> str | None:
 
 | File | Change |
 |---|---|
-| `portal/backend/app/models/retrieval_gaps.py` | New file: `PortalRetrievalGap` model (incl. `nearest_kb_slug` column) |
-| `portal/backend/alembic/versions/xxxx_add_retrieval_gaps.py` | New file: Alembic migration |
-| `portal/backend/app/api/internal.py` | Add `POST /internal/v1/gap-events` endpoint |
-| `portal/backend/app/api/app_gaps.py` | New file: `GET /api/app/gaps`, `GET /api/app/gaps/summary` |
-| `portal/backend/app/api/knowledge_bases.py` | Extend KB stats with `org_gap_count_7d` (or whichever router serves stats) |
-| `portal/backend/app/main.py` | Register new `app_gaps` router |
+| `klai-portal/backend/app/models/retrieval_gaps.py` | New file: `PortalRetrievalGap` model (incl. `nearest_kb_slug` column) |
+| `klai-portal/backend/alembic/versions/xxxx_add_retrieval_gaps.py` | New file: Alembic migration |
+| `klai-portal/backend/app/api/internal.py` | Add `POST /internal/v1/gap-events` endpoint |
+| `klai-portal/backend/app/api/app_gaps.py` | New file: `GET /api/app/gaps`, `GET /api/app/gaps/summary` |
+| `klai-portal/backend/app/api/knowledge_bases.py` | Extend KB stats with `org_gap_count_7d` (or whichever router serves stats) |
+| `klai-portal/backend/app/main.py` | Register new `app_gaps` router |
 
 **Dependencies:** None (uses existing SQLAlchemy, FastAPI, Pydantic stack).
 
@@ -109,7 +109,7 @@ def _get_nearest_kb_slug(chunks: list[dict]) -> str | None:
 
 **Technical Approach:**
 
-1. **New route** (`portal/frontend/src/routes/app/gaps.tsx`):
+1. **New route** (`klai-portal/frontend/src/routes/app/gaps.tsx`):
    - TanStack Router file-based route at `/app/gaps`.
    - Uses `useQuery` for `GET /api/app/gaps` with inline `queryFn` (per separation-of-concerns pattern).
    - Table component using `Card` with data table pattern from `docs/ui-components.md`.
@@ -118,14 +118,14 @@ def _get_nearest_kb_slug(chunks: list[dict]) -> str | None:
    - Filter controls: `Select` for days (7, 14, 30), `Select` for gap type (all, hard, soft).
    - Empty state message when no gaps found.
 
-2. **Navigation** (`portal/frontend/src/routes/app/route.tsx`):
+2. **Navigation** (`klai-portal/frontend/src/routes/app/route.tsx`):
    - Add `{ to: '/app/gaps', label: m.gaps_nav_label(), icon: SearchX }` to `allNavItems`.
    - Gate behind `knowledge` product (add `/app/gaps` to `PRODUCT_ROUTES` mapping).
 
-3. **i18n** (`portal/frontend/messages/en.json`, `portal/frontend/messages/nl.json`):
+3. **i18n** (`klai-portal/frontend/messages/en.json`, `klai-portal/frontend/messages/nl.json`):
    - Add all `gaps_*` message keys per S6 in spec.md.
 
-4. **KB overview extension** (`portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`):
+4. **KB overview extension** (`klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`):
    - Extend `KBStats` interface with `org_gap_count_7d: number | null`.
    - Add metric tile in overview tab alongside existing tiles.
 
@@ -133,11 +133,11 @@ def _get_nearest_kb_slug(chunks: list[dict]) -> str | None:
 
 | File | Change |
 |---|---|
-| `portal/frontend/src/routes/app/gaps.tsx` | New file: gap dashboard page |
-| `portal/frontend/src/routes/app/route.tsx` | Add nav item and product route mapping |
-| `portal/frontend/messages/en.json` | Add `gaps_*` message keys |
-| `portal/frontend/messages/nl.json` | Add `gaps_*` message keys (NL translations) |
-| `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Extend `KBStats` interface, add gap tile |
+| `klai-portal/frontend/src/routes/app/gaps.tsx` | New file: gap dashboard page |
+| `klai-portal/frontend/src/routes/app/route.tsx` | Add nav item and product route mapping |
+| `klai-portal/frontend/messages/en.json` | Add `gaps_*` message keys |
+| `klai-portal/frontend/messages/nl.json` | Add `gaps_*` message keys (NL translations) |
+| `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Extend `KBStats` interface, add gap tile |
 
 **Dependencies:** `lucide-react` `SearchX` icon (already available in lucide-react).
 

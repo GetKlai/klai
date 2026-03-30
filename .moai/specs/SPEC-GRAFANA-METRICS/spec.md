@@ -307,10 +307,10 @@ Grafana queries shall use the `grafana_reader` user which has SELECT-only permis
 | Tag                  | Reference                                           |
 |----------------------|-----------------------------------------------------|
 | SPEC-GRAFANA-METRICS | This specification                                  |
-| portal_orgs          | `portal/backend/app/models/portal.py`               |
-| portal_users         | `portal/backend/app/models/portal.py`               |
-| vexa_meetings        | `portal/backend/app/models/meetings.py`             |
-| billing.py           | `portal/backend/app/api/billing.py`                 |
-| signup.py            | `portal/backend/app/api/signup.py`                  |
-| meetings.py          | `portal/backend/app/api/meetings.py`                |
-| auth.py              | `portal/backend/app/api/auth.py`                    |
+| portal_orgs          | `klai-portal/backend/app/models/portal.py`               |
+| portal_users         | `klai-portal/backend/app/models/portal.py`               |
+| vexa_meetings        | `klai-portal/backend/app/models/meetings.py`             |
+| billing.py           | `klai-portal/backend/app/api/billing.py`                 |
+| signup.py            | `klai-portal/backend/app/api/signup.py`                  |
+| meetings.py          | `klai-portal/backend/app/api/meetings.py`                |
+| auth.py              | `klai-portal/backend/app/api/auth.py`                    |

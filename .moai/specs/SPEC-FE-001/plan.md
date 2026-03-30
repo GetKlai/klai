@@ -27,8 +27,8 @@ Dit plan beschrijft de implementatiestrategie voor het admin panel uitbreiding. 
 **Wat:** Voeg `status: str` toe aan het `UserOut` Pydantic model in de backend admin module, afgeleid van Zitadel user state.
 
 **Bestanden te wijzigen:**
-- `portal/backend/app/routers/admin.py` -- `UserOut` model uitbreiden met `status` veld
-- `portal/backend/app/routers/admin.py` -- query/mapping logica om Zitadel user state (active/suspended/deactivated) naar `status` string te mappen
+- `klai-portal/backend/app/routers/admin.py` -- `UserOut` model uitbreiden met `status` veld
+- `klai-portal/backend/app/routers/admin.py` -- query/mapping logica om Zitadel user state (active/suspended/deactivated) naar `status` string te mappen
 
 **Referentie-implementatie:** Bestaande velden in `UserOut` (zoals `invite_pending`) voor patroon.
 
@@ -43,7 +43,7 @@ Dit plan beschrijft de implementatiestrategie voor het admin panel uitbreiding. 
 **Wat:** Voeg een status badge kolom toe aan de users tabel en een actiemenu (MoreVertical dropdown) met lifecycle acties per rij.
 
 **Bestanden te wijzigen:**
-- `portal/frontend/src/routes/admin/users/index.tsx` -- nieuwe kolom toevoegen aan `columnHelper`, actiemenu component
+- `klai-portal/frontend/src/routes/admin/users/index.tsx` -- nieuwe kolom toevoegen aan `columnHelper`, actiemenu component
 
 **Nieuwe componenten/functies:**
 - Status badge rendering functie: `warning` badge voor suspended, `destructive` voor offboarded, `default`/geen voor active
@@ -67,7 +67,7 @@ Dit plan beschrijft de implementatiestrategie voor het admin panel uitbreiding. 
 **Wat:** Voeg een product management sectie en context-sensitive lifecycle actieknoppen toe aan de user edit pagina.
 
 **Bestanden te wijzigen:**
-- `portal/frontend/src/routes/admin/users/$userId/edit.tsx` -- product toggles sectie + lifecycle knoppen
+- `klai-portal/frontend/src/routes/admin/users/$userId/edit.tsx` -- product toggles sectie + lifecycle knoppen
 
 **Nieuwe componenten/functies:**
 - Product toggles sectie:
@@ -92,7 +92,7 @@ Dit plan beschrijft de implementatiestrategie voor het admin panel uitbreiding. 
 **Wat:** Nieuwe pagina `/admin/groups` met groepenoverzicht en create-functionaliteit.
 
 **Bestanden te creeren:**
-- `portal/frontend/src/routes/admin/groups/index.tsx` -- groups route met `createFileRoute()`
+- `klai-portal/frontend/src/routes/admin/groups/index.tsx` -- groups route met `createFileRoute()`
 
 **Functionaliteit:**
 - Tabel met kolommen: naam, beschrijving, aanmaakdatum, aangemaakt door
@@ -115,7 +115,7 @@ Dit plan beschrijft de implementatiestrategie voor het admin panel uitbreiding. 
 **Wat:** Nieuwe pagina `/admin/groups/$groupId` met groepdetails en ledenbeheer.
 
 **Bestanden te creeren:**
-- `portal/frontend/src/routes/admin/groups/$groupId/index.tsx` -- group detail route
+- `klai-portal/frontend/src/routes/admin/groups/$groupId/index.tsx` -- group detail route
 
 **Functionaliteit:**
 - Groepsinformatie header: naam, beschrijving (inline bewerkbaar of via edit dialog)
@@ -157,8 +157,8 @@ Dit plan beschrijft de implementatiestrategie voor het admin panel uitbreiding. 
 **Wat:** Alle nieuwe user-facing tekst toevoegen aan zowel `nl.json` als `en.json`.
 
 **Bestanden te wijzigen:**
-- `portal/frontend/src/paraglide/messages/nl.json`
-- `portal/frontend/src/paraglide/messages/en.json`
+- `klai-portal/frontend/src/paraglide/messages/nl.json`
+- `klai-portal/frontend/src/paraglide/messages/en.json`
 
 **Volledige key-lijst:**
 

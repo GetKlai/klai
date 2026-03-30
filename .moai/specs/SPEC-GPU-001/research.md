@@ -27,7 +27,7 @@ No inference service has any authentication mechanism:
 - Whisper: No auth — `providers.py:55` multipart POST to `/v1/audio/transcriptions`
 - Infinity reranker: LibreChat sends `JINA_API_KEY: "klai-internal"` but Infinity ignores it
 
-Source: `deploy/knowledge-ingest/knowledge_ingest/embedder.py`, `sparse_embedder.py`, `retrieval-api/retrieval_api/services/reranker.py`, `klai-scribe/scribe-api/app/services/providers.py`
+Source: `deploy/knowledge-ingest/knowledge_ingest/embedder.py`, `sparse_embedder.py`, `klai-retrieval-api/retrieval_api/services/reranker.py`, `klai-scribe/scribe-api/app/services/providers.py`
 
 ### Encryption in Transit: NONE
 
@@ -220,6 +220,6 @@ On an RTX 3090 on Vast.ai, **there is no practical way to protect data in GPU me
 | `deploy/docker-compose.yml` | 922-942 | Infinity reranker definition |
 | `deploy/knowledge-ingest/.../embedder.py` | 45 | No auth in TEI client |
 | `deploy/knowledge-ingest/.../sparse_embedder.py` | 30 | No auth in sparse client |
-| `retrieval-api/.../reranker.py` | 1-65 | No auth in reranker client |
+| `klai-retrieval-api/.../reranker.py` | 1-65 | No auth in reranker client |
 | `klai-scribe/.../providers.py` | 55 | No auth in whisper client |
 | `deploy/caddy/Caddyfile` | 161-191 | Public routes, inference NOT exposed |

@@ -26,9 +26,9 @@ Gap detection was explicitly deferred in `klai-claude/docs/knowledge-ingest-flow
 ### Existing Infrastructure
 
 - **LiteLLM hook** (`deploy/litellm/klai_knowledge.py`): Pre-call hook with access to `org_id`, `user_id`, query text, chunk results, and retrieval timing. Posts to `PORTAL_API_URL` for authorization checks using `PORTAL_INTERNAL_SECRET`.
-- **Internal API** (`portal/backend/app/api/internal.py`): Existing service-to-service endpoint pattern with `_require_internal_token()` guard. Used by klai-mailer, Zitadel Actions, klai-connector, and the knowledge hook.
-- **Portal KB stats** (`portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`): Overview tab displays `KBStats` interface with `docs_count`, `connector_count`, `volume`, `usage_last_30d`.
-- **App navigation** (`portal/frontend/src/routes/app/route.tsx`): Sidebar driven by `allNavItems` array with product-gated visibility.
+- **Internal API** (`klai-portal/backend/app/api/internal.py`): Existing service-to-service endpoint pattern with `_require_internal_token()` guard. Used by klai-mailer, Zitadel Actions, klai-connector, and the knowledge hook.
+- **Portal KB stats** (`klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx`): Overview tab displays `KBStats` interface with `docs_count`, `connector_count`, `volume`, `usage_last_30d`.
+- **App navigation** (`klai-portal/frontend/src/routes/app/route.tsx`): Sidebar driven by `allNavItems` array with product-gated visibility.
 
 ### Constraints
 
@@ -286,10 +286,10 @@ All requirements implemented as specified. One design decision made during revie
 
 | File | Purpose |
 |---|---|
-| `portal/backend/app/api/app_gaps.py` | Gap query and summary endpoints |
-| `portal/backend/app/models/retrieval_gaps.py` | SQLAlchemy model for `portal_retrieval_gaps` |
-| `portal/backend/alembic/versions/e8f9a0b1c2d3_add_retrieval_gaps_table.py` | Database migration |
-| `portal/frontend/src/routes/app/gaps/index.tsx` | Gap dashboard UI |
+| `klai-portal/backend/app/api/app_gaps.py` | Gap query and summary endpoints |
+| `klai-portal/backend/app/models/retrieval_gaps.py` | SQLAlchemy model for `portal_retrieval_gaps` |
+| `klai-portal/backend/alembic/versions/e8f9a0b1c2d3_add_retrieval_gaps_table.py` | Database migration |
+| `klai-portal/frontend/src/routes/app/gaps/index.tsx` | Gap dashboard UI |
 
 ### Files Modified
 
@@ -297,14 +297,14 @@ All requirements implemented as specified. One design decision made during revie
 |---|---|
 | `deploy/litellm/klai_knowledge.py` | Added `_classify_gap()`, `_fire_gap_event()`, gap detection block |
 | `deploy/litellm/tests/test_klai_knowledge_hook.py` | 29 new TDD tests for gap detection |
-| `portal/backend/app/api/internal.py` | Added `POST /internal/v1/gap-events` endpoint |
-| `portal/backend/app/api/app_knowledge_bases.py` | Extended `KBStatsOut` with `org_gap_count_7d` |
-| `portal/backend/app/main.py` | Registered `app_gaps_router` |
-| `portal/frontend/messages/en.json` | 18 new `gaps_*` i18n keys |
-| `portal/frontend/messages/nl.json` | 18 new `gaps_*` i18n keys (NL translations) |
-| `portal/frontend/src/routes/app/knowledge/index.tsx` | Knowledge Gaps card for admins |
-| `portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Gap count metric tile in overview |
-| `portal/frontend/src/routeTree.gen.ts` | Regenerated to include `/app/gaps` route |
+| `klai-portal/backend/app/api/internal.py` | Added `POST /internal/v1/gap-events` endpoint |
+| `klai-portal/backend/app/api/app_knowledge_bases.py` | Extended `KBStatsOut` with `org_gap_count_7d` |
+| `klai-portal/backend/app/main.py` | Registered `app_gaps_router` |
+| `klai-portal/frontend/messages/en.json` | 18 new `gaps_*` i18n keys |
+| `klai-portal/frontend/messages/nl.json` | 18 new `gaps_*` i18n keys (NL translations) |
+| `klai-portal/frontend/src/routes/app/knowledge/index.tsx` | Knowledge Gaps card for admins |
+| `klai-portal/frontend/src/routes/app/knowledge/$kbSlug.tsx` | Gap count metric tile in overview |
+| `klai-portal/frontend/src/routeTree.gen.ts` | Regenerated to include `/app/gaps` route |
 
 ### Deployment Prerequisites
 

@@ -6,21 +6,21 @@
 
 ```
 klai-mono/                     # Monorepo root (GetKlai/klai)
-├── portal/                    # Customer SaaS application (FastAPI + React)
+├── klai-portal/                    # Customer SaaS application (FastAPI + React)
 │   ├── backend/               # FastAPI API server
 │   └── frontend/              # React SPA (Vite + TanStack Router)
-├── docs/                      # Docs app -- per-tenant documentation portal (Next.js)
+├── klai-docs/                      # Docs app -- per-tenant documentation portal (Next.js)
 ├── deploy/                    # AI platform deploy configs (Docker Compose, Caddy, LiteLLM, etc.)
 │   ├── klai-connector/        # External source connector service
 │   ├── klai-mailer/           # Zitadel email notification provider
 │   ├── klai-knowledge-mcp/    # Knowledge MCP server for LibreChat
 │   └── knowledge-ingest/      # Document ingestion pipeline (RAG)
-├── scribe/                    # Transcription services
+├── klai-scribe/                    # Transcription services
 │   ├── scribe-api/            # Transcription management API
 │   └── whisper-server/        # Self-hosted Whisper inference
-├── focus/                     # Research services
+├── klai-focus/                     # Research services
 │   └── research-api/          # Deep research API
-├── retrieval-api/             # Hybrid retrieval service (vector + graph)
+├── klai-retrieval-api/             # Hybrid retrieval service (vector + graph)
 ├── scripts/                   # Shared utilities and deploy scripts
 ├── claude-docs/               # Knowledge base (patterns, pitfalls, architecture docs)
 ├── .claude/                   # Claude Code assets (synced from klai-claude)
@@ -37,12 +37,12 @@ klai-mono/                     # Monorepo root (GetKlai/klai)
 
 ---
 
-## portal/ -- Customer SaaS Application
+## klai-portal/ -- Customer SaaS Application
 
 The customer-facing product: dashboard, admin, billing, usage tracking, knowledge management, meeting bots.
 
 ```
-portal/
+klai-portal/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py            # FastAPI app initialization, lifespan, middleware
@@ -82,7 +82,7 @@ portal/
 │   │   │   │   ├── meetings/      # Meeting bot pages
 │   │   │   │   ├── knowledge/     # Knowledge base management
 │   │   │   │   ├── docs/          # Docs management
-│   │   │   │   ├── focus/         # Research UI
+│   │   │   │   ├── klai-focus/         # Research UI
 │   │   │   │   └── transcribe/    # Direct transcription
 │   │   │   ├── admin/         # Admin panel routes
 │   │   │   ├── setup/         # Organization setup wizard
@@ -133,10 +133,10 @@ deploy/
 
 ---
 
-## scribe/ -- Transcription Services
+## klai-scribe/ -- Transcription Services
 
 ```
-scribe/
+klai-scribe/
 ├── scribe-api/                # Transcription management API (FastAPI)
 │   ├── app/                   # Application code
 │   ├── tests/
@@ -148,10 +148,10 @@ scribe/
 
 ---
 
-## focus/ -- Research Services
+## klai-focus/ -- Research Services
 
 ```
-focus/
+klai-focus/
 └── research-api/              # Deep research API (FastAPI)
     ├── app/                   # Application code
     ├── tests/
@@ -160,12 +160,12 @@ focus/
 
 ---
 
-## retrieval-api/ -- Hybrid Retrieval Service
+## klai-retrieval-api/ -- Hybrid Retrieval Service
 
 Unified retrieval endpoint combining vector search (Qdrant) and knowledge graph (FalkorDB/Graphiti) with Reciprocal Rank Fusion.
 
 ```
-retrieval-api/
+klai-retrieval-api/
 ├── retrieval_api/             # Application code
 ├── tests/
 ├── scripts/
@@ -175,12 +175,12 @@ retrieval-api/
 
 ---
 
-## docs/ -- Documentation Portal
+## klai-docs/ -- Documentation Portal
 
 Per-tenant documentation sites backed by Gitea git storage, with Next.js frontend and Zitadel SSO.
 
 ```
-docs/
+klai-docs/
 ├── app/                       # Next.js app directory
 ├── components/                # React components
 ├── lib/                       # Utilities

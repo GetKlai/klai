@@ -61,7 +61,7 @@ De modules moeten in strikt sequentiele volgorde worden uitgerold. Elke module m
 **Afhankelijkheden**: M2 moet werkend zijn (deelt route structuur en pg_store patronen)
 
 **Referentie-implementatie**:
-- Delete patroon: `portal/backend/app/api/admin.py` regels 420-451
+- Delete patroon: `klai-portal/backend/app/api/admin.py` regels 420-451
 - Bestaande soft-delete: `pg_store.soft_delete_artifact` en `qdrant_store.delete_document`
 
 ### Secundair doel: M4 - Portal Backend Proxy
@@ -83,8 +83,8 @@ De modules moeten in strikt sequentiele volgorde worden uitgerold. Elke module m
 **Afhankelijkheden**: M2 en M3 moeten werkend en deployed zijn
 
 **Referentie-implementatie**:
-- Auth patroon: `portal/backend/app/api/dependencies.py` regels 41-68
-- Bestaande knowledge routes: `portal/backend/app/api/knowledge.py`
+- Auth patroon: `klai-portal/backend/app/api/dependencies.py` regels 41-68
+- Bestaande knowledge routes: `klai-portal/backend/app/api/knowledge.py`
 
 ### Secundair doel: M5 - Portal Frontend
 
@@ -105,8 +105,8 @@ De modules moeten in strikt sequentiele volgorde worden uitgerold. Elke module m
 **Afhankelijkheden**: M4 moet werkend zijn
 
 **Referentie-implementatie**:
-- Tabel patroon: `portal/frontend/src/routes/admin/users/index.tsx`
-- DeleteConfirmButton: `portal/frontend/src/components/ui/delete-confirm-button.tsx`
+- Tabel patroon: `klai-portal/frontend/src/routes/admin/users/index.tsx`
+- DeleteConfirmButton: `klai-portal/frontend/src/components/ui/delete-confirm-button.tsx`
 - i18n: `import * as m from '@/paraglide/messages'`
 
 ## Risico's en Mitigatie

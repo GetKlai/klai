@@ -8,15 +8,15 @@ Current branch: `main`.
 
 | Directory | Purpose | Language | Status |
 |-----------|---------|----------|--------|
-| `portal/backend/` | Customer portal API | Python (FastAPI) | Active |
-| `portal/frontend/` | Customer portal UI | TypeScript (React/Vite) | Active |
-| `docs/` | Documentation site | TypeScript (Next.js 15) | Active |
+| `klai-portal/backend/` | Customer portal API | Python (FastAPI) | Active |
+| `klai-portal/frontend/` | Customer portal UI | TypeScript (React/Vite) | Active |
+| `klai-docs/` | Documentation site | TypeScript (Next.js 15) | Active |
 | `deploy/` | Self-hosting templates | Docker Compose / YAML | Active |
 | `.claude/` | Shared Claude Code tooling — agents, rules, commands, skills | Markdown | Active |
 | `claude-docs/` | Living knowledge base — patterns, pitfalls, styleguide | Markdown | Active |
 | `klai-private/` | Private business docs — research, GTM, pricing | Markdown | Submodule |
 | `klai-infra/` | Infrastructure secrets (SOPS) | Shell/YAML | Submodule (private) |
-| `klai-portal/` | Portal repo (legacy name, now `portal/`) | — | Present |
+| `klai-portal/` | Portal repo (legacy name, now `klai-portal/`) | — | Present |
 | `klai-scribe/` | Meeting transcription service | Python | Present |
 | `klai-website/` | Marketing website | Astro/TypeScript | Present |
 | `scripts/` | Repo management utilities | Shell | Active |

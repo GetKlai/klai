@@ -1,8 +1,8 @@
 # Klai Services Overview
 
-## Portal (portal/)
-- **Backend:** `portal/backend/` — FastAPI, SQLAlchemy async, Alembic, PostgreSQL. Port 8010 on core-01.
-- **Frontend:** `portal/frontend/` — React 19 + Vite + TanStack Router + Mantine 8 + Paraglide i18n
+## Portal (klai-portal/)
+- **Backend:** `klai-portal/backend/` — FastAPI, SQLAlchemy async, Alembic, PostgreSQL. Port 8010 on core-01.
+- **Frontend:** `klai-portal/frontend/` — React 19 + Vite + TanStack Router + Mantine 8 + Paraglide i18n
 
 ## klai-scribe (`klai-scribe/`)
 - **Purpose:** Meeting/audio transcription

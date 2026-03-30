@@ -11,8 +11,8 @@
 ## Environment
 
 - **Platform:** Klai Portal (SaaS transcriptie)
-- **Scribe service:** FastAPI at `klai-mono/scribe/scribe-api/`
-- **Frontend:** TanStack Router + React at `klai-mono/portal/frontend/`
+- **Scribe service:** FastAPI at `klai-mono/klai-scribe/scribe-api/`
+- **Frontend:** TanStack Router + React at `klai-mono/klai-portal/frontend/`
 - **Database:** PostgreSQL, scribe schema, SQLAlchemy 2.0 async, Alembic migrations
 - **LLM gateway:** LiteLLM (deployed op core-01, nog te configureren in scribe service settings)
 - **i18n:** Paraglide (`messages/nl.json`, `messages/en.json`)
@@ -35,11 +35,11 @@ Dit SPEC lost twee samenhangende problemen op:
 
 - A-1: De scribe service heeft nog geen LiteLLM-configuratie. Drie settings worden toegevoegd: `litellm_base_url`, `litellm_master_key`, `summarize_model`.
 - A-2: `summary_json` bestaat nog niet op `scribe.transcriptions`. Meest recente migratie is `0003`. Nieuwe migratie wordt `0004`.
-- A-3: De `GET /scribe/v1/transcriptions/{id}` endpoint bestaat al. De response hoeft alleen `summary_json` erbij te krijgen.
+- A-3: De `GET /klai-scribe/v1/transcriptions/{id}` endpoint bestaat al. De response hoeft alleen `summary_json` erbij te krijgen.
 - A-4: Voor de lijstweergave is een `has_summary: bool` veld voldoende — de volledige `summary_json` JSONB hoeft niet in elke lijstrij mee.
 - A-5: Audio-opnames hebben geen sprekerssegmenten (`transcript_segments`). De transcripttekst is altijd platte tekst.
 - A-6: Een transcriptietekst past in een enkel LLM-contextvenster (< 100K tokens). Chunking is niet nodig voor de initiële implementatie.
-- A-7: De tweefasige aanpak (extract → synthesize) uit `portal/backend/app/services/summarizer.py` is het referentiepatroon. De scribe service implementeert dit zelfstandig (geen cross-service dependency).
+- A-7: De tweefasige aanpak (extract → synthesize) uit `klai-portal/backend/app/services/summarizer.py` is het referentiepatroon. De scribe service implementeert dit zelfstandig (geen cross-service dependency).
 - A-8: Het type opname (`meeting` of `recording`) wordt opgeslagen in `summary_json.type` — geen aparte kolom nodig.
 
 ---
@@ -66,7 +66,7 @@ ALS een audio-opname een transcript heeft, DAN toont de detailpagina een type-dr
 De type-dropdown biedt twee opties: "Vergadering" (`meeting`) en "Algemene opname" (`recording`). Standaard geselecteerd: "Algemene opname".
 
 **REQ-SUM-003 (Event-driven):**
-WANNEER de gebruiker op "Samenvatten" klikt, DAN roept de frontend `POST /scribe/v1/transcriptions/{id}/summarize` aan met het gekozen type en de taal van de transcriptie.
+WANNEER de gebruiker op "Samenvatten" klikt, DAN roept de frontend `POST /klai-scribe/v1/transcriptions/{id}/summarize` aan met het gekozen type en de taal van de transcriptie.
 
 **REQ-SUM-004 (State-driven):**
 ALS `recording_type = "meeting"`, DAN gebruikt het systeem de meeting-promptset (sprekers, besluiten, actiepunten, open vragen, volgende stappen).
@@ -108,7 +108,7 @@ Alle nieuwe UI-strings zijn beschikbaar in `nl.json` en `en.json`.
 
 ### Meeting-promptset (type: "meeting")
 
-Identiek aan het patroon in `portal/backend/app/services/summarizer.py`.
+Identiek aan het patroon in `klai-portal/backend/app/services/summarizer.py`.
 
 **Extractie (system prompt):**
 ```
@@ -227,7 +227,7 @@ Functies:
 
 **S-5: Nieuw endpoint in `app/api/transcribe.py`**
 ```
-POST /scribe/v1/transcriptions/{id}/summarize
+POST /klai-scribe/v1/transcriptions/{id}/summarize
 Query: force: bool = False
 Body: { "recording_type": "meeting" | "recording", "language": str | None }
 Response: { "summary_json": { "type": ..., "markdown": ..., "structured": ... } }
@@ -248,7 +248,7 @@ Logica:
 Patroon: vrijwel identiek aan `meetings/$meetingId.tsx`, aangepast voor audio-opnames.
 
 Bevat:
-- Fetch van `GET /scribe/v1/transcriptions/{id}` met auth-header
+- Fetch van `GET /klai-scribe/v1/transcriptions/{id}` met auth-header
 - Titel (naam of preview van tekst) + terugknop naar `/app/transcribe`
 - **Transcript card**: transcripttekst als `<pre>`-stijl, kopieer- en downloadknoppen
 - **Samenvatten-sectie**: type-dropdown + "Samenvatten" knop (zichtbaar als transcript bestaat)
@@ -292,15 +292,15 @@ Toevoegen aan `nl.json` en `en.json`:
 
 | Bestand | Wijziging |
 |---------|-----------|
-| `scribe/scribe-api/alembic/versions/0004_add_summary_to_transcriptions.py` | Nieuw: `summary_json JSONB nullable` |
-| `scribe/scribe-api/app/models/transcription.py` | Voeg `summary_json` kolom + Pydantic velden toe |
-| `scribe/scribe-api/app/core/config.py` | Voeg LiteLLM settings toe |
-| `scribe/scribe-api/app/services/summarizer.py` | Nieuw: tweefasen-samenvatting met twee promptsets |
-| `scribe/scribe-api/app/api/transcribe.py` | Voeg `POST /{id}/summarize` toe; voeg `has_summary` toe aan list response |
-| `portal/frontend/src/routes/app/transcribe/$transcriptionId.tsx` | Nieuw: detailpagina |
-| `portal/frontend/src/routes/app/transcribe/index.tsx` | Klikbare titels + `has_summary` indicator |
-| `portal/frontend/messages/nl.json` | Nieuwe i18n-keys |
-| `portal/frontend/messages/en.json` | Nieuwe i18n-keys |
+| `klai-scribe/scribe-api/alembic/versions/0004_add_summary_to_transcriptions.py` | Nieuw: `summary_json JSONB nullable` |
+| `klai-scribe/scribe-api/app/models/transcription.py` | Voeg `summary_json` kolom + Pydantic velden toe |
+| `klai-scribe/scribe-api/app/core/config.py` | Voeg LiteLLM settings toe |
+| `klai-scribe/scribe-api/app/services/summarizer.py` | Nieuw: tweefasen-samenvatting met twee promptsets |
+| `klai-scribe/scribe-api/app/api/transcribe.py` | Voeg `POST /{id}/summarize` toe; voeg `has_summary` toe aan list response |
+| `klai-portal/frontend/src/routes/app/transcribe/$transcriptionId.tsx` | Nieuw: detailpagina |
+| `klai-portal/frontend/src/routes/app/transcribe/index.tsx` | Klikbare titels + `has_summary` indicator |
+| `klai-portal/frontend/messages/nl.json` | Nieuwe i18n-keys |
+| `klai-portal/frontend/messages/en.json` | Nieuwe i18n-keys |
 
 ---
 

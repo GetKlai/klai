@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scribe/whisper-server/**'
+      - 'klai-scribe/whisper-server/**'
       - '.github/workflows/whisper-server.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push whisper-server
         uses: docker/build-push-action@v7
         with:
-          context: ./scribe/whisper-server
+          context: ./klai-scribe/whisper-server
           push: true
           tags: |
             ghcr.io/getklai/whisper-server:latest

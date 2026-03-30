@@ -43,7 +43,7 @@ De verwijdering is fire-and-forget met error handling -- een failure mag de pipe
 
 **Taak 1.1:** Voeg `recording_deleted` en `recording_deleted_at` velden toe aan `VexaMeeting`
 
-- Bestand: `portal/backend/app/models/meetings.py`
+- Bestand: `klai-portal/backend/app/models/meetings.py`
 - Wijziging: Twee nieuwe velden toevoegen aan de `VexaMeeting` class
   - `recording_deleted: Mapped[bool]` met `default=False, server_default="false"`
   - `recording_deleted_at: Mapped[datetime | None]` met `nullable=True`
@@ -59,7 +59,7 @@ De verwijdering is fire-and-forget met error handling -- een failure mag de pipe
 
 **Taak 2.1:** Implementeer `delete_recording()` op `VexaClient`
 
-- Bestand: `portal/backend/app/services/vexa.py`
+- Bestand: `klai-portal/backend/app/services/vexa.py`
 - Nieuwe methode: `async def delete_recording(self, vexa_meeting_id: int) -> bool`
 - Logica:
   1. Verkrijg Docker client via `docker.from_env()`
@@ -79,7 +79,7 @@ De verwijdering is fire-and-forget met error handling -- een failure mag de pipe
 
 **Taak 3.1:** Helper-functie voor verwijdering na transcriptie
 
-- Bestand: `portal/backend/app/api/meetings.py` (of nieuw bestand `portal/backend/app/services/recording_cleanup.py`)
+- Bestand: `klai-portal/backend/app/api/meetings.py` (of nieuw bestand `klai-portal/backend/app/services/recording_cleanup.py`)
 - Nieuwe functie: `async def cleanup_recording(meeting: VexaMeeting, db: AsyncSession) -> None`
 - Logica:
   1. Guard: return als `meeting.status != "done"` of `meeting.vexa_meeting_id is None` of `meeting.recording_deleted is True`
@@ -91,14 +91,14 @@ De verwijdering is fire-and-forget met error handling -- een failure mag de pipe
 
 **Taak 3.2:** Integreer in webhook handler
 
-- Bestand: `portal/backend/app/api/meetings.py`
+- Bestand: `klai-portal/backend/app/api/meetings.py`
 - Locatie: na regel 632 (`await db.commit()`) in de webhook handler
 - Toevoegen: `await cleanup_recording(meeting, db)` (alleen als `meeting.status == "done"`)
 - Traceability: SPEC-GDPR-002-R1
 
 **Taak 3.3:** Integreer in bot_poller
 
-- Bestand: `portal/backend/app/services/bot_poller.py`
+- Bestand: `klai-portal/backend/app/services/bot_poller.py`
 - Locatie: na regel 97 (`await db.commit()`) in de active-meeting loop
 - Locatie: na regel 115 (`await db.commit()`) in de stuck-meeting loop
 - Toevoegen: `await cleanup_recording(m, db)` (alleen als `m.status == "done"`)
@@ -108,7 +108,7 @@ De verwijdering is fire-and-forget met error handling -- een failure mag de pipe
 
 **Taak 4.1:** Implementeer `recording_cleanup_loop()`
 
-- Bestand: `portal/backend/app/services/recording_cleanup.py`
+- Bestand: `klai-portal/backend/app/services/recording_cleanup.py`
 - Nieuwe functie: `async def recording_cleanup_loop() -> None`
 - Logica:
   1. `await asyncio.sleep(60)` -- wacht tot app volledig gestart is
@@ -123,7 +123,7 @@ De verwijdering is fire-and-forget met error handling -- een failure mag de pipe
 
 **Taak 4.2:** Registreer in FastAPI lifespan
 
-- Bestand: `portal/backend/app/main.py`
+- Bestand: `klai-portal/backend/app/main.py`
 - Wijziging: voeg `asyncio.create_task(recording_cleanup_loop())` toe in de `lifespan()` context manager, vergelijkbaar met de registratie van `poll_loop()`
 - Traceability: SPEC-GDPR-002-R5
 

@@ -242,7 +242,7 @@ async def async_post_call_success_hook(self, data, user_api_key_dict, response):
 
 - `portal-api` toevoegen aan `net-mongodb` network
 - `LIBRECHAT_MONGO_ROOT_URI` env var toevoegen aan `portal-api` service
-- `motor` toevoegen aan `portal/backend/pyproject.toml`
+- `motor` toevoegen aan `klai-portal/backend/pyproject.toml`
 
 ### 4. portal-backend: intern endpoint
 

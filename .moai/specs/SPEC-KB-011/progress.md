@@ -9,9 +9,9 @@
 ## Files created
 
 - `deploy/knowledge-ingest/knowledge_ingest/graph.py` — GraphitiClient + ingest_episode + retry
-- `retrieval-api/retrieval_api/services/graph_search.py` — GraphSearchService + search + convert
+- `klai-retrieval-api/retrieval_api/services/graph_search.py` — GraphSearchService + search + convert
 - `deploy/knowledge-ingest/tests/test_graph.py` — 5 unit tests
-- `retrieval-api/tests/test_graph_search.py` — 7 unit tests
+- `klai-retrieval-api/tests/test_graph_search.py` — 7 unit tests
 
 ## Files modified
 
@@ -20,13 +20,13 @@
 - `deploy/knowledge-ingest/knowledge_ingest/config.py` — graphiti/falkordb settings
 - `deploy/knowledge-ingest/knowledge_ingest/pg_store.py` — update_artifact_extra()
 - `deploy/knowledge-ingest/knowledge_ingest/routes/ingest.py` — background task trigger
-- `retrieval-api/pyproject.toml` — graphiti-core[falkordb]
-- `retrieval-api/retrieval_api/config.py` — graphiti/falkordb settings
-- `retrieval-api/retrieval_api/services/graph_search.py` — graph search service
-- `retrieval-api/retrieval_api/api/retrieve.py` — parallel graph search + RRF merge
-- `retrieval-api/retrieval_api/models.py` — graph_results_count + graph_search_ms fields
-- `retrieval-api/retrieval_api/main.py` — FalkorDB health check
-- `retrieval-api/tests/test_api.py` — TestGraphMetadata class (2 tests)
+- `klai-retrieval-api/pyproject.toml` — graphiti-core[falkordb]
+- `klai-retrieval-api/retrieval_api/config.py` — graphiti/falkordb settings
+- `klai-retrieval-api/retrieval_api/services/graph_search.py` — graph search service
+- `klai-retrieval-api/retrieval_api/api/retrieve.py` — parallel graph search + RRF merge
+- `klai-retrieval-api/retrieval_api/models.py` — graph_results_count + graph_search_ms fields
+- `klai-retrieval-api/retrieval_api/main.py` — FalkorDB health check
+- `klai-retrieval-api/tests/test_api.py` — TestGraphMetadata class (2 tests)
 - `deploy/knowledge-ingest/tests/test_pg_store.py` — test_update_artifact_extra
 
 ## Known deployment verification needed

@@ -8,7 +8,7 @@ Klai bundles the tools your team needs to work with AI: a chat interface, a know
 
 | Package | Description |
 |---------|-------------|
-| [`portal/`](portal/) | Web portal — tenant management, knowledge base, transcription, research |
+| [`klai-portal/`](klai-portal/) | Web portal — tenant management, knowledge base, transcription, research |
 | [`docs/`](docs/) | Documentation site |
 | [`deploy/`](deploy/) | Self-hosting stack — Docker Compose, Caddy, Zitadel, LiteLLM, LibreChat |
 

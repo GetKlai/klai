@@ -204,7 +204,7 @@ SPEC-KB-002 was executed in two phases. Fase 1 en 2 (AC-1 t/m AC-5) zijn volledi
 
 ### AC-1: KB aanmaken provisioneert Gitea — COMPLETED
 
-Geimplementeerd in `5bfe381` (feat(portal): SPEC-KB-003 knowledge base app layer) als onderdeel van de KB creation flow in `/app/knowledge/new`. De portal backend roept `docs_client.provision_kb()` aan bij `POST /api/app/knowledge-bases`, slaat `gitea_repo_slug` op, en doet rollback bij fout. De docs_client is toegevoegd aan portal/backend/app/services/docs_client.py.
+Geimplementeerd in `5bfe381` (feat(portal): SPEC-KB-003 knowledge base app layer) als onderdeel van de KB creation flow in `/app/knowledge/new`. De portal backend roept `docs_client.provision_kb()` aan bij `POST /api/app/knowledge-bases`, slaat `gitea_repo_slug` op, en doet rollback bij fout. De docs_client is toegevoegd aan klai-portal/backend/app/services/docs_client.py.
 
 ### AC-2 + AC-3: /app/docs zonder eigen aanmaakformulier — COMPLETED
 

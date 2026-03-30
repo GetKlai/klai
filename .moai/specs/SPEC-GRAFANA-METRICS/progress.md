@@ -14,7 +14,7 @@
   - NEW: deploy/grafana/provisioning/dashboards/klai-product.json
   - NEW: deploy/grafana/provisioning/dashboards/klai-health.json
   - NEW: deploy/grafana/sql/grafana-reader-setup.sql
-  - MOD: portal/backend/app/api/signup.py (emit signup event)
-  - MOD: portal/backend/app/api/auth.py (emit login event)
-  - MOD: portal/backend/app/api/billing.py (emit billing events)
-  - MOD: portal/backend/app/api/meetings.py (emit meeting events)
+  - MOD: klai-portal/backend/app/api/signup.py (emit signup event)
+  - MOD: klai-portal/backend/app/api/auth.py (emit login event)
+  - MOD: klai-portal/backend/app/api/billing.py (emit billing events)
+  - MOD: klai-portal/backend/app/api/meetings.py (emit meeting events)

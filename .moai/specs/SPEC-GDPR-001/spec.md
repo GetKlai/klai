@@ -117,9 +117,9 @@ De volgende onderdelen zijn **bewust** uitgesloten uit deze SPEC:
 | TAG              | Bestand                                          |
 |------------------|--------------------------------------------------|
 | SPEC-GDPR-001   | `.moai/specs/SPEC-GDPR-001/spec.md`             |
-| R-GDPR-001      | `portal/backend/app/api/me.py` (`sar_export`)   |
-| R-GDPR-002      | `portal/backend/app/api/me.py` (DB queries 1-8) |
-| R-GDPR-003      | `portal/backend/app/api/me.py` (try/except blokken) |
-| R-GDPR-004      | `portal/backend/app/api/me.py` (auth + 401/404) |
-| R-GDPR-005      | `portal/backend/app/api/me.py` (external_systems) |
-| R-GDPR-006      | `portal/frontend/src/routes/app/account.tsx`     |
+| R-GDPR-001      | `klai-portal/backend/app/api/me.py` (`sar_export`)   |
+| R-GDPR-002      | `klai-portal/backend/app/api/me.py` (DB queries 1-8) |
+| R-GDPR-003      | `klai-portal/backend/app/api/me.py` (try/except blokken) |
+| R-GDPR-004      | `klai-portal/backend/app/api/me.py` (auth + 401/404) |
+| R-GDPR-005      | `klai-portal/backend/app/api/me.py` (external_systems) |
+| R-GDPR-006      | `klai-portal/frontend/src/routes/app/account.tsx`     |

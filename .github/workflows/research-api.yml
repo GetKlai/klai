@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'focus/research-api/**'
+      - 'klai-focus/research-api/**'
       - '.github/workflows/research-api.yml'
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
       - name: Build and push research-api
         uses: docker/build-push-action@v7
         with:
-          context: ./focus/research-api
+          context: ./klai-focus/research-api
           push: true
           tags: |
             ghcr.io/getklai/research-api:latest

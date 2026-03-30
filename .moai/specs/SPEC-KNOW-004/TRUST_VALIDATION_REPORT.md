@@ -1,7 +1,7 @@
 # Quality Gate Validation Report
 ## SPEC-KNOW-004: Vector Search Migration (pgvector → Qdrant)
 
-**Service:** `focus/research-api/`
+**Service:** `klai-focus/research-api/`
 **Validation Date:** 2026-03-26
 **Overall Status:** ⚠️ **WARNING** (0 Critical, 3 Warnings, 1 Investigation Finding)
 
@@ -27,10 +27,10 @@
 **Impact:** New modules lack any test coverage. Estimated impact: 0% coverage for `qdrant_store.py`, `knowledge_client.py`.
 
 **Files Affected:**
-- `focus/research-api/app/services/qdrant_store.py` (191 lines, 0 tests)
-- `focus/research-api/app/services/knowledge_client.py` (50 lines, 0 tests)
-- `focus/research-api/app/services/retrieval.py` (modified, no new tests added)
-- `focus/research-api/app/services/ingestion.py` (modified, no new tests added)
+- `klai-focus/research-api/app/services/qdrant_store.py` (191 lines, 0 tests)
+- `klai-focus/research-api/app/services/knowledge_client.py` (50 lines, 0 tests)
+- `klai-focus/research-api/app/services/retrieval.py` (modified, no new tests added)
+- `klai-focus/research-api/app/services/ingestion.py` (modified, no new tests added)
 
 **Missing Test Categories:**
 
@@ -59,7 +59,7 @@
    - Alembic migration 0003 execution in test DB
    - Downgrade path validity
 
-**Recommendation:** Create `focus/research-api/tests/` directory with:
+**Recommendation:** Create `klai-focus/research-api/tests/` directory with:
 - `conftest.py` (fixtures for Qdrant client, test database)
 - `test_qdrant_store.py` (unit + integration for vector operations)
 - `test_knowledge_client.py` (mocked HTTP tests + error scenarios)
@@ -249,7 +249,7 @@ def search_chunks(query_vector, tenant_id, notebook_id, source_ids, top_k=8):
 - Merge with note: "Tests required before production deployment"
 
 ### If Blocking on Tests
-- Implement test suite in `focus/research-api/tests/` (estimate: 4-6 hours)
+- Implement test suite in `klai-focus/research-api/tests/` (estimate: 4-6 hours)
 - Minimum required:
   - `test_qdrant_store.py`: 10-15 tests
   - `test_knowledge_client.py`: 8-10 tests

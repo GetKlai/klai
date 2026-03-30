@@ -213,7 +213,7 @@ resolved_at: Mapped[datetime | None] = mapped_column(
 
 ### 2. Re-Scoring Service
 
-New module `portal/backend/app/services/gap_rescorer.py`:
+New module `klai-portal/backend/app/services/gap_rescorer.py`:
 
 ```python
 async def rescore_gaps_for_org(
@@ -272,14 +272,14 @@ Extract `_classify_gap` and the threshold constants into a shared module (`app/s
 
 | File | Change |
 |------|--------|
-| `portal/backend/app/models/retrieval_gaps.py` | Add `resolved_at` column |
-| `portal/backend/alembic/versions/xxxx_add_resolved_at_to_gaps.py` | New migration |
-| `portal/backend/app/services/gap_rescorer.py` | New module: re-scoring logic |
-| `portal/backend/app/services/gap_classification.py` | New module: extracted `_classify_gap` + thresholds |
-| `portal/backend/app/api/app_gaps.py` | Filter resolved gaps, add `include_resolved` param, update summary |
-| `portal/backend/app/api/internal.py` | Trigger re-scoring on sync-status callback (success only) |
-| `portal/backend/app/api/app_knowledge_bases.py` | Trigger re-scoring after page save (via Gitea webhook or save handler) |
-| `portal/backend/app/core/config.py` | Add `KLAI_GAP_SOFT_THRESHOLD`, `KLAI_GAP_DENSE_THRESHOLD` settings |
+| `klai-portal/backend/app/models/retrieval_gaps.py` | Add `resolved_at` column |
+| `klai-portal/backend/alembic/versions/xxxx_add_resolved_at_to_gaps.py` | New migration |
+| `klai-portal/backend/app/services/gap_rescorer.py` | New module: re-scoring logic |
+| `klai-portal/backend/app/services/gap_classification.py` | New module: extracted `_classify_gap` + thresholds |
+| `klai-portal/backend/app/api/app_gaps.py` | Filter resolved gaps, add `include_resolved` param, update summary |
+| `klai-portal/backend/app/api/internal.py` | Trigger re-scoring on sync-status callback (success only) |
+| `klai-portal/backend/app/api/app_knowledge_bases.py` | Trigger re-scoring after page save (via Gitea webhook or save handler) |
+| `klai-portal/backend/app/core/config.py` | Add `KLAI_GAP_SOFT_THRESHOLD`, `KLAI_GAP_DENSE_THRESHOLD` settings |
 
 ---
 
@@ -322,21 +322,21 @@ All Primary Goal milestones (M1–M7) were implemented in a single commit. M8 (s
 
 | File | Purpose |
 |------|---------|
-| `portal/backend/alembic/versions/f8a9b0c1d2e3_add_resolved_at_to_retrieval_gaps.py` | Alembic migration: adds `resolved_at TIMESTAMPTZ NULL` column and partial index `ix_retrieval_gaps_open` (WHERE resolved_at IS NULL) |
-| `portal/backend/app/services/gap_classification.py` | Ports `_classify_gap` from `deploy/litellm/klai_knowledge.py` into portal backend; reads thresholds from `KLAI_GAP_SOFT_THRESHOLD` / `KLAI_GAP_DENSE_THRESHOLD` env vars |
-| `portal/backend/app/services/gap_rescorer.py` | `rescore_open_gaps()` (queries retrieval API, marks gaps resolved) + `schedule_rescore()` (fire-and-forget wrapper with configurable delay) |
-| `portal/backend/tests/test_gap_classification.py` | 10 unit tests covering all threshold/score path combinations |
-| `portal/backend/tests/test_gap_rescorer.py` | 7 unit tests: no-URL skip, resolve happy path, stays-open path, 50-query cap, empty gaps, retrieval error, network exception |
+| `klai-portal/backend/alembic/versions/f8a9b0c1d2e3_add_resolved_at_to_retrieval_gaps.py` | Alembic migration: adds `resolved_at TIMESTAMPTZ NULL` column and partial index `ix_retrieval_gaps_open` (WHERE resolved_at IS NULL) |
+| `klai-portal/backend/app/services/gap_classification.py` | Ports `_classify_gap` from `deploy/litellm/klai_knowledge.py` into portal backend; reads thresholds from `KLAI_GAP_SOFT_THRESHOLD` / `KLAI_GAP_DENSE_THRESHOLD` env vars |
+| `klai-portal/backend/app/services/gap_rescorer.py` | `rescore_open_gaps()` (queries retrieval API, marks gaps resolved) + `schedule_rescore()` (fire-and-forget wrapper with configurable delay) |
+| `klai-portal/backend/tests/test_gap_classification.py` | 10 unit tests covering all threshold/score path combinations |
+| `klai-portal/backend/tests/test_gap_rescorer.py` | 7 unit tests: no-URL skip, resolve happy path, stays-open path, 50-query cap, empty gaps, retrieval error, network exception |
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| `portal/backend/app/models/retrieval_gaps.py` | Added `resolved_at` column + `ix_retrieval_gaps_open` partial index |
-| `portal/backend/app/core/config.py` | Added `klai_gap_soft_threshold: float = 0.4`, `klai_gap_dense_threshold: float = 0.35`, `knowledge_retrieve_url: str = ""` |
-| `portal/backend/app/api/internal.py` | Added `schedule_rescore()` call on `status == "success"` in `receive_sync_status`; added new `POST /internal/v1/orgs/{org_id}/page-saved` endpoint |
-| `portal/backend/app/api/app_gaps.py` | Added `include_resolved: bool = Query(default=False)` param; added `resolved_at IS NULL` filter when false; added `resolved_at` field to `GapOut`; added `resolved_at IS NULL` filter to `get_gap_summary` |
-| `portal/backend/app/api/app_knowledge_bases.py` | Added `resolved_at IS NULL` to gap count query in KB stats |
+| `klai-portal/backend/app/models/retrieval_gaps.py` | Added `resolved_at` column + `ix_retrieval_gaps_open` partial index |
+| `klai-portal/backend/app/core/config.py` | Added `klai_gap_soft_threshold: float = 0.4`, `klai_gap_dense_threshold: float = 0.35`, `knowledge_retrieve_url: str = ""` |
+| `klai-portal/backend/app/api/internal.py` | Added `schedule_rescore()` call on `status == "success"` in `receive_sync_status`; added new `POST /internal/v1/orgs/{org_id}/page-saved` endpoint |
+| `klai-portal/backend/app/api/app_gaps.py` | Added `include_resolved: bool = Query(default=False)` param; added `resolved_at IS NULL` filter when false; added `resolved_at` field to `GapOut`; added `resolved_at IS NULL` filter to `get_gap_summary` |
+| `klai-portal/backend/app/api/app_knowledge_bases.py` | Added `resolved_at IS NULL` to gap count query in KB stats |
 
 ### Divergences from Plan
 
@@ -347,7 +347,7 @@ All Primary Goal milestones (M1–M7) were implemented in a single commit. M8 (s
 
 ### Deployment Prerequisites
 
-1. **Run Alembic migration** (`f8a9b0c1d2e3_add_resolved_at_to_retrieval_gaps`): `cd portal/backend && alembic upgrade head`
+1. **Run Alembic migration** (`f8a9b0c1d2e3_add_resolved_at_to_retrieval_gaps`): `cd klai-portal/backend && alembic upgrade head`
 2. **Add env var** `KNOWLEDGE_RETRIEVE_URL` to `/opt/klai/.env` (e.g. `http://retrieval-api:8000`); without it, re-scoring is silently skipped
 3. **Update klai-docs** to call `POST /internal/v1/orgs/{org_id}/page-saved` after processing Gitea push webhooks (follow-up task, not in this SPEC)
 

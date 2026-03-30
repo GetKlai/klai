@@ -1,7 +1,7 @@
 ---
 name: klai-portal-ui
 description: >
-  Klai portal UI conventions. Mandatory for any agent editing portal/frontend/src/.
+  Klai portal UI conventions. Mandatory for any agent editing klai-portal/frontend/src/.
   Covers page layout (h1 left + back button right), component usage, color tokens,
   and the LiteLLM model policy (never use gpt-* or other US model names).
 license: Apache-2.0
@@ -16,13 +16,13 @@ metadata:
 
 # Klai Portal UI Conventions
 
-**[HARD] Read this skill in full before editing any file in `portal/frontend/src/`.**
+**[HARD] Read this skill in full before editing any file in `klai-portal/frontend/src/`.**
 
 ---
 
 ## Page layout standard
 
-Reference implementation: `portal/frontend/src/routes/admin/users/invite.tsx`
+Reference implementation: `klai-portal/frontend/src/routes/admin/users/invite.tsx`
 
 Every page uses this structure:
 
@@ -81,6 +81,6 @@ Klai is EU-only. Use only LiteLLM aliases:
 
 ## Full references
 
-- `portal/docs/ui-components.md` — full component reference with code examples
+- `klai-portal/docs/ui-components.md` — full component reference with code examples
 - `.claude/rules/klai/klai-portal-ui.md` — form patterns, table patterns, deletion confirmation
 - `.claude/rules/klai/klai-ui-styleguide.md` — typography, spacing, color system
