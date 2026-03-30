@@ -412,6 +412,9 @@ async def get_kb_stats(
     # Qdrant vector count for this KB
     volume = await _qdrant_count_for_kb(org.zitadel_org_id, kb.slug)
 
+    # Source artifact count from knowledge-ingest (PostgreSQL)
+    source_count = await knowledge_ingest_client.get_source_count(org.zitadel_org_id, kb.slug)
+
     # FalkorDB graph stats (entity/edge counts for the org)
     graph_stats = await knowledge_ingest_client.get_graph_stats(org.zitadel_org_id)
     graph_entity_count: int | None = graph_stats.get("entity_count")
@@ -459,7 +462,7 @@ async def get_kb_stats(
         volume=volume,
         usage_last_30d=usage_last_30d,
         org_gap_count_7d=org_gap_count_7d,
-        source_page_count=docs_count,
+        source_page_count=source_count,
         vector_chunk_count=volume,
         graph_entity_count=graph_entity_count,
         graph_edge_count=graph_edge_count,

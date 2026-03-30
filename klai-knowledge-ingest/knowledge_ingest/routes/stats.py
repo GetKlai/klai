@@ -1,12 +1,15 @@
 """
-Graph stats route:
+Stats routes:
   GET /ingest/v1/graph-stats?org_id={org_id}  — entity/edge counts from FalkorDB
+  GET /ingest/v1/source-count?org_id={org_id}&kb_slug={kb_slug}  — artifact count from PostgreSQL
 """
 import logging
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
+from sqlalchemy import text
 
+from knowledge_ingest import db
 from knowledge_ingest.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,32 @@ router = APIRouter()
 class GraphStatsResponse(BaseModel):
     entity_count: int | None = None
     edge_count: int | None = None
+
+
+class SourceCountResponse(BaseModel):
+    source_count: int | None = None
+
+
+@router.get("/ingest/v1/source-count", response_model=SourceCountResponse)
+async def get_source_count(
+    org_id: str = Query(..., description="Zitadel org ID"),
+    kb_slug: str = Query(..., description="Knowledge base slug"),
+) -> SourceCountResponse:
+    """Return the number of active source artifacts for a KB."""
+    try:
+        async with db.async_session() as session:
+            result = await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM knowledge.artifacts "
+                    "WHERE org_id = :org_id AND kb_slug = :kb_slug AND status = 'active'"
+                ),
+                {"org_id": org_id, "kb_slug": kb_slug},
+            )
+            count = result.scalar_one()
+            return SourceCountResponse(source_count=count)
+    except Exception as exc:
+        logger.debug("Could not fetch source count for org=%s kb=%s: %s", org_id, kb_slug, exc)
+        return SourceCountResponse()
 
 
 @router.get("/ingest/v1/graph-stats", response_model=GraphStatsResponse)
