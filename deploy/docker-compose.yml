@@ -857,7 +857,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       TEI_URL: http://tei:8080
-      SPARSE_EMBED_URL: http://bge-m3-sparse:8001
+      SPARSE_SIDECAR_URL: http://bge-m3-sparse:8001
       GITEA_URL: http://gitea:3000
       GITEA_TOKEN: ${GITEA_ADMIN_TOKEN}
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}

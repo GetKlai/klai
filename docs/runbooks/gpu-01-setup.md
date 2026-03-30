@@ -511,7 +511,6 @@ curl -sf http://172.18.0.1:8000/health   # Whisper
 | `TEI_URL` | `http://tei:8080` | `http://172.18.0.1:7997` |
 | `TEI_RERANKER_URL` | `http://infinity-reranker:7997` | `http://172.18.0.1:7997` |
 | `SPARSE_SIDECAR_URL` | `http://bge-m3-sparse:8001` | `http://172.18.0.1:8001` |
-| `SPARSE_EMBED_URL` | `http://bge-m3-sparse:8001` | `http://172.18.0.1:8001` |
 | `WHISPER_SERVER_URL` | `http://whisper-server:8000` | `http://172.18.0.1:8000` |
 | `TRANSCRIBER_URL` | `http://whisper-server:8000/...` | `http://172.18.0.1:8000/...` |
 | `JINA_API_URL` | `http://infinity-reranker:7997/v1/rerank` | `http://172.18.0.1:7997/v1/rerank` |
