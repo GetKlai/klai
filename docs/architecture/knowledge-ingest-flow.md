@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `deploy/knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-03-27).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-03-27).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
