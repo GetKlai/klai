@@ -49,6 +49,9 @@ paths:
 | [platform-portal-api-deploy-env-preflight](#platform-portal-api-deploy-env-preflight) | CRIT | New config fields need env vars before deploying |
 | [platform-litellm-health-vs-liveliness](#platform-litellm-health-vs-liveliness) | HIGH | `/health` requires auth; use `/health/liveliness` for checks |
 | [platform-grafana-dashboard-datasource-uid](#platform-grafana-dashboard-datasource-uid) | MED | Dashboard datasource UID must match provisioning YAML `uid` exactly |
+| [platform-litellm-custom-router-fires-on-internal-calls](#platform-litellm-custom-router-fires-on-internal-calls) | HIGH | custom_router.py content heuristics fire on internal service LLM calls containing URLs |
+| [platform-mistral-monthly-quota](#platform-mistral-monthly-quota) | HIGH | Tier 1 has 4M token/month cap; looks like RPM limit but `x-ratelimit-remaining-tokens-month: 0` reveals it |
+| [platform-litellm-compose-env-silent-typo](#platform-litellm-compose-env-silent-typo) | HIGH | `${WRONG_VAR}` in docker-compose environment block silently injects wrong value |
 
 ---
 
@@ -934,6 +937,118 @@ When building a dashboard JSON locally or in CI, a convenient placeholder UID is
 **Rule:** Dashboard JSON datasource UIDs and datasource provisioning YAML `uid` fields must match exactly. Define the UID in the datasource YAML — do not rely on Grafana auto-generation.
 
 **Seen in:** `deploy/grafana/provisioning/dashboards/web-performance.json` — SPEC-PERF-001 Web Vitals dashboard uses `uid: "victoriametrics"` throughout; the datasource YAML must set the same UID.
+
+---
+
+## platform-litellm-custom-router-fires-on-internal-calls
+
+**Severity:** HIGH
+
+**Trigger:** Adding a content-based routing hook to LiteLLM that intercepts `klai-primary` requests, when internal background services (Graphiti, enrichment, batch pipelines) also use `klai-primary`
+
+`custom_router.py` uses URL count and token count as heuristics to detect LibreChat web search. These same heuristics fire on internal service LLM calls when the prompt contains document content — for example, Graphiti ingesting telecom documentation with many URLs.
+
+**What happened:**
+Graphiti backfill for Voys telecom docs failed: 71 of 179 artifacts never completed. Root cause: Graphiti uses `klai-primary` for its ~5 internal LLM calls per episode. The custom router saw URLs in the document content and switched the model to `klai-fast`. Then: 429 rate limit from Mistral → Ollama fallback → 120s timeout per episode → backfill crawling at 10+ minutes per artifact.
+
+**The routing cascade:**
+```
+Graphiti calls klai-primary
+  → custom_router detects ≥3 URLs in telecom doc content
+  → routes to klai-fast (mis-classified as web search)
+  → klai-fast hits 429 (Mistral rate limit)
+  → falls back to klai-ollama-fallback
+  → Ollama connection timeout: 120s
+  → episode fails
+```
+
+**Fix:** Use a separate LiteLLM alias for internal background services. The `async_pre_call_hook` in `custom_router.py` returns early for any model that is not `klai-primary`:
+
+```python
+async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
+    if data.get("model") != "klai-primary":
+        return data  # klai-pipeline passes through untouched
+```
+
+**Pattern:**
+- Internal services (Graphiti, enrichment, batch): use `klai-pipeline` via env var `GRAPHITI_LLM_MODEL=klai-pipeline`
+- LibreChat chat traffic: use `klai-primary` (routed by custom_router)
+- Never use `klai-primary` for internal services that process document content
+
+**`klai-pipeline` is defined in `deploy/litellm/config.yaml`** — same underlying model as `klai-primary` but bypasses all content-based routing.
+
+**Why content heuristics are unreliable for internal calls:**
+LibreChat web search injects scraped content as message *content* (≥3 URLs → klai-fast). Internal services processing documents with URLs look identical to web search results from the router's perspective. There is no reliable way to distinguish them without an explicit model alias.
+
+**See also:** `deploy/litellm/custom_router.py` — scope comment in module docstring
+
+---
+
+## platform-mistral-monthly-quota
+
+**Severity:** HIGH
+
+**Trigger:** LiteLLM logs show 429 errors from Mistral, but RPM metrics look fine and you have credits on your account
+
+Mistral Tier 1 accounts have a hard **4 million token/month** cap — separate from RPM and from prepaid credits. When the monthly quota is exhausted you get 429s with `x-ratelimit-remaining-tokens-month: 0`, which looks identical to an RPM rate limit. Credits do NOT buy more monthly tokens on Tier 1.
+
+**Detection — check headers directly:**
+```bash
+# Make a tiny Mistral call and inspect response headers
+curl -s -I -X POST https://api.mistral.ai/v1/chat/completions \
+  -H "Authorization: Bearer $MISTRAL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mistral-small-latest","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
+  | grep -i ratelimit
+# Key header: x-ratelimit-remaining-tokens-month: 0  ← monthly quota exhausted
+```
+
+**Tier 2 upgrade:**
+Tier 2 gives 10× higher monthly quota and is unlocked automatically when total cumulative billing exceeds €20 (not prepaid credits — actual usage billed). The upgrade is not instant; propagation can take hours even after crossing the threshold. Check usage at console.mistral.ai → Usage.
+
+**Workaround during quota outage:**
+Swap `klai-pipeline` in LiteLLM config.yaml to a different model temporarily:
+```yaml
+# core-01/litellm/config.yaml — temporary during Mistral quota outage
+- model_name: klai-pipeline
+  litellm_params:
+    model: anthropic/claude-haiku-4-5-20251001
+    api_key: os.environ/ANTHROPIC_API_KEY
+  rpm: 50
+  tpm: 100000
+```
+Restore to `mistral/mistral-small-latest` after quota resets (1st of month).
+
+**Important:** Monthly quota resets on the 1st of the month. Prepaid credits are for billing — they do not extend the token quota.
+
+---
+
+## platform-litellm-compose-env-silent-typo
+
+**Severity:** HIGH
+
+**Trigger:** Adding a new API key to the LiteLLM container (e.g. ANTHROPIC_API_KEY) and the container receives the wrong value
+
+The litellm service in `/opt/klai/docker-compose.yml` uses an explicit `environment:` block with `${VAR}` substitution from the global `/opt/klai/.env`. There is no `env_file:` directive. A typo in the variable name (e.g. `ANTHROPIC_API_KEY: ${MISTRAL_API_KEY}`) silently injects the wrong value — no error, no warning, just the wrong string inside the container.
+
+**What happened (March 2026):**
+`ANTHROPIC_API_KEY: ${MISTRAL_API_KEY}` was in docker-compose.yml. The container received the Mistral key as the Anthropic key value, so every Claude API call returned 401. This was invisible until `docker compose config litellm` was run.
+
+**Detection:**
+```bash
+# Always verify resolved values before restarting
+ssh core-01 "cd /opt/klai && docker compose config litellm" | grep -A 30 'environment:'
+# Check that ANTHROPIC_API_KEY value starts with sk-ant-, not sk-...
+```
+
+**Rule:** After adding or changing any variable reference in a docker-compose `environment:` block, always run `docker compose config <service>` to verify the resolved values before restarting. The interpolated output shows what the container will actually receive.
+
+**Adding a new API key to LiteLLM — correct flow:**
+1. Add the key to global `/opt/klai/.env`: `echo 'ANTHROPIC_API_KEY=sk-ant-...' >> /opt/klai/.env` (single quotes!)
+2. Fix the `environment:` block in docker-compose.yml: `ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}`
+3. Verify: `docker compose config litellm | grep ANTHROPIC`
+4. Add to `klai-infra/core-01/litellm/.env.sops` for backup (non-interactive SOPS pattern)
+5. Restart: `docker compose up -d litellm`
 
 ---
 
