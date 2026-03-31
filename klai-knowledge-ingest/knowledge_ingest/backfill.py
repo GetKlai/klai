@@ -23,8 +23,7 @@ from knowledge_ingest.graph import ingest_episode
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-EPISODE_TIMEOUT = 300  # seconds per episode
-MAX_CONSECUTIVE_FAILURES = 10
+EPISODE_TIMEOUT = 600  # seconds per episode (large articles need more time)
 MAX_TEXT_CHARS = 4000  # limit text per episode to reduce LLM calls
 
 logging.basicConfig(
@@ -95,13 +94,18 @@ async def main() -> None:
         len(all_points), len(chunks_by_artifact),
     )
 
-    # ---- Process -------------------------------------------------------
+    # ---- Process (parallel) --------------------------------------------
+    concurrency = settings.graphiti_max_concurrent
+    semaphore = asyncio.Semaphore(concurrency)
     ok_count = 0
     err_count = 0
-    consecutive_failures = 0
     t_start = time.time()
+    total_to_process = len(to_process)
 
-    for idx, row in enumerate(to_process, 1):
+    async def process_one(idx: int, row: asyncpg.Record) -> bool:
+        """Process a single artifact. Returns True on success."""
+        nonlocal ok_count, err_count
+
         artifact_id = str(row["id"])
         title = row["path"] or artifact_id
         content_type = row["content_type"] or "text"
@@ -109,55 +113,43 @@ async def main() -> None:
 
         chunks = chunks_by_artifact.get(artifact_id, [])
         if not chunks:
-            log.warning("[%d/%d] %s — no chunks, skipping", idx, len(to_process), title)
-            continue
+            log.warning("[%d/%d] %s — no chunks, skipping", idx, total_to_process, title)
+            return False
 
         full_text = "\n\n".join(chunks)
         if len(full_text) > MAX_TEXT_CHARS:
             full_text = full_text[:MAX_TEXT_CHARS]
 
-        try:
-            episode_id = await asyncio.wait_for(
-                ingest_episode(
-                    artifact_id=artifact_id,
-                    document_text=full_text,
-                    org_id=org_id,
-                    content_type=content_type,
-                    belief_time_start=created_epoch,
-                ),
-                timeout=EPISODE_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            err_count += 1
-            consecutive_failures += 1
-            log.error(
-                "[%d/%d] %s — TIMEOUT after %ds",
-                idx, len(to_process), title, EPISODE_TIMEOUT,
-            )
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                log.error("Too many consecutive failures (%d), stopping", consecutive_failures)
-                break
-            continue
-        except Exception as exc:
-            err_count += 1
-            consecutive_failures += 1
-            log.error("[%d/%d] %s — %s", idx, len(to_process), title, exc)
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                log.error("Too many consecutive failures (%d), stopping", consecutive_failures)
-                break
-            continue
+        async with semaphore:
+            try:
+                episode_id = await asyncio.wait_for(
+                    ingest_episode(
+                        artifact_id=artifact_id,
+                        document_text=full_text,
+                        org_id=org_id,
+                        content_type=content_type,
+                        belief_time_start=created_epoch,
+                    ),
+                    timeout=EPISODE_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                err_count += 1
+                log.error(
+                    "[%d/%d] %s — TIMEOUT after %ds",
+                    idx, total_to_process, title, EPISODE_TIMEOUT,
+                )
+                return False
+            except Exception as exc:
+                err_count += 1
+                log.error("[%d/%d] %s — %s", idx, total_to_process, title, exc)
+                return False
 
         if episode_id is None:
             err_count += 1
-            consecutive_failures += 1
-            log.error("[%d/%d] %s — returned None (LLM issue?)", idx, len(to_process), title)
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                log.error("Too many consecutive failures (%d), stopping", consecutive_failures)
-                break
-            continue
+            log.error("[%d/%d] %s — returned None (LLM issue?)", idx, total_to_process, title)
+            return False
 
         # Success — persist for resume
-        consecutive_failures = 0
         ok_count += 1
         await pool.execute(
             "UPDATE knowledge.artifacts "
@@ -174,12 +166,20 @@ async def main() -> None:
         rate = ok_count / (elapsed / 3600) if elapsed > 0 else 0
         log.info(
             "[%d/%d] %s — OK episode=%s (%d/hr, %ds elapsed)",
-            idx, len(to_process), title, episode_id, int(rate), int(elapsed),
+            idx, total_to_process, title, episode_id, int(rate), int(elapsed),
         )
+        return True
+
+    log.info("Starting parallel backfill with concurrency=%d", concurrency)
+    tasks = [
+        process_one(idx, row)
+        for idx, row in enumerate(to_process, 1)
+    ]
+    await asyncio.gather(*tasks)
 
     log.info(
         "Backfill complete: %d OK, %d errors out of %d",
-        ok_count, err_count, len(to_process),
+        ok_count, err_count, total_to_process,
     )
 
 

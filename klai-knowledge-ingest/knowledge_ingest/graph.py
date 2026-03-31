@@ -32,9 +32,16 @@ from knowledge_ingest.config import settings
 logger = structlog.get_logger()
 
 # Rate-limit Graphiti episodes: each add_episode() makes ~5 LLM calls internally.
-# With Mistral rate limits (60 req/min for klai-large), concurrent episodes cause timeouts.
-_episode_semaphore = asyncio.Semaphore(1)
-EPISODE_DELAY = 5  # seconds between episodes — prevents LLM rate-limit bursts
+# Concurrency controlled by GRAPHITI_MAX_CONCURRENT env var (default: 1).
+_episode_semaphore: asyncio.Semaphore | None = None
+EPISODE_DELAY = 2  # seconds between episodes — prevents LLM rate-limit bursts
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _episode_semaphore
+    if _episode_semaphore is None:
+        _episode_semaphore = asyncio.Semaphore(settings.graphiti_max_concurrent)
+    return _episode_semaphore
 
 _graphiti_client: Graphiti | None = None
 
@@ -129,7 +136,7 @@ async def ingest_episode(
     max_attempts = 3
     episode_result: str | None = None
 
-    async with _episode_semaphore:
+    async with _get_semaphore():
         for attempt in range(max_attempts):
             try:
                 t0 = time.perf_counter()
