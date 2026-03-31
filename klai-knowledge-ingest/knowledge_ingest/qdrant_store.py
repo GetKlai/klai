@@ -76,7 +76,7 @@ async def ensure_collection() -> None:
     # This handles newly added fields (e.g. user_id) on pre-existing collections.
     collection_info = await client.get_collection(COLLECTION)
     indexed_fields = set((collection_info.payload_schema or {}).keys())
-    for field in ("org_id", "kb_slug", "artifact_id", "content_type", "user_id"):
+    for field in ("org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids"):
         if field not in indexed_fields:
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema="keyword",
@@ -349,3 +349,44 @@ async def search(
         }
         for p in points
     ]
+
+
+async def set_entity_graph_data(
+    artifact_id: str,
+    org_id: str,
+    entity_uuids: list[str],
+    pagerank_scores: dict[str, float],
+) -> None:
+    """Set entity UUIDs and max PageRank score on all chunks of an artifact.
+
+    Called after Graphiti episode ingestion completes. All chunks of the same
+    artifact get the same entity list (extracted at document level).
+    entity_pagerank_max is the highest PageRank score among this artifact's entities.
+    """
+    if not entity_uuids:
+        return
+
+    client = get_client()
+    scores = [pagerank_scores.get(uid, 0.0) for uid in entity_uuids]
+    pagerank_max = max(scores) if scores else 0.0
+
+    await client.set_payload(
+        COLLECTION,
+        payload={
+            "entity_uuids": entity_uuids,
+            "entity_pagerank_max": pagerank_max,
+        },
+        points=Filter(
+            must=[
+                FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            ]
+        ),
+    )
+    logger.info(
+        "entity_graph_data_set",
+        artifact_id=artifact_id,
+        org_id=org_id,
+        entity_count=len(entity_uuids),
+        pagerank_max=round(pagerank_max, 6),
+    )
