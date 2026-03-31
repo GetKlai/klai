@@ -1003,6 +1003,7 @@
   "admin_connectors_webcrawler_advanced_toggle": "Geavanceerd: CSS selector",
   "admin_connectors_webcrawler_preview_url": "Voorbeeld URL",
   "admin_connectors_webcrawler_run_preview": "Voorvertoning starten",
+  "admin_connectors_webcrawler_preview_looks_good": "Content ziet er goed uit — {count} woorden schoon geëxtraheerd.",
   "admin_connectors_webcrawler_warning_nav_detected": "In deze voorvertoning zijn navigatiemenu's gedetecteerd. De hoofdinhoud is waarschijnlijk vermengd met site-navigatie. Gebruik de optie 'Geavanceerd: CSS selector' hieronder om alleen het inhoudsgebied te targeten (bijv. main, article, .content).",
 
   "admin_connectors_coming_soon": "Binnenkort",

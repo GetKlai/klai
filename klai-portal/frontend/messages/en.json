@@ -1003,6 +1003,7 @@
   "admin_connectors_webcrawler_advanced_toggle": "Advanced: CSS selector",
   "admin_connectors_webcrawler_preview_url": "Preview URL",
   "admin_connectors_webcrawler_run_preview": "Run preview",
+  "admin_connectors_webcrawler_preview_looks_good": "Content looks good — {count} words extracted cleanly.",
   "admin_connectors_webcrawler_warning_nav_detected": "Navigation menus were detected in this preview. This may mean the main content is mixed with site navigation. Use the 'Advanced: CSS selector' option below to target only the content area (e.g. main, article, .content).",
 
   "admin_connectors_coming_soon": "Coming soon",

@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
-  Check, X, Settings, AlertTriangle, ArrowLeft, Database, Search, GitBranch,
+  Check, X, Settings, AlertTriangle, ArrowLeft, Database, Search, GitBranch, CheckCircle2,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -654,7 +654,7 @@ function ConnectorsSection({
         <Card>
           <CardContent className="pt-6">
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              {!selectedType && <div className="grid grid-cols-2 gap-3">
                 {connectorTypes.map(({ type, label, available }) => (
                   <button
                     key={type}
@@ -675,7 +675,7 @@ function ConnectorsSection({
                     {!available && <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>}
                   </button>
                 ))}
-              </div>
+              </div>}
 
               {selectedType === 'github' && (
                 <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
@@ -828,6 +828,12 @@ function ConnectorsSection({
                           {m.admin_connectors_webcrawler_preview_loading()}
                         </div>
                       )}
+                      {createPreviewResult !== null && !createPreviewMutation.isPending && createPreviewResult.warnings.length === 0 && createPreviewResult.word_count > 0 && (
+                        <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                          <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(createPreviewResult.word_count) })}</span>
+                        </div>
+                      )}
                       {createPreviewResult !== null && !createPreviewMutation.isPending && createPreviewResult.warnings.length > 0 && (
                         <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -861,22 +867,36 @@ function ConnectorsSection({
                       </button>
                       {showAdvancedSelector && (
                         <div className="space-y-2 pl-4 border-l-2 border-[var(--color-border)]">
-                          <Input
-                            id="conn-content-selector"
-                            placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
-                            value={webcrawlerConfig.content_selector}
-                            onChange={(e) => {
-                              const val = e.target.value
-                              setWebcrawlerConfig((p) => ({ ...p, content_selector: val }))
-                              if (selectorDebounceRef.current) clearTimeout(selectorDebounceRef.current)
-                              selectorDebounceRef.current = setTimeout(() => {
-                                if (wcPreviewUrl) {
-                                  setCreatePreviewResult(null)
-                                  createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: val })
-                                }
-                              }, 800)
-                            }}
-                          />
+                          <div className="flex gap-2 items-center">
+                            <Input
+                              id="conn-content-selector"
+                              placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                              value={webcrawlerConfig.content_selector}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setWebcrawlerConfig((p) => ({ ...p, content_selector: val }))
+                                if (selectorDebounceRef.current) clearTimeout(selectorDebounceRef.current)
+                                selectorDebounceRef.current = setTimeout(() => {
+                                  if (wcPreviewUrl) {
+                                    setCreatePreviewResult(null)
+                                    createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: val })
+                                  }
+                                }, 800)
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={createPreviewMutation.isPending || !wcPreviewUrl}
+                              onClick={() => {
+                                setCreatePreviewResult(null)
+                                createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector })
+                              }}
+                            >
+                              {createPreviewMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : m.admin_connectors_webcrawler_run_preview()}
+                            </Button>
+                          </div>
                         </div>
                       )}
                       <div className="flex gap-2 pt-1">
