@@ -95,7 +95,7 @@ async def synthesize(
         messages = [messages[0], *recent, messages[-1]]
 
     body = {
-        "model": "klai-primary",
+        "model": settings.synthesis_model,
         "messages": messages,
         "stream": True,
         "temperature": 0.3,

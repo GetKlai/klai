@@ -33,5 +33,9 @@ class Settings(BaseSettings):
     graph_search_timeout: float = 5.0
     graphiti_llm_model: str = "klai-fast"
 
+    # Model used by the synthesis (chat) layer.
+    # Toggle via env var: RETRIEVAL_API_SYNTHESIS_MODEL=klai-claude
+    synthesis_model: str = "klai-primary"
+
 
 settings = Settings()
