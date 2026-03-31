@@ -277,7 +277,7 @@ async def password_reset(body: PasswordResetRequest) -> None:
     try:
         await zitadel.send_password_reset(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception("send_password_reset failed %s: %s", exc.response.status_code, exc.response.text)
+        logger.exception("send_password_reset failed", status=exc.response.status_code)
         return  # fail silently
 
 
@@ -287,7 +287,7 @@ async def password_set(body: PasswordSetRequest) -> None:
     try:
         await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
-        logger.exception("set_password_with_code failed %s: %s", exc.response.status_code, exc.response.text)
+        logger.exception("set_password_with_code failed", status=exc.response.status_code)
         if exc.response.status_code in (400, 404, 410):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
