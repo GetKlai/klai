@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from knowledge_ingest import chunker, embedder, graph as graph_module, kb_config, org_config, pg_store, qdrant_store
 from knowledge_ingest.config import settings
+from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import (
     BulkSyncRequest,
@@ -82,13 +83,13 @@ def _extract_frontmatter_metadata(content: str) -> dict:
 
 
 _ASSERTION_MODE_MIGRATION: dict[str, str] = {
-    "factual": "fact",
-    "belief": "claim",
-    "hypothesis": "speculation",
+    "fact": "factual",
+    "claim": "belief",
+    "speculation": "hypothesis",
     "note": "unknown",
 }
 
-_VALID_NEW_ASSERTION_MODES = frozenset({"fact", "claim", "speculation", "procedural", "quoted", "unknown"})
+_VALID_ASSERTION_MODES = frozenset({"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"})
 
 
 def _parse_knowledge_fields(
@@ -116,7 +117,7 @@ def _parse_knowledge_fields(
     # Apply connector-level hint before frontmatter: hint sets the default,
     # frontmatter can always override it.
     if allowed_assertion_modes:
-        valid_hints = [m for m in allowed_assertion_modes if m in _VALID_NEW_ASSERTION_MODES]
+        valid_hints = [m for m in allowed_assertion_modes if m in _VALID_ASSERTION_MODES]
         if len(valid_hints) == 1:
             defaults["assertion_mode"] = valid_hints[0]
 
@@ -137,7 +138,7 @@ def _parse_knowledge_fields(
         result["provenance_type"] = fm["provenance_type"]
 
     raw_mode = fm.get("assertion_mode")
-    if raw_mode in _VALID_NEW_ASSERTION_MODES:
+    if raw_mode in _VALID_ASSERTION_MODES:
         result["assertion_mode"] = raw_mode
     elif raw_mode in _ASSERTION_MODE_MIGRATION:
         result["assertion_mode"] = _ASSERTION_MODE_MIGRATION[raw_mode]
@@ -202,9 +203,18 @@ async def ingest_document(req: IngestRequest) -> dict:
         else:
             texts = [req.content]
     else:
+        # Use content profile chunk_tokens_max (converted to chars) when it
+        # differs from the global default.  1 token ≈ 4 chars.
+        profile = get_profile(req.content_type)
+        profile_chunk_chars = profile.chunk_tokens_max * 4
+        chunk_size = (
+            profile_chunk_chars
+            if profile_chunk_chars != settings.chunk_size
+            else settings.chunk_size
+        )
         chunks = chunker.chunk_markdown(
             req.content,
-            chunk_size=settings.chunk_size,
+            chunk_size=chunk_size,
             overlap=settings.chunk_overlap,
         )
         if not chunks:

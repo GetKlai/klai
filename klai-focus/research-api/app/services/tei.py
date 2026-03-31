@@ -25,7 +25,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
             resp = await client.post(
-                f"{settings.tei_url}/v1/embeddings",
+                f"{settings.infinity_url}/v1/embeddings",
                 json={"input": batch, "model": _EMBED_MODEL},
             )
             resp.raise_for_status()

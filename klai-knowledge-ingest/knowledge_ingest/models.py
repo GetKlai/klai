@@ -2,7 +2,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
-AssertionMode = Literal["fact", "claim", "speculation", "procedural", "quoted", "unknown"]
+AssertionMode = Literal["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"]
 VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 
 

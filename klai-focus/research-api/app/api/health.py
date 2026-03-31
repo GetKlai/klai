@@ -21,13 +21,13 @@ async def _check(url: str, timeout: float = 5.0) -> str:
 @router.get("/health")
 async def health() -> dict:
     docling_status = await _check(f"{settings.docling_url}/health")
-    tei_status = await _check(f"{settings.tei_url}/health")
+    infinity_status = await _check(f"{settings.infinity_url}/health")
     searxng_status = await _check(f"{settings.searxng_url}/")
 
     return {
         "status": "ok",
         "docling": docling_status,
-        "tei": tei_status,
+        "infinity": infinity_status,
         "vector_backend": settings.vector_backend,
         "searxng": searxng_status,
     }

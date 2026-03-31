@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 async def _warmup_reranker() -> None:
     """Send a dummy request to load the reranker model before the first real query."""
-    if not settings.reranker_enabled or not settings.tei_reranker_url:
+    if not settings.reranker_enabled or not settings.infinity_reranker_url:
         return
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             await client.post(
-                f"{settings.tei_reranker_url}/v1/rerank",
+                f"{settings.infinity_reranker_url}/v1/rerank",
                 json={
                     "model": "bge-reranker-v2-m3",
                     "query": "warmup",
@@ -41,9 +41,9 @@ async def _warmup_reranker() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
-        "retrieval-api starting | qdrant=%s tei=%s litellm=%s",
+        "retrieval-api starting | qdrant=%s infinity=%s litellm=%s",
         settings.qdrant_url,
-        settings.tei_url,
+        settings.infinity_url,
         settings.litellm_url,
     )
     await _warmup_reranker()
@@ -61,16 +61,16 @@ app.mount("/metrics", make_asgi_app())
 
 @app.get("/health")
 async def health():
-    """Check reachability of TEI, Qdrant, and LiteLLM."""
+    """Check reachability of Infinity, Qdrant, and LiteLLM."""
     checks: dict[str, str] = {}
 
-    # TEI
+    # Infinity
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{settings.tei_url}/health")
-            checks["tei"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+            resp = await client.get(f"{settings.infinity_url}/health")
+            checks["infinity"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
     except Exception as exc:
-        checks["tei"] = f"error: {exc}"
+        checks["infinity"] = f"error: {exc}"
 
     # Qdrant
     try:

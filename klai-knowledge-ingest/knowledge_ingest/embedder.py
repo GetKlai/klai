@@ -15,7 +15,7 @@ EMBED_DIM = 1024  # BGE-M3 dense output dimension
 _EMBED_MODEL = "BAAI/bge-m3"
 
 # Batch size for Infinity requests — keeps queue_time manageable
-_TEI_BATCH_SIZE = 32
+_BATCH_SIZE = 32
 
 
 async def _embed_batch(
@@ -62,21 +62,21 @@ async def _embed_batch(
 async def embed(texts: list[str]) -> list[list[float]]:
     """Return dense embeddings for a list of texts.
 
-    Splits into batches of _TEI_BATCH_SIZE to keep Infinity queue_time low
+    Splits into batches of _BATCH_SIZE to keep Infinity queue_time low
     and avoid client-side read timeouts on large documents.
     """
     if not texts:
         return []
     async with httpx.AsyncClient(
-        base_url=settings.tei_url,
-        timeout=settings.tei_timeout,
+        base_url=settings.infinity_url,
+        timeout=settings.infinity_timeout,
     ) as client:
-        if len(texts) <= _TEI_BATCH_SIZE:
+        if len(texts) <= _BATCH_SIZE:
             return await _embed_batch(client, texts)
 
         results: list[list[float]] = []
-        for start in range(0, len(texts), _TEI_BATCH_SIZE):
-            batch = texts[start : start + _TEI_BATCH_SIZE]
+        for start in range(0, len(texts), _BATCH_SIZE):
+            batch = texts[start : start + _BATCH_SIZE]
             batch_result = await _embed_batch(client, batch)
             results.extend(batch_result)
         return results

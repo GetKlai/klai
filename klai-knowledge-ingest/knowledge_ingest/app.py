@@ -111,13 +111,13 @@ async def health():
     except Exception as exc:
         checks["qdrant"] = f"error: {exc}"
 
-    # TEI (dense embeddings)
+    # Infinity (dense embeddings)
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{settings.tei_url}/health")
-            checks["tei"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+            resp = await client.get(f"{settings.infinity_url}/health")
+            checks["infinity"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
     except Exception as exc:
-        checks["tei"] = f"error: {exc}"
+        checks["infinity"] = f"error: {exc}"
 
     # bge-m3-sparse (sparse embeddings sidecar)
     try:
