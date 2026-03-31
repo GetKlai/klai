@@ -158,22 +158,45 @@ function AddConnectorPage() {
         <CardContent className="pt-6">
           <div className="space-y-4">
 
-            {/* Global step breadcrumb */}
-            <div className="flex items-center gap-1.5 text-xs">
-              {selectedType ? (
-                <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={() => setSelectedType(null)}>
-                  {m.admin_connectors_step_type()}
-                </button>
-              ) : (
-                <span className="font-medium text-[var(--color-purple-deep)]">1. {m.admin_connectors_step_type()}</span>
-              )}
-              {selectedType === 'github' && (
-                <>
-                  <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />
-                  <span className="font-medium text-[var(--color-purple-deep)]">1. {m.admin_connectors_step_configure()}</span>
-                </>
-              )}
-            </div>
+            {/* Unified step breadcrumb — always shows all steps */}
+            {(() => {
+              type StepKey = 'type' | 'details' | 'preview' | 'settings' | 'configure'
+              const wcSteps: { key: StepKey; label: string; onClick?: () => void }[] = [
+                { key: 'type',     label: `1. ${m.admin_connectors_step_type()}`,                     onClick: () => setSelectedType(null) },
+                { key: 'details',  label: `2. ${m.admin_connectors_webcrawler_step_details()}`,        onClick: () => setWcStep('details') },
+                { key: 'preview',  label: `3. ${m.admin_connectors_webcrawler_step_preview()}`,        onClick: () => setWcStep('preview') },
+                { key: 'settings', label: `4. ${m.admin_connectors_webcrawler_step_settings()}` },
+              ]
+              const ghSteps: { key: StepKey; label: string; onClick?: () => void }[] = [
+                { key: 'type',      label: `1. ${m.admin_connectors_step_type()}`,      onClick: () => setSelectedType(null) },
+                { key: 'configure', label: `2. ${m.admin_connectors_step_configure()}` },
+              ]
+              const steps = selectedType === 'github' ? ghSteps : wcSteps
+              const currentKey: StepKey = !selectedType ? 'type' : selectedType === 'github' ? 'configure' : wcStep
+              const currentIdx = steps.findIndex((s) => s.key === currentKey)
+              return (
+                <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                  {steps.map((step, i) => {
+                    const isPast = i < currentIdx
+                    const isActive = step.key === currentKey
+                    return (
+                      <span key={step.key} className="flex items-center gap-1.5">
+                        {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
+                        {isPast && step.onClick ? (
+                          <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={step.onClick}>
+                            {step.label}
+                          </button>
+                        ) : (
+                          <span className={isActive ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
+                            {step.label}
+                          </span>
+                        )}
+                      </span>
+                    )
+                  })}
+                </div>
+              )
+            })()}
 
             {/* Step 1: Type selection */}
             {!selectedType && (
@@ -252,35 +275,6 @@ function AddConnectorPage() {
             {/* Web crawler wizard */}
             {selectedType === 'web_crawler' && (
               <div className="space-y-4">
-                {/* Webcrawler step indicator (steps 2-4, appended to global breadcrumb above) */}
-                {(() => {
-                  const steps: WcStep[] = ['details', 'preview', 'settings']
-                  const currentIdx = steps.indexOf(wcStep)
-                  return (
-                    <div className="flex items-center gap-1.5 text-xs -mt-2">
-                      {steps.map((step, i) => {
-                        const label = `${String(i + 1)}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
-                        const isPast = i < currentIdx
-                        const isActive = wcStep === step
-                        return (
-                          <span key={step} className="flex items-center gap-1.5">
-                            <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />
-                            {isPast ? (
-                              <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={() => setWcStep(step)}>
-                                {label}
-                              </button>
-                            ) : (
-                              <span className={isActive ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
-                                {label}
-                              </span>
-                            )}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
-
                 {/* Step 1: Details */}
                 {wcStep === 'details' && (
                   <div className="space-y-3">
