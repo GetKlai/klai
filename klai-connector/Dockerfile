@@ -13,6 +13,10 @@ COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.
 COPY --from=deps /usr/local/bin /usr/local/bin
 COPY . .
 
+RUN adduser --disabled-password --gecos "" klai
+
 EXPOSE 8200
+
+USER klai
 
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8200"]

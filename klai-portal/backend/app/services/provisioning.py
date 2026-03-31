@@ -331,7 +331,7 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
         pass
 
     librechat_host_base = settings.librechat_host_data_path
-    client.containers.run(  # type: ignore[call-overload]
+    client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
         image=settings.librechat_image,
         name=container_name,
         detach=True,

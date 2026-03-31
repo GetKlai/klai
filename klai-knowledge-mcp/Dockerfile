@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir uv && \
 COPY logging_setup.py .
 COPY main.py .
 
+RUN adduser --disabled-password --gecos "" klai
+
 EXPOSE 8080
+
+USER klai
 
 CMD ["python", "main.py"]

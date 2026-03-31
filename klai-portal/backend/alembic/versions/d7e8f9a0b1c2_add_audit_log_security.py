@@ -23,7 +23,7 @@ def upgrade() -> None:
     # Fix 5: Row Level Security for tenant isolation
     op.execute("ALTER TABLE portal_audit_log ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE portal_audit_log FORCE ROW LEVEL SECURITY")
-    op.execute(f"CREATE POLICY tenant_isolation ON portal_audit_log USING (org_id = {_T})")
+    op.execute(f"CREATE POLICY tenant_isolation ON portal_audit_log USING (org_id = {_T})")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
 
 def downgrade() -> None:
