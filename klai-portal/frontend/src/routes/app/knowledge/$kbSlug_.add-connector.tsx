@@ -162,7 +162,7 @@ function AddConnectorPage() {
             <div className="flex items-center gap-1.5 text-xs">
               {selectedType ? (
                 <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={() => setSelectedType(null)}>
-                  1. {m.admin_connectors_step_type()}
+                  {m.admin_connectors_step_type()}
                 </button>
               ) : (
                 <span className="font-medium text-[var(--color-purple-deep)]">1. {m.admin_connectors_step_type()}</span>
@@ -170,7 +170,7 @@ function AddConnectorPage() {
               {selectedType === 'github' && (
                 <>
                   <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />
-                  <span className="font-medium text-[var(--color-purple-deep)]">2. {m.admin_connectors_step_configure()}</span>
+                  <span className="font-medium text-[var(--color-purple-deep)]">1. {m.admin_connectors_step_configure()}</span>
                 </>
               )}
             </div>
@@ -259,7 +259,7 @@ function AddConnectorPage() {
                   return (
                     <div className="flex items-center gap-1.5 text-xs -mt-2">
                       {steps.map((step, i) => {
-                        const label = `${String(i + 2)}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
+                        const label = `${String(i + 1)}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
                         const isPast = i < currentIdx
                         const isActive = wcStep === step
                         return (
@@ -296,25 +296,6 @@ function AddConnectorPage() {
                       <Label htmlFor="wc-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
                       <Input id="wc-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
                     </div>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)] transition-colors"
-                      onClick={() => setShowAdvancedSelector((p) => !p)}
-                    >
-                      <Settings className="h-3 w-3" />
-                      {m.admin_connectors_webcrawler_advanced_toggle()}
-                      {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    </button>
-                    {showAdvancedSelector && (
-                      <div className="pl-4 border-l-2 border-[var(--color-border)]">
-                        <Input
-                          id="wc-content-selector"
-                          placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
-                          value={webcrawlerConfig.content_selector}
-                          onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
-                        />
-                      </div>
-                    )}
                     <div className="flex gap-2 pt-1">
                       <Button
                         type="button"
