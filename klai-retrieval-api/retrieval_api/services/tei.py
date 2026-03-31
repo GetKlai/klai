@@ -1,4 +1,8 @@
-"""Infinity (OpenAI-compatible) client for embedding and reranking."""
+"""TEI (text-embeddings-inference) client for dense embeddings.
+TEI runs on gpu-01 at port 7997, tunneled to 172.18.0.1:7997 on core-01.
+Uses the OpenAI-compatible /v1/embeddings API (same format as Infinity).
+Do NOT confuse with Infinity (port 7998), which is the separate reranker service.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ async def embed_single(text: str) -> list[float]:
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{settings.infinity_url}/v1/embeddings",
+            f"{settings.tei_url}/v1/embeddings",
             json={"input": text, "model": _EMBED_MODEL},
         )
         resp.raise_for_status()
@@ -32,7 +36,7 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts via the Infinity /v1/embeddings endpoint."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{settings.infinity_url}/v1/embeddings",
+            f"{settings.tei_url}/v1/embeddings",
             json={"input": texts, "model": _EMBED_MODEL},
         )
         resp.raise_for_status()

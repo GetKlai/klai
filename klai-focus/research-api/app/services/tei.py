@@ -1,6 +1,8 @@
 """
-HTTP client for Infinity running BGE-M3 (OpenAI-compatible API).
-Produces 1024-dimensional dense vectors.
+HTTP client for TEI (text-embeddings-inference) running BGE-M3.
+TEI is on gpu-01 port 7997, tunneled to 172.18.0.1:7997 on core-01.
+Uses the OpenAI-compatible /v1/embeddings API. Produces 1024-dim dense vectors.
+Not to be confused with Infinity (port 7998), which handles reranking only.
 """
 import logging
 
@@ -25,7 +27,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
             resp = await client.post(
-                f"{settings.infinity_url}/v1/embeddings",
+                f"{settings.tei_url}/v1/embeddings",
                 json={"input": batch, "model": _EMBED_MODEL},
             )
             resp.raise_for_status()

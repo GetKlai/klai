@@ -94,7 +94,7 @@ def _get_graphiti() -> Graphiti:
             "graphiti_client_init",
             llm_base_url=litellm_base_url,
             model=settings.graphiti_llm_model,
-            embedder_url=f"{settings.infinity_url}/v1",
+            embedder_url=f"{settings.tei_url}/v1",
         )
         llm_config = LLMConfig(
             base_url=litellm_base_url,
@@ -121,7 +121,7 @@ def _get_graphiti() -> Graphiti:
         llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
         embedder = OpenAIEmbedder(
             config=OpenAIEmbedderConfig(
-                base_url=f"{settings.infinity_url}/v1",
+                base_url=f"{settings.tei_url}/v1",
                 api_key=api_key,
                 embedding_model="bge-m3",
                 embedding_dim=1024,

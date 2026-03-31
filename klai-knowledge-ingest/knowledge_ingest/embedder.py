@@ -1,6 +1,8 @@
 """
-Infinity (OpenAI-compatible) client for BGE-M3 dense embeddings.
-Infinity runs on gpu-01 and is accessible via SSH tunnel on klai-net.
+TEI (text-embeddings-inference) client for BGE-M3 dense embeddings.
+TEI runs on gpu-01 and is accessible via SSH tunnel at 172.18.0.1:7997.
+Note: TEI uses the OpenAI-compatible /v1/embeddings API — do not confuse with
+Infinity (port 7998), which is a separate service used exclusively for reranking.
 """
 import asyncio
 import logging
@@ -37,7 +39,7 @@ async def _embed_batch(
             last_exc = exc
             wait = 2**attempt
             logger.warning(
-                "Infinity embed timeout (attempt %d/3, %d texts), retrying in %ds",
+                "TEI embed timeout (attempt %d/3, %d texts), retrying in %ds",
                 attempt + 1,
                 len(texts),
                 wait,
@@ -48,7 +50,7 @@ async def _embed_batch(
                 last_exc = exc
                 wait = 2**attempt
                 logger.warning(
-                    "Infinity embed 5xx (attempt %d/3, status %d), retrying in %ds",
+                    "TEI embed 5xx (attempt %d/3, status %d), retrying in %ds",
                     attempt + 1,
                     exc.response.status_code,
                     wait,
@@ -68,8 +70,8 @@ async def embed(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     async with httpx.AsyncClient(
-        base_url=settings.infinity_url,
-        timeout=settings.infinity_timeout,
+        base_url=settings.tei_url,
+        timeout=settings.tei_timeout,
     ) as client:
         if len(texts) <= _BATCH_SIZE:
             return await _embed_batch(client, texts)
