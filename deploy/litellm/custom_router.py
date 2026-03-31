@@ -4,9 +4,13 @@ Context-aware model routing for LiteLLM proxy.
 Intercepts klai-primary requests via pre_call_hook and routes based on
 conversation context:
 
-  Tool call history detected  →  klai-large   (mistral-large-123B, agentic/MCP flows)
-  Web search content detected →  klai-fast    (open-mistral-nemo-12B, speed for synthesis)
-  Default                     →  klai-primary  (mistral-small-22B, normal chat)
+  Tool call history detected  →  klai-large    (mistral-large, agentic/MCP flows)
+  Web search content detected →  klai-fast     (mistral-small, speed for synthesis)
+  Default                     →  klai-primary  (mistral-small, normal chat)
+
+Scope: LibreChat/chat traffic only. Internal background services (Graphiti,
+enrichment, batch pipelines) use klai-pipeline, which bypasses this router
+entirely — the hook returns early for any model != "klai-primary".
 
 Detection:
   - Tool calls: any message with role="tool" → agentic flow, needs strong reasoning

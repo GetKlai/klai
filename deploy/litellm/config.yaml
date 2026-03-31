@@ -8,6 +8,16 @@ model_list:
     rpm: 20    # Mistral org limit: 1 req/s (60 RPM shared across all models)
     tpm: 45000 # Mistral model limit: 50K TPM for mistral-small
 
+  # Pipeline: Mistral Small 4 — for internal background services (Graphiti, enrichment, batch)
+  # Bypasses custom_router.py content-based routing — service calls are structured prompts,
+  # not chat messages. Never use for LibreChat traffic.
+  - model_name: klai-pipeline
+    litellm_params:
+      model: mistral/mistral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+    rpm: 20    # Share of the 60 RPM org limit
+    tpm: 45000
+
   # Fast: Mistral Small 4 — same model, separate alias for routing flexibility
   # Auto-selected by custom_router.py when scraped web content is detected
   - model_name: klai-fast
