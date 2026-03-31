@@ -40,7 +40,7 @@ CONTENT_TYPE_DEFAULTS: dict[str, str] = {
 # -- Pydantic schemas --------------------------------------------------------
 
 
-VALID_ASSERTION_MODES = frozenset({"fact", "claim", "speculation", "procedural", "quoted", "unknown"})
+VALID_ASSERTION_MODES = frozenset({"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"})
 
 
 class ConnectorCreateRequest(BaseModel):

@@ -29,7 +29,7 @@ async def rerank(
     try:
         async with httpx.AsyncClient(timeout=settings.reranker_timeout) as client:
             resp = await client.post(
-                f"{settings.tei_reranker_url}/v1/rerank",
+                f"{settings.infinity_reranker_url}/v1/rerank",
                 json={
                     "model": "bge-reranker-v2-m3",
                     "query": query,

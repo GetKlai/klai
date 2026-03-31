@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-03-27).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-03-31).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -139,6 +139,12 @@ all files, and skips syncs when the repository tree SHA hasn't changed since the
 This means a large repo with no changes costs almost nothing. Supported files: `.md`,
 `.txt`, `.pdf`, `.docx`, `.rst`, `.html`, `.csv`.
 
+**Binary file parsing in klai-connector:** Plain-text formats (`.md`, `.txt`, `.rst`,
+`.csv`) are decoded directly. Binary formats (`.pdf`, `.docx`, `.html`) are parsed via
+**Unstructured.io** (`unstructured.partition.auto`) inside `klai-connector/app/services/
+parser.py`. The parsed plain text is then forwarded to `knowledge-ingest` via
+`POST /ingest/v1/document`. Maximum file size: 50 MB.
+
 **Web crawls (live):** uses Crawl4AI with sitemap awareness for deep site crawls.
 
 **Planned connectors:**
@@ -185,40 +191,64 @@ Before any processing begins, the pipeline selects a *content profile* based on
 handled — a PDF technical manual and a meeting transcript have very different chunk sizes,
 context window strategies, and enrichment needs.
 
-| content_type | HyPE | Context strategy | Chunk size |
+| content_type | HyPE | Context strategy | Max chunk size |
 |---|---|---|---|
-| `kb_article` | Conditional (synthesis_depth ≤ 1) | first_n | 300–500 tokens |
-| `pdf_document` | Always | front_matter | 400–800 tokens |
-| `meeting_transcript` | Always | rolling_window | 150–400 tokens |
-| `1on1_transcript` | Always | rolling_window | 100–300 tokens |
-| `email_thread` | Conditional (depth ≤ 1) | most_recent | 200–500 tokens |
-| `unknown` | Never | first_n | 500 tokens |
+| `kb_article` | Conditional (synthesis_depth ≤ 1) | first_n | 500 tokens (2000 chars) |
+| `pdf_document` | Always | front_matter | 800 tokens (3200 chars) |
+| `meeting_transcript` | Always | rolling_window | 400 tokens (1600 chars) |
+| `1on1_transcript` | Always | rolling_window | 300 tokens (1200 chars) |
+| `email_thread` | Conditional (depth ≤ 1) | most_recent | 500 tokens (2000 chars) |
+| `unknown` | Never | first_n | 500 tokens (2000 chars) |
 
 If no `content_type` is set, the pipeline uses `unknown` — no enrichment, basic chunking.
 
 ### Phase 1: Immediate (synchronous)
 
-**Step 1 — Parse and chunk.** The raw file is sent to **docling-serve**, a self-hosted
-wrapper around Docling's `HybridChunker`. It splits the document at natural boundaries
-(headings, paragraphs, tables) into chunks of the size defined by the content profile.
-Chunking is token-aware rather than character-aware, so chunks don't cut off mid-sentence.
+**Step 1 — Parse and chunk.** The content arrives as plain text (already decoded by the
+caller for Gitea pages and connector text files). Binary files (PDF, DOCX, HTML) are
+parsed upstream in **klai-connector** via Unstructured.io's `partition.auto` — not in
+knowledge-ingest itself.
 
-**Step 2 — Embed and store raw vectors.** Each chunk is sent to **TEI** (Text Embeddings
-Inference) running **BGE-M3** to produce a 1024-dimensional dense vector. These raw
-embeddings are immediately upserted into Qdrant as `vector_chunk`. The document is now
-searchable.
+Chunking is done by a custom `chunker.py` inside knowledge-ingest:
+1. **Heading split** — the document is first split at H1/H2/H3 headings
+   (`^(#{1,3})\s+(.+)$`). Each section keeps its heading prepended so chunks are
+   self-contained.
+2. **Size split** — sections that are still larger than `chunk_size` (default 1500
+   **characters**, roughly 300–400 tokens for BGE-M3) are further split at paragraph
+   boundaries (`\n\n`) or sentence boundaries (`. `).
+3. **Overlap** — consecutive chunks share a 200-character tail/head overlap to prevent
+   answers from falling between chunks.
 
-**Step 3 — Enqueue enrichment.** The main request enqueues an async task via Procrastinate
-(a PostgreSQL-backed task queue) and returns to the caller. Two queues separate
-priorities: `enrich-interactive` for user-triggered saves (should feel fast), and
-`enrich-bulk` for background syncs (can wait).
+The content profile defines `chunk_tokens_max` per document type. The chunker converts
+this to characters (`tokens × 4`) and uses it as `chunk_size`. Effective chunk sizes:
 
-**Step 4 — Feed the knowledge graph (fire-and-forget).** If `settings.graphiti_enabled`
-is on, an `asyncio.create_task()` fires the document to Graphiti/FalkorDB as a "episode".
-The main request doesn't wait for this and doesn't fail if it errors. Graphiti extracts
-entities and relationships from the text and stores them in a graph database (FalkorDB),
-enabling relationship-based queries that pure vector search can't do (e.g. "what does
-person X work on, and what decisions are connected to those projects?").
+| content_type | chunk_tokens_max | chunk_size (chars) |
+|---|---|---|
+| `1on1_transcript` | 300 | 1200 |
+| `meeting_transcript` | 400 | 1600 |
+| `kb_article` | 500 | 2000 |
+| `email_thread` | 500 | 2000 |
+| `unknown` | 500 | 2000 |
+| `pdf_document` | 800 | 3200 |
+
+**Step 2 — Embed and store raw vectors.** Each chunk is sent to **Infinity** (OpenAI-
+compatible `/v1/embeddings` endpoint) running **BGE-M3** to produce a 1024-dimensional
+dense vector. These raw embeddings are immediately upserted into Qdrant as `vector_chunk`.
+The document is now searchable.
+
+**Step 3 — Enqueue enrichment.** The main request enqueues two async tasks via
+Procrastinate (a PostgreSQL-backed task queue) and returns to the caller. Three queues
+manage priorities:
+- `enrich-interactive` — user-triggered saves (should feel fast)
+- `enrich-bulk` — background connector syncs (can wait)
+- `graphiti-bulk` — knowledge graph ingestion (lowest priority)
+
+The worker processes queues in drain order: `ingest-kb → enrich-interactive → enrich-bulk
+→ graphiti-bulk`.
+
+**Step 4 — Feed the knowledge graph (async).** If `settings.graphiti_enabled` is on, a
+Procrastinate task on the `graphiti-bulk` queue defers the document to Graphiti/FalkorDB
+as an "episode". The main request doesn't wait for this and doesn't fail if it errors.
 
 ### Phase 2: Async enrichment (Procrastinate worker)
 
@@ -231,7 +261,7 @@ options?), and (2) users search with questions while documents contain answers (
 gap). Enrichment addresses both.
 
 **Step A — Contextual Retrieval prefix.**
-A single LLM call (via the LiteLLM proxy, model `klai-primary`) takes each chunk plus
+A single LLM call (via the LiteLLM proxy, model `klai-fast`) takes each chunk plus
 surrounding context from the document and generates:
 - A 1–2 sentence *context prefix* that situates the chunk: "This excerpt is from the Q4
   roadmap doc and describes the decision to migrate from X to Y."
@@ -284,6 +314,50 @@ and every search includes a mandatory `must: org_id = X` filter. All tenants sha
 single `klai_knowledge` collection — there's no collection-per-tenant. This keeps ops
 simple (one index to manage, one backup, no provisioning step per org) while still
 isolating data at query time.
+
+### Phase 3: Knowledge graph ingestion (Graphiti / FalkorDB)
+
+After the Qdrant upsert, the `graphiti-bulk` Procrastinate task runs `ingest_episode()`.
+This is the deepest enrichment phase — it builds a traversable knowledge graph on top of
+the vector index.
+
+**Three types of objects in the graph:**
+
+**EpisodicNode** — the document itself as a time-stamped event. Every ingested artifact
+becomes an `EpisodicNode` with the full text, a `valid_from` timestamp, and a
+`belief_time_end` sentinel (`253402300800` = year 9999) that marks it as currently active.
+When a document is re-ingested, the old EpisodicNode gets `belief_time_end = now()` (soft
+delete) and a fresh one is created. This temporal layering means the graph holds a full
+history of what the system "believed" at any point in time.
+
+**EntityNode** — extracted entities within the document. Graphiti's LLM step extracts
+named entities (people, products, projects, decisions, organisations) from each chunk and
+creates or updates `EntityNode` objects in FalkorDB. If the entity was seen in a previous
+document, its existing node is reused (entity resolution by name + embedding similarity).
+
+**Edge** — relationships between entities. Each co-occurrence or explicit relationship
+found in the text creates or strengthens a `RELATES_TO` edge between two `EntityNode`
+objects. The label is a short phrase extracted by the LLM ("works at", "decided on",
+"depends on").
+
+**Hebbian reinforcement** — every time two entities co-occur in a new document, the edge
+weight between them is incremented: `SET r.weight = COALESCE(r.weight, 0) + 1`. Edges
+that keep appearing across many documents become stronger. This mirrors Hebb's rule
+("neurons that fire together wire together") — frequently co-mentioned concepts end up
+more tightly connected in the graph.
+
+**PageRank** — after every Graphiti ingest batch, a PageRank algorithm runs over the
+entity graph (`CALL algo.pageRank('Entity', 'RELATES_TO')`). Entities with many
+connections (and connections to other well-connected entities) get higher scores. These
+scores are written back to **Qdrant** as `entity_pagerank_max` in the chunk payload,
+allowing the retrieval layer to optionally boost chunks that mention highly-central
+entities.
+
+**Rate limiting** — Graphiti makes internal LLM calls (entity extraction, relationship
+labeling). Mistral's API has a 1 req/s rate limit. `knowledge_ingest/graph.py` wraps all
+Graphiti LLM calls with a `_TokenBucketLimiter(rate=settings.graphiti_llm_rps)` transport
+(default 1.0 req/s). On rate-limit error: backs off 30s then 60s. On other errors: backs
+off 1s then 2s. Three retries total before the episode is dropped (with a warning log).
 
 ---
 
@@ -457,7 +531,8 @@ the hook (which runs automatically for every message), MCP tools are explicitly 
 by the model when it decides to save something to the user's personal knowledge base.
 
 The V1 tool is `save_to_personal_kb`. The model can save text with a title, tags, and
-an `assertion_mode` label (`factual`, `procedural`, `belief`, `hypothesis`, `quoted`).
+an `assertion_mode` label (`factual`, `belief`, `hypothesis`, `procedural`, `quoted`,
+`unknown`).
 
 **Write path:** MCP server → `POST /ingest/v1/document` (knowledge-ingest) → Qdrant
 `klai_knowledge` collection with `kb_slug="personal"` and `user_id`. Personal saves are
@@ -495,8 +570,8 @@ live in Qdrant.
 **Ingest:**
 ```
 User uploads to Focus notebook
-  → docling-serve extracts text
-  → TEI embeds chunks (BGE-M3 dense)
+  → docling-serve extracts text (PDF, DOCX, HTML, URLs)
+  → Infinity embeds chunks (BGE-M3 dense, 1024-dim)
   → stored in Qdrant klai_focus collection
   → PostgreSQL research.chunks tracks metadata (no embedding column)
 ```
@@ -514,8 +589,8 @@ In `broad` mode, retrieval-api runs parallel Qdrant searches on both `klai_focus
 research-api then picks the appropriate system prompt based on whether KB results were
 actually found.
 
-**Web mode** uses SearXNG (self-hosted search) to find URLs, fetches them via docling,
-embeds the text on-the-fly, and combines with notebook chunks. Whether web mode works
+**Web mode** uses SearXNG (self-hosted search) to find URLs, fetches and parses them via
+**docling-serve** (`convert_url`), embeds the text on-the-fly, and combines with notebook chunks. Whether web mode works
 well in practice depends on SearXNG's availability and docling's ability to extract clean
 text from the fetched pages.
 
@@ -525,20 +600,20 @@ text from the fetched pages.
 
 | Service | Role |
 |---|---|
-| `knowledge-ingest` | Ingest pipeline: parse, chunk, embed, enqueue enrichment |
+| `knowledge-ingest` | Ingest pipeline: chunk, embed, enqueue enrichment, graph ingestion |
 | `retrieval-api` | Retrieval endpoint (SPEC-KB-008) — replaces deprecated /knowledge/v1/retrieve |
-| `procrastinate-worker` | Async enrichment worker (queues: enrich-interactive, enrich-bulk) |
+| `procrastinate-worker` | Async enrichment worker (queues: enrich-interactive, enrich-bulk, graphiti-bulk) |
 | `qdrant` | Vector store — `klai_knowledge` collection, 3 named vectors per chunk |
-| `tei` | BGE-M3 dense embeddings (1024-dim) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
-| `bge-m3-sparse` | BGE-M3 sparse (SPLADE-style) embeddings sidecar — gpu-01 via SSH tunnel at 172.18.0.1:8001 |
-| `docling-serve` | Document parsing and token-aware chunking |
+| `infinity` | BGE-M3 dense embeddings (1024-dim, OpenAI-compatible) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
+| `bge-m3-sparse` | BGE-M3 sparse embeddings sidecar (FlagEmbedding) — gpu-01 via SSH tunnel at 172.18.0.1:8001 |
 | `infinity-reranker` | bge-reranker-v2-m3 on GPU (gpu-01 via SSH tunnel at 172.18.0.1:7998) — shared with LibreChat webSearch |
 | `litellm` | LLM proxy + KlaiKnowledgeHook pre-call filter |
 | `librechat-{slug}` | Per-tenant chat container |
 | `gitea` | Git store for human-authored KB pages |
 | `falkordb` | Graph database for Graphiti knowledge graph |
 | `klai-knowledge-mcp` | MCP server for explicit knowledge saves from LibreChat |
-| `klai-connector` | External source sync: GitHub repos, web crawls |
+| `klai-connector` | External source sync: GitHub repos, web crawls — uses Unstructured.io for binary parsing |
+| `docling-serve` | Document parsing voor Focus (uploads + URL-fetching in web mode) |
 | `research-api` | Klai Focus backend — Qdrant `klai_focus` collection |
 
 ---
@@ -550,6 +625,8 @@ text from the fetched pages.
 | MCP read tools (semantic search via tool call) | V1 covers saves only |
 | Helpdesk transcript adapter | Interface with whisper-server not decided |
 | Assertion mode active in retrieval | See research below |
+| ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
+| Docling migration voor binary parsing in klai-connector | Unstructured.io huidig; Docling sneller en nauwkeuriger voor digitale PDFs. Usecase verschilt: Unstructured beter voor gescande/handgeschreven docs. Tracked voor evaluatie. |
 
 ---
 
@@ -562,28 +639,26 @@ text from the fetched pages.
 
 ### What assertion modes are
 
-The knowledge architecture defines five assertion modes per artifact: `factual`,
-`procedural`, `quoted`, `belief`, `hypothesis`. These are one of three metadata axes
-(alongside provenance type and synthesis depth) described in the architecture doc §3.2.
+The knowledge architecture defines six assertion modes per artifact: `factual`,
+`procedural`, `quoted`, `belief`, `hypothesis`, `unknown`. These are one of three metadata
+axes (alongside provenance type and synthesis depth) described in the architecture doc §3.2.
 
 ### Current implementation status
 
 | Component | Status |
 |---|---|
-| DB schema (`knowledge.artifacts.assertion_mode`, 5-value enum) | Done |
-| Ingest parsing (from YAML frontmatter, default `factual`) | Done |
-| MCP tool interface (accepts `fact`, `claim`, `note`) | Done, with mapping gap |
+| DB schema (`knowledge.artifacts.assertion_mode`, enum) | Done |
+| Ingest parsing (from YAML frontmatter, default `unknown`) | Done |
+| Valid set: `{factual, belief, hypothesis, procedural, quoted, unknown}` | Done |
+| Migration dict: handles old → new name variants in frontmatter | Done |
+| Frontend UI (add-connector page assertion mode multi-select) | Done |
 | HyPE classification | Not built — enrichment does not classify assertion mode |
 | Qdrant payload | Not included — cannot filter or weight by assertion mode |
 | Retrieval API response | Not returned — stripped from results |
 | Reranker weighting | Not built |
 
-The MCP tools accept `{fact, claim, note}` but the database stores `{factual, procedural,
-quoted, belief, hypothesis}`. There is no mapping layer. Invalid MCP values fall back to
-`note`, which has no DB equivalent.
-
-**Summary:** Storage exists. The entire consumption side (retrieval, reranking, generation
-context) ignores assertion mode.
+**Summary:** Storage and ingest parsing exist. The entire consumption side (retrieval,
+reranking, generation context) ignores assertion mode.
 
 ### Industry landscape
 

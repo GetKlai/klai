@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
     qdrant_focus_collection: str = "klai_focus"
 
-    tei_url: str = "http://172.18.0.1:7997"
-    tei_reranker_url: str = "http://172.18.0.1:7998"
+    infinity_url: str = "http://172.18.0.1:7997"
+    infinity_reranker_url: str = "http://172.18.0.1:7998"
 
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
     sparse_sidecar_timeout: float = 5.0
 
-    reranker_enabled: bool = True  # Infinity GPU reranker on tei_reranker_url; ~96ms/20 docs
+    reranker_enabled: bool = True  # Infinity GPU reranker on infinity_reranker_url; ~96ms/20 docs
     coreference_model: str = "klai-fast"
     coreference_timeout: float = 3.0
     reranker_timeout: float = 30.0
