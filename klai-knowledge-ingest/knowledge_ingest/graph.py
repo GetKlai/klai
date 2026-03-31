@@ -215,8 +215,12 @@ async def ingest_episode(
                 break
 
             except Exception as exc:
+                exc_str = str(exc).lower()
+                is_rate_limit = "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str
                 if attempt < max_attempts - 1:
-                    wait = 2**attempt  # 1s, 2s
+                    # Rate limit: back off long enough for Mistral's sliding window to reset.
+                    # Other errors: short exponential backoff (1s, 2s).
+                    wait = 30 * (2**attempt) if is_rate_limit else 2**attempt  # 30s/60s or 1s/2s
                     logger.warning(
                         "graphiti_ingest_retry",
                         attempt=attempt + 1,
@@ -224,6 +228,7 @@ async def ingest_episode(
                         artifact_id=artifact_id,
                         error=str(exc),
                         wait_s=wait,
+                        rate_limited=is_rate_limit,
                     )
                     await asyncio.sleep(wait)
                 else:

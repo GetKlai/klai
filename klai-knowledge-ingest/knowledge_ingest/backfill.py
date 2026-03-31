@@ -94,18 +94,16 @@ async def main() -> None:
         len(all_points), len(chunks_by_artifact),
     )
 
-    # ---- Process (parallel) --------------------------------------------
-    concurrency = settings.graphiti_max_concurrent
-    semaphore = asyncio.Semaphore(concurrency)
+    # ---- Process (sequential) ------------------------------------------
+    # ingest_episode() owns concurrency control via its own semaphore.
+    # Sequential processing here avoids creating 57 queued coroutines at once
+    # and makes progress logging easier to follow.
     ok_count = 0
     err_count = 0
     t_start = time.time()
     total_to_process = len(to_process)
 
-    async def process_one(idx: int, row: asyncpg.Record) -> bool:
-        """Process a single artifact. Returns True on success."""
-        nonlocal ok_count, err_count
-
+    for idx, row in enumerate(to_process, 1):
         artifact_id = str(row["id"])
         title = row["path"] or artifact_id
         content_type = row["content_type"] or "text"
@@ -114,40 +112,39 @@ async def main() -> None:
         chunks = chunks_by_artifact.get(artifact_id, [])
         if not chunks:
             log.warning("[%d/%d] %s — no chunks, skipping", idx, total_to_process, title)
-            return False
+            continue
 
         full_text = "\n\n".join(chunks)
         if len(full_text) > MAX_TEXT_CHARS:
             full_text = full_text[:MAX_TEXT_CHARS]
 
-        async with semaphore:
-            try:
-                episode_id = await asyncio.wait_for(
-                    ingest_episode(
-                        artifact_id=artifact_id,
-                        document_text=full_text,
-                        org_id=org_id,
-                        content_type=content_type,
-                        belief_time_start=created_epoch,
-                    ),
-                    timeout=EPISODE_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                err_count += 1
-                log.error(
-                    "[%d/%d] %s — TIMEOUT after %ds",
-                    idx, total_to_process, title, EPISODE_TIMEOUT,
-                )
-                return False
-            except Exception as exc:
-                err_count += 1
-                log.error("[%d/%d] %s — %s", idx, total_to_process, title, exc)
-                return False
+        try:
+            episode_id = await asyncio.wait_for(
+                ingest_episode(
+                    artifact_id=artifact_id,
+                    document_text=full_text,
+                    org_id=org_id,
+                    content_type=content_type,
+                    belief_time_start=created_epoch,
+                ),
+                timeout=EPISODE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            err_count += 1
+            log.error(
+                "[%d/%d] %s — TIMEOUT after %ds",
+                idx, total_to_process, title, EPISODE_TIMEOUT,
+            )
+            continue
+        except Exception as exc:
+            err_count += 1
+            log.error("[%d/%d] %s — %s", idx, total_to_process, title, exc)
+            continue
 
         if episode_id is None:
             err_count += 1
             log.error("[%d/%d] %s — returned None (LLM issue?)", idx, total_to_process, title)
-            return False
+            continue
 
         # Success — persist for resume
         ok_count += 1
@@ -168,14 +165,6 @@ async def main() -> None:
             "[%d/%d] %s — OK episode=%s (%d/hr, %ds elapsed)",
             idx, total_to_process, title, episode_id, int(rate), int(elapsed),
         )
-        return True
-
-    log.info("Starting parallel backfill with concurrency=%d", concurrency)
-    tasks = [
-        process_one(idx, row)
-        for idx, row in enumerate(to_process, 1)
-    ]
-    await asyncio.gather(*tasks)
 
     log.info(
         "Backfill complete: %d OK, %d errors out of %d",
