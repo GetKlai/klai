@@ -307,16 +307,21 @@ async def ingest_document(req: IngestRequest) -> dict:
                 org_id=req.org_id,
             )
 
-    # Graphiti episode ingest — fire-and-forget background task (AC-1, AC-3, AC-8)
+    # Graphiti episode ingest — queued via Procrastinate on graphiti-bulk (lowest priority).
+    # The worker drains: ingest-kb → enrich-interactive → enrich-bulk → graphiti-bulk.
+    # This ensures enrichment LLM calls finish before Graphiti starts, so they never
+    # compete on the same 1 req/s upstream rate limit simultaneously.
     if settings.graphiti_enabled:
-        asyncio.create_task(
-            _graphiti_background(
-                artifact_id=artifact_id,
-                document_text=req.content,
-                org_id=req.org_id,
-                content_type=req.content_type,
-                belief_time_start=kf["belief_time_start"],
-            )
+        from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+        proc_app = enrichment_tasks.get_app()
+        await proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
+            queueing_lock=f"graphiti:{artifact_id}",
+        ).defer_async(
+            artifact_id=artifact_id,
+            document_text=req.content,
+            org_id=req.org_id,
+            content_type=req.content_type,
+            belief_time_start=kf["belief_time_start"],
         )
 
     ingest_ms = int((time.monotonic() - t_ingest) * 1000)

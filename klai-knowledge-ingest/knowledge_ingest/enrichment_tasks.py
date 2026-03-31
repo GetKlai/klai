@@ -110,6 +110,34 @@ def _register_tasks(procrastinate_app: Any) -> None:
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
 
+    @procrastinate_app.task(queue="graphiti-bulk", retry=procrastinate.RetryStrategy(max_attempts=3))
+    async def ingest_graphiti_episode(
+        artifact_id: str,
+        document_text: str,
+        org_id: str,
+        content_type: str,
+        belief_time_start: int,
+    ) -> None:
+        """Ingest a document into the Graphiti knowledge graph.
+
+        Runs on the graphiti-bulk queue, which the worker drains AFTER enrich-bulk.
+        This ensures enrichment LLM calls complete before Graphiti starts, preventing
+        both from competing on the same 1 req/s upstream rate limit simultaneously.
+        """
+        from knowledge_ingest import graph as graph_module  # noqa: PLC0415
+        from knowledge_ingest import pg_store  # noqa: PLC0415
+        episode_id = await graph_module.ingest_episode(
+            artifact_id=artifact_id,
+            document_text=document_text,
+            org_id=org_id,
+            content_type=content_type,
+            belief_time_start=belief_time_start,
+        )
+        if episode_id:
+            await pg_store.update_artifact_extra(artifact_id, {"graphiti_episode_id": episode_id})
+
+    procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
+
 
 async def _enrich_document(
     org_id: str,
