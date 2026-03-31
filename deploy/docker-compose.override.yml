@@ -1,0 +1,4 @@
+# CI tags ghcr.io/getklai/retrieval-api:latest as klai/retrieval-api:local before docker compose up
+services:
+  retrieval-api:
+    image: klai/retrieval-api:local
