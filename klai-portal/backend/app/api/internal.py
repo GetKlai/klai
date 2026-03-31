@@ -255,9 +255,9 @@ async def get_knowledge_feature(
             logger.warning("KB authz: no LibreChat user found for ObjectId %s — fail-closed", librechat_user_id)
             return KnowledgeFeatureResponse(enabled=False)
 
-        zitadel_user_id = mongo_user.get("openid_id") or mongo_user.get("sub")
+        zitadel_user_id = mongo_user.get("openidId") or mongo_user.get("openid_id") or mongo_user.get("sub")
         if not zitadel_user_id:
-            logger.warning("KB authz: LibreChat user %s has no openid_id — fail-closed", librechat_user_id)
+            logger.warning("KB authz: LibreChat user %s has no openidId/sub — fail-closed", librechat_user_id)
             return KnowledgeFeatureResponse(enabled=False)
 
         # Resolve portal user and cache the mapping
