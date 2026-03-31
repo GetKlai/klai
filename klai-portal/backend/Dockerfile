@@ -27,6 +27,10 @@ COPY app/ app/
 COPY alembic/ alembic/
 COPY alembic.ini .
 
+RUN adduser --disabled-password --gecos "" klai
+
 EXPOSE 8010
+
+USER klai
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]
