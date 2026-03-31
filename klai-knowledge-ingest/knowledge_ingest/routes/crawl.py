@@ -150,7 +150,16 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 crawler.arun(url=body.url, config=config),
                 timeout=30.0,
             )
-        fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
+        raw_md = result.markdown.raw_markdown or ""
+        fit_md_raw = result.markdown.fit_markdown or ""
+        preview_logger.info(
+            "Crawl4ai result",
+            url=body.url,
+            raw_words=len(raw_md.split()),
+            fit_words=len(fit_md_raw.split()),
+            raw_preview=raw_md[:200],
+        )
+        fit_md = fit_md_raw or raw_md
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
