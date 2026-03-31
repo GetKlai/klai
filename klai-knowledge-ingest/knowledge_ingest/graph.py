@@ -31,6 +31,7 @@ except ImportError:
 import structlog
 
 from knowledge_ingest.config import settings
+import knowledge_ingest.qdrant_store as qdrant_store
 
 logger = structlog.get_logger()
 
@@ -194,6 +195,32 @@ async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
 
 
+async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
+    """Compute PageRank scores for all Entity nodes in the org's graph.
+
+    Uses FalkorDB's native pagerank.stream() algorithm — no external library needed.
+    Returns {entity_uuid: score}. Returns empty dict when graph is too small or on error.
+    """
+    if not settings.graphiti_enabled:
+        return {}
+
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    try:
+        result = await driver.execute_query(
+            "CALL pagerank.stream('Entity', 'RELATES_TO') "
+            "YIELD node, score "
+            "RETURN node.uuid AS uuid, score",
+        )
+        if result is None:
+            return {}
+        records, _, _ = result
+        return {r["uuid"]: float(r["score"]) for r in records if r.get("uuid")}
+    except Exception as exc:
+        logger.warning("pagerank_compute_failed", org_id=org_id, error=str(exc))
+        return {}
+
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,
@@ -282,6 +309,28 @@ async def ingest_episode(
                             "graphiti_edge_weights_failed",
                             artifact_id=artifact_id,
                             error=str(wt_exc),
+                        )
+
+                # Store entity UUIDs + PageRank scores in Qdrant for retrieval boosting
+                entity_uuids_list = [
+                    str(getattr(n, "uuid", ""))
+                    for n in nodes
+                    if getattr(n, "uuid", None)
+                ]
+                if entity_uuids_list:
+                    try:
+                        pagerank_scores = await compute_entity_pagerank(org_id)
+                        await qdrant_store.set_entity_graph_data(
+                            artifact_id=artifact_id,
+                            org_id=org_id,
+                            entity_uuids=entity_uuids_list,
+                            pagerank_scores=pagerank_scores,
+                        )
+                    except Exception as eg_exc:
+                        logger.warning(
+                            "entity_graph_data_failed",
+                            artifact_id=artifact_id,
+                            error=str(eg_exc),
                         )
 
                 break
