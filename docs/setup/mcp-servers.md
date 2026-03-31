@@ -14,26 +14,14 @@ Code startup, which exceeds the MCP timeout and causes Serena to fail silently.
 
 ## 2. Configure `.mcp.json`
 
-The MCP config lives at `/Users/mark/Server/projects/.mcp.json` (one level above the klai repo —
-not committed to git). This file is shared across all projects in the workspace.
+The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
 
 **Required content** (restore this if the file is missing or any MCP server stops working):
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.mcp.schema.json",
   "mcpServers": {
-    "playwright": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@latest",
-        "--executable-path",
-        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        "--user-data-dir",
-        "/Users/mark/Library/Caches/ms-playwright/klai-profile"
-      ],
-      "env": {}
-    },
     "serena": {
       "type": "stdio",
       "command": "serena",
@@ -43,10 +31,40 @@ not committed to git). This file is shared across all projects in the workspace.
     "context7": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "env": {}
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "env": {}
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
       "env": {}
     }
   }
+}
+```
+
+The `.playwright-mcp/config.json` is gitignored and must be created per machine.
+
+**macOS** (`.playwright-mcp/config.json`):
+```json
+{
+  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "userDataDir": "/Users/mark/.claude/mcp-brave-profile"
+}
+```
+
+**Windows** (`.playwright-mcp/config.json`):
+```json
+{
+  "executablePath": "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
+  "userDataDir": "C:/Users/markv/.claude/mcp-brave-profile"
 }
 ```
 
