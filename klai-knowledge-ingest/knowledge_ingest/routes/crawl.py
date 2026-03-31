@@ -60,7 +60,7 @@ await new Promise(r => setTimeout(r, 300));
   '.cc-window', '.cookie-banner', '.cookie-notice', '.cookie-consent',
   '[id*="cookie-banner" i]', '[id*="consent-banner" i]',
   '[class*="cookie-banner" i]', '[class*="consent-banner" i]',
-  '[aria-label*="cookie" i]', '[aria-modal="true"]',
+  '[aria-label*="cookie" i]',
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 
 // --- 2. Open toggles ---
@@ -92,7 +92,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
         async with AsyncWebCrawler() as crawler:
             result = await asyncio.wait_for(
                 crawler.arun(url=body.url, config=config),
-                timeout=20.0,
+                timeout=30.0,
             )
         fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
         return CrawlPreviewResponse(
