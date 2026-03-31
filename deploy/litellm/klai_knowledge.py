@@ -243,7 +243,6 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # user_id = LibreChat MongoDB ObjectId sent as the "user" field
         user_id = data.get("user", "")
-        logger.warning("KlaiKnowledgeHook: org_id=%s user_id=%r call_type=%s", org_id, user_id, call_type)
         if not user_id:
             return data
 
