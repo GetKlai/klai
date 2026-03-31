@@ -208,7 +208,7 @@ async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
     driver = graphiti.driver.clone(org_id)
     try:
         result = await driver.execute_query(
-            "CALL pagerank.stream('Entity', 'RELATES_TO') "
+            "CALL algo.pageRank('Entity', 'RELATES_TO') "
             "YIELD node, score "
             "RETURN node.uuid AS uuid, score",
         )
