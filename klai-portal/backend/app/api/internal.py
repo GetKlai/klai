@@ -201,7 +201,7 @@ class KnowledgeFeatureResponse(BaseModel):
 @router.get("/v1/users/{librechat_user_id}/feature/knowledge", response_model=KnowledgeFeatureResponse)
 async def get_knowledge_feature(
     librechat_user_id: str,
-    org_id: int,
+    org_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeFeatureResponse:
@@ -228,7 +228,7 @@ async def get_knowledge_feature(
             return KnowledgeFeatureResponse(enabled=False)
 
         # Look up the org to get its LibreChat container name (= MongoDB database name)
-        org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
+        org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == org_id))
         org = org_result.scalar_one_or_none()
         if org is None or not org.librechat_container:
             logger.warning("KB authz: org %s has no librechat_container — fail-closed", org_id)
