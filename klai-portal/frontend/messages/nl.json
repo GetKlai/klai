@@ -1002,6 +1002,8 @@
   "admin_connectors_webcrawler_back": "Terug",
   "admin_connectors_webcrawler_advanced_toggle": "Geavanceerd: CSS selector",
   "admin_connectors_webcrawler_preview_rerun": "Voorvertoning vernieuwen",
+  "admin_connectors_webcrawler_preview_url": "Voorbeeld URL",
+  "admin_connectors_webcrawler_run_preview": "Voorvertoning starten",
 
   "admin_connectors_coming_soon": "Binnenkort",
   "admin_connectors_create_submit": "Connector toevoegen",

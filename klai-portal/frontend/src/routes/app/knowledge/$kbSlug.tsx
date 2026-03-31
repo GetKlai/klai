@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
@@ -189,6 +190,7 @@ function ConnectorsSection({
   // Webcrawler wizard state (create form only)
   const [wcStep, setWcStep] = useState<'details' | 'preview' | 'settings'>('details')
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
+  const [wcPreviewUrl, setWcPreviewUrl] = useState('')
 
   // Preview state for webcrawler forms
   const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
@@ -496,7 +498,9 @@ function ConnectorsSection({
                           <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(editPreviewResult.word_count) })}</span>
                         </div>
                         {editPreviewResult.fit_markdown ? (
-                          <pre className="text-xs text-[var(--color-muted-foreground)] overflow-y-auto max-h-48 whitespace-pre-wrap">{editPreviewResult.fit_markdown}</pre>
+                          <div className="overflow-y-auto max-h-56 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_a]:text-[var(--color-accent)] [&_a]:underline [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
+                            <ReactMarkdown>{editPreviewResult.fit_markdown}</ReactMarkdown>
+                          </div>
                         ) : (
                           <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
                         )}
@@ -595,7 +599,7 @@ function ConnectorsSection({
                     key={type}
                     type="button"
                     disabled={!available}
-                    onClick={() => { if (available) { setSelectedType(type); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null) } }}
+                    onClick={() => { if (available) { setSelectedType(type); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') } }}
                     className={[
                       'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
                       !available && 'cursor-not-allowed opacity-50',
@@ -653,7 +657,7 @@ function ConnectorsSection({
                     <Button type="submit" size="sm" disabled={createMutation.isPending}>
                       {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null) }}>{m.admin_connectors_cancel()}</Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
                   </div>
                 </form>
               )}
@@ -693,14 +697,16 @@ function ConnectorsSection({
                           size="sm"
                           disabled={!name || !webcrawlerConfig.base_url}
                           onClick={() => {
+                            const previewUrl = wcPreviewUrl || webcrawlerConfig.base_url
+                            setWcPreviewUrl(previewUrl)
                             setWcStep('preview')
                             setCreatePreviewResult(null)
-                            createPreviewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })
+                            createPreviewMutation.mutate({ url: previewUrl, content_selector: webcrawlerConfig.content_selector })
                           }}
                         >
                           {m.admin_connectors_webcrawler_next()}
                         </Button>
-                        <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null) }}>{m.admin_connectors_cancel()}</Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
                       </div>
                     </div>
                   )}
@@ -708,6 +714,32 @@ function ConnectorsSection({
                   {/* Step 2: Preview */}
                   {wcStep === 'preview' && (
                     <div className="space-y-3">
+                      {/* Preview URL row */}
+                      <div className="flex gap-2 items-end">
+                        <div className="flex-1 space-y-1.5">
+                          <Label htmlFor="conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
+                          <Input
+                            id="conn-preview-url"
+                            type="url"
+                            placeholder={webcrawlerConfig.base_url}
+                            value={wcPreviewUrl}
+                            onChange={(e) => setWcPreviewUrl(e.target.value)}
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={createPreviewMutation.isPending || !wcPreviewUrl}
+                          onClick={() => {
+                            setCreatePreviewResult(null)
+                            createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector })
+                          }}
+                        >
+                          {createPreviewMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : m.admin_connectors_webcrawler_run_preview()}
+                        </Button>
+                      </div>
+                      {/* Preview result */}
                       {createPreviewMutation.isPending && (
                         <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -721,7 +753,9 @@ function ConnectorsSection({
                             <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(createPreviewResult.word_count) })}</span>
                           </div>
                           {createPreviewResult.fit_markdown ? (
-                            <pre className="text-xs text-[var(--color-muted-foreground)] overflow-y-auto max-h-48 whitespace-pre-wrap">{createPreviewResult.fit_markdown}</pre>
+                            <div className="overflow-y-auto max-h-56 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_a]:text-[var(--color-accent)] [&_a]:underline [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
+                              <ReactMarkdown>{createPreviewResult.fit_markdown}</ReactMarkdown>
+                            </div>
                           ) : (
                             <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
                           )}
@@ -745,18 +779,6 @@ function ConnectorsSection({
                             value={webcrawlerConfig.content_selector}
                             onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
                           />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={createPreviewMutation.isPending}
-                            onClick={() => {
-                              setCreatePreviewResult(null)
-                              createPreviewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })
-                            }}
-                          >
-                            {m.admin_connectors_webcrawler_preview_rerun()}
-                          </Button>
                         </div>
                       )}
                       <div className="flex gap-2 pt-1">
