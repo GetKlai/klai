@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
@@ -191,6 +191,7 @@ function ConnectorsSection({
   const [wcStep, setWcStep] = useState<'details' | 'preview' | 'settings'>('details')
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
+  const selectorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Preview state for webcrawler forms
   const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
@@ -498,8 +499,8 @@ function ConnectorsSection({
                           <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(editPreviewResult.word_count) })}</span>
                         </div>
                         {editPreviewResult.fit_markdown ? (
-                          <div className="overflow-y-auto max-h-56 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_a]:text-[var(--color-accent)] [&_a]:underline [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
-                            <ReactMarkdown>{editPreviewResult.fit_markdown}</ReactMarkdown>
+                          <div className="overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
+                            <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{editPreviewResult.fit_markdown}</ReactMarkdown>
                           </div>
                         ) : (
                           <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
@@ -665,16 +666,37 @@ function ConnectorsSection({
               {selectedType === 'web_crawler' && (
                 <div className="space-y-4">
                   {/* Step indicator */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    {(['details', 'preview', 'settings'] as const).map((step, i) => (
-                      <span key={step} className="flex items-center gap-1.5">
-                        {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
-                        <span className={wcStep === step ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
-                          {i + 1}. {step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
+                  {(() => {
+                    const steps = ['details', 'preview', 'settings'] as const
+                    const currentIdx = steps.indexOf(wcStep)
+                    return (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        {steps.map((step, i) => {
+                          const label = `${i + 1}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
+                          const isPast = i < currentIdx
+                          const isActive = wcStep === step
+                          return (
+                            <span key={step} className="flex items-center gap-1.5">
+                              {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
+                              {isPast ? (
+                                <button
+                                  type="button"
+                                  className="text-[var(--color-accent)] hover:underline"
+                                  onClick={() => setWcStep(step)}
+                                >
+                                  {label}
+                                </button>
+                              ) : (
+                                <span className={isActive ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
+                                  {label}
+                                </span>
+                              )}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
 
                   {/* Step 1: Details */}
                   {wcStep === 'details' && (
@@ -753,8 +775,8 @@ function ConnectorsSection({
                             <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(createPreviewResult.word_count) })}</span>
                           </div>
                           {createPreviewResult.fit_markdown ? (
-                            <div className="overflow-y-auto max-h-56 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_a]:text-[var(--color-accent)] [&_a]:underline [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
-                              <ReactMarkdown>{createPreviewResult.fit_markdown}</ReactMarkdown>
+                            <div className="overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
+                              <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{createPreviewResult.fit_markdown}</ReactMarkdown>
                             </div>
                           ) : (
                             <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
@@ -777,7 +799,17 @@ function ConnectorsSection({
                             id="conn-content-selector"
                             placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
                             value={webcrawlerConfig.content_selector}
-                            onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setWebcrawlerConfig((p) => ({ ...p, content_selector: val }))
+                              if (selectorDebounceRef.current) clearTimeout(selectorDebounceRef.current)
+                              selectorDebounceRef.current = setTimeout(() => {
+                                if (wcPreviewUrl) {
+                                  setCreatePreviewResult(null)
+                                  createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: val })
+                                }
+                              }, 800)
+                            }}
                           />
                         </div>
                       )}
