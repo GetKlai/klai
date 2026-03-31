@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     graphiti_enabled: bool = True
     graphiti_llm_model: str = "klai-fast"
     graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
+    # Delay between episodes (seconds). Each episode makes ~5 LLM calls internally.
+    # At 1 req/s Mistral limit: 5 calls need ≥5s total — default 5s ensures headroom
+    # when calls complete quickly. Lower only if Mistral latency consistently > 1s/call.
+    graphiti_episode_delay: float = 5.0
 
     model_config = {"env_file": ".env"}
 

@@ -21,6 +21,7 @@ try:
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
     from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
     from graphiti_core.nodes import EpisodeType
+    from openai import AsyncOpenAI
     _GRAPHITI_AVAILABLE = True
 except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
@@ -34,7 +35,6 @@ logger = structlog.get_logger()
 # Rate-limit Graphiti episodes: each add_episode() makes ~5 LLM calls internally.
 # Concurrency controlled by GRAPHITI_MAX_CONCURRENT env var (default: 1).
 _episode_semaphore: asyncio.Semaphore | None = None
-EPISODE_DELAY = 2  # seconds between episodes — prevents LLM rate-limit bursts
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -59,7 +59,14 @@ def _get_graphiti() -> "Graphiti":
             model=settings.graphiti_llm_model,
             api_key=api_key,
         )
-        llm_client = OpenAIGenericClient(config=llm_config)
+        # max_retries=0: 429s surface immediately to our ingest_episode() retry loop
+        # instead of being silently swallowed by the openai client for minutes.
+        openai_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=litellm_base_url,
+            max_retries=0,
+        )
+        llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
         embedder = OpenAIEmbedder(
             config=OpenAIEmbedderConfig(
                 base_url=f"{settings.tei_url}/v1",
@@ -214,7 +221,9 @@ async def ingest_episode(
                         error=str(exc),
                     )
 
-        # Delay INSIDE semaphore — ensures actual gap between consecutive episodes
-        await asyncio.sleep(EPISODE_DELAY)
+        # Delay INSIDE semaphore — ensures actual gap between consecutive episodes.
+        # Graphiti makes ~5 LLM calls per episode; at 1 req/s Mistral limit this
+        # delay ensures we don't burst above the rate limit between episodes.
+        await asyncio.sleep(settings.graphiti_episode_delay)
 
     return episode_result
