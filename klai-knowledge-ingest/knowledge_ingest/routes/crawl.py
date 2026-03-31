@@ -33,18 +33,12 @@ class CrawlPreviewResponse(BaseModel):
     word_count: int
 
 
-def _expand_details_html(html: str) -> str:
-    """Expand <details>/<summary> into regular headings so markdown converters don't lose the content."""
-    from bs4 import BeautifulSoup  # noqa: PLC0415
-    soup = BeautifulSoup(html, "html.parser")
-    for details in soup.find_all("details"):
-        summary = details.find("summary")
-        if summary:
-            heading = soup.new_tag("h3")
-            heading.string = summary.get_text(strip=True)
-            summary.replace_with(heading)
-        details.unwrap()
-    return str(soup)
+# JS injected before content extraction: opens native <details> and Notion-style toggles
+_JS_OPEN_TOGGLES = """
+document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
+document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
+await new Promise(r => setTimeout(r, 600));
+"""
 
 
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
@@ -64,23 +58,14 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
             ),
             css_selector=body.content_selector or None,
+            js_code=_JS_OPEN_TOGGLES,
         )
         async with AsyncWebCrawler() as crawler:
             result = await asyncio.wait_for(
                 crawler.arun(url=body.url, config=config),
-                timeout=15.0,
+                timeout=20.0,
             )
-        # Use cleaned_html with details-expansion for richer output; fall back to fit_markdown
-        cleaned = result.cleaned_html or ""
-        if cleaned:
-            expanded = _expand_details_html(cleaned)
-            converter = html2text.HTML2Text()
-            converter.ignore_links = False
-            converter.ignore_images = True
-            converter.body_width = 0
-            fit_md = converter.handle(expanded)
-        else:
-            fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
+        fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
