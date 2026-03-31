@@ -100,7 +100,6 @@ _JS_PREPARE_PAGE = """
   '[class*=" nav "]', '[class="nav"]',
   // Super.so (Notion-based help centers, e.g. help.voys.nl)
   '.super-navbar', '.super-sidebar', '.super-footer',
-  '.super-navigation-menu__item',
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 
 // --- 2. Dismiss cookie banners ---
