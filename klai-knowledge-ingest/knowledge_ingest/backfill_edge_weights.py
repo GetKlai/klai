@@ -54,7 +54,10 @@ async def backfill_org(driver: FalkorDriver, org_id: str) -> int:
 async def main() -> None:
     # List all graphs via the sync falkordb client (no async list API).
     client = falkordb_sync.FalkorDB(host=settings.falkordb_host, port=settings.falkordb_port)
-    all_graphs: list[str] = client.list_graphs()
+    try:
+        all_graphs: list[str] = client.list_graphs()
+    finally:
+        client.close()
 
     if not all_graphs:
         logger.info("backfill_edge_weights_no_graphs")
