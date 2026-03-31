@@ -988,6 +988,8 @@
   "admin_connectors_webcrawler_path_prefix_placeholder": "Bijv. /docs/",
   "admin_connectors_webcrawler_max_pages": "Maximaal aantal pagina's",
   "admin_connectors_webcrawler_max_pages_placeholder": "Standaard: 200, max: 2000",
+  "admin_connectors_webcrawler_content_selector": "Content selector (optioneel)",
+  "admin_connectors_webcrawler_content_selector_placeholder": "Bijv. main, .artikel, .super-content",
 
   "admin_connectors_coming_soon": "Binnenkort",
   "admin_connectors_create_submit": "Connector toevoegen",

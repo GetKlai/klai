@@ -988,6 +988,8 @@
   "admin_connectors_webcrawler_path_prefix_placeholder": "E.g. /docs/",
   "admin_connectors_webcrawler_max_pages": "Maximum pages",
   "admin_connectors_webcrawler_max_pages_placeholder": "Default: 200, max: 2000",
+  "admin_connectors_webcrawler_content_selector": "Content selector (optional)",
+  "admin_connectors_webcrawler_content_selector_placeholder": "E.g. main, .article, .super-content",
 
   "admin_connectors_coming_soon": "Coming soon",
   "admin_connectors_create_submit": "Add connector",

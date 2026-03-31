@@ -127,6 +127,7 @@ interface WebCrawlerConfig {
   base_url: string
   path_prefix: string
   max_pages: string
+  content_selector: string
 }
 
 // -- Small helpers -----------------------------------------------------------
@@ -173,7 +174,7 @@ function ConnectorsSection({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
   })
   const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
-    base_url: '', path_prefix: '', max_pages: '200',
+    base_url: '', path_prefix: '', max_pages: '200', content_selector: '',
   })
 
   const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
@@ -182,7 +183,7 @@ function ConnectorsSection({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editSchedule, setEditSchedule] = useState('')
-  const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200' })
+  const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
   const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
   const [editAllowedAssertionModes, setEditAllowedAssertionModes] = useState<string[]>([])
 
@@ -231,6 +232,7 @@ function ConnectorsSection({
         config.base_url = webcrawlerConfig.base_url
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
+        if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
       }
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
@@ -273,6 +275,7 @@ function ConnectorsSection({
         config.base_url = editWebcrawlerConfig.base_url
         if (editWebcrawlerConfig.path_prefix) config.path_prefix = editWebcrawlerConfig.path_prefix
         if (editWebcrawlerConfig.max_pages) config.max_pages = Number(editWebcrawlerConfig.max_pages)
+        if (editWebcrawlerConfig.content_selector) config.content_selector = editWebcrawlerConfig.content_selector
       }
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
         method: 'PATCH',
@@ -298,11 +301,12 @@ function ConnectorsSection({
     setEditSchedule(c.schedule ?? '')
     setEditAllowedAssertionModes(c.allowed_assertion_modes ?? [])
     if (c.connector_type === 'web_crawler') {
-      const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number }
+      const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string }
       setEditWebcrawlerConfig({
         base_url: String(cfg.base_url ?? ''),
         path_prefix: String(cfg.path_prefix ?? ''),
         max_pages: String(cfg.max_pages ?? '200'),
+        content_selector: cfg.content_selector ?? '',
       })
     }
     if (c.connector_type === 'github') {
@@ -440,6 +444,10 @@ function ConnectorsSection({
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
                       <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={editWebcrawlerConfig.max_pages} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
+                      <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={editWebcrawlerConfig.content_selector} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
@@ -606,6 +614,10 @@ function ConnectorsSection({
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
                     <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
+                    <Input id="conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-schedule-wc">{m.admin_connectors_field_schedule()}</Label>
