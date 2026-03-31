@@ -52,6 +52,7 @@ import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invit
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
+import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 import { Route as AppFocusNotebookIdAddSourceRouteImport } from './routes/app/focus/$notebookId_.add-source'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
@@ -275,6 +276,12 @@ const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   path: '/groups/$groupId/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AppKnowledgeKbSlugAddConnectorRoute =
+  AppKnowledgeKbSlugAddConnectorRouteImport.update({
+    id: '/knowledge/$kbSlug_/add-connector',
+    path: '/knowledge/$kbSlug/add-connector',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppFocusNotebookIdEditRoute = AppFocusNotebookIdEditRouteImport.update({
   id: '/focus/$notebookId_/edit',
   path: '/focus/$notebookId/edit',
@@ -357,6 +364,7 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -406,6 +414,7 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
 }
 export interface FileRoutesById {
@@ -458,6 +467,7 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -511,6 +521,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/knowledge/$kbSlug/add-connector'
     | '/admin/groups/$groupId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -560,6 +571,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/knowledge/$kbSlug/add-connector'
     | '/admin/groups/$groupId'
   id:
     | '__root__'
@@ -611,6 +623,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug_/edit'
     | '/app/focus/$notebookId_/add-source'
     | '/app/focus/$notebookId_/edit'
+    | '/app/knowledge/$kbSlug_/add-connector'
     | '/admin/groups/$groupId/'
   fileRoutesById: FileRoutesById
 }
@@ -934,6 +947,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminGroupsGroupIdIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/app/knowledge/$kbSlug_/add-connector': {
+      id: '/app/knowledge/$kbSlug_/add-connector'
+      path: '/knowledge/$kbSlug/add-connector'
+      fullPath: '/app/knowledge/$kbSlug/add-connector'
+      preLoaderRoute: typeof AppKnowledgeKbSlugAddConnectorRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/focus/$notebookId_/edit': {
       id: '/app/focus/$notebookId_/edit'
       path: '/focus/$notebookId/edit'
@@ -1048,6 +1068,7 @@ interface AppRouteRouteChildren {
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
   AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
+  AppKnowledgeKbSlugAddConnectorRoute: typeof AppKnowledgeKbSlugAddConnectorRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -1073,6 +1094,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,
   AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
+  AppKnowledgeKbSlugAddConnectorRoute: AppKnowledgeKbSlugAddConnectorRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

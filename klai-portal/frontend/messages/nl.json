@@ -912,6 +912,7 @@
   "admin_connectors_heading": "Connectors",
   "admin_connectors_subtitle": "Synchroniseer externe bronnen naar de kennisbank van je organisatie.",
   "admin_connectors_add_button": "Connector toevoegen",
+  "admin_connectors_add_title": "Connector toevoegen",
   "admin_connectors_loading": "Laden...",
   "admin_connectors_empty": "Nog geen connectors ingesteld.",
   "admin_connectors_empty_description": "Voeg een connector toe om automatisch documenten van GitHub of andere bronnen te synchroniseren.",
