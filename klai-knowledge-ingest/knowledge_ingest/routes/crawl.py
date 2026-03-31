@@ -91,6 +91,13 @@ _JS_PREPARE_PAGE = """
   '[role="search"]',
   '[id*="navbar" i]', '[id*="nav-bar" i]', '[id*="site-nav" i]',
   '[id*="header" i]', '[id*="footer" i]', '[id*="sidebar" i]',
+  // Zendesk help center
+  '[class*="header__nav" i]', '[class*="header__menu" i]',
+  '[class*="sub-nav" i]', '[class*="secondary-nav" i]',
+  '.header .main-nav', '.header .nav-links',
+  '[class*="global-nav" i]', '[class*="product-nav" i]',
+  // Generic "navigation" class patterns
+  '[class*=" nav "]', '[class="nav"]',
   // Super.so (Notion-based help centers, e.g. help.voys.nl)
   '.super-navbar', '.super-sidebar', '.super-footer',
   '.super-navigation-menu__item',
