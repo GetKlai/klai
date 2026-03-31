@@ -913,6 +913,8 @@
   "admin_connectors_subtitle": "Sync external sources to your organisation knowledge base.",
   "admin_connectors_add_button": "Add connector",
   "admin_connectors_add_title": "Add connector",
+  "admin_connectors_step_type": "Connector type",
+  "admin_connectors_step_configure": "Configure",
   "admin_connectors_loading": "Loading...",
   "admin_connectors_empty": "No connectors configured yet.",
   "admin_connectors_empty_description": "Add a connector to automatically sync documents from GitHub or other sources.",
