@@ -255,7 +255,7 @@ function ConnectorsSection({
       setSchedule('')
       setAllowedAssertionModes([])
       setGithubConfig({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
-      setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200' })
+      setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
     },
   })
 
