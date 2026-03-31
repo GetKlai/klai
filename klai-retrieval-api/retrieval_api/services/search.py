@@ -48,14 +48,19 @@ def _get_client() -> AsyncQdrantClient:
 
 
 def _invalid_at_filter() -> Filter:
-    """Build a filter that excludes chunks where invalid_at is set and in the past."""
+    """Build a filter that excludes chunks where invalid_at is set and in the past.
+
+    Uses must_not with a range filter: a chunk is excluded only when invalid_at
+    is present AND <= now. Absent invalid_at fields pass through because Qdrant
+    range filters on absent fields return no match (so must_not = pass).
+    The old is_null=True approach did not match absent fields in Qdrant 1.17+.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
     return Filter(
-        should=[
-            FieldCondition(key="invalid_at", is_null=True),
+        must_not=[
             FieldCondition(
                 key="invalid_at",
-                range={"gt": now_iso},
+                range={"lte": now_iso},
             ),
         ]
     )
