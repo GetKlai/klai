@@ -6,16 +6,31 @@ on:
     paths:
       - 'klai-portal/backend/**'
       - 'klai-portal/frontend/**'
+      - 'klai-connector/**'
+      - 'klai-focus/**'
+      - 'klai-knowledge-ingest/**'
+      - 'klai-knowledge-mcp/**'
+      - 'klai-mailer/**'
+      - 'klai-retrieval-api/**'
+      - 'klai-scribe/**'
+      - 'deploy/litellm/**'
       - '.github/workflows/semgrep.yml'
   pull_request:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
       - 'klai-portal/frontend/**'
+      - 'klai-connector/**'
+      - 'klai-focus/**'
+      - 'klai-knowledge-ingest/**'
+      - 'klai-knowledge-mcp/**'
+      - 'klai-mailer/**'
+      - 'klai-retrieval-api/**'
+      - 'klai-scribe/**'
+      - 'deploy/litellm/**'
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   semgrep:
@@ -31,15 +46,14 @@ jobs:
           semgrep scan \
             --config auto \
             --config p/owasp-top-ten \
-            --sarif \
-            --output semgrep-results.sarif \
             klai-portal/backend \
             klai-portal/frontend \
+            klai-connector \
+            klai-focus \
+            klai-knowledge-ingest/knowledge_ingest \
+            klai-knowledge-mcp \
+            klai-mailer \
+            klai-retrieval-api \
+            klai-scribe \
+            deploy/litellm \
             --error
-        continue-on-error: true
-
-      - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: semgrep-results.sarif
