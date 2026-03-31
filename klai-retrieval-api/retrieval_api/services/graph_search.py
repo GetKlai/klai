@@ -11,9 +11,9 @@ AC-10: group_ids=[org_id] enforces tenant isolation.
 from __future__ import annotations
 
 import asyncio
-import logging
 import math
 
+import structlog
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
@@ -22,7 +22,7 @@ from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 
 from retrieval_api.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
 
@@ -78,13 +78,13 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
         return _convert_results(results, top_k)
     except asyncio.TimeoutError:
         logger.warning(
-            "Graphiti search timed out after %.1fs for org %s",
-            settings.graph_search_timeout,
-            org_id,
+            "graph_search_timeout",
+            org_id=org_id,
+            timeout_s=settings.graph_search_timeout,
         )
         return []
     except Exception as exc:
-        logger.warning("Graphiti search failed for org %s: %s", org_id, exc)
+        logger.warning("graph_search_failed", org_id=org_id, error=str(exc))
         return []
 
 
