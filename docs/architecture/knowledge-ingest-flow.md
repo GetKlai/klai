@@ -231,9 +231,9 @@ this to characters (`tokens × 4`) and uses it as `chunk_size`. Effective chunk 
 | `unknown` | 500 | 2000 |
 | `pdf_document` | 800 | 3200 |
 
-**Step 2 — Embed and store raw vectors.** Each chunk is sent to **Infinity** (OpenAI-
-compatible `/v1/embeddings` endpoint) running **BGE-M3** to produce a 1024-dimensional
-dense vector. These raw embeddings are immediately upserted into Qdrant as `vector_chunk`.
+**Step 2 — Embed and store raw vectors.** Each chunk is sent to **TEI** (HuggingFace
+text-embeddings-inference, OpenAI-compatible `/v1/embeddings` endpoint) running **BGE-M3**
+to produce a 1024-dimensional dense vector. These raw embeddings are immediately upserted into Qdrant as `vector_chunk`.
 The document is now searchable.
 
 **Step 3 — Enqueue enrichment.** The main request enqueues two async tasks via
@@ -571,7 +571,7 @@ live in Qdrant.
 ```
 User uploads to Focus notebook
   → docling-serve extracts text (PDF, DOCX, HTML, URLs)
-  → Infinity embeds chunks (BGE-M3 dense, 1024-dim)
+  → TEI embeds chunks (BGE-M3 dense, 1024-dim)
   → stored in Qdrant klai_focus collection
   → PostgreSQL research.chunks tracks metadata (no embedding column)
 ```
@@ -604,7 +604,7 @@ text from the fetched pages.
 | `retrieval-api` | Retrieval endpoint (SPEC-KB-008) — replaces deprecated /knowledge/v1/retrieve |
 | `procrastinate-worker` | Async enrichment worker (queues: enrich-interactive, enrich-bulk, graphiti-bulk) |
 | `qdrant` | Vector store — `klai_knowledge` collection, 3 named vectors per chunk |
-| `infinity` | BGE-M3 dense embeddings (1024-dim, OpenAI-compatible) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
+| `tei` | TEI (text-embeddings-inference) — BGE-M3 dense embeddings (1024-dim, OpenAI-compatible `/v1/embeddings`) — gpu-01 via SSH tunnel at 172.18.0.1:7997 |
 | `bge-m3-sparse` | BGE-M3 sparse embeddings sidecar (FlagEmbedding) — gpu-01 via SSH tunnel at 172.18.0.1:8001 |
 | `infinity-reranker` | bge-reranker-v2-m3 on GPU (gpu-01 via SSH tunnel at 172.18.0.1:7998) — shared with LibreChat webSearch |
 | `litellm` | LLM proxy + KlaiKnowledgeHook pre-call filter |
@@ -615,6 +615,41 @@ text from the fetched pages.
 | `klai-connector` | External source sync: GitHub repos, web crawls — uses Unstructured.io for binary parsing |
 | `docling-serve` | Document parsing voor Focus (uploads + URL-fetching in web mode) |
 | `research-api` | Klai Focus backend — Qdrant `klai_focus` collection |
+
+---
+
+## GPU inference services — why three separate services exist
+
+All three services run on **gpu-01** and are tunneled to **core-01** via autossh. They serve
+completely different roles and cannot be consolidated — each requires a different model,
+a different API, and is optimised for a different task.
+
+| Service | Port | Tunnel endpoint | Model | API | Role |
+|---|---|---|---|---|---|
+| **TEI** (text-embeddings-inference) | 7997 | `172.18.0.1:7997` | BAAI/bge-m3 | `/v1/embeddings` (OpenAI-compatible) | Dense vector embeddings (1024-dim float) |
+| **Infinity** (reranker) | 7998 | `172.18.0.1:7998` | bge-reranker-v2-m3 | `/v1/rerank` | Cross-encoder reranking — scores (query, doc) pairs jointly |
+| **bge-m3-sparse** | 8001 | `172.18.0.1:8001` | BAAI/bge-m3 (FlagEmbedding) | `/embed_sparse_batch` | Sparse vector embeddings — SPLADE-style (token-index, weight) pairs |
+
+**Why TEI and Infinity are separate:**
+- TEI is optimised for high-throughput embedding: it batches encode requests and parallelises
+  across the GPU. It cannot do cross-encoder reranking.
+- Infinity is a cross-encoder service: it takes (query, document) pairs and scores them jointly,
+  which gives much more precise relevance scoring than comparing independently-encoded vectors.
+  It is inherently slower (one forward pass per pair) and cannot produce embeddings.
+- Both happen to use the OpenAI `/v1/embeddings` API format for their inputs, which caused
+  historical confusion in code comments — but they serve completely different purposes.
+
+**Why TEI and bge-m3-sparse are separate:**
+- TEI produces **dense** vectors (all 1024 dimensions have values) — good for semantic similarity.
+- bge-m3-sparse produces **sparse** vectors (only a few hundred token indices have non-zero weights)
+  — good for exact keyword matching (BM25-style). These complement each other in hybrid search.
+- The dense and sparse models are both based on BAAI/bge-m3 but require different inference code
+  (TEI for dense, FlagEmbedding for sparse), hence separate services.
+
+**Config variable names:**
+- `TEI_URL` (env) / `tei_url` (Python settings) → `http://172.18.0.1:7997`
+- `INFINITY_RERANKER_URL` (env) / `infinity_reranker_url` (Python settings) → `http://172.18.0.1:7998`
+- `SPARSE_SIDECAR_URL` (env) / `sparse_sidecar_url` (Python settings) → `http://172.18.0.1:8001`
 
 ---
 

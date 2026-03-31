@@ -41,9 +41,9 @@ async def _warmup_reranker() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
-        "retrieval-api starting | qdrant=%s infinity=%s litellm=%s",
+        "retrieval-api starting | qdrant=%s tei=%s litellm=%s",
         settings.qdrant_url,
-        settings.infinity_url,
+        settings.tei_url,
         settings.litellm_url,
     )
     await _warmup_reranker()
@@ -61,16 +61,16 @@ app.mount("/metrics", make_asgi_app())
 
 @app.get("/health")
 async def health():
-    """Check reachability of Infinity, Qdrant, and LiteLLM."""
+    """Check reachability of TEI, Qdrant, and LiteLLM."""
     checks: dict[str, str] = {}
 
-    # Infinity
+    # TEI (dense embeddings, port 7997 on gpu-01)
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{settings.infinity_url}/health")
-            checks["infinity"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+            resp = await client.get(f"{settings.tei_url}/health")
+            checks["tei"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
     except Exception as exc:
-        checks["infinity"] = f"error: {exc}"
+        checks["tei"] = f"error: {exc}"
 
     # Qdrant
     try:

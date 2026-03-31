@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
     qdrant_focus_collection: str = "klai_focus"
 
-    infinity_url: str = "http://172.18.0.1:7997"
+    tei_url: str = "http://172.18.0.1:7997"
     infinity_reranker_url: str = "http://172.18.0.1:7998"
 
     litellm_url: str = "http://litellm:4000"

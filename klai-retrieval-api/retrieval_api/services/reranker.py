@@ -1,4 +1,8 @@
-"""Reranker service: re-score candidates using a cross-encoder via TEI."""
+"""Reranker service: re-score candidates using a cross-encoder via Infinity.
+Infinity runs on gpu-01 at port 7998, tunneled to 172.18.0.1:7998 on core-01.
+Uses /v1/rerank API with bge-reranker-v2-m3.
+Do NOT confuse with TEI (port 7997), which is the separate dense-embedding service.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ async def rerank(
     candidates: list[dict],
     top_k: int,
 ) -> list[dict]:
-    """Rerank candidates using the TEI reranker endpoint.
+    """Rerank candidates using the Infinity reranker endpoint.
 
     On failure (timeout, HTTP error), falls back to returning
     ``candidates[:top_k]`` with ``reranker_score=None``.
