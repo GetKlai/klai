@@ -19,13 +19,19 @@ _T = "NULLIF(current_setting('app.current_org_id', true), '')::int"
 
 
 def _enable_rls(table: str) -> None:
-    op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-    op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+    op.execute(
+        f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"
+    )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+    op.execute(
+        f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
+    )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
 
 def _create_org_policy(table: str) -> None:
     """Standard policy for tables with a direct org_id column."""
-    op.execute(f"CREATE POLICY tenant_isolation ON {table} USING (org_id = {_T})")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+    op.execute(
+        f"CREATE POLICY tenant_isolation ON {table} USING (org_id = {_T})"
+    )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
 
 def upgrade() -> None:
@@ -57,13 +63,21 @@ def downgrade() -> None:
         "portal_group_kb_access",
         "portal_group_memberships",
     ):
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        op.execute(
+            f"DROP POLICY IF EXISTS tenant_isolation ON {table}"
+        )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        op.execute(
+            f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"
+        )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
     for table in (
         "portal_group_products",
         "portal_knowledge_bases",
         "portal_groups",
     ):
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        op.execute(
+            f"DROP POLICY IF EXISTS tenant_isolation ON {table}"
+        )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        op.execute(
+            f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"
+        )  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
