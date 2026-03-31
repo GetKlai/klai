@@ -126,7 +126,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         # @MX:NOTE: Set EVIDENCE_SHADOW_MODE=false to activate evidence-tier scoring for users.
         # @MX:SPEC: SPEC-EVIDENCE-001 R9. Disable shadow mode after RAGAS validation confirms improvement.
         # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
-        shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "true").lower() in (
+        shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "false").lower() in (
             "true", "1", "yes",
         )
         scored = evidence_tier.apply(copy.deepcopy(reranked))
