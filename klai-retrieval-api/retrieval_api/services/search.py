@@ -51,7 +51,7 @@ def _invalid_at_filter() -> Filter:
     now_iso = datetime.now(timezone.utc).isoformat()
     return Filter(
         should=[
-            FieldCondition(key="invalid_at", match=MatchValue(value=None)),
+            FieldCondition(key="invalid_at", is_null=True),
             FieldCondition(
                 key="invalid_at",
                 range={"gt": now_iso},
@@ -113,13 +113,14 @@ async def _search_notebook(
     """Dense cosine search on klai_focus collection (single unnamed vector)."""
     client = _get_client()
 
-    must_conditions = [
+    must_conditions: list[FieldCondition | Filter] = [
         FieldCondition(key="tenant_id", match=MatchValue(value=request.org_id)),
     ]
     if request.notebook_id:
         must_conditions.append(
             FieldCondition(key="notebook_id", match=MatchValue(value=request.notebook_id))
         )
+    must_conditions.append(_invalid_at_filter())
 
     try:
         result = await asyncio.wait_for(
@@ -168,7 +169,7 @@ async def _search_knowledge(
     client = _get_client()
 
     scope_conditions = _scope_filter(request)
-    query_filter = Filter(must=[*scope_conditions])
+    query_filter = Filter(must=[*scope_conditions, _invalid_at_filter()])
 
     prefetch_limit = max(candidates * 4, 20)
     prefetch = [
