@@ -13,7 +13,14 @@ import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { STORAGE_KEYS } from '@/lib/storage'
 
+type GapsSearch = { days?: number; gapType?: string }
+const VALID_DAYS = new Set([7, 14, 30, 60, 90])
+
 export const Route = createFileRoute('/app/gaps/')({
+  validateSearch: (search: Record<string, unknown>): GapsSearch => ({
+    days: VALID_DAYS.has(Number(search.days)) ? Number(search.days) : undefined,
+    gapType: search.gapType === 'hard' || search.gapType === 'soft' ? (search.gapType as string) : undefined,
+  }),
   component: () => (
     <ProductGuard product="knowledge">
       <GapsPage />
@@ -55,10 +62,11 @@ function GapsPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/app/gaps/' })
 
-  const [days, setDays] = useState(30)
-  const [gapType, setGapType] = useState<string>('')
+  const { days: daysParam, gapType: gapTypeParam } = Route.useSearch()
+  const days = daysParam ?? 30
+  const gapType = gapTypeParam ?? ''
   const [activePicker, setActivePicker] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<GapsResponse>({
@@ -132,7 +140,7 @@ function GapsPage() {
           <Select
             id="gap-days"
             value={String(days)}
-            onChange={(e) => setDays(Number(e.target.value))}
+            onChange={(e) => void navigate({ search: (prev) => ({ ...prev, days: Number(e.target.value) }) })}
             className="w-auto"
           >
             <option value="7">7d</option>
@@ -147,7 +155,7 @@ function GapsPage() {
           <Select
             id="gap-type"
             value={gapType}
-            onChange={(e) => setGapType(e.target.value)}
+            onChange={(e) => void navigate({ search: (prev) => ({ ...prev, gapType: e.target.value || undefined }) })}
             className="w-auto"
           >
             <option value="">{m.gaps_filter_all()}</option>

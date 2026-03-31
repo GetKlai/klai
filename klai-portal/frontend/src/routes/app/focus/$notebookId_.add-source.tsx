@@ -10,7 +10,18 @@ import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
+const FOCUS_BASE = '/research/v1'
+
+type AddTab = 'file' | 'url'
+
+const VALID_ADD_SOURCE_TABS = new Set<AddTab>(['file', 'url'])
+
+type AddSourceSearch = { tab?: AddTab }
+
 export const Route = createFileRoute('/app/focus/$notebookId_/add-source')({
+  validateSearch: (search: Record<string, unknown>): AddSourceSearch => ({
+    tab: (VALID_ADD_SOURCE_TABS as Set<string>).has(search.tab as string) ? (search.tab as AddTab) : undefined,
+  }),
   component: () => (
     <ProductGuard product="chat">
       <AddSourcePage />
@@ -18,18 +29,15 @@ export const Route = createFileRoute('/app/focus/$notebookId_/add-source')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
-
-type AddTab = 'file' | 'url'
-
 function AddSourcePage() {
   const { notebookId } = Route.useParams()
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/app/focus/$notebookId/add-source' })
 
-  const [addTab, setAddTab] = useState<AddTab>('file')
+  const { tab: tabParam } = Route.useSearch()
+  const addTab: AddTab = tabParam ?? 'file'
   const [urlInput, setUrlInput] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -113,7 +121,7 @@ function AddSourcePage() {
             {(['file', 'url'] as AddTab[]).map((tab) => (
               <button
                 key={tab}
-                onClick={() => { setAddTab(tab); setAddError(null) }}
+                onClick={() => { void navigate({ search: { tab: tab === 'file' ? undefined : tab } }); setAddError(null) }}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
                   addTab === tab
                     ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'

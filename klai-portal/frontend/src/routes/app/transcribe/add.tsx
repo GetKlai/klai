@@ -11,19 +11,26 @@ import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square } from 'lucid
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
+const SCRIBE_BASE = '/scribe/v1'
+const ACCEPTED_TYPES = '.wav,.mp3,.m4a,.ogg,.webm'
+const MAX_MB = 100
+
+type Tab = 'record' | 'upload'
+
+const VALID_ADD_TABS = new Set<Tab>(['record', 'upload'])
+
+type AddTranscribeSearch = { tab?: Tab }
+
 export const Route = createFileRoute('/app/transcribe/add')({
+  validateSearch: (search: Record<string, unknown>): AddTranscribeSearch => ({
+    tab: (VALID_ADD_TABS as Set<string>).has(search.tab as string) ? (search.tab as Tab) : undefined,
+  }),
   component: () => (
     <ProductGuard product="scribe">
       <AddTranscribePage />
     </ProductGuard>
   ),
 })
-
-const SCRIBE_BASE = '/scribe/v1'
-const ACCEPTED_TYPES = '.wav,.mp3,.m4a,.ogg,.webm'
-const MAX_MB = 100
-
-type Tab = 'record' | 'upload'
 
 interface TranscriptionDraft {
   name?: string | null
@@ -45,9 +52,10 @@ function AddTranscribePage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/app/transcribe/add' })
 
-  const [activeTab, setActiveTab] = useState<Tab>('record')
+  const { tab: tabParam } = Route.useSearch()
+  const activeTab: Tab = tabParam ?? 'record'
   const [language, setLanguage] = useState<string>('')
   const [result, setResult] = useState<TranscriptionDraft | null>(null)
   const [name, setName] = useState('')
@@ -294,7 +302,7 @@ function AddTranscribePage() {
                 <button
                   key={tab}
                   onClick={() => {
-                    setActiveTab(tab)
+                    void navigate({ search: { tab: tab === 'record' ? undefined : tab } })
                     setError(null)
                   }}
                   className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
