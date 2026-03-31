@@ -113,7 +113,21 @@ async def _crawl_and_ingest_page(
         content_type_header = result.response_headers.get("content-type", "")
     is_pdf = "application/pdf" in content_type_header or url.lower().endswith(".pdf")
     content_type = "pdf_document" if is_pdf else "kb_article"
-    text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
+
+    # Expand <details>/<summary> so toggle content is included in the ingested text
+    cleaned = result.cleaned_html or ""
+    if cleaned and not is_pdf:
+        from bs4 import BeautifulSoup  # noqa: PLC0415
+        import html2text as _html2text  # noqa: PLC0415
+        from knowledge_ingest.routes.crawl import _expand_details_html  # noqa: PLC0415
+        expanded = _expand_details_html(cleaned)
+        conv = _html2text.HTML2Text()
+        conv.ignore_links = False
+        conv.ignore_images = True
+        conv.body_width = 0
+        text = conv.handle(expanded)
+    else:
+        text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
     front_matter = result.metadata.get("description", "") if result.metadata else ""
 
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}

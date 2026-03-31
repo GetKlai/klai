@@ -33,6 +33,20 @@ class CrawlPreviewResponse(BaseModel):
     word_count: int
 
 
+def _expand_details_html(html: str) -> str:
+    """Expand <details>/<summary> into regular headings so markdown converters don't lose the content."""
+    from bs4 import BeautifulSoup  # noqa: PLC0415
+    soup = BeautifulSoup(html, "html.parser")
+    for details in soup.find_all("details"):
+        summary = details.find("summary")
+        if summary:
+            heading = soup.new_tag("h3")
+            heading.string = summary.get_text(strip=True)
+            summary.replace_with(heading)
+        details.unwrap()
+    return str(soup)
+
+
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
 async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
     """Fetch a URL with PruningContentFilter and return the filtered markdown preview."""
@@ -56,7 +70,17 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 crawler.arun(url=body.url, config=config),
                 timeout=15.0,
             )
-        fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
+        # Use cleaned_html with details-expansion for richer output; fall back to fit_markdown
+        cleaned = result.cleaned_html or ""
+        if cleaned:
+            expanded = _expand_details_html(cleaned)
+            converter = html2text.HTML2Text()
+            converter.ignore_links = False
+            converter.ignore_images = True
+            converter.body_width = 0
+            fit_md = converter.handle(expanded)
+        else:
+            fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
