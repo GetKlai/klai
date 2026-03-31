@@ -124,7 +124,6 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
             js_code=_JS_CLEAN_POST_HYDRATION,
             remove_consent_popups=True,
-            remove_overlay_elements=True,
             page_timeout=30000,
         )
         async with AsyncWebCrawler() as crawler:
