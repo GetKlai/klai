@@ -5,6 +5,7 @@ Crawl route:
 """
 import asyncio
 import logging
+import re
 from urllib.parse import urlparse
 
 import html2text
@@ -22,6 +23,42 @@ preview_logger = structlog.get_logger()
 router = APIRouter()
 
 
+_LINK_RE = re.compile(r"\[([^\]]*)\]\([^\)]+\)")
+
+
+def _detect_nav_contamination(text: str) -> list[str]:
+    """Detect navigation/menu contamination in fit_markdown.
+
+    Two signals that BOTH must fire (conservative — false positives are worse than misses):
+    - link_density:  >35% of all non-empty lines are 'link-only' (link(s) with ≤2 prose words)
+    - top_heavy:     >45% of the first 25 lines are link-only
+
+    Returns ["navigation_detected"] when contamination is likely, [] otherwise.
+    """
+    lines = [ln for ln in text.strip().splitlines() if ln.strip()]
+    if len(lines) < 15 or len(text.split()) < 50:
+        return []
+
+    def _is_nav_line(line: str) -> bool:
+        stripped = line.strip("*-># \t|")
+        links = _LINK_RE.findall(stripped)
+        if not links:
+            return False
+        remaining = _LINK_RE.sub("", stripped).strip(" |,-•·")
+        return len(remaining.split()) <= 2
+
+    nav_count = sum(1 for ln in lines if _is_nav_line(ln))
+    nav_ratio = nav_count / len(lines)
+
+    first_n = lines[: min(25, len(lines))]
+    first_nav = sum(1 for ln in first_n if _is_nav_line(ln))
+    first_nav_ratio = first_nav / len(first_n)
+
+    if nav_ratio > 0.35 and first_nav_ratio > 0.45:
+        return ["navigation_detected"]
+    return []
+
+
 class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
@@ -31,6 +68,7 @@ class CrawlPreviewResponse(BaseModel):
     url: str
     fit_markdown: str
     word_count: int
+    warnings: list[str] = []
 
 
 # JS injected before content extraction:
@@ -115,6 +153,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             url=body.url,
             fit_markdown=fit_md,
             word_count=len(fit_md.split()),
+            warnings=_detect_nav_contamination(fit_md),
         )
     except Exception as exc:
         preview_logger.warning("Preview crawl failed", url=body.url, error=str(exc))
