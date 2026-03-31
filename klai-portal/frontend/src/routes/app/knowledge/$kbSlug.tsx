@@ -185,6 +185,10 @@ function ConnectorsSection({
   const [editSchedule, setEditSchedule] = useState('')
   const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
   const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
+
+  // Preview state for webcrawler forms
+  const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
+  const [editPreviewResult, setEditPreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
   const [editAllowedAssertionModes, setEditAllowedAssertionModes] = useState<string[]>([])
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
@@ -295,8 +299,37 @@ function ConnectorsSection({
     },
   })
 
+  const createPreviewMutation = useMutation({
+    mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, content_selector: content_selector || null }),
+      })
+      if (!res.ok) return { fit_markdown: '', word_count: 0 }
+      return res.json() as Promise<{ fit_markdown: string; word_count: number; url: string }>
+    },
+    onSuccess: (data) => setCreatePreviewResult(data),
+    onError: () => setCreatePreviewResult({ fit_markdown: '', word_count: 0 }),
+  })
+
+  const editPreviewMutation = useMutation({
+    mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
+      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, content_selector: content_selector || null }),
+      })
+      if (!res.ok) return { fit_markdown: '', word_count: 0 }
+      return res.json() as Promise<{ fit_markdown: string; word_count: number; url: string }>
+    },
+    onSuccess: (data) => setEditPreviewResult(data),
+    onError: () => setEditPreviewResult({ fit_markdown: '', word_count: 0 }),
+  })
+
   function startEdit(c: ConnectorSummary) {
     setEditingId(c.id)
+    setEditPreviewResult(null)
     setEditName(c.name)
     setEditSchedule(c.schedule ?? '')
     setEditAllowedAssertionModes(c.allowed_assertion_modes ?? [])
@@ -437,6 +470,17 @@ function ConnectorsSection({
                       <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
                       <Input id="edit-conn-base-url" type="url" required value={editWebcrawlerConfig.base_url} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
                     </div>
+                    <div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!editWebcrawlerConfig.base_url || editPreviewMutation.isPending}
+                        onClick={() => editPreviewMutation.mutate({ url: editWebcrawlerConfig.base_url, content_selector: editWebcrawlerConfig.content_selector })}
+                      >
+                        {editPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
+                      </Button>
+                    </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
                       <Input id="edit-conn-path-prefix" value={editWebcrawlerConfig.path_prefix} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
@@ -449,6 +493,19 @@ function ConnectorsSection({
                       <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
                       <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={editWebcrawlerConfig.content_selector} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
                     </div>
+                    {editPreviewResult !== null && (
+                      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
+                          <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(editPreviewResult.word_count) })}</span>
+                        </div>
+                        {editPreviewResult.fit_markdown ? (
+                          <pre className="text-xs text-[var(--color-muted-foreground)] overflow-y-auto max-h-48 whitespace-pre-wrap">{editPreviewResult.fit_markdown}</pre>
+                        ) : (
+                          <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                        )}
+                      </div>
+                    )}
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
                       <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
@@ -607,6 +664,17 @@ function ConnectorsSection({
                     <Label htmlFor="conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
                     <Input id="conn-base-url" type="url" required placeholder={m.admin_connectors_webcrawler_base_url_placeholder()} value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
                   </div>
+                  <div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!webcrawlerConfig.base_url || createPreviewMutation.isPending}
+                      onClick={() => createPreviewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })}
+                    >
+                      {createPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
+                    </Button>
+                  </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
                     <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
@@ -619,6 +687,19 @@ function ConnectorsSection({
                     <Label htmlFor="conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
                     <Input id="conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
                   </div>
+                  {createPreviewResult !== null && (
+                    <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
+                        <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(createPreviewResult.word_count) })}</span>
+                      </div>
+                      {createPreviewResult.fit_markdown ? (
+                        <pre className="text-xs text-[var(--color-muted-foreground)] overflow-y-auto max-h-48 whitespace-pre-wrap">{createPreviewResult.fit_markdown}</pre>
+                      ) : (
+                        <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                      )}
+                    </div>
+                  )}
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-schedule-wc">{m.admin_connectors_field_schedule()}</Label>
                     <Input id="conn-schedule-wc" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />

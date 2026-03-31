@@ -852,3 +852,39 @@ async def list_kbs_with_access(
         )
         for kb in all_kbs
     ]
+
+
+# -- Crawler preview ----------------------------------------------------------
+
+
+class CrawlPreviewRequest(BaseModel):
+    url: str
+    content_selector: str | None = None
+
+
+class CrawlPreviewResponse(BaseModel):
+    url: str
+    fit_markdown: str
+    word_count: int
+
+
+@router.post("/knowledge-bases/{kb_slug}/connectors/crawl-preview", response_model=CrawlPreviewResponse)
+async def crawl_preview(
+    kb_slug: str,
+    body: CrawlPreviewRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> CrawlPreviewResponse:
+    """Preview KB content for a URL using PruningContentFilter. Requires owner role."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+    result = await knowledge_ingest_client.preview_crawl(
+        url=body.url,
+        content_selector=body.content_selector,
+    )
+    return CrawlPreviewResponse(
+        url=result.get("url", body.url),
+        fit_markdown=result.get("fit_markdown", ""),
+        word_count=result.get("word_count", 0),
+    )

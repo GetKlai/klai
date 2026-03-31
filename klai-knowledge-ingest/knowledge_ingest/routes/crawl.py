@@ -1,20 +1,70 @@
 """
 Crawl route:
   POST /ingest/v1/crawl — fetch a URL, convert HTML to markdown, and ingest
+  POST /ingest/v1/crawl/preview — fetch a URL with PruningContentFilter and return fit_markdown
 """
+import asyncio
 import logging
 from urllib.parse import urlparse
 
 import html2text
 import httpx
+import structlog
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
 from knowledge_ingest.utils.url_validator import validate_url
 
 logger = logging.getLogger(__name__)
+preview_logger = structlog.get_logger()
 router = APIRouter()
+
+
+class CrawlPreviewRequest(BaseModel):
+    url: str
+    content_selector: str | None = None
+
+
+class CrawlPreviewResponse(BaseModel):
+    url: str
+    fit_markdown: str
+    word_count: int
+
+
+@router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
+async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
+    """Fetch a URL with PruningContentFilter and return the filtered markdown preview."""
+    preview_logger.info("Preview crawl requested", url=body.url)
+    try:
+        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode  # noqa: PLC0415
+        from crawl4ai.content_filter_strategy import PruningContentFilter  # noqa: PLC0415
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator  # noqa: PLC0415
+
+        config = CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,
+            word_count_threshold=10,
+            excluded_tags=["nav", "footer", "header", "aside", "script", "style"],
+            markdown_generator=DefaultMarkdownGenerator(
+                content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
+            ),
+            css_selector=body.content_selector or None,
+        )
+        async with AsyncWebCrawler() as crawler:
+            result = await asyncio.wait_for(
+                crawler.arun(url=body.url, config=config),
+                timeout=15.0,
+            )
+        fit_md = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
+        return CrawlPreviewResponse(
+            url=body.url,
+            fit_markdown=fit_md,
+            word_count=len(fit_md.split()),
+        )
+    except Exception as exc:
+        preview_logger.warning("Preview crawl failed", url=body.url, error=str(exc))
+        return CrawlPreviewResponse(url=body.url, fit_markdown="", word_count=0)
 
 
 @router.post("/ingest/v1/crawl", response_model=CrawlResponse)

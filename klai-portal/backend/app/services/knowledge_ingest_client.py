@@ -72,6 +72,29 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
         resp.raise_for_status()
 
 
+async def preview_crawl(url: str, content_selector: str | None = None) -> dict:
+    """Call knowledge-ingest preview endpoint and return fit_markdown + word_count.
+
+    Returns {"fit_markdown": "", "word_count": 0, "url": url} on any failure so the caller
+    can always render a safe empty state.
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            timeout=20.0,
+        ) as client:
+            resp = await client.post(
+                "/ingest/v1/crawl/preview",
+                json={"url": url, "content_selector": content_selector},
+            )
+            resp.raise_for_status()
+            return resp.json()  # type: ignore[no-any-return]
+    except Exception:
+        logger.warning("preview_crawl failed", extra={"url": url})
+        return {"fit_markdown": "", "word_count": 0, "url": url}
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 

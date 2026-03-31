@@ -23,6 +23,7 @@ async def run_crawl_job(
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
     rate_limit: float = 2.0,
+    content_selector: str | None = None,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
@@ -30,6 +31,8 @@ async def run_crawl_job(
     """
     try:
         from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode  # noqa: PLC0415
+        from crawl4ai.content_filter_strategy import PruningContentFilter  # noqa: PLC0415
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator  # noqa: PLC0415
     except ImportError:
         logger.error("crawl4ai not installed - cannot run crawl job %s", job_id)
         await _update_job(job_id, status="failed", error="crawl4ai not installed")
@@ -44,6 +47,10 @@ async def run_crawl_job(
         cache_mode=CacheMode.BYPASS,
         word_count_threshold=10,
         excluded_tags=["nav", "footer", "header", "aside", "script", "style"],
+        markdown_generator=DefaultMarkdownGenerator(
+            content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
+        ),
+        css_selector=content_selector or None,
     )
 
     try:
@@ -106,7 +113,7 @@ async def _crawl_and_ingest_page(
         content_type_header = result.response_headers.get("content-type", "")
     is_pdf = "application/pdf" in content_type_header or url.lower().endswith(".pdf")
     content_type = "pdf_document" if is_pdf else "kb_article"
-    text = result.markdown or result.cleaned_html or ""
+    text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
     front_matter = result.metadata.get("description", "") if result.metadata else ""
 
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
