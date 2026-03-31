@@ -93,47 +93,9 @@ _JS_REMOVE_CHROME = """
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 """
 
-# JS injected AFTER wait_for fires (i.e. after main content is present).
-# Dismisses cookie banners and opens collapsed toggles.
-_JS_CLEAN_AND_EXPAND = """
-// --- Dismiss cookie banners ---
-const declineBtns = [
-  '[aria-label*="decline" i]', '[aria-label*="reject" i]', '[aria-label*="weiger" i]',
-  'button[id*="decline" i]', 'button[id*="reject" i]', 'button[id*="weiger" i]',
-  'button[class*="decline" i]', 'button[class*="reject" i]',
-  '.ppms_cm_popup__btn--secondary',      // Piwik PRO
-  '#onetrust-reject-all-handler',        // OneTrust
-  '.cc-deny',                            // cookieconsent
-  '#CybotCookiebotDialogBodyButtonDecline', // Cookiebot
-  '.cky-btn-reject',                     // CookieYes
-  '.cmplz-deny',                         // Complianz
-  '.qc-cmp-secondary-button',            // Quantcast
-  '#klaro .cm-btn-decline',              // Klaro
-  '[data-testid*="decline" i]',
-];
-for (const sel of declineBtns) {
-  const btn = document.querySelector(sel);
-  if (btn) { btn.click(); break; }
-}
-await new Promise(r => setTimeout(r, 300));
-
-// Remove leftover overlay containers
-[
-  '.ppms_cm_popup_overlay', '.ppms_cm_popup',
-  '#onetrust-banner-sdk', '#onetrust-consent-sdk',
-  '.cc-window', '.cookie-banner', '.cookie-notice', '.cookie-consent',
-  '[id*="cookie-banner" i]', '[id*="consent-banner" i]',
-  '[class*="cookie-banner" i]', '[class*="consent-banner" i]',
-  '[aria-label*="cookie" i]',
-  '#CybotCookiebotDialog', '.CybotCookiebotBanner',  // Cookiebot
-  '.cky-consent-container',                           // CookieYes
-  '#cmplz-cookiebanner-container',                   // Complianz
-  '.qc-cmp-ui-container',                            // Quantcast
-  '#iubenda-cs-banner',                              // Iubenda
-  '#klaro',                                          // Klaro
-].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-
-// --- Open toggles ---
+# JS injected AFTER wait_for fires — opens collapsed toggles (Notion etc.).
+# Cookie/consent removal is handled by remove_consent_popups=True (built-in, runs after js_code).
+_JS_EXPAND_TOGGLES = """
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
 document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
 await new Promise(r => setTimeout(r, 600));
@@ -159,7 +121,9 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             css_selector=body.content_selector or None,
             js_code_before_wait=_JS_REMOVE_CHROME,
             wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
-            js_code=_JS_CLEAN_AND_EXPAND,
+            js_code=_JS_EXPAND_TOGGLES,
+            remove_consent_popups=True,
+            remove_overlay_elements=True,
             page_timeout=30000,
         )
         async with AsyncWebCrawler() as crawler:
