@@ -88,7 +88,6 @@ _JS_PREPARE_PAGE = """
   '[class*="top-bar" i]', '[class*="topbar" i]',
   '[class*="breadcrumb" i]',
   '[class*="sidebar" i]', '[class*="side-bar" i]', '[class*="sidenav" i]', '[class*="side-nav" i]',
-  '[class*="toc" i]', '[class*="table-of-contents" i]',
   '[role="search"]',
   '[id*="navbar" i]', '[id*="nav-bar" i]', '[id*="site-nav" i]',
   '[id*="header" i]', '[id*="footer" i]', '[id*="sidebar" i]',
