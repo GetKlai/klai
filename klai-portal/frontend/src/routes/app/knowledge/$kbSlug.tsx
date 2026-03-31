@@ -211,8 +211,8 @@ function ConnectorsSection({
   const editInitializedRef = useRef<string | null>(null)
 
   // Preview state for webcrawler forms
-  const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
-  const [editPreviewResult, setEditPreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
+  const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
+  const [editPreviewResult, setEditPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
   const [editAllowedAssertionModes, setEditAllowedAssertionModes] = useState<string[]>([])
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
@@ -366,11 +366,11 @@ function ConnectorsSection({
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, content_selector: content_selector || null }),
       })
-      if (!res.ok) return { fit_markdown: '', word_count: 0 }
-      return res.json() as Promise<{ fit_markdown: string; word_count: number; url: string }>
+      if (!res.ok) return { fit_markdown: '', word_count: 0, warnings: [] }
+      return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
     },
     onSuccess: (data) => setCreatePreviewResult(data),
-    onError: () => setCreatePreviewResult({ fit_markdown: '', word_count: 0 }),
+    onError: () => setCreatePreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
   })
 
   const editPreviewMutation = useMutation({
@@ -380,11 +380,11 @@ function ConnectorsSection({
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, content_selector: content_selector || null }),
       })
-      if (!res.ok) return { fit_markdown: '', word_count: 0 }
-      return res.json() as Promise<{ fit_markdown: string; word_count: number; url: string }>
+      if (!res.ok) return { fit_markdown: '', word_count: 0, warnings: [] }
+      return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
     },
     onSuccess: (data) => setEditPreviewResult(data),
-    onError: () => setEditPreviewResult({ fit_markdown: '', word_count: 0 }),
+    onError: () => setEditPreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
   })
 
   function startEdit(c: ConnectorSummary) {
@@ -546,6 +546,12 @@ function ConnectorsSection({
                         {editPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
                       </Button>
                     </div>
+                    {editPreviewResult !== null && editPreviewResult.warnings.length > 0 && (
+                      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
+                      </div>
+                    )}
                     {editPreviewResult !== null && (
                       <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
                         <div className="flex items-center justify-between">
@@ -820,6 +826,12 @@ function ConnectorsSection({
                         <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
                           <Loader2 className="h-4 w-4 animate-spin" />
                           {m.admin_connectors_webcrawler_preview_loading()}
+                        </div>
+                      )}
+                      {createPreviewResult !== null && !createPreviewMutation.isPending && createPreviewResult.warnings.length > 0 && (
+                        <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
                         </div>
                       )}
                       {createPreviewResult !== null && !createPreviewMutation.isPending && (
