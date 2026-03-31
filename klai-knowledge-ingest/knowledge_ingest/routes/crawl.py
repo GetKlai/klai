@@ -71,14 +71,11 @@ class CrawlPreviewResponse(BaseModel):
     warnings: list[str] = []
 
 
-# JS injected before content extraction:
-#  1. Remove navigation, header, footer, sidebar (by tag + common class/role selectors)
-#  2. Dismiss cookie/consent popups (click decline, then nuke DOM nodes)
-#  3. Open native <details> and JS-rendered toggles (Notion, etc.)
-_JS_PREPARE_PAGE = """
-// --- 1. Remove navigation and chrome — before any other step ---
-// excluded_tags in CrawlerRunConfig only removes semantic tags (nav/header/footer/aside).
-// Many sites use <div class="nav"> etc., so we also remove by role and common class/id patterns.
+# JS injected BEFORE the wait_for condition is evaluated.
+# Removes navigation/chrome so the wait_for word-count check fires only when
+# the main article content (not nav) is present — critical for React/Next.js sites
+# where pre-hydration nav already contains 50+ words.
+_JS_REMOVE_CHROME = """
 [
   'nav', 'header', 'footer', 'aside',
   '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
@@ -94,8 +91,12 @@ _JS_PREPARE_PAGE = """
   // Super.so (Notion-based help centers)
   '.super-navbar', '.super-sidebar', '.super-footer',
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+"""
 
-// --- 2. Dismiss cookie banners ---
+# JS injected AFTER wait_for fires (i.e. after main content is present).
+# Dismisses cookie banners and opens collapsed toggles.
+_JS_CLEAN_AND_EXPAND = """
+// --- Dismiss cookie banners ---
 const declineBtns = [
   '[aria-label*="decline" i]', '[aria-label*="reject" i]', '[aria-label*="weiger" i]',
   'button[id*="decline" i]', 'button[id*="reject" i]', 'button[id*="weiger" i]',
@@ -132,7 +133,7 @@ await new Promise(r => setTimeout(r, 300));
   '#klaro',                                          // Klaro
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 
-// --- 3. Open toggles ---
+// --- Open toggles ---
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
 document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
 await new Promise(r => setTimeout(r, 600));
@@ -156,8 +157,9 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
             ),
             css_selector=body.content_selector or None,
-            js_code=_JS_PREPARE_PAGE,
+            js_code_before_wait=_JS_REMOVE_CHROME,
             wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
+            js_code=_JS_CLEAN_AND_EXPAND,
             page_timeout=30000,
         )
         async with AsyncWebCrawler() as crawler:
