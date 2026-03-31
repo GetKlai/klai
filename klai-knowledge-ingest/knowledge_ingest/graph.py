@@ -74,6 +74,34 @@ def _get_graphiti() -> "Graphiti":
     return _graphiti_client
 
 
+
+async def _update_edge_weights(
+    nodes: list,
+    org_id: str,
+) -> int:
+    """Increment weight on RELATES_TO edges between entities from this episode.
+
+    Hebbian-style reinforcement: edges confirmed by more episodes get higher
+    weight, making them rank higher in search results.
+    """
+    entity_uuids = [str(getattr(n, "uuid", "")) for n in nodes if getattr(n, "uuid", None)]
+    if len(entity_uuids) < 2:
+        return 0
+
+    graphiti = _get_graphiti()
+    driver = graphiti.graph_driver.with_database(org_id)
+    result = await driver.execute_query(
+        "MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity) "
+        "WHERE a.uuid IN $uuids AND b.uuid IN $uuids AND a <> b "
+        "SET r.weight = COALESCE(r.weight, 0) + 1 "
+        "RETURN count(r) AS updated",
+        uuids=entity_uuids,
+    )
+    updated = 0
+    if hasattr(result, "result_set") and result.result_set:
+        updated = result.result_set[0][0]
+    return updated
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,
@@ -138,6 +166,25 @@ async def ingest_episode(
                     ingest_ms=round(ingest_ms, 1),
                 )
                 episode_result = episode_id
+
+                # Hebbian reinforcement: increment weight on edges between
+                # entities co-mentioned in this episode
+                if len(nodes) >= 2:
+                    try:
+                        wt_count = await _update_edge_weights(nodes, org_id)
+                        if wt_count:
+                            logger.debug(
+                                "graphiti_edge_weights_updated",
+                                artifact_id=artifact_id,
+                                edges_updated=wt_count,
+                            )
+                    except Exception as wt_exc:
+                        logger.warning(
+                            "graphiti_edge_weights_failed",
+                            artifact_id=artifact_id,
+                            error=str(wt_exc),
+                        )
+
                 break
 
             except Exception as exc:
