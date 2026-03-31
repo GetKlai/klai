@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     falkordb_port: int = 6379
     graphiti_enabled: bool = True
     graphiti_llm_model: str = "klai-fast"
+    graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
 
     model_config = {"env_file": ".env"}
 
