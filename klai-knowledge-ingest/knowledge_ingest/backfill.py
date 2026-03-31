@@ -42,11 +42,11 @@ async def main() -> None:
     )
 
     # ---- Discover org --------------------------------------------------
-    org = await pool.fetchrow("SELECT id FROM public.organizations LIMIT 1")
+    org = await pool.fetchrow("SELECT DISTINCT org_id FROM knowledge.artifacts LIMIT 1")
     if not org:
-        log.error("No organization found")
+        log.error("No artifacts found — nothing to backfill")
         return
-    org_id = str(org["id"])
+    org_id = str(org["org_id"])
     log.info("Org: %s", org_id)
 
     # ---- Get artifacts -------------------------------------------------
