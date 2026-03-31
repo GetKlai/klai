@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, Info } from 'lucide-react'
 
 import { API_BASE } from '@/lib/api'
 import { chatKbLogger } from '@/lib/logger'
@@ -243,7 +243,6 @@ export function KBScopeBar() {
               'flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]',
               isPending ? 'cursor-not-allowed opacity-50' : '',
             ].join(' ')}
-            title={m.chat_kb_bar_narrow_tooltip()}
           >
             <input
               type="checkbox"
@@ -261,6 +260,10 @@ export function KBScopeBar() {
             >
               {m.chat_kb_bar_narrow_label()}
             </span>
+            <Info
+              className="h-3 w-3 shrink-0 text-[var(--color-muted-foreground)] opacity-60"
+              title={m.chat_kb_bar_narrow_tooltip()}
+            />
           </label>
         </>
       )}
