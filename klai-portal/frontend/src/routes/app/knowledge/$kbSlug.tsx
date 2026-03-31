@@ -186,6 +186,10 @@ function ConnectorsSection({
   const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
   const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
 
+  // Webcrawler wizard state (create form only)
+  const [wcStep, setWcStep] = useState<'details' | 'preview' | 'settings'>('details')
+  const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
+
   // Preview state for webcrawler forms
   const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
   const [editPreviewResult, setEditPreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
@@ -591,7 +595,7 @@ function ConnectorsSection({
                     key={type}
                     type="button"
                     disabled={!available}
-                    onClick={() => { if (available) setSelectedType(type) }}
+                    onClick={() => { if (available) { setSelectedType(type); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null) } }}
                     className={[
                       'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
                       !available && 'cursor-not-allowed opacity-50',
@@ -649,77 +653,144 @@ function ConnectorsSection({
                     <Button type="submit" size="sm" disabled={createMutation.isPending}>
                       {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null) }}>{m.admin_connectors_cancel()}</Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null) }}>{m.admin_connectors_cancel()}</Button>
                   </div>
                 </form>
               )}
 
               {selectedType === 'web_crawler' && (
-                <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-name">{m.admin_connectors_field_name()}</Label>
-                    <Input id="conn-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                <div className="space-y-4">
+                  {/* Step indicator */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    {(['details', 'preview', 'settings'] as const).map((step, i) => (
+                      <span key={step} className="flex items-center gap-1.5">
+                        {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
+                        <span className={wcStep === step ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
+                          {i + 1}. {step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}
+                        </span>
+                      </span>
+                    ))}
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
-                    <Input id="conn-base-url" type="url" required placeholder={m.admin_connectors_webcrawler_base_url_placeholder()} value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
-                    <Input id="conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
-                  </div>
-                  <div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={!webcrawlerConfig.base_url || createPreviewMutation.isPending}
-                      onClick={() => createPreviewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })}
-                    >
-                      {createPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
-                    </Button>
-                  </div>
-                  {createPreviewResult !== null && (
-                    <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                        <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(createPreviewResult.word_count) })}</span>
+
+                  {/* Step 1: Details */}
+                  {wcStep === 'details' && (
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="conn-name">{m.admin_connectors_field_name()}</Label>
+                        <Input id="conn-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
                       </div>
-                      {createPreviewResult.fit_markdown ? (
-                        <pre className="text-xs text-[var(--color-muted-foreground)] overflow-y-auto max-h-48 whitespace-pre-wrap">{createPreviewResult.fit_markdown}</pre>
-                      ) : (
-                        <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
-                      )}
+                      <div className="space-y-1.5">
+                        <Label htmlFor="conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
+                        <Input id="conn-base-url" type="url" required placeholder={m.admin_connectors_webcrawler_base_url_placeholder()} value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                        <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={!name || !webcrawlerConfig.base_url}
+                          onClick={() => {
+                            setWcStep('preview')
+                            setCreatePreviewResult(null)
+                            createPreviewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })
+                          }}
+                        >
+                          {m.admin_connectors_webcrawler_next()}
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null) }}>{m.admin_connectors_cancel()}</Button>
+                      </div>
                     </div>
                   )}
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
-                    <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
-                    <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-schedule-wc">{m.admin_connectors_field_schedule()}</Label>
-                    <Input id="conn-schedule-wc" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                    <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                  </div>
-                  {createMutation.error && (
-                    <p className="text-sm text-[var(--color-destructive)]">
-                      {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
-                    </p>
+
+                  {/* Step 2: Preview */}
+                  {wcStep === 'preview' && (
+                    <div className="space-y-3">
+                      {createPreviewMutation.isPending && (
+                        <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {m.admin_connectors_webcrawler_preview_loading()}
+                        </div>
+                      )}
+                      {createPreviewResult !== null && !createPreviewMutation.isPending && (
+                        <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
+                            <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(createPreviewResult.word_count) })}</span>
+                          </div>
+                          {createPreviewResult.fit_markdown ? (
+                            <pre className="text-xs text-[var(--color-muted-foreground)] overflow-y-auto max-h-48 whitespace-pre-wrap">{createPreviewResult.fit_markdown}</pre>
+                          ) : (
+                            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                          )}
+                        </div>
+                      )}
+                      {/* Advanced toggle */}
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)] transition-colors"
+                        onClick={() => setShowAdvancedSelector((p) => !p)}
+                      >
+                        <Settings className="h-3 w-3" />
+                        {m.admin_connectors_webcrawler_advanced_toggle()}
+                        {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      </button>
+                      {showAdvancedSelector && (
+                        <div className="space-y-2 pl-4 border-l-2 border-[var(--color-border)]">
+                          <Input
+                            id="conn-content-selector"
+                            placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                            value={webcrawlerConfig.content_selector}
+                            onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={createPreviewMutation.isPending}
+                            onClick={() => {
+                              setCreatePreviewResult(null)
+                              createPreviewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })
+                            }}
+                          >
+                            {m.admin_connectors_webcrawler_preview_rerun()}
+                          </Button>
+                        </div>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <Button type="button" size="sm" onClick={() => setWcStep('settings')}>{m.admin_connectors_webcrawler_next()}</Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('details')}>{m.admin_connectors_webcrawler_back()}</Button>
+                      </div>
+                    </div>
                   )}
-                  <div className="flex gap-2 pt-1">
-                    <Button type="submit" size="sm" disabled={createMutation.isPending}>
-                      {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
-                    </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null) }}>{m.admin_connectors_cancel()}</Button>
-                  </div>
-                </form>
+
+                  {/* Step 3: Settings */}
+                  {wcStep === 'settings' && (
+                    <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                        <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                        <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                      </div>
+                      {createMutation.error && (
+                        <p className="text-sm text-[var(--color-destructive)]">
+                          {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                        </p>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <Button type="submit" size="sm" disabled={createMutation.isPending}>
+                          {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('preview')}>{m.admin_connectors_webcrawler_back()}</Button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               )}
 
               {!selectedType && (
