@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Info } from 'lucide-react'
+import { BookOpen } from 'lucide-react'
 
 import { API_BASE } from '@/lib/api'
 import { chatKbLogger } from '@/lib/logger'
@@ -257,13 +257,7 @@ export function KBScopeBar() {
                 {m.chat_kb_bar_narrow_label()}
               </span>
             </label>
-            <Info className="h-3 w-3 shrink-0 cursor-help text-[var(--color-muted-foreground)] opacity-50" />
-            <span
-              className={[
-                'text-xs italic text-[var(--color-accent)] transition-opacity duration-150',
-                pref.kb_narrow ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-              ].join(' ')}
-            >
+            <span className="text-xs italic text-[var(--color-accent)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
               {m.chat_kb_bar_narrow_tooltip()}
             </span>
           </div>
