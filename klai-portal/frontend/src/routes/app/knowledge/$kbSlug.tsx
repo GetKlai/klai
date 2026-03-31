@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
   BookOpen, Users, BarChart2, Zap, List, FolderTree, ChevronRight, ChevronDown,
-  Check, X, Settings, AlertTriangle, ArrowLeft, Database, Search, GitBranch, CheckCircle2,
+  Check, X, Settings, AlertTriangle, ArrowLeft, Database, Search, GitBranch,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -39,7 +39,6 @@ type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'set
 type KBSearch = {
   tab?: KBTab
   edit?: string
-  add?: true
 }
 
 const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings'])
@@ -48,7 +47,6 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
   validateSearch: (search: Record<string, unknown>): KBSearch => ({
     tab: (VALID_TABS as Set<string>).has(search.tab as string) ? (search.tab as KBTab) : undefined,
     edit: typeof search.edit === 'string' ? search.edit : undefined,
-    add: search.add === true || search.add === 'true' ? true : undefined,
   }),
   component: () => (
     <ProductGuard product="knowledge">
@@ -120,7 +118,6 @@ interface MembersResponse {
   groups: GroupMember[]
 }
 
-type ConnectorType = 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
 
 const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
   { value: 'fact',        label: 'Fact',        description: 'Established fact, documentation, specs' },
@@ -180,21 +177,10 @@ function ConnectorsSection({
   isOwner: boolean
 }) {
   const queryClient = useQueryClient()
-  const { edit: editingId, add: showAdd } = Route.useSearch()
+  const { edit: editingId } = Route.useSearch()
   const navigate = useNavigate({ from: '/app/knowledge/$kbSlug' })
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
-  const [selectedType, setSelectedType] = useState<ConnectorType | null>(null)
-  const [name, setName] = useState('')
-  const [schedule, setSchedule] = useState('')
-  const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
-    installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
-  })
-  const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
-    base_url: '', path_prefix: '', max_pages: '200', content_selector: '',
-  })
-
-  const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
 
   // Edit state (local form values — initialized from connector data via useEffect)
   const [editName, setEditName] = useState('')
@@ -202,15 +188,10 @@ function ConnectorsSection({
   const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
   const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
 
-  // Webcrawler wizard state (create form only)
-  const [wcStep, setWcStep] = useState<'details' | 'preview' | 'settings'>('details')
-  const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
-  const [wcPreviewUrl, setWcPreviewUrl] = useState('')
   // Track which connector ID the edit form has been initialized for
   const editInitializedRef = useRef<string | null>(null)
 
-  // Preview state for webcrawler forms
-  const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
+  // Preview state for webcrawler edit form
   const [editPreviewResult, setEditPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
   const [editAllowedAssertionModes, setEditAllowedAssertionModes] = useState<string[]>([])
 
@@ -280,48 +261,6 @@ function ConnectorsSection({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] }),
   })
 
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedType) return
-      const config: Record<string, unknown> = {}
-      if (selectedType === 'github') {
-        config.installation_id = Number(githubConfig.installation_id)
-        config.repo_owner = githubConfig.repo_owner
-        config.repo_name = githubConfig.repo_name
-        config.branch = githubConfig.branch
-        if (githubConfig.path_filter) config.path_filter = githubConfig.path_filter
-      }
-      if (selectedType === 'web_crawler') {
-        config.base_url = webcrawlerConfig.base_url
-        if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
-        if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
-        if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
-      }
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          connector_type: selectedType,
-          config,
-          schedule: schedule || null,
-          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
-        }),
-      })
-      if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
-      void navigate({ search: (prev) => ({ ...prev, add: undefined }) })
-      setSelectedType(null)
-      setName('')
-      setSchedule('')
-      setAllowedAssertionModes([])
-      setGithubConfig({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
-      setWebcrawlerConfig({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
-    },
-  })
-
   const updateMutation = useMutation({
     mutationFn: async (id: string) => {
       const connector = connectors.find((c) => c.id === id)
@@ -358,20 +297,6 @@ function ConnectorsSection({
     },
   })
 
-  const createPreviewMutation = useMutation({
-    mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, content_selector: content_selector || null }),
-      })
-      if (!res.ok) return { fit_markdown: '', word_count: 0, warnings: [] }
-      return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
-    },
-    onSuccess: (data) => setCreatePreviewResult(data),
-    onError: () => setCreatePreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
-  })
-
   const editPreviewMutation = useMutation({
     mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
@@ -388,7 +313,7 @@ function ConnectorsSection({
 
   function startEdit(c: ConnectorSummary) {
     editInitializedRef.current = null // reset so useEffect re-runs for fresh data
-    void navigate({ search: (prev) => ({ ...prev, edit: c.id, add: undefined }) })
+    void navigate({ search: (prev) => ({ ...prev, edit: c.id }) })
     setEditPreviewResult(null)
     setEditName(c.name)
     setEditSchedule(c.schedule ?? '')
@@ -432,14 +357,6 @@ function ConnectorsSection({
       setSyncingIds((prev) => { const next = new Set(prev); next.delete(id); return next })
     }
   }
-
-  const connectorTypes: { type: ConnectorType; label: () => string; available: boolean }[] = [
-    { type: 'github', label: m.admin_connectors_type_github, available: true },
-    { type: 'web_crawler', label: m.admin_connectors_type_website, available: true },
-    { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: false },
-    { type: 'notion', label: m.admin_connectors_type_notion, available: false },
-    { type: 'ms_docs', label: m.admin_connectors_type_ms_docs, available: false },
-  ]
 
   if (isLoading) {
     return <p className="py-4 text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
@@ -509,7 +426,7 @@ function ConnectorsSection({
         </Card>
       )}
 
-      {connectors.length === 0 && !showAdd && (
+      {connectors.length === 0 && (
         <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_connectors_empty()}</p>
       )}
 
@@ -642,282 +559,13 @@ function ConnectorsSection({
         )
       })()}
 
-      {isOwner && !showAdd && (
-        <Button size="sm" variant="outline" onClick={() => void navigate({ search: (prev) => ({ ...prev, add: true as const }) })}>
+      {isOwner && (
+        <Button size="sm" variant="outline" onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/add-connector', params: { kbSlug } })}>
           <Plus className="h-4 w-4 mr-1" />
           {m.admin_connectors_add_button()}
         </Button>
       )}
 
-      {showAdd && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="space-y-4">
-              {!selectedType && <div className="grid grid-cols-2 gap-3">
-                {connectorTypes.map(({ type, label, available }) => (
-                  <button
-                    key={type}
-                    type="button"
-                    disabled={!available}
-                    onClick={() => { if (available) { setSelectedType(type); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') } }}
-                    className={[
-                      'flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all',
-                      !available && 'cursor-not-allowed opacity-50',
-                      available && selectedType === type
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
-                        : available
-                          ? 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50'
-                          : 'border-[var(--color-border)] bg-[var(--color-card)]',
-                    ].join(' ')}
-                  >
-                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">{label()}</span>
-                    {!available && <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>}
-                  </button>
-                ))}
-              </div>}
-
-              {selectedType === 'github' && (
-                <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-name">{m.admin_connectors_field_name()}</Label>
-                    <Input id="conn-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-install">{m.admin_connectors_github_installation_id()}</Label>
-                    <Input id="conn-install" type="number" required value={githubConfig.installation_id} onChange={(e) => setGithubConfig((p) => ({ ...p, installation_id: e.target.value }))} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="conn-owner">{m.admin_connectors_github_repo_owner()}</Label>
-                      <Input id="conn-owner" required value={githubConfig.repo_owner} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="conn-repo">{m.admin_connectors_github_repo_name()}</Label>
-                      <Input id="conn-repo" required value={githubConfig.repo_name} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_name: e.target.value }))} />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-branch">{m.admin_connectors_github_branch()}</Label>
-                    <Input id="conn-branch" required placeholder={m.admin_connectors_github_branch_placeholder()} value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-schedule">{m.admin_connectors_field_schedule()}</Label>
-                    <Input id="conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                    <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                  </div>
-                  {createMutation.error && (
-                    <p className="text-sm text-[var(--color-destructive)]">
-                      {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
-                    </p>
-                  )}
-                  <div className="flex gap-2 pt-1">
-                    <Button type="submit" size="sm" disabled={createMutation.isPending}>
-                      {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
-                    </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => { void navigate({ search: (prev) => ({ ...prev, add: undefined }) }); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
-                  </div>
-                </form>
-              )}
-
-              {selectedType === 'web_crawler' && (
-                <div className="space-y-4">
-                  {/* Step indicator */}
-                  {(() => {
-                    const steps = ['details', 'preview', 'settings'] as const
-                    const currentIdx = steps.indexOf(wcStep)
-                    return (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        {steps.map((step, i) => {
-                          const label = `${i + 1}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
-                          const isPast = i < currentIdx
-                          const isActive = wcStep === step
-                          return (
-                            <span key={step} className="flex items-center gap-1.5">
-                              {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
-                              {isPast ? (
-                                <button
-                                  type="button"
-                                  className="text-[var(--color-accent)] hover:underline"
-                                  onClick={() => setWcStep(step)}
-                                >
-                                  {label}
-                                </button>
-                              ) : (
-                                <span className={isActive ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
-                                  {label}
-                                </span>
-                              )}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    )
-                  })()}
-
-                  {/* Step 1: Details */}
-                  {wcStep === 'details' && (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="conn-name">{m.admin_connectors_field_name()}</Label>
-                        <Input id="conn-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
-                        <Input id="conn-base-url" type="url" required placeholder={m.admin_connectors_webcrawler_base_url_placeholder()} value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
-                        <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
-                      </div>
-                      {/* Advanced: CSS selector in step 1, before preview */}
-                      <button
-                        type="button"
-                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)] transition-colors"
-                        onClick={() => setShowAdvancedSelector((p) => !p)}
-                      >
-                        <Settings className="h-3 w-3" />
-                        {m.admin_connectors_webcrawler_advanced_toggle()}
-                        {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                      </button>
-                      {showAdvancedSelector && (
-                        <div className="pl-4 border-l-2 border-[var(--color-border)]">
-                          <Input
-                            id="conn-content-selector"
-                            placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
-                            value={webcrawlerConfig.content_selector}
-                            onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
-                          />
-                        </div>
-                      )}
-                      <div className="flex gap-2 pt-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={!name || !webcrawlerConfig.base_url}
-                          onClick={() => {
-                            setWcPreviewUrl(webcrawlerConfig.base_url)
-                            setWcStep('preview')
-                            setCreatePreviewResult(null)
-                          }}
-                        >
-                          {m.admin_connectors_webcrawler_next()}
-                        </Button>
-                        <Button type="button" size="sm" variant="ghost" onClick={() => { void navigate({ search: (prev) => ({ ...prev, add: undefined }) }); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Step 2: Preview */}
-                  {wcStep === 'preview' && (
-                    <div className="space-y-3">
-                      {/* Preview URL row */}
-                      <div className="flex gap-2 items-end">
-                        <div className="flex-1 space-y-1.5">
-                          <Label htmlFor="conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
-                          <Input
-                            id="conn-preview-url"
-                            type="url"
-                            placeholder={webcrawlerConfig.base_url}
-                            value={wcPreviewUrl}
-                            onChange={(e) => setWcPreviewUrl(e.target.value)}
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={createPreviewMutation.isPending || !wcPreviewUrl}
-                          onClick={() => {
-                            setCreatePreviewResult(null)
-                            createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector })
-                          }}
-                        >
-                          {createPreviewMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : m.admin_connectors_webcrawler_run_preview()}
-                        </Button>
-                      </div>
-                      {/* Preview result */}
-                      {createPreviewMutation.isPending && (
-                        <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {m.admin_connectors_webcrawler_preview_loading()}
-                        </div>
-                      )}
-                      {createPreviewResult !== null && !createPreviewMutation.isPending && (createPreviewResult.warnings ?? []).length === 0 && createPreviewResult.word_count > 0 && (
-                        <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(createPreviewResult.word_count) })}</span>
-                        </div>
-                      )}
-                      {createPreviewResult !== null && !createPreviewMutation.isPending && (createPreviewResult.warnings ?? []).length > 0 && (
-                        <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                          <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
-                        </div>
-                      )}
-                      {!createPreviewResult && !createPreviewMutation.isPending && (
-                        <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
-                      )}
-                      {createPreviewResult !== null && !createPreviewMutation.isPending && (
-                        <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                            <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(createPreviewResult.word_count) })}</span>
-                          </div>
-                          {createPreviewResult.fit_markdown ? (
-                            <div className="overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2">
-                              <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{createPreviewResult.fit_markdown}</ReactMarkdown>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
-                          )}
-                        </div>
-                      )}
-                      <div className="flex gap-2 pt-1">
-                        <Button type="button" size="sm" onClick={() => setWcStep('settings')}>{m.admin_connectors_webcrawler_next()}</Button>
-                        <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('details')}>{m.admin_connectors_webcrawler_back()}</Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Step 3: Settings */}
-                  {wcStep === 'settings' && (
-                    <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                        <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
-                        <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-                      </div>
-                      {createMutation.error && (
-                        <p className="text-sm text-[var(--color-destructive)]">
-                          {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
-                        </p>
-                      )}
-                      <div className="flex gap-2 pt-1">
-                        <Button type="submit" size="sm" disabled={createMutation.isPending}>
-                          {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
-                        </Button>
-                        <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('preview')}>{m.admin_connectors_webcrawler_back()}</Button>
-                      </div>
-                    </form>
-                  )}
-                </div>
-              )}
-
-              {!selectedType && (
-                <div className="flex justify-end">
-                  <Button type="button" size="sm" variant="ghost" onClick={() => void navigate({ search: (prev) => ({ ...prev, add: undefined }) })}>{m.admin_connectors_cancel()}</Button>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <AlertDialog open={confirmingDeleteId !== null} onOpenChange={(open) => { if (!open) setConfirmingDeleteId(null) }}>
         <AlertDialogContent>
