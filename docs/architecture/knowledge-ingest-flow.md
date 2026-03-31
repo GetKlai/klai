@@ -631,13 +631,24 @@ a different API, and is optimised for a different task.
 | **bge-m3-sparse** | 8001 | `172.18.0.1:8001` | BAAI/bge-m3 (FlagEmbedding) | `/embed_sparse_batch` | Sparse vector embeddings — SPLADE-style (token-index, weight) pairs |
 
 **Why TEI and Infinity are separate:**
-- TEI is optimised for high-throughput embedding: it batches encode requests and parallelises
-  across the GPU. It cannot do cross-encoder reranking.
-- Infinity is a cross-encoder service: it takes (query, document) pairs and scores them jointly,
-  which gives much more precise relevance scoring than comparing independently-encoded vectors.
-  It is inherently slower (one forward pass per pair) and cannot produce embeddings.
-- Both happen to use the OpenAI `/v1/embeddings` API format for their inputs, which caused
-  historical confusion in code comments — but they serve completely different purposes.
+
+TEI (embedding) and Infinity (reranking) represent two different stages in the retrieval
+pipeline, and the split is a deliberate latency/quality trade-off:
+
+- TEI runs over the **entire dataset** on every search. You cannot afford a slow model here —
+  it needs to embed query and chunks independently so Qdrant can do fast approximate nearest-
+  neighbour search across hundreds of thousands of vectors.
+- Infinity is a **cross-encoder**: it sees query and document together in a single forward pass,
+  which is much more accurate but also proportionally slower. It is only applied to the top-20
+  candidates that TEI already selected — never to the full dataset.
+
+The reason we use both instead of just one: TEI alone misses nuance (a chunk can look
+semantically similar but not actually answer the question). Infinity alone is too slow to run
+across the full index. Two-stage is the only way to get both recall and precision within an
+acceptable latency budget.
+
+Both happen to use the OpenAI `/v1/embeddings` API format for their inputs, which caused
+historical confusion in code comments — but they serve completely different purposes.
 
 **Why TEI and bge-m3-sparse are separate:**
 - TEI produces **dense** vectors (all 1024 dimensions have values) — good for semantic similarity.
