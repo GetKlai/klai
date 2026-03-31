@@ -998,6 +998,7 @@
   "admin_connectors_webcrawler_preview_title": "KB content preview",
   "admin_connectors_webcrawler_preview_word_count": "~{count} words",
   "admin_connectors_webcrawler_preview_empty": "No content found. Try a different URL or add a content selector.",
+  "admin_connectors_webcrawler_preview_no_content": "No content could be extracted from this page. The site may require JavaScript or a CSS selector. Try a specific article URL instead of the homepage.",
   "admin_connectors_webcrawler_step_details": "Details",
   "admin_connectors_webcrawler_step_preview": "Preview",
   "admin_connectors_webcrawler_step_settings": "Settings",

@@ -407,16 +407,22 @@ function AddConnectorPage() {
                         <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
                       </div>
                     )}
+                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && (
+                      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                      </div>
+                    )}
                     {!previewResult && !previewMutation.isPending && (
                       <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
                     )}
-                    {previewResult !== null && !previewMutation.isPending && (
+                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count > 0 && (
                       <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
                           <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                         </div>
-                        {previewResult.fit_markdown ? (
+                        {previewResult.fit_markdown.trim() ? (
                           <div className={MARKDOWN_PROSE_CLASSES}>
                             <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
                           </div>
