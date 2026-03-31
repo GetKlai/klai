@@ -163,7 +163,10 @@ async def main() -> None:
             "UPDATE knowledge.artifacts "
             "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
             "WHERE id = $2::uuid",
-            json.dumps({"graphiti_episode_id": episode_id}),
+            json.dumps({
+                "graphiti_episode_id": episode_id,
+                "graphiti_model": settings.graphiti_llm_model,
+            }),
             artifact_id,
         )
 
