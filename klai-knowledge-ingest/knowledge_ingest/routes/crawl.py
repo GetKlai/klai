@@ -93,9 +93,10 @@ _JS_REMOVE_CHROME = """
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 """
 
-# JS injected AFTER wait_for fires — opens collapsed toggles (Notion etc.).
+# JS injected AFTER wait_for fires (React has now rendered the full DOM).
+# Re-runs nav removal (React rebuilds nav during hydration) and opens collapsed toggles.
 # Cookie/consent removal is handled by remove_consent_popups=True (built-in, runs after js_code).
-_JS_EXPAND_TOGGLES = """
+_JS_CLEAN_POST_HYDRATION = _JS_REMOVE_CHROME + """
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
 document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
 await new Promise(r => setTimeout(r, 600));
@@ -121,7 +122,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             css_selector=body.content_selector or None,
             js_code_before_wait=_JS_REMOVE_CHROME,
             wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
-            js_code=_JS_EXPAND_TOGGLES,
+            js_code=_JS_CLEAN_POST_HYDRATION,
             remove_consent_popups=True,
             remove_overlay_elements=True,
             page_timeout=30000,
