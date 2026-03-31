@@ -998,6 +998,7 @@
   "admin_connectors_webcrawler_preview_title": "Voorvertoning van KB-inhoud",
   "admin_connectors_webcrawler_preview_word_count": "~{count} woorden",
   "admin_connectors_webcrawler_preview_empty": "Geen inhoud gevonden. Probeer een andere URL of voeg een content selector toe.",
+  "admin_connectors_webcrawler_preview_no_content": "Er kon geen content worden geëxtraheerd van deze pagina. De site vereist mogelijk JavaScript of een CSS selector. Probeer een specifieke artikel-URL in plaats van de homepage.",
   "admin_connectors_webcrawler_step_details": "Details",
   "admin_connectors_webcrawler_step_preview": "Voorvertoning",
   "admin_connectors_webcrawler_step_settings": "Instellingen",
