@@ -122,6 +122,30 @@ async def _update_edge_weights(
         updated = result.result_set[0][0]
     return updated
 
+async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
+    """Delete FalkorDB nodes for a set of episodes within an org's graph.
+
+    Deletes:
+    1. Episodic nodes whose uuid matches any episode_id (DETACH DELETE removes incident edges).
+    2. Entity nodes that are no longer connected to any remaining Episodic node.
+
+    No-op when graphiti is disabled or episode_ids is empty.
+    """
+    if not settings.graphiti_enabled or not episode_ids:
+        return
+    graphiti = _get_graphiti()
+    driver = graphiti.graph_driver.with_database(org_id)
+    await driver.execute_query(
+        "MATCH (e:Episodic) WHERE e.uuid IN $uuids DETACH DELETE e",
+        uuids=episode_ids,
+    )
+    # Delete Entity nodes no longer referenced by any Episodic node.
+    await driver.execute_query(
+        "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
+    )
+    logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
+
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,

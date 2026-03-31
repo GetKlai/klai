@@ -493,13 +493,16 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
 
 @router.delete("/ingest/v1/kb")
 async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
-    """Delete all data for a knowledge base: Qdrant chunks + PostgreSQL records.
-    Called by Docs on KB deletion. Scoped to (org_id, kb_slug).
+    """Delete all data for a knowledge base: FalkorDB graph nodes + Qdrant chunks + PostgreSQL records.
+    Called by the portal on KB deletion. Scoped to (org_id, kb_slug).
     """
     _verify_internal_secret(request)
+    # Fetch episode IDs before PG deletion — graph cleanup requires them.
+    episode_ids = await pg_store.get_episode_ids(org_id, kb_slug)
+    await graph_module.delete_kb_episodes(org_id, episode_ids)
     await qdrant_store.delete_kb(org_id, kb_slug)
     await pg_store.delete_kb(org_id, kb_slug)
-    logger.info("kb_deleted", org_id=org_id, kb_slug=kb_slug)
+    logger.info("kb_deleted", org_id=org_id, kb_slug=kb_slug, episodes_deleted=len(episode_ids))
     return {"status": "ok"}
 
 

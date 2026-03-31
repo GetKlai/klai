@@ -142,6 +142,25 @@ async def soft_delete_artifact(org_id: str, kb_slug: str, path: str) -> None:
     )
 
 
+async def get_episode_ids(org_id: str, kb_slug: str) -> list[str]:
+    """Return Graphiti episode UUIDs for all artifacts in a KB.
+
+    Reads the graphiti_episode_id from the extra JSON field before deletion.
+    Excludes the 'no-chunks' sentinel (artifacts with no text content).
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT extra::jsonb->>'graphiti_episode_id' AS episode_id
+               FROM knowledge.artifacts
+               WHERE org_id = $1 AND kb_slug = $2
+                 AND extra IS NOT NULL
+                 AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
+            org_id, kb_slug,
+        )
+    return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
+
+
 async def delete_kb(org_id: str, kb_slug: str) -> None:
     """Hard-delete all PostgreSQL records for a knowledge base.
 

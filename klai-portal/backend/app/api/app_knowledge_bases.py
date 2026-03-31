@@ -353,19 +353,26 @@ async def delete_app_knowledge_base(
 ) -> None:
     """Delete a KB and all associated data. Requires owner access.
 
-    Deletion order: docs-app (handles Qdrant + Gitea + docs DB) -> portal DB + tombstone.
-    Aborts if docs-app cleanup fails.
+    Deletion order:
+    1. docs-app (only if gitea_repo_slug or docs_enabled) — Qdrant vectors, Gitea, docs DB row.
+    2. knowledge-ingest (always) — FalkorDB graph nodes, Qdrant chunks, PG artifacts.
+    3. Portal DB — KB row + cascaded access rows.
+
+    Both step 1 and 2 raise on failure, aborting before the portal record is deleted.
     """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     await _require_owner(kb, caller_id, db)
 
-    # Step 1: Clean up external systems via docs-app
-    # docs-app DELETE handles: Qdrant vectors, Gitea webhook, Gitea repo, docs.knowledge_bases row
+    # Step 1: Clean up docs-app (Qdrant vectors managed by docs, Gitea webhook/repo, docs DB row).
     if kb.gitea_repo_slug or kb.docs_enabled:
         await docs_client.deprovision_kb(org.slug, kb.slug)
 
-    # Step 2: Portal DB -- delete KB row (cascades access rows)
+    # Step 2: Clean up knowledge-ingest data (FalkorDB graph nodes, Qdrant chunks, PG artifacts).
+    # Always called, regardless of docs/gitea state — connector-based KBs never have gitea_repo_slug.
+    await knowledge_ingest_client.delete_kb(org.zitadel_org_id, kb.slug)
+
+    # Step 3: Portal DB -- delete KB row (cascades access rows).
     # No tombstone: slug is free to reuse after a full delete (all data wiped).
     await db.delete(kb)
     await db.commit()
