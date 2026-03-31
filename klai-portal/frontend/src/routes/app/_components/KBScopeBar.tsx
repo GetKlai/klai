@@ -6,7 +6,6 @@ import { BookOpen, Info } from 'lucide-react'
 import { API_BASE } from '@/lib/api'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
-import { Tooltip } from '@/components/ui/tooltip'
 
 interface KBPref {
   kb_retrieval_enabled: boolean
@@ -238,8 +237,8 @@ export function KBScopeBar() {
             )}
           </div>
 
-          {/* Narrow mode toggle — label + info icon outside <label> to avoid accidental toggle */}
-          <div className={['flex items-center gap-1', isPending ? 'opacity-50' : ''].join(' ')}>
+          {/* Narrow mode toggle */}
+          <div className={['group flex items-center gap-1.5', isPending ? 'opacity-50' : ''].join(' ')}>
             <label className="flex cursor-pointer items-center gap-1.5 text-xs">
               <input
                 type="checkbox"
@@ -258,9 +257,15 @@ export function KBScopeBar() {
                 {m.chat_kb_bar_narrow_label()}
               </span>
             </label>
-            <Tooltip label={m.chat_kb_bar_narrow_tooltip()}>
-              <Info className="h-3 w-3 cursor-help text-[var(--color-muted-foreground)] opacity-60" />
-            </Tooltip>
+            <Info className="h-3 w-3 shrink-0 cursor-help text-[var(--color-muted-foreground)] opacity-50" />
+            <span
+              className={[
+                'text-xs italic text-[var(--color-accent)] transition-opacity duration-150',
+                pref.kb_narrow ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+              ].join(' ')}
+            >
+              {m.chat_kb_bar_narrow_tooltip()}
+            </span>
           </div>
         </>
       )}
