@@ -34,10 +34,26 @@ class CrawlPreviewResponse(BaseModel):
 
 
 # JS injected before content extraction:
-#  1. Dismiss cookie/consent popups (click decline, then nuke DOM nodes)
-#  2. Open native <details> and JS-rendered toggles (Notion, etc.)
+#  1. Remove navigation, header, footer, sidebar (by tag + common class/role selectors)
+#  2. Dismiss cookie/consent popups (click decline, then nuke DOM nodes)
+#  3. Open native <details> and JS-rendered toggles (Notion, etc.)
 _JS_PREPARE_PAGE = """
-// --- 1. Dismiss cookie banners ---
+// --- 1. Remove navigation and chrome — before any other step ---
+// excluded_tags in CrawlerRunConfig only removes semantic tags (nav/header/footer/aside).
+// Many sites use <div class="nav"> etc., so we also remove by role and common class/id patterns.
+[
+  'nav', 'header', 'footer', 'aside',
+  '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+  '[class*="navbar" i]', '[class*="nav-bar" i]', '[class*="nav-menu" i]',
+  '[class*="site-header" i]', '[class*="site-footer" i]', '[class*="site-nav" i]',
+  '[class*="page-header" i]', '[class*="page-footer" i]',
+  '[class*="top-bar" i]', '[class*="topbar" i]',
+  '[class*="breadcrumb" i]',
+  '[id*="navbar" i]', '[id*="nav-bar" i]', '[id*="site-nav" i]',
+  '[id*="header" i]', '[id*="footer" i]', '[id*="sidebar" i]',
+].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+
+// --- 2. Dismiss cookie banners ---
 const declineBtns = [
   '[aria-label*="decline" i]', '[aria-label*="reject" i]', '[aria-label*="weiger" i]',
   'button[id*="decline" i]', 'button[id*="reject" i]', 'button[id*="weiger" i]',
@@ -63,7 +79,7 @@ await new Promise(r => setTimeout(r, 300));
   '[aria-label*="cookie" i]',
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 
-// --- 2. Open toggles ---
+// --- 3. Open toggles ---
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
 document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
 await new Promise(r => setTimeout(r, 600));

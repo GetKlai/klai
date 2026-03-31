@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
         async with proc_app.open_async():
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(
-                    queues=["ingest-kb", "enrich-interactive", "enrich-bulk"],
+                    queues=["ingest-kb", "enrich-interactive", "enrich-bulk", "graphiti-bulk"],
                     install_signal_handlers=False,
                 )
             )

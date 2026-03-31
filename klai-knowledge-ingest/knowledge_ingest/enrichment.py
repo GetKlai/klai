@@ -40,6 +40,10 @@ Genereer een JSON-object met:
 Antwoord ALLEEN met geldig JSON."""
 
 
+class EnrichmentError(Exception):
+    """Transient LLM failure — Procrastinate will retry the job."""
+
+
 class EnrichmentResult(BaseModel):
     context_prefix: str
     questions: list[str]
@@ -126,19 +130,19 @@ async def enrich_chunk(
             )
             resp.raise_for_status()
             data = resp.json()
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         logger.warning("enrichment_llm_timeout", path=path)
-        return None
+        raise EnrichmentError(f"LLM timeout enriching {path}") from exc
     except Exception as exc:
         logger.warning("enrichment_llm_error", path=path, error=str(exc))
-        return None
+        raise EnrichmentError(f"LLM error enriching {path}: {exc}") from exc
 
     try:
         content = data["choices"][0]["message"]["content"]
         return EnrichmentResult.model_validate_json(content)
     except (KeyError, IndexError, ValidationError, ValueError) as exc:
         logger.warning("enrichment_llm_unparseable", path=path, error=str(exc))
-        return None
+        raise EnrichmentError(f"Unparseable LLM response for {path}: {exc}") from exc
 
 
 async def enrich_chunks(
@@ -153,7 +157,8 @@ async def enrich_chunks(
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
-    Chunks that fail enrichment fall back to their original text.
+    Raises EnrichmentError on any LLM failure — callers (Procrastinate tasks) let this
+    propagate so the job is retried up to max_attempts times.
 
     context_strategy: name of a strategy in context_strategies.STRATEGIES.
     context_tokens: max tokens for the extracted context window.
@@ -170,13 +175,6 @@ async def enrich_chunks(
                 question_focus=question_focus,
                 participant_context=participant_context,
                 context_window=context_window,
-            )
-        if result is None:
-            return EnrichedChunk(
-                original_text=chunk_text,
-                enriched_text=chunk_text,
-                context_prefix="",
-                questions=[],
             )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         return EnrichedChunk(
