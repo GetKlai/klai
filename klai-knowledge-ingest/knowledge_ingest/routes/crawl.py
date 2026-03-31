@@ -91,6 +91,8 @@ _JS_PREPARE_PAGE = """
   '[role="search"]',
   '[id*="navbar" i]', '[id*="nav-bar" i]', '[id*="site-nav" i]',
   '[id*="header" i]', '[id*="footer" i]', '[id*="sidebar" i]',
+  // Super.so (Notion-based help centers)
+  '.super-navbar', '.super-sidebar', '.super-footer',
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 
 // --- 2. Dismiss cookie banners ---
@@ -98,9 +100,14 @@ const declineBtns = [
   '[aria-label*="decline" i]', '[aria-label*="reject" i]', '[aria-label*="weiger" i]',
   'button[id*="decline" i]', 'button[id*="reject" i]', 'button[id*="weiger" i]',
   'button[class*="decline" i]', 'button[class*="reject" i]',
-  '.ppms_cm_popup__btn--secondary',  // Piwik PRO
-  '#onetrust-reject-all-handler',    // OneTrust
-  '.cc-deny',                        // cookieconsent
+  '.ppms_cm_popup__btn--secondary',      // Piwik PRO
+  '#onetrust-reject-all-handler',        // OneTrust
+  '.cc-deny',                            // cookieconsent
+  '#CybotCookiebotDialogBodyButtonDecline', // Cookiebot
+  '.cky-btn-reject',                     // CookieYes
+  '.cmplz-deny',                         // Complianz
+  '.qc-cmp-secondary-button',            // Quantcast
+  '#klaro .cm-btn-decline',              // Klaro
   '[data-testid*="decline" i]',
 ];
 for (const sel of declineBtns) {
@@ -117,6 +124,12 @@ await new Promise(r => setTimeout(r, 300));
   '[id*="cookie-banner" i]', '[id*="consent-banner" i]',
   '[class*="cookie-banner" i]', '[class*="consent-banner" i]',
   '[aria-label*="cookie" i]',
+  '#CybotCookiebotDialog', '.CybotCookiebotBanner',  // Cookiebot
+  '.cky-consent-container',                           // CookieYes
+  '#cmplz-cookiebanner-container',                   // Complianz
+  '.qc-cmp-ui-container',                            // Quantcast
+  '#iubenda-cs-banner',                              // Iubenda
+  '#klaro',                                          // Klaro
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 
 // --- 3. Open toggles ---
