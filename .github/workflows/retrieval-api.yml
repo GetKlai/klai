@@ -52,6 +52,7 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/retrieval-api:latest
+            docker tag ghcr.io/getklai/retrieval-api:latest klai/retrieval-api:local
             cd /opt/klai && docker compose up -d retrieval-api
 
   scan:
