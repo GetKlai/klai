@@ -1,7 +1,7 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   Brain, FileText, Globe, Lock, RefreshCw, Trash2, Loader2, Plus, Pencil,
@@ -34,7 +34,22 @@ import { queryLogger, taxonomyLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { STORAGE_KEYS } from '@/lib/storage'
 
+type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings'
+
+type KBSearch = {
+  tab?: KBTab
+  edit?: string
+  add?: true
+}
+
+const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings'])
+
 export const Route = createFileRoute('/app/knowledge/$kbSlug')({
+  validateSearch: (search: Record<string, unknown>): KBSearch => ({
+    tab: (VALID_TABS as Set<string>).has(search.tab as string) ? (search.tab as KBTab) : undefined,
+    edit: typeof search.edit === 'string' ? search.edit : undefined,
+    add: search.add === true || search.add === 'true' ? true : undefined,
+  }),
   component: () => (
     <ProductGuard product="knowledge">
       <KnowledgeDetailPage />
@@ -165,9 +180,10 @@ function ConnectorsSection({
   isOwner: boolean
 }) {
   const queryClient = useQueryClient()
+  const { edit: editingId, add: showAdd } = Route.useSearch()
+  const navigate = useNavigate({ from: '/app/knowledge/$kbSlug' })
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
-  const [showAdd, setShowAdd] = useState(false)
   const [selectedType, setSelectedType] = useState<ConnectorType | null>(null)
   const [name, setName] = useState('')
   const [schedule, setSchedule] = useState('')
@@ -180,8 +196,7 @@ function ConnectorsSection({
 
   const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
 
-  // Edit state
-  const [editingId, setEditingId] = useState<string | null>(null)
+  // Edit state (local form values — initialized from connector data via useEffect)
   const [editName, setEditName] = useState('')
   const [editSchedule, setEditSchedule] = useState('')
   const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
@@ -192,6 +207,8 @@ function ConnectorsSection({
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
   const selectorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Track which connector ID the edit form has been initialized for
+  const editInitializedRef = useRef<string | null>(null)
 
   // Preview state for webcrawler forms
   const [createPreviewResult, setCreatePreviewResult] = useState<{ fit_markdown: string; word_count: number } | null>(null)
@@ -216,6 +233,42 @@ function ConnectorsSection({
       return false
     },
   })
+
+  // When editingId is set from the URL, populate local edit form state from connector data.
+  // The ref prevents re-initializing for the same ID on every connectors re-fetch.
+  useEffect(() => {
+    if (!editingId) {
+      editInitializedRef.current = null
+      return
+    }
+    if (editInitializedRef.current === editingId) return
+    const c = connectors.find((conn) => conn.id === editingId)
+    if (!c) return // connectors not yet loaded — effect re-runs when query resolves
+    editInitializedRef.current = editingId
+    setEditPreviewResult(null)
+    setEditName(c.name)
+    setEditSchedule(c.schedule ?? '')
+    setEditAllowedAssertionModes(c.allowed_assertion_modes ?? [])
+    if (c.connector_type === 'web_crawler') {
+      const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string }
+      setEditWebcrawlerConfig({
+        base_url: String(cfg.base_url ?? ''),
+        path_prefix: String(cfg.path_prefix ?? ''),
+        max_pages: String(cfg.max_pages ?? '200'),
+        content_selector: cfg.content_selector ?? '',
+      })
+    }
+    if (c.connector_type === 'github') {
+      const cfg = c.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
+      setEditGithubConfig({
+        installation_id: String(cfg.installation_id ?? ''),
+        repo_owner: String(cfg.repo_owner ?? ''),
+        repo_name: String(cfg.repo_name ?? ''),
+        branch: String(cfg.branch ?? 'main'),
+        path_filter: String(cfg.path_filter ?? ''),
+      })
+    }
+  }, [editingId, connectors])
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -260,7 +313,7 @@ function ConnectorsSection({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
-      setShowAdd(false)
+      void navigate({ search: (prev) => ({ ...prev, add: undefined }) })
       setSelectedType(null)
       setName('')
       setSchedule('')
@@ -302,7 +355,7 @@ function ConnectorsSection({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
-      setEditingId(null)
+      void navigate({ search: (prev) => ({ ...prev, edit: undefined }) })
     },
   })
 
@@ -335,7 +388,8 @@ function ConnectorsSection({
   })
 
   function startEdit(c: ConnectorSummary) {
-    setEditingId(c.id)
+    editInitializedRef.current = null // reset so useEffect re-runs for fresh data
+    void navigate({ search: (prev) => ({ ...prev, edit: c.id, add: undefined }) })
     setEditPreviewResult(null)
     setEditName(c.name)
     setEditSchedule(c.schedule ?? '')
@@ -460,7 +514,7 @@ function ConnectorsSection({
         <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_connectors_empty()}</p>
       )}
 
-      {editingId !== null && (() => {
+      {editingId !== undefined && (() => {
         const connector = connectors.find((c) => c.id === editingId)
         if (!connector) return null
         return (
@@ -530,7 +584,7 @@ function ConnectorsSection({
                     )}
                     <div className="flex gap-2 pt-1">
                       <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>{m.admin_connectors_cancel()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => void navigate({ search: (prev) => ({ ...prev, edit: undefined }) })}>{m.admin_connectors_cancel()}</Button>
                     </div>
                   </form>
                 )}
@@ -573,7 +627,7 @@ function ConnectorsSection({
                     )}
                     <div className="flex gap-2 pt-1">
                       <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>{m.admin_connectors_cancel()}</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => void navigate({ search: (prev) => ({ ...prev, edit: undefined }) })}>{m.admin_connectors_cancel()}</Button>
                     </div>
                   </form>
                 )}
@@ -584,7 +638,7 @@ function ConnectorsSection({
       })()}
 
       {isOwner && !showAdd && (
-        <Button size="sm" variant="outline" onClick={() => setShowAdd(true)}>
+        <Button size="sm" variant="outline" onClick={() => void navigate({ search: (prev) => ({ ...prev, add: true as const }) })}>
           <Plus className="h-4 w-4 mr-1" />
           {m.admin_connectors_add_button()}
         </Button>
@@ -658,7 +712,7 @@ function ConnectorsSection({
                     <Button type="submit" size="sm" disabled={createMutation.isPending}>
                       {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { void navigate({ search: (prev) => ({ ...prev, add: undefined }) }); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
                   </div>
                 </form>
               )}
@@ -728,7 +782,7 @@ function ConnectorsSection({
                         >
                           {m.admin_connectors_webcrawler_next()}
                         </Button>
-                        <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => { void navigate({ search: (prev) => ({ ...prev, add: undefined }) }); setSelectedType(null); setWcStep('details'); setShowAdvancedSelector(false); setCreatePreviewResult(null); setWcPreviewUrl('') }}>{m.admin_connectors_cancel()}</Button>
                       </div>
                     </div>
                   )}
@@ -849,7 +903,7 @@ function ConnectorsSection({
 
               {!selectedType && (
                 <div className="flex justify-end">
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setShowAdd(false)}>{m.admin_connectors_cancel()}</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => void navigate({ search: (prev) => ({ ...prev, add: undefined }) })}>{m.admin_connectors_cancel()}</Button>
                 </div>
               )}
             </div>
@@ -1840,14 +1894,14 @@ function DashboardSection({
 
 // -- Main page ---------------------------------------------------------------
 
-type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings'
-
 function KnowledgeDetailPage() {
   const { kbSlug } = Route.useParams()
+  const { tab } = Route.useSearch()
+  const navigate = useNavigate({ from: '/app/knowledge/$kbSlug' })
+  const activeTab: KBTab = tab ?? 'overview'
   const auth = useAuth()
   const token = auth.user?.access_token
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<KBTab>('overview')
 
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -1973,7 +2027,7 @@ function KnowledgeDetailPage() {
             <button
               key={id}
               type="button"
-              onClick={() => setActiveTab(id)}
+              onClick={() => void navigate({ search: { tab: id } })}
               className={[
                 'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
                 activeTab === id
