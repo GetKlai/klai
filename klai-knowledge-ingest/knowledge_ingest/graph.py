@@ -54,6 +54,12 @@ def _get_graphiti() -> "Graphiti":
     if _graphiti_client is None:
         api_key = settings.litellm_api_key or "dummy"
         litellm_base_url = f"{settings.litellm_url}/v1"
+        logger.info(
+            "graphiti_client_init",
+            llm_base_url=litellm_base_url,
+            model=settings.graphiti_llm_model,
+            embedder_url=f"{settings.tei_url}/v1",
+        )
         llm_config = LLMConfig(
             base_url=litellm_base_url,
             model=settings.graphiti_llm_model,
@@ -146,6 +152,13 @@ async def ingest_episode(
     async with _get_semaphore():
         for attempt in range(max_attempts):
             try:
+                logger.info(
+                    "graphiti_episode_start",
+                    artifact_id=artifact_id,
+                    attempt=attempt + 1,
+                    model=settings.graphiti_llm_model,
+                    litellm_url=settings.litellm_url,
+                )
                 t0 = time.perf_counter()
                 result = await graphiti.add_episode(
                     name=artifact_id,
