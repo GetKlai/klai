@@ -817,7 +817,6 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
-      GRAPHITI_LLM_MODEL: klai-pipeline
     networks:
       - klai-net
       - net-postgres

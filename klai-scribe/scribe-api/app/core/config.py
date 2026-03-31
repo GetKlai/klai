@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     # LiteLLM gateway (for AI summarization)
     litellm_base_url: str = "http://litellm:4000"
     litellm_master_key: str = ""
-    summarize_model: str = "klai-primary"
+    extraction_model: str = "klai-fast"
+    synthesis_model: str = "klai-primary"
 
     # Knowledge-ingest service (for KB ingestion)
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"

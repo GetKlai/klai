@@ -182,7 +182,7 @@ async def stream_llm(
         headers["Authorization"] = f"Bearer {settings.litellm_api_key}"
 
     body = {
-        "model": "klai-primary",
+        "model": settings.synthesis_model,
         "messages": messages,
         "stream": True,
         "temperature": 0.3,
