@@ -546,7 +546,7 @@ function ConnectorsSection({
                         {editPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
                       </Button>
                     </div>
-                    {editPreviewResult !== null && editPreviewResult.warnings.length > 0 && (
+                    {editPreviewResult !== null && (editPreviewResult.warnings ?? []).length > 0 && (
                       <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                         <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                         <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
@@ -828,13 +828,13 @@ function ConnectorsSection({
                           {m.admin_connectors_webcrawler_preview_loading()}
                         </div>
                       )}
-                      {createPreviewResult !== null && !createPreviewMutation.isPending && createPreviewResult.warnings.length === 0 && createPreviewResult.word_count > 0 && (
+                      {createPreviewResult !== null && !createPreviewMutation.isPending && (createPreviewResult.warnings ?? []).length === 0 && createPreviewResult.word_count > 0 && (
                         <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                           <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(createPreviewResult.word_count) })}</span>
                         </div>
                       )}
-                      {createPreviewResult !== null && !createPreviewMutation.isPending && createPreviewResult.warnings.length > 0 && (
+                      {createPreviewResult !== null && !createPreviewMutation.isPending && (createPreviewResult.warnings ?? []).length > 0 && (
                         <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                           <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
