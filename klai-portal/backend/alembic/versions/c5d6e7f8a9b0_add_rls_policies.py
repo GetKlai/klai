@@ -19,13 +19,13 @@ _T = "NULLIF(current_setting('app.current_org_id', true), '')::int"
 
 
 def _enable_rls(table: str) -> None:
-    op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-    op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+    op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+    op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
 
 def _create_org_policy(table: str) -> None:
     """Standard policy for tables with a direct org_id column."""
-    op.execute(f"CREATE POLICY tenant_isolation ON {table} USING (org_id = {_T})")
+    op.execute(f"CREATE POLICY tenant_isolation ON {table} USING (org_id = {_T})")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
 
 def upgrade() -> None:
@@ -40,13 +40,13 @@ def upgrade() -> None:
 
     # Junction tables (no direct org_id; resolved via parent)
     _enable_rls("portal_group_memberships")
-    op.execute(
+    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
         f"CREATE POLICY tenant_isolation ON portal_group_memberships "
         f"USING (group_id IN (SELECT id FROM portal_groups WHERE org_id = {_T}))"
     )
 
     _enable_rls("portal_group_kb_access")
-    op.execute(
+    op.execute(  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
         f"CREATE POLICY tenant_isolation ON portal_group_kb_access "
         f"USING (kb_id IN (SELECT id FROM portal_knowledge_bases WHERE org_id = {_T}))"
     )

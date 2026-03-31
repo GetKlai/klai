@@ -10,6 +10,10 @@ COPY . .
 
 ENV LOG_LEVEL=INFO
 
+RUN adduser --disabled-password --gecos "" klai
+
 EXPOSE 8030
+
+USER klai
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8030"]

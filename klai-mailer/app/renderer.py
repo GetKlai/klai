@@ -76,7 +76,7 @@ def _text_to_html(text: str) -> str:
 
 class Renderer:
     def __init__(self, theme_dir: Path):
-        self._theme_env = Environment(
+        self._theme_env = Environment(  # nosemgrep: direct-use-of-jinja2
             loader=FileSystemLoader(str(theme_dir)),
             autoescape=select_autoescape(["html", "j2"]),
         )

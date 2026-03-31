@@ -19,6 +19,10 @@ ENV WHISPER_COMPUTE_TYPE=int8
 ENV WHISPER_DOWNLOAD_ROOT=/models
 ENV LOG_LEVEL=INFO
 
+RUN adduser --disabled-password --gecos "" klai
+
 EXPOSE 8000
+
+USER klai
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
