@@ -23,7 +23,12 @@ import {
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
+type TranscribeSearch = { search?: string }
+
 export const Route = createFileRoute('/app/transcribe/')({
+  validateSearch: (search: Record<string, unknown>): TranscribeSearch => ({
+    search: typeof search.search === 'string' && search.search ? search.search : undefined,
+  }),
   component: () => (
     <ProductGuard product="scribe">
       <TranscribePage />
@@ -160,7 +165,7 @@ function TranscribePage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/app/transcribe/' })
 
   function handleNavigateToDetail(item: UnifiedItem) {
     if (item.source === 'upload') {
@@ -170,11 +175,13 @@ function TranscribePage() {
     }
   }
 
+  const { search: searchParam } = Route.useSearch()
+  const search = searchParam ?? ''
+
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState<string>('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
 
   const { data: transcriptionsData, isLoading: transcriptionsLoading } = useQuery<TranscriptionListResponse>({
     queryKey: ['transcriptions', token],
@@ -386,7 +393,7 @@ function TranscribePage() {
               <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]">
                 <Input
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => void navigate({ search: { search: e.target.value || undefined } })}
                   placeholder={m.app_transcribe_search_placeholder()}
                   className="h-8 text-sm max-w-xs"
                 />

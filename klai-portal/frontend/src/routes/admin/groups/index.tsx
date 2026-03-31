@@ -32,7 +32,12 @@ import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { API_BASE } from '@/lib/api'
 
+type GroupsSearch = { create?: true }
+
 export const Route = createFileRoute('/admin/groups/')({
+  validateSearch: (search: Record<string, unknown>): GroupsSearch => ({
+    create: search.create === true || search.create === 'true' ? true : undefined,
+  }),
   component: AdminGroups,
 })
 
@@ -101,9 +106,10 @@ const columnHelper = createColumnHelper<Group>()
 function AdminGroups() {
   const auth = useAuth()
   const token = auth.user?.access_token
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/admin/groups/' })
   const queryClient = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
+  const { create } = Route.useSearch()
+  const showCreate = create === true
   const [newGroupName, setNewGroupName] = useState('')
 
   const { data, isLoading, error } = useQuery({
@@ -173,7 +179,7 @@ function AdminGroups() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
-      setShowCreate(false)
+      void navigate({ search: {} })
       setNewGroupName('')
       toast.success(m.admin_groups_success_created())
     },
@@ -272,7 +278,7 @@ function AdminGroups() {
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.admin_groups_title()}
         </h1>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <Button size="sm" onClick={() => void navigate({ search: { create: true } })}>
           <Plus className="h-4 w-4 mr-2" />
           {m.admin_groups_create()}
         </Button>
@@ -304,7 +310,7 @@ function AdminGroups() {
               <Button
                 variant="ghost"
                 onClick={() => {
-                  setShowCreate(false)
+                  void navigate({ search: {} })
                   setNewGroupName('')
                 }}
               >

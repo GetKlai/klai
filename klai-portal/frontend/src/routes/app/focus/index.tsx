@@ -12,7 +12,12 @@ import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
+type FocusSearch = { search?: string }
+
 export const Route = createFileRoute('/app/focus/')({
+  validateSearch: (search: Record<string, unknown>): FocusSearch => ({
+    search: typeof search.search === 'string' && search.search ? search.search : undefined,
+  }),
   component: () => (
     <ProductGuard product="chat">
       <FocusPage />
@@ -59,13 +64,15 @@ function FocusPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/app/focus/' })
 
   const isOrgAdmin = token ? parseJwtRoles(token).includes('org_admin') : false
   const currentUserId = auth.user?.profile?.sub
 
+  const { search: searchParam } = Route.useSearch()
+  const search = searchParam ?? ''
+
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
 
   const { data, isLoading, error } = useQuery<NotebookListResponse>({
     queryKey: ['focus-notebooks', token],
@@ -167,7 +174,7 @@ function FocusPage() {
               <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]">
                 <Input
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => void navigate({ search: { search: e.target.value || undefined } })}
                   placeholder={m.app_focus_search_placeholder()}
                   className="h-8 text-sm max-w-xs"
                 />
