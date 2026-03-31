@@ -5,6 +5,8 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
+    rpm: 20    # Mistral org limit: 1 req/s (60 RPM shared across all models)
+    tpm: 45000 # Mistral model limit: 50K TPM for mistral-small
 
   # Fast: Mistral Small 4 — same model, separate alias for routing flexibility
   # Auto-selected by custom_router.py when scraped web content is detected
@@ -12,6 +14,8 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
+    rpm: 20    # Share of the 60 RPM org limit
+    tpm: 45000
 
   # Large: Mistral Large 3 (~675B MoE, ~40B active) — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
@@ -19,6 +23,8 @@ model_list:
     litellm_params:
       model: mistral/mistral-large-latest
       api_key: os.environ/MISTRAL_API_KEY
+    rpm: 20    # Share of the 60 RPM org limit
+    tpm: 45000
 
   # Fallback: Ollama on core-01 (CPU, only when Mistral is down)
   - model_name: klai-ollama-fallback
@@ -28,6 +34,8 @@ model_list:
 
 router_settings:
   routing_strategy: simple-shuffle
+  optional_pre_call_checks:
+    - enforce_model_rate_limits  # Queue requests when RPM/TPM limits are hit
   fallbacks:
     - klai-primary:
         - klai-ollama-fallback
