@@ -132,7 +132,7 @@ function AddTranscribePage() {
     setError(null)
     setResult(null)
     if (file.size > MAX_MB * 1024 * 1024) {
-      setError(m.app_transcribe_error_too_large({ max: MAX_MB }))
+      setError(m.app_transcribe_error_too_large({ max: String(MAX_MB) }))
       return
     }
     setSelectedFile(file)
@@ -436,7 +436,7 @@ function AddTranscribePage() {
                   <div>
                     <p className="text-sm font-medium">{m.app_transcribe_dropzone_label()}</p>
                     <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
-                      {m.app_transcribe_dropzone_hint({ formats: 'WAV, MP3, M4A, OGG, WebM', max: MAX_MB })}
+                      {m.app_transcribe_dropzone_hint({ formats: 'WAV, MP3, M4A, OGG, WebM', max: String(MAX_MB) })}
                     </p>
                   </div>
                 )}
