@@ -15,6 +15,8 @@ paths:
 
 | Pattern | When to use |
 |---|---|
+| [platform-litellm-tier-model](#platform-litellm-tier-model) | Three-tier alias model: when to use klai-fast / klai-primary / klai-large |
+| [platform-litellm-provider-swap](#platform-litellm-provider-swap) | Switching all services between Mistral and Claude |
 | [platform-litellm-vllm-config](#platform-litellm-vllm-config) | Configuring LiteLLM to route to vLLM instances |
 | [platform-vllm-startup-sequence](#platform-vllm-startup-sequence) | Starting vLLM services on ai-01 |
 | [platform-mongodb-per-tenant](#platform-mongodb-per-tenant) | Provisioning a new customer tenant |
@@ -26,6 +28,127 @@ paths:
 | [platform-zitadel-user-role-assignment](#platform-zitadel-user-role-assignment) | Assigning a Zitadel project role to a user |
 | [platform-vexa-bot-lifecycle](#platform-vexa-bot-lifecycle) | Debugging a meeting stuck in status |
 | [platform-hetzner-dns-wildcard-tls](#platform-hetzner-dns-wildcard-tls) | Building Caddy with wildcard TLS for `*.getklai.com` |
+
+---
+
+## platform-litellm-tier-model
+
+**When to use:** Deciding which `klai-*` alias to use in a service, or understanding what each tier maps to
+
+Klai uses three tier aliases in LiteLLM. All service code calls only these — never a raw provider model name.
+
+| Alias | Mistral (default) | Claude (fallback) | Task type |
+|---|---|---|---|
+| `klai-fast` | `mistral-small-2603` | `claude-haiku-4-5-20251001` | Lightweight, high-volume, latency-sensitive |
+| `klai-primary` | `mistral-small-2603` | `claude-sonnet-4-6` | Standard quality, user-facing |
+| `klai-large` | `mistral-large-2512` | `claude-sonnet-4-6` | Agentic, tool use, MCP flows |
+
+### Which tier per task
+
+| Task | Tier |
+|---|---|
+| Coreference / query rewrite | `klai-fast` |
+| LLM enrichment (HyPE questions, context prefix) | `klai-fast` |
+| Graphiti entity extraction + graph search | `klai-fast` |
+| KB chat synthesis (streaming, citations) | `klai-primary` |
+| Meeting / transcription summarization | `klai-primary` |
+| LibreChat general chat | `klai-primary` (custom_router may upscale to large) |
+| MCP tool use / multi-step agentic flows | `klai-large` |
+
+### Why fast and primary map to the same Mistral model
+
+Mistral Small 4 (`mistral-small-2603`) is a 119B MoE with 6.5B active parameters per token — combining low latency with quality that matches older Large-class models. It serves both lightweight tasks (fast tier) and user-facing synthesis (primary tier) at $0.15/$0.60 per M tokens, one-third the cost of Large 3.
+
+The tiers remain separate aliases so each can be independently pointed at a different model — e.g. Haiku vs Sonnet when running Claude, or different vLLM endpoints.
+
+**Mistral Nemo (`open-mistral-nemo`) is retired** — superseded by Small 4 across all fast-tier tasks.
+
+### Hardcoding rule
+
+Never hardcode model names in service files. Always use `settings.X_model` with a default in `config.py`:
+
+```python
+# config.py
+coreference_model: str = "klai-fast"     # query rewrite
+synthesis_model:   str = "klai-primary"  # KB chat answer
+graphiti_llm_model: str = "klai-fast"    # entity extraction
+enrichment_model:  str = "klai-fast"     # HyPE + context prefix
+summarize_model:   str = "klai-primary"  # meeting/transcription
+
+# service file
+body = {"model": settings.coreference_model, ...}  # never a literal string
+```
+
+**See also:** `model-policy.md` for the full alias table and forbidden model names
+
+---
+
+## platform-litellm-provider-swap
+
+**When to use:** Switching all Klai services from Mistral to Claude (or back), e.g. during quota exhaustion or for demos
+
+Because all services use tier aliases (`klai-fast`, `klai-primary`, `klai-large`), a full provider swap is **3 lines in the LiteLLM config** — no service code changes needed.
+
+### Switch to Claude (Anthropic)
+
+```yaml
+# deploy/litellm/config.yaml — model_list section
+- model_name: klai-fast
+  litellm_params:
+    model: anthropic/claude-haiku-4-5-20251001
+    api_key: os.environ/ANTHROPIC_API_KEY
+  rpm: 50
+  tpm: 100000
+
+- model_name: klai-primary
+  litellm_params:
+    model: anthropic/claude-sonnet-4-6
+    api_key: os.environ/ANTHROPIC_API_KEY
+  rpm: 50
+  tpm: 200000
+
+- model_name: klai-large
+  litellm_params:
+    model: anthropic/claude-sonnet-4-6
+    api_key: os.environ/ANTHROPIC_API_KEY
+  rpm: 50
+  tpm: 200000
+```
+
+Then `docker compose restart litellm` on core-01. All services pick up the new backend automatically.
+
+### Switch back to Mistral
+
+```yaml
+- model_name: klai-fast
+  litellm_params:
+    model: mistral/mistral-small-latest
+    api_key: os.environ/MISTRAL_API_KEY
+  rpm: 20
+  tpm: 45000
+
+- model_name: klai-primary
+  litellm_params:
+    model: mistral/mistral-small-latest
+    api_key: os.environ/MISTRAL_API_KEY
+  rpm: 20
+  tpm: 45000
+
+- model_name: klai-large
+  litellm_params:
+    model: mistral/mistral-large-latest
+    api_key: os.environ/MISTRAL_API_KEY
+  rpm: 20
+  tpm: 45000
+```
+
+### Rate limit notes
+
+- Mistral org limit: 60 RPM shared across all models (20 RPM per alias)
+- Anthropic: 50 RPM per model, much more headroom
+- The `enforce_model_rate_limits` callback in `router_settings` must be present for rate limiting to queue rather than fail
+
+**See also:** `platform-litellm-tier-model` for which alias to use per task
 
 ---
 

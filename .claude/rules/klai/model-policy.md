@@ -17,21 +17,50 @@ Never use these (or any variant) as default values, config defaults, or hardcode
 
 ## Correct model aliases (LiteLLM)
 
-Klai's LiteLLM proxy exposes these aliases — use ONLY these:
+Klai's LiteLLM proxy exposes three tier aliases — use ONLY these:
 
-| Alias | Maps to | Use for |
+| Alias | Mistral | Claude equivalent | Use for |
+|---|---|---|---|
+| `klai-fast` | `mistral-small-2603` (Small 4) | `claude-haiku-4-5` | Lightweight, high-volume, latency-sensitive |
+| `klai-primary` | `mistral-small-2603` (Small 4) | `claude-sonnet-4-6` | Standard quality, user-facing |
+| `klai-large` | `mistral-large-2512` (Large 3) | `claude-sonnet-4-6` | Agentic, tool use, MCP flows |
+
+### Which tier to use
+
+| Task | Tier | Reason |
 |---|---|---|
-| `klai-primary` | Mistral Small (EU) | Default for most tasks |
-| `klai-fast` | Mistral Nemo (EU) | Fast, lightweight tasks |
-| `klai-large` | Mistral Large (EU) | Complex reasoning |
+| Coreference / query rewrite | `klai-fast` | 1-sentence output, latency-sensitive |
+| LLM enrichment (HyPE, context prefix) | `klai-fast` | Short structured output, high volume |
+| Graphiti entity extraction + graph search | `klai-fast` | Structured extraction, background |
+| KB chat synthesis | `klai-primary` | User-facing, 6k token context, citations |
+| Meeting / transcription summarization | `klai-primary` | Quality matters, moderate length |
+| LibreChat general chat | `klai-primary` | Main UX — custom_router may upscale |
+| MCP tool use / agentic reasoning | `klai-large` | Multi-step function calling |
+
+### Tier model rationale (researched 2026-03-31)
+
+**Why `klai-fast` and `klai-primary` map to the same Mistral model:**
+Mistral Small 4 (`mistral-small-2603`) is a 119B MoE with only 6.5B active parameters — it
+combines low inference cost with quality that matches or exceeds older Large models. It handles
+both lightweight tasks (fast tier) and user-facing synthesis (primary tier) at $0.15/$0.60 per M
+tokens, one-third the cost of Large. The tiers remain separate aliases so each can be routed to a
+different provider model independently (e.g. Claude Haiku vs Sonnet, or vLLM fast vs slow model).
+
+**Why `klai-large` uses Mistral Large 3:**
+41B active parameters (675B MoE total) with strong function-calling reliability. Justified for
+low-volume agentic flows where correctness matters more than latency or cost.
+
+**Mistral Nemo is retired.** It was the July 2024 predecessor to Small 4. Do not use
+`open-mistral-nemo` in new configurations.
 
 Example — Python:
 ```python
 # WRONG
 model: str = "gpt-4o-mini"
 
-# CORRECT
-model: str = "klai-primary"
+# CORRECT — pick the right tier
+coreference_model: str = "klai-fast"    # lightweight
+synthesis_model:   str = "klai-primary" # user-facing quality
 ```
 
 Example — any config/env:
