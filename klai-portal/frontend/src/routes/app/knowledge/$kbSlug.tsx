@@ -206,7 +206,6 @@ function ConnectorsSection({
   const [wcStep, setWcStep] = useState<'details' | 'preview' | 'settings'>('details')
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const selectorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Track which connector ID the edit form has been initialized for
   const editInitializedRef = useRef<string | null>(null)
 
@@ -773,17 +772,35 @@ function ConnectorsSection({
                         <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
                         <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
                       </div>
+                      {/* Advanced: CSS selector in step 1, before preview */}
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)] transition-colors"
+                        onClick={() => setShowAdvancedSelector((p) => !p)}
+                      >
+                        <Settings className="h-3 w-3" />
+                        {m.admin_connectors_webcrawler_advanced_toggle()}
+                        {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      </button>
+                      {showAdvancedSelector && (
+                        <div className="pl-4 border-l-2 border-[var(--color-border)]">
+                          <Input
+                            id="conn-content-selector"
+                            placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                            value={webcrawlerConfig.content_selector}
+                            onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                          />
+                        </div>
+                      )}
                       <div className="flex gap-2 pt-1">
                         <Button
                           type="button"
                           size="sm"
                           disabled={!name || !webcrawlerConfig.base_url}
                           onClick={() => {
-                            const previewUrl = wcPreviewUrl || webcrawlerConfig.base_url
-                            setWcPreviewUrl(previewUrl)
+                            setWcPreviewUrl(webcrawlerConfig.base_url)
                             setWcStep('preview')
                             setCreatePreviewResult(null)
-                            createPreviewMutation.mutate({ url: previewUrl, content_selector: webcrawlerConfig.content_selector })
                           }}
                         >
                           {m.admin_connectors_webcrawler_next()}
@@ -840,6 +857,9 @@ function ConnectorsSection({
                           <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
                         </div>
                       )}
+                      {!createPreviewResult && !createPreviewMutation.isPending && (
+                        <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                      )}
                       {createPreviewResult !== null && !createPreviewMutation.isPending && (
                         <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
                           <div className="flex items-center justify-between">
@@ -853,50 +873,6 @@ function ConnectorsSection({
                           ) : (
                             <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
                           )}
-                        </div>
-                      )}
-                      {/* Advanced toggle */}
-                      <button
-                        type="button"
-                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)] transition-colors"
-                        onClick={() => setShowAdvancedSelector((p) => !p)}
-                      >
-                        <Settings className="h-3 w-3" />
-                        {m.admin_connectors_webcrawler_advanced_toggle()}
-                        {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                      </button>
-                      {showAdvancedSelector && (
-                        <div className="space-y-2 pl-4 border-l-2 border-[var(--color-border)]">
-                          <div className="flex gap-2 items-center">
-                            <Input
-                              id="conn-content-selector"
-                              placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
-                              value={webcrawlerConfig.content_selector}
-                              onChange={(e) => {
-                                const val = e.target.value
-                                setWebcrawlerConfig((p) => ({ ...p, content_selector: val }))
-                                if (selectorDebounceRef.current) clearTimeout(selectorDebounceRef.current)
-                                selectorDebounceRef.current = setTimeout(() => {
-                                  if (wcPreviewUrl) {
-                                    setCreatePreviewResult(null)
-                                    createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: val })
-                                  }
-                                }, 800)
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              disabled={createPreviewMutation.isPending || !wcPreviewUrl}
-                              onClick={() => {
-                                setCreatePreviewResult(null)
-                                createPreviewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector })
-                              }}
-                            >
-                              {createPreviewMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : m.admin_connectors_webcrawler_run_preview()}
-                            </Button>
-                          </div>
                         </div>
                       )}
                       <div className="flex gap-2 pt-1">
