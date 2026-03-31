@@ -2,12 +2,14 @@
 
 Usage:
     docker exec klai-core-knowledge-ingest-1 python -m knowledge_ingest.backfill
+    docker exec klai-core-knowledge-ingest-1 python -m knowledge_ingest.backfill --limit 1
 
 Reads artifacts from PostgreSQL, fetches chunks from Qdrant, and calls
 ingest_episode() for each. Resume-safe: checks for graphiti_episode_id
 in artifact.extra before processing.
 """
 
+import argparse
 import asyncio
 import json
 import logging
@@ -33,7 +35,7 @@ logging.basicConfig(
 log = logging.getLogger("backfill")
 
 
-async def main() -> None:
+async def main(limit: int | None = None) -> None:
     pool = await get_pool()
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
@@ -74,6 +76,10 @@ async def main() -> None:
     if not to_process:
         log.info("Nothing to do")
         return
+
+    if limit is not None:
+        to_process = to_process[:limit]
+        log.info("Limiting to %d artifact(s)", limit)
 
     # ---- Fetch all chunks from Qdrant once -----------------------------
     log.info("Fetching chunks from Qdrant collection '%s'...", settings.qdrant_collection)
@@ -173,4 +179,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Graphiti backfill")
+    parser.add_argument("--limit", type=int, default=None, help="Process at most N artifacts")
+    args = parser.parse_args()
+    asyncio.run(main(limit=args.limit))
