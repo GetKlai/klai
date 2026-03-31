@@ -252,11 +252,15 @@ export function KBScopeBar() {
               disabled={isPending}
               className="h-3.5 w-3.5 accent-[var(--color-accent)]"
             />
-            {pref.kb_narrow && (
-              <span className="text-[var(--color-purple-deep)]">
-                {m.chat_kb_bar_narrow_label()}
-              </span>
-            )}
+            <span
+              className={
+                pref.kb_narrow
+                  ? 'text-[var(--color-purple-deep)]'
+                  : 'text-[var(--color-muted-foreground)]'
+              }
+            >
+              {m.chat_kb_bar_narrow_label()}
+            </span>
           </label>
         </>
       )}
