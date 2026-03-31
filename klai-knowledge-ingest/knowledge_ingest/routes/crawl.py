@@ -71,35 +71,32 @@ class CrawlPreviewResponse(BaseModel):
     warnings: list[str] = []
 
 
-# JS injected BEFORE the wait_for condition is evaluated.
-# Removes navigation/chrome so the wait_for word-count check fires only when
-# the main article content (not nav) is present — critical for React/Next.js sites
-# where pre-hydration nav already contains 50+ words.
+# JS injected BEFORE wait_for: strip nav chrome so the word-count condition fires
+# only when article content is present, not on pre-hydration nav words.
+#
+# IMPORTANT: use only semantic tag/role selectors here.
+# Class/id substring selectors (e.g. [class*="sidebar"]) are dangerous — they
+# match layout wrappers like class="has-sidebar" or class="sidebar-open" and
+# delete the article element along with the wrapper. Verified with Playwright on
+# help.voys.nl: [class*="sidebar"] removed the super-content-wrapper that wraps
+# <main>, wiping all article content and producing raw_words=0.
 _JS_REMOVE_CHROME = """
 [
   'nav', 'header', 'footer', 'aside',
   '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
-  '[class*="navbar" i]', '[class*="nav-bar" i]', '[class*="nav-menu" i]',
-  '[class*="site-header" i]', '[class*="site-footer" i]', '[class*="site-nav" i]',
-  '[class*="page-header" i]', '[class*="page-footer" i]',
-  '[class*="top-bar" i]', '[class*="topbar" i]',
-  '[class*="breadcrumb" i]',
-  '[class*="sidebar" i]', '[class*="side-bar" i]', '[class*="sidenav" i]', '[class*="side-nav" i]',
   '[role="search"]',
-  '[id*="navbar" i]', '[id*="nav-bar" i]', '[id*="site-nav" i]',
-  '[id*="header" i]', '[id*="footer" i]', '[id*="sidebar" i]',
-  // Super.so (Notion-based help centers)
-  '.super-navbar', '.super-sidebar', '.super-footer',
 ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
 """
 
-# JS injected AFTER wait_for fires (React has now rendered the full DOM).
-# Re-runs nav removal (React rebuilds nav during hydration) and opens collapsed toggles.
-# Cookie/consent removal is handled by remove_consent_popups=True (built-in, runs after js_code).
-_JS_CLEAN_POST_HYDRATION = _JS_REMOVE_CHROME + """
+# JS injected AFTER wait_for fires: open collapsed toggles (Notion/details).
+# Nav removal is NOT repeated here — _JS_REMOVE_CHROME runs pre-hydration and
+# excluded_tags handles any semantic nav/header/footer/aside in markdown generation.
+# Running nav-removal JS post-hydration risks matching layout wrappers that React
+# added during hydration (see note on _JS_REMOVE_CHROME above).
+_JS_EXPAND_TOGGLES = """
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
 document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
-await new Promise(r => setTimeout(r, 600));
+await new Promise(r => setTimeout(r, 300));
 """
 
 
@@ -120,8 +117,9 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
             ),
             css_selector=body.content_selector or None,
-            wait_for="js:() => (document.querySelector('main') || document.body).innerText.trim().split(/\\s+/).length > 30",
-            js_code=_JS_CLEAN_POST_HYDRATION,
+            js_code_before_wait=_JS_REMOVE_CHROME,
+            wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
+            js_code=_JS_EXPAND_TOGGLES,
             remove_consent_popups=True,
             remove_overlay_elements=True,
             page_timeout=30000,
