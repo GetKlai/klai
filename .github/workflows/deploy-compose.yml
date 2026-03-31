@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/docker-compose.yml'
+      - 'deploy/docker-compose.override.yml'
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
 
@@ -30,7 +31,8 @@ jobs:
             git clone --depth=1 --filter=blob:none --sparse \
               https://github.com/GetKlai/klai.git klai-compose-sync
             cd klai-compose-sync
-            git sparse-checkout set --skip-checks deploy/docker-compose.yml
+            git sparse-checkout set --skip-checks deploy/docker-compose.yml deploy/docker-compose.override.yml
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
+            cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
             rm -rf /tmp/klai-compose-sync
-            echo "docker-compose.yml synced to /opt/klai/"
+            echo "docker-compose.yml and docker-compose.override.yml synced to /opt/klai/"
