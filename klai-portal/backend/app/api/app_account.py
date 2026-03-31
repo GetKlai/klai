@@ -31,6 +31,7 @@ class KBPreferenceOut(BaseModel):
     kb_retrieval_enabled: bool
     kb_personal_enabled: bool
     kb_slugs_filter: list[str] | None
+    kb_narrow: bool
     kb_pref_version: int
 
 
@@ -38,6 +39,7 @@ class KBPreferencePatch(BaseModel):
     kb_retrieval_enabled: bool | None = None
     kb_personal_enabled: bool | None = None
     kb_slugs_filter: list[str] | None = None
+    kb_narrow: bool | None = None
 
 
 # -- Endpoints ----------------------------------------------------------------
@@ -54,6 +56,7 @@ async def get_kb_preference(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
         kb_personal_enabled=user.kb_personal_enabled,
         kb_slugs_filter=user.kb_slugs_filter,
+        kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
     )
 
@@ -77,6 +80,9 @@ async def patch_kb_preference(
 
     if body.kb_personal_enabled is not None:
         user.kb_personal_enabled = body.kb_personal_enabled
+
+    if body.kb_narrow is not None:
+        user.kb_narrow = body.kb_narrow
 
     if "kb_slugs_filter" in body.model_fields_set:
         slugs = body.kb_slugs_filter
@@ -110,5 +116,6 @@ async def patch_kb_preference(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
         kb_personal_enabled=user.kb_personal_enabled,
         kb_slugs_filter=user.kb_slugs_filter,
+        kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
     )

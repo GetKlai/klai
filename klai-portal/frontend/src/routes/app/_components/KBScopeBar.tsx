@@ -11,6 +11,7 @@ interface KBPref {
   kb_retrieval_enabled: boolean
   kb_personal_enabled: boolean
   kb_slugs_filter: string[] | null
+  kb_narrow: boolean
   kb_pref_version: number
 }
 
@@ -136,6 +137,10 @@ export function KBScopeBar() {
     mutation.mutate({ kb_personal_enabled: !pref!.kb_personal_enabled })
   }
 
+  function toggleNarrow() {
+    mutation.mutate({ kb_narrow: !pref!.kb_narrow })
+  }
+
   function toggleSlug(slug: string) {
     const next = currentSlugs.includes(slug)
       ? currentSlugs.filter((s) => s !== slug)
@@ -231,6 +236,28 @@ export function KBScopeBar() {
               </div>
             )}
           </div>
+
+          {/* Narrow mode toggle */}
+          <label
+            className={[
+              'flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]',
+              isPending ? 'cursor-not-allowed opacity-50' : '',
+            ].join(' ')}
+            title={m.chat_kb_bar_narrow_tooltip()}
+          >
+            <input
+              type="checkbox"
+              checked={pref.kb_narrow}
+              onChange={toggleNarrow}
+              disabled={isPending}
+              className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+            />
+            {pref.kb_narrow && (
+              <span className="text-[var(--color-purple-deep)]">
+                {m.chat_kb_bar_narrow_label()}
+              </span>
+            )}
+          </label>
         </>
       )}
 

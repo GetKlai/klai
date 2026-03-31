@@ -1160,5 +1160,7 @@
   "chat_kb_bar_no_kbs": "Geen kennisbanken beschikbaar",
   "chat_kb_bar_apply": "Toepassen",
   "chat_kb_bar_select_all": "Alles selecteren",
-  "chat_kb_bar_deselect_all": "Alles deselecteren"
+  "chat_kb_bar_deselect_all": "Alles deselecteren",
+  "chat_kb_bar_narrow_label": "Alleen kennisbank",
+  "chat_kb_bar_narrow_tooltip": "Beantwoord uitsluitend vanuit de kennisbank. Wijzigingen zijn actief binnen 30 seconden."
 }
