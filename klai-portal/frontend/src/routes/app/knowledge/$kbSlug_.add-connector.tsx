@@ -71,7 +71,6 @@ function AddConnectorPage() {
 
   const [selectedType, setSelectedType] = useState<ConnectorType | null>(null)
   const [name, setName] = useState('')
-  const [schedule, setSchedule] = useState('')
   const [allowedAssertionModes, setAllowedAssertionModes] = useState<string[]>([])
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
@@ -114,7 +113,7 @@ function AddConnectorPage() {
           name,
           connector_type: selectedType,
           config,
-          schedule: schedule || null,
+          schedule: null,
           allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
@@ -126,6 +125,8 @@ function AddConnectorPage() {
     },
   })
 
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
   const previewMutation = useMutation({
     mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
@@ -133,11 +134,11 @@ function AddConnectorPage() {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, content_selector: content_selector || null }),
       })
-      if (!res.ok) return { fit_markdown: '', word_count: 0, warnings: [] }
+      if (!res.ok) throw new Error(`Preview failed (${String(res.status)})`)
       return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
     },
-    onSuccess: (data) => setPreviewResult(data),
-    onError: () => setPreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
+    onSuccess: (data) => { setPreviewResult(data); setPreviewError(null) },
+    onError: (err) => { setPreviewError(err instanceof Error ? err.message : 'Preview failed'); setPreviewResult(null) },
   })
 
   return (
@@ -156,6 +157,23 @@ function AddConnectorPage() {
       <Card>
         <CardContent className="pt-6">
           <div className="space-y-4">
+
+            {/* Global step breadcrumb */}
+            <div className="flex items-center gap-1.5 text-xs">
+              {selectedType ? (
+                <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={() => setSelectedType(null)}>
+                  1. {m.admin_connectors_step_type()}
+                </button>
+              ) : (
+                <span className="font-medium text-[var(--color-purple-deep)]">1. {m.admin_connectors_step_type()}</span>
+              )}
+              {selectedType === 'github' && (
+                <>
+                  <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />
+                  <span className="font-medium text-[var(--color-purple-deep)]">2. {m.admin_connectors_step_configure()}</span>
+                </>
+              )}
+            </div>
 
             {/* Step 1: Type selection */}
             {!selectedType && (
@@ -212,10 +230,6 @@ function AddConnectorPage() {
                   <Input id="conn-branch" required placeholder={m.admin_connectors_github_branch_placeholder()} value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="conn-schedule">{m.admin_connectors_field_schedule()}</Label>
-                  <Input id="conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
                   <Label>{m.admin_connectors_assertion_modes_label()}</Label>
                   <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
                 </div>
@@ -238,19 +252,19 @@ function AddConnectorPage() {
             {/* Web crawler wizard */}
             {selectedType === 'web_crawler' && (
               <div className="space-y-4">
-                {/* Step indicator */}
+                {/* Webcrawler step indicator (steps 2-4, appended to global breadcrumb above) */}
                 {(() => {
                   const steps: WcStep[] = ['details', 'preview', 'settings']
                   const currentIdx = steps.indexOf(wcStep)
                   return (
-                    <div className="flex items-center gap-1.5 text-xs">
+                    <div className="flex items-center gap-1.5 text-xs -mt-2">
                       {steps.map((step, i) => {
-                        const label = `${String(i + 1)}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
+                        const label = `${String(i + 2)}. ${step === 'details' ? m.admin_connectors_webcrawler_step_details() : step === 'preview' ? m.admin_connectors_webcrawler_step_preview() : m.admin_connectors_webcrawler_step_settings()}`
                         const isPast = i < currentIdx
                         const isActive = wcStep === step
                         return (
                           <span key={step} className="flex items-center gap-1.5">
-                            {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
+                            <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />
                             {isPast ? (
                               <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={() => setWcStep(step)}>
                                 {label}
@@ -309,6 +323,7 @@ function AddConnectorPage() {
                         onClick={() => {
                           setWcPreviewUrl(webcrawlerConfig.base_url)
                           setPreviewResult(null)
+                          setPreviewError(null)
                           setWcStep('preview')
                         }}
                       >
@@ -361,6 +376,7 @@ function AddConnectorPage() {
                       disabled={previewMutation.isPending || !wcPreviewUrl}
                       onClick={() => {
                         setPreviewResult(null)
+                        setPreviewError(null)
                         previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector })
                       }}
                     >
@@ -369,7 +385,10 @@ function AddConnectorPage() {
                         : m.admin_connectors_webcrawler_run_preview()
                       }
                     </Button>
-                    {/* Result */}
+                    {/* Error / Result */}
+                    {previewError && !previewMutation.isPending && (
+                      <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
+                    )}
                     {previewMutation.isPending && (
                       <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -423,10 +442,6 @@ function AddConnectorPage() {
                     <div className="space-y-1.5">
                       <Label htmlFor="wc-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
                       <Input id="wc-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="wc-schedule">{m.admin_connectors_field_schedule()}</Label>
-                      <Input id="wc-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
                     </div>
                     {createMutation.error && (
                       <p className="text-sm text-[var(--color-destructive)]">
