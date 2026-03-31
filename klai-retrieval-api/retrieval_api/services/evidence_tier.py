@@ -11,6 +11,7 @@ Feature flags (environment variables):
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from typing import TypedDict
@@ -81,6 +82,33 @@ def _content_type_weight(content_type: str | None, profile: EvidenceProfile) -> 
     )
 
 
+# PageRank boost constants.
+# Scale brings typical FalkorDB algo.pageRank values (0.003–0.05) into log1p-friendly range.
+# Alpha caps the max boost at ~25% for hub entities in the current graph size.
+# Consistent with the Hebbian boost pattern in graph_search._convert_results.
+_PAGERANK_SCALE = 100.0
+_PAGERANK_ALPHA = 0.20
+
+
+def _pagerank_weight(pagerank_max: float | None) -> float:
+    """Return multiplicative boost for entity_pagerank_max.
+
+    Uses log-scaled boost so the factor grows meaningfully but not unboundedly
+    as graph density increases. Returns 1.0 (no effect) for chunks without
+    graph data or when the feature flag is disabled.
+
+    Typical boost range (production graph, 290 entities):
+        pagerank_max 0.003 → ×1.05  (+5%)
+        pagerank_max 0.010 → ×1.14  (+14%)
+        pagerank_max 0.020 → ×1.22  (+22%)
+    """
+    if not _is_enabled("EVIDENCE_PAGERANK_ENABLED"):
+        return 1.0
+    if pagerank_max is None or pagerank_max <= 0.0:
+        return 1.0
+    return 1.0 + _PAGERANK_ALPHA * math.log1p(pagerank_max * _PAGERANK_SCALE)
+
+
 # @MX:TODO: [AUTO] assertion_mode scoring is flat 1.00 in v1 (plumbing only).
 # @MX:SPEC: SPEC-EVIDENCE-002 — activate differential weights after empirical validation.
 def _assertion_weight(assertion_mode: str | None, profile: EvidenceProfile) -> float:
@@ -134,13 +162,15 @@ def apply(
         ct_weight = _content_type_weight(chunk.get("content_type"), profile)
         a_weight = _assertion_weight(chunk.get("assertion_mode"), profile)
         t_decay = _temporal_decay(chunk.get("ingested_at"), profile)
+        pr_weight = _pagerank_weight(chunk.get("entity_pagerank_max"))
 
         base_score = chunk.get("reranker_score") or chunk.get("score", 0.0)
-        chunk["final_score"] = base_score * ct_weight * a_weight * t_decay
+        chunk["final_score"] = base_score * ct_weight * a_weight * t_decay * pr_weight
         chunk["evidence_tier_metadata"] = {
             "content_type_weight": ct_weight,
             "assertion_weight": a_weight,
             "temporal_decay": t_decay,
+            "pagerank_weight": pr_weight,
         }
 
     return _order_for_llm(chunks)

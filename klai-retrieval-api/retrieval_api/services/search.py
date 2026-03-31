@@ -8,7 +8,6 @@ klai_focus uses a single unnamed dense vector.
 from __future__ import annotations
 
 import asyncio
-import logging
 import warnings
 from datetime import datetime, timezone
 
@@ -27,10 +26,12 @@ from qdrant_client.models import (
     SparseVector,
 )
 
+import structlog
+
 from retrieval_api.config import settings
 from retrieval_api.models import RetrieveRequest
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _client: AsyncQdrantClient | None = None
 
@@ -134,7 +135,7 @@ async def _search_notebook(
             timeout=5.0,
         )
     except (asyncio.TimeoutError, Exception) as exc:
-        logger.error("Qdrant search failed on %s: %s", settings.qdrant_focus_collection, exc)
+        logger.error("qdrant_search_failed", collection=settings.qdrant_focus_collection, error=str(exc))
         raise
 
     return [
@@ -208,7 +209,7 @@ async def _search_knowledge(
             timeout=5.0,
         )
     except (asyncio.TimeoutError, Exception) as exc:
-        logger.error("Qdrant search failed on %s: %s", settings.qdrant_collection, exc)
+        logger.error("qdrant_search_failed", collection=settings.qdrant_collection, error=str(exc))
         raise
 
     return [
@@ -224,6 +225,7 @@ async def _search_knowledge(
             "invalid_at": r.payload.get("invalid_at"),
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
+            "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
         }
         for r in result.points
     ]
@@ -256,12 +258,12 @@ async def hybrid_search(
         if not isinstance(knowledge_results, BaseException):
             merged.extend(knowledge_results)
         else:
-            logger.warning("Knowledge search failed in broad scope: %s", knowledge_results)
+            logger.warning("qdrant_broad_knowledge_failed", error=str(knowledge_results))
 
         if not isinstance(notebook_results, BaseException):
             merged.extend(notebook_results)
         else:
-            logger.warning("Notebook search failed in broad scope: %s", notebook_results)
+            logger.warning("qdrant_broad_notebook_failed", error=str(notebook_results))
 
         # Sort by score descending, take top candidates
         merged.sort(key=lambda x: x["score"], reverse=True)
