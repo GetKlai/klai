@@ -260,10 +260,9 @@ export function KBScopeBar() {
             >
               {m.chat_kb_bar_narrow_label()}
             </span>
-            <Info
-              className="h-3 w-3 shrink-0 text-[var(--color-muted-foreground)] opacity-60"
-              title={m.chat_kb_bar_narrow_tooltip()}
-            />
+            <span title={m.chat_kb_bar_narrow_tooltip()} className="flex items-center">
+              <Info className="h-3 w-3 shrink-0 text-[var(--color-muted-foreground)] opacity-60" />
+            </span>
           </label>
         </>
       )}
