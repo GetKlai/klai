@@ -68,6 +68,7 @@ class PortalUser(Base):
     kb_retrieval_enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
     kb_personal_enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
     kb_slugs_filter: Mapped[list[str] | None] = mapped_column(ARRAY(String(128)), nullable=True)
+    kb_narrow: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     kb_pref_version: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")

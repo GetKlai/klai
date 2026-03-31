@@ -195,6 +195,7 @@ class KnowledgeFeatureResponse(BaseModel):
     kb_retrieval_enabled: bool = True
     kb_personal_enabled: bool = True
     kb_slugs_filter: list[str] | None = None
+    kb_narrow: bool = False
     kb_pref_version: int = 0
 
 
@@ -282,6 +283,7 @@ async def get_knowledge_feature(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
         kb_personal_enabled=user.kb_personal_enabled,
         kb_slugs_filter=user.kb_slugs_filter,
+        kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
     )
 

@@ -98,7 +98,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     if not PORTAL_INTERNAL_SECRET:
         logger.warning("KlaiKnowledgeHook: PORTAL_INTERNAL_SECRET not set — fail-closed")
         return {"enabled": False, "kb_retrieval_enabled": True, "kb_personal_enabled": True,
-                "kb_slugs_filter": None, "version": 0}
+                "kb_slugs_filter": None, "kb_narrow": False, "version": 0}
 
     # Step 1: check version pointer (short-lived — invalidated by preference changes)
     version_key = f"kb_ver:{org_id}:{user_id}"
@@ -123,7 +123,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     except Exception as exc:
         logger.warning("KlaiKnowledgeHook: portal feature fetch failed (%s) — fail-closed", exc)
         return {"enabled": False, "kb_retrieval_enabled": True, "kb_personal_enabled": True,
-                "kb_slugs_filter": None, "version": 0}
+                "kb_slugs_filter": None, "kb_narrow": False, "version": 0}
 
     version = data.get("kb_pref_version", 0)
     result = {
@@ -131,6 +131,7 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
         "kb_retrieval_enabled": data.get("kb_retrieval_enabled", True),
         "kb_personal_enabled": data.get("kb_personal_enabled", True),
         "kb_slugs_filter": data.get("kb_slugs_filter"),
+        "kb_narrow": data.get("kb_narrow", False),
         "version": version,
     }
 
@@ -254,9 +255,10 @@ class KlaiKnowledgeHook(CustomLogger):
         if not feature["kb_retrieval_enabled"]:
             return data  # user disabled KB retrieval (REQ-E4 pre-step skip)
 
-        # Determine retrieval scope and optional org KB slug filter
+        # Determine retrieval scope, KB slug filter, and answer mode
         scope = "both" if feature.get("kb_personal_enabled", True) else "org"
         kb_slugs = feature.get("kb_slugs_filter")  # None = all org KBs
+        kb_narrow = feature.get("kb_narrow", False)
 
         conversation_history = _build_conversation_history(messages)
 
@@ -315,9 +317,20 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         # Build context block with provenance labels per chunk
-        lines = [
-            "[Klai Kennisbank — gebruik dit als primaire informatiebron voor deze vraag]\n"
-        ]
+        # Narrow: model must answer strictly from KB chunks only.
+        # Broad (default): KB as additional context, general knowledge allowed.
+        if kb_narrow:
+            header = (
+                "[Klai Kennisbank — beantwoord uitsluitend op basis van onderstaande bronnen. "
+                "Gebruik geen algemene kennis buiten deze bronnen. "
+                "Staat het antwoord er niet in? Zeg dan: 'Ik kan dit niet vinden in de kennisbank.']\n"
+            )
+        else:
+            header = (
+                "[Klai Kennisbank — gebruik dit als aanvullende context bij je antwoord. "
+                "Je mag dit aanvullen met je algemene kennis.]\n"
+            )
+        lines = [header]
         for chunk in chunks:
             title = chunk.get("metadata", {}).get("title", "")
             scope_label = chunk.get("scope", "org")

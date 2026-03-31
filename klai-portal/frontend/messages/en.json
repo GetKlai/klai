@@ -1160,5 +1160,7 @@
   "chat_kb_bar_no_kbs": "No knowledge bases available",
   "chat_kb_bar_apply": "Apply",
   "chat_kb_bar_select_all": "Select all",
-  "chat_kb_bar_deselect_all": "Deselect all"
+  "chat_kb_bar_deselect_all": "Deselect all",
+  "chat_kb_bar_narrow_label": "Only knowledge base",
+  "chat_kb_bar_narrow_tooltip": "Answer only using the knowledge base. Changes take 30s to take effect."
 }
