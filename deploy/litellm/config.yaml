@@ -1,31 +1,18 @@
 model_list:
-  # Primary: Mistral Small 4 (119B MoE, 6.5B active) — default for most tasks
-  # MMLU-Pro 78, 256K context, best price/quality ratio
+  # Primary: Mistral Small 4 (119B MoE, 6.5B active) — default for user-facing tasks
+  # Routes through custom_router.py: may be upgraded to klai-large (tool calls)
+  # or downgraded to klai-fast (web search content). Never use for internal services.
   - model_name: klai-primary
     litellm_params:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 20    # Mistral org limit: 1 req/s (60 RPM shared across all models)
-    tpm: 45000 # Mistral model limit: 50K TPM for mistral-small
 
-  # Pipeline: Mistral Small 4 — for internal background services (Graphiti, enrichment, batch)
-  # Bypasses custom_router.py content-based routing — service calls are structured prompts,
-  # not chat messages. Never use for LibreChat traffic.
-  - model_name: klai-pipeline
-    litellm_params:
-      model: mistral/mistral-small-latest
-      api_key: os.environ/MISTRAL_API_KEY
-    rpm: 20    # Share of the 60 RPM org limit
-    tpm: 45000
-
-  # Fast: Mistral Small 4 — same model, separate alias for routing flexibility
-  # Auto-selected by custom_router.py when scraped web content is detected
+  # Fast: Mistral Small 4 — same model, bypasses custom_router.py routing
+  # Use for all internal services: enrichment, coreference, Graphiti extraction
   - model_name: klai-fast
     litellm_params:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 20    # Share of the 60 RPM org limit
-    tpm: 45000
 
   # Large: Mistral Large 3 (~675B MoE, ~40B active) — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
@@ -33,25 +20,15 @@ model_list:
     litellm_params:
       model: mistral/mistral-large-latest
       api_key: os.environ/MISTRAL_API_KEY
-    rpm: 20    # Share of the 60 RPM org limit
-    tpm: 45000
-
-  # Fallback: Ollama on core-01 (CPU, only when Mistral is down)
-  - model_name: klai-ollama-fallback
-    litellm_params:
-      model: ollama/phi3:mini
-      api_base: http://ollama:11434
 
 router_settings:
   routing_strategy: simple-shuffle
   optional_pre_call_checks:
-    - enforce_model_rate_limits  # Queue requests when RPM/TPM limits are hit
-  fallbacks:
-    - klai-fast:
-        - klai-ollama-fallback
-    - klai-large:
-        - klai-primary
-  # klai-primary has no fallback — failures surface immediately with the real error
+    - enforce_model_rate_limits  # Queue requests when provider budget is hit
+  provider_budget_config:
+    mistral:
+      rpm_limit: 60     # Mistral org-wide limit — shared across all aliases
+      tpm_limit: 150000 # 3 aliases × 50K TPM
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params

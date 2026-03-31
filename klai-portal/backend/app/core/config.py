@@ -103,7 +103,8 @@ class Settings(BaseSettings):
 
     # LiteLLM (for summarization)
     litellm_base_url: str = "http://litellm:4000"
-    summarize_model: str = "klai-primary"
+    extraction_model: str = "klai-fast"
+    synthesis_model: str = "klai-primary"
 
     # Knowledge gap thresholds (mirror of LiteLLM hook env vars for re-scoring)
     klai_gap_soft_threshold: float = 0.4

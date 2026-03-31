@@ -9,7 +9,7 @@ conversation context:
   Default                     →  klai-primary  (mistral-small, normal chat)
 
 Scope: LibreChat/chat traffic only. Internal background services (Graphiti,
-enrichment, batch pipelines) use klai-pipeline, which bypasses this router
+enrichment, batch pipelines) use klai-fast directly, which bypasses this router
 entirely — the hook returns early for any model != "klai-primary".
 
 Detection:

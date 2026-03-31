@@ -38,7 +38,7 @@ async def resolve(query: str, history: list[dict]) -> str:
         {"role": "user", "content": query},
     ]
     body = {
-        "model": "klai-fast",
+        "model": settings.coreference_model,
         "messages": messages,
         "stream": False,
         "temperature": 0.0,

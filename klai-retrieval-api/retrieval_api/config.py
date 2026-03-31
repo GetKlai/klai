@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     sparse_sidecar_timeout: float = 5.0
 
     reranker_enabled: bool = True  # Infinity GPU reranker on tei_reranker_url; ~96ms/20 docs
+    coreference_model: str = "klai-fast"
     coreference_timeout: float = 3.0
     reranker_timeout: float = 30.0
     # Graphiti / FalkorDB knowledge graph

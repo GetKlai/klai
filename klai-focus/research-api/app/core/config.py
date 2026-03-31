@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Limits
     max_upload_mb: int = 50
 
+    synthesis_model: str = "klai-primary"
+
     log_level: str = "INFO"
 
     @property
