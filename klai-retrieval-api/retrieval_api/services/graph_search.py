@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
@@ -92,19 +93,33 @@ def _convert_results(results: list, top_k: int) -> list[dict]:
 
     Graphiti search returns EdgeResult / EntityEdge objects. Key fields:
     - .fact or .name: the text content
-    - .score or .weight: relevance score (may be absent — use rank as fallback)
+    - .score: semantic relevance from Graphiti (cosine similarity)
+    - .weight: Hebbian reinforcement count (incremented per confirming episode)
     - .uuid: unique identifier
+
+    Scoring: base semantic score boosted by log-scaled Hebbian weight.
+    Results are sorted by combined score so RRF uses the correct rank ordering.
     """
     converted = []
-    for i, r in enumerate(results[:top_k]):
+    for i, r in enumerate(results):
         text = (
             getattr(r, "fact", None)
             or getattr(r, "name", None)
             or getattr(r, "content", None)
             or str(r)
         )
-        raw_score = getattr(r, "score", None) or getattr(r, "weight", None)
-        score = float(raw_score) if raw_score is not None else 1.0 / (i + 1)
+        score_val = getattr(r, "score", None)
+        weight_val = getattr(r, "weight", None)
+
+        base = float(score_val) if score_val is not None else 1.0 / (i + 1)
+        if weight_val is not None and float(weight_val) > 0:
+            # Hebbian boost: log scale prevents unbounded growth as weight accumulates.
+            # Factor 0.1 keeps the boost modest (weight=10 → +24%, weight=100 → +46%).
+            boost = 1.0 + 0.1 * math.log1p(float(weight_val))
+            score = base * boost
+        else:
+            score = base
+
         uid = str(getattr(r, "uuid", i))
         converted.append(
             {
@@ -119,4 +134,6 @@ def _convert_results(results: list, top_k: int) -> list[dict]:
                 "invalid_at": None,
             }
         )
-    return converted
+
+    converted.sort(key=lambda x: x["score"], reverse=True)
+    return converted[:top_k]

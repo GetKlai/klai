@@ -13,6 +13,8 @@ import asyncio
 import time
 from datetime import datetime, timezone
 
+import httpx
+
 try:
     from graphiti_core import Graphiti
     from graphiti_core.driver.falkordb_driver import FalkorDriver
@@ -35,6 +37,39 @@ logger = structlog.get_logger()
 # Rate-limit Graphiti episodes: each add_episode() makes ~5 LLM calls internally.
 # Concurrency controlled by GRAPHITI_MAX_CONCURRENT env var (default: 1).
 _episode_semaphore: asyncio.Semaphore | None = None
+
+
+class _TokenBucketLimiter:
+    """Token bucket: enforces at most `rate` HTTP calls per second, no burst.
+
+    Applied to the AsyncOpenAI httpx transport so every LLM call Graphiti makes
+    internally (entity extraction, deduplication, etc.) is throttled — regardless
+    of how fast the upstream API responds.
+    """
+
+    def __init__(self, rate: float) -> None:
+        self._min_interval = 1.0 / rate
+        self._lock = asyncio.Lock()
+        self._next_allowed: float = 0.0
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            loop = asyncio.get_event_loop()
+            now = loop.time()
+            wait = self._next_allowed - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._next_allowed = loop.time() + self._min_interval
+
+
+class _RateLimitedTransport(httpx.AsyncBaseTransport):
+    def __init__(self, wrapped: httpx.AsyncBaseTransport, limiter: _TokenBucketLimiter) -> None:
+        self._wrapped = wrapped
+        self._limiter = limiter
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        await self._limiter.acquire()
+        return await self._wrapped.handle_async_request(request)
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -67,10 +102,20 @@ def _get_graphiti() -> "Graphiti":
         )
         # max_retries=0: 429s surface immediately to our ingest_episode() retry loop
         # instead of being silently swallowed by the openai client for minutes.
+        # Token bucket transport: throttles every HTTP call Graphiti makes internally
+        # (entity extraction, deduplication, embedding, etc.) to graphiti_llm_rps req/s.
+        # This prevents bursts that would exceed the upstream Mistral 1 req/s org limit.
+        _llm_limiter = _TokenBucketLimiter(rate=settings.graphiti_llm_rps)
         openai_client = AsyncOpenAI(
             api_key=api_key,
             base_url=litellm_base_url,
             max_retries=0,
+            http_client=httpx.AsyncClient(
+                transport=_RateLimitedTransport(
+                    wrapped=httpx.AsyncHTTPTransport(),
+                    limiter=_llm_limiter,
+                )
+            ),
         )
         llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
         embedder = OpenAIEmbedder(
@@ -109,7 +154,7 @@ async def _update_edge_weights(
         return 0
 
     graphiti = _get_graphiti()
-    driver = graphiti.graph_driver.with_database(org_id)
+    driver = graphiti.driver.clone(org_id)
     result = await driver.execute_query(
         "MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity) "
         "WHERE a.uuid IN $uuids AND b.uuid IN $uuids AND a <> b "
@@ -118,8 +163,11 @@ async def _update_edge_weights(
         uuids=entity_uuids,
     )
     updated = 0
-    if hasattr(result, "result_set") and result.result_set:
-        updated = result.result_set[0][0]
+    # execute_query returns (records: list[dict], header, summary)
+    if result is not None:
+        records, _, _ = result
+        if records:
+            updated = records[0].get("updated", 0)
     return updated
 
 async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
@@ -134,7 +182,7 @@ async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     if not settings.graphiti_enabled or not episode_ids:
         return
     graphiti = _get_graphiti()
-    driver = graphiti.graph_driver.with_database(org_id)
+    driver = graphiti.driver.clone(org_id)
     await driver.execute_query(
         "MATCH (e:Episodic) WHERE e.uuid IN $uuids DETACH DELETE e",
         uuids=episode_ids,
@@ -263,9 +311,8 @@ async def ingest_episode(
                         error=str(exc),
                     )
 
-        # Delay INSIDE semaphore — ensures actual gap between consecutive episodes.
-        # Graphiti makes ~5 LLM calls per episode; at 1 req/s Mistral limit this
-        # delay ensures we don't burst above the rate limit between episodes.
+        # Delay INSIDE semaphore — small breathing room between episodes.
+        # Intra-episode rate limiting is handled by _RateLimitedTransport.
         await asyncio.sleep(settings.graphiti_episode_delay)
 
     return episode_result
