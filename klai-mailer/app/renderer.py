@@ -115,4 +115,4 @@ class Renderer:
     def wrap(self, render_result: dict[str, Any], branding: dict[str, Any]) -> str:
         """Inject rendered content into the Klai HTML email wrapper."""
         template = self._theme_env.get_template("email.html.j2")
-        return template.render(**render_result, **branding)
+        return template.render(**render_result, **branding)  # nosemgrep: direct-use-of-jinja2

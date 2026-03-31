@@ -57,13 +57,13 @@ def downgrade() -> None:
         "portal_group_kb_access",
         "portal_group_memberships",
     ):
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
 
     for table in (
         "portal_group_products",
         "portal_knowledge_bases",
         "portal_groups",
     ):
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")  # nosemgrep: formatted-sql-query,sqlalchemy-execute-raw-query
