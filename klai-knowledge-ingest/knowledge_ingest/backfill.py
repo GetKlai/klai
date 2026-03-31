@@ -81,23 +81,31 @@ async def main(limit: int | None = None) -> None:
         to_process = to_process[:limit]
         log.info("Limiting to %d artifact(s)", limit)
 
-    # ---- Fetch all chunks from Qdrant once -----------------------------
+    # ---- Fetch all chunks from Qdrant (paginated) ----------------------
     log.info("Fetching chunks from Qdrant collection '%s'...", settings.qdrant_collection)
-    all_points, next_offset = await qdrant.scroll(
-        collection_name=settings.qdrant_collection,
-        limit=10000,
-        with_payload=True,
-        with_vectors=False,
-    )
     chunks_by_artifact: dict[str, list[str]] = {}
-    for pt in all_points:
-        aid = (pt.payload or {}).get("artifact_id", "")
-        text = (pt.payload or {}).get("text", "")
-        if aid and text:
-            chunks_by_artifact.setdefault(aid, []).append(text)
+    total_points = 0
+    offset = None
+    while True:
+        batch, next_offset = await qdrant.scroll(
+            collection_name=settings.qdrant_collection,
+            offset=offset,
+            limit=1000,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for pt in batch:
+            aid = (pt.payload or {}).get("artifact_id", "")
+            text = (pt.payload or {}).get("text", "")
+            if aid and text:
+                chunks_by_artifact.setdefault(aid, []).append(text)
+        total_points += len(batch)
+        if next_offset is None:
+            break
+        offset = next_offset
     log.info(
         "Loaded %d chunks for %d artifacts from Qdrant",
-        len(all_points), len(chunks_by_artifact),
+        total_points, len(chunks_by_artifact),
     )
 
     # ---- Process (sequential) ------------------------------------------
@@ -117,7 +125,14 @@ async def main(limit: int | None = None) -> None:
 
         chunks = chunks_by_artifact.get(artifact_id, [])
         if not chunks:
-            log.warning("[%d/%d] %s — no chunks, skipping", idx, total_to_process, title)
+            log.warning("[%d/%d] %s — no chunks, marking as skipped", idx, total_to_process, title)
+            await pool.execute(
+                "UPDATE knowledge.artifacts "
+                "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                "WHERE id = $2::uuid",
+                json.dumps({"graphiti_episode_id": "no-chunks"}),
+                artifact_id,
+            )
             continue
 
         full_text = "\n\n".join(chunks)
