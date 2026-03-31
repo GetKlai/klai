@@ -52,14 +52,12 @@ async def main() -> None:
     # ---- Get artifacts -------------------------------------------------
     rows = await pool.fetch(
         """
-        SELECT id, title, content_type,
-               EXTRACT(EPOCH FROM created_at)::bigint AS created_epoch,
-               extra
+        SELECT id, path, content_type, created_at, extra
         FROM knowledge.artifacts
         WHERE org_id = $1
         ORDER BY created_at
         """,
-        int(org_id),
+        org_id,
     )
     total = len(rows)
     already = sum(
@@ -105,9 +103,9 @@ async def main() -> None:
 
     for idx, row in enumerate(to_process, 1):
         artifact_id = str(row["id"])
-        title = row["title"] or artifact_id
+        title = row["path"] or artifact_id
         content_type = row["content_type"] or "text"
-        created_epoch = row["created_epoch"] or int(time.time())
+        created_epoch = row["created_at"] or int(time.time())
 
         chunks = chunks_by_artifact.get(artifact_id, [])
         if not chunks:
