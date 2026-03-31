@@ -144,6 +144,8 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             ),
             css_selector=body.content_selector or None,
             js_code=_JS_PREPARE_PAGE,
+            wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
+            page_timeout=30000,
         )
         async with AsyncWebCrawler() as crawler:
             result = await asyncio.wait_for(
