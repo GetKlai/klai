@@ -37,12 +37,11 @@ router_settings:
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when RPM/TPM limits are hit
   fallbacks:
-    - klai-primary:
-        - klai-ollama-fallback
     - klai-fast:
         - klai-ollama-fallback
     - klai-large:
         - klai-primary
+  # klai-primary has no fallback — failures surface immediately with the real error
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params
