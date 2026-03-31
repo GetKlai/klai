@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
 try:
     from graphiti_core import Graphiti
+    from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
     from graphiti_core.driver.falkordb_driver import FalkorDriver
     from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
     from graphiti_core.llm_client.config import LLMConfig
     from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
-    from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
     from graphiti_core.nodes import EpisodeType
     from openai import AsyncOpenAI
     _GRAPHITI_AVAILABLE = True
@@ -30,8 +30,8 @@ except ImportError:
 
 import structlog
 
-from knowledge_ingest.config import settings
 import knowledge_ingest.qdrant_store as qdrant_store
+from knowledge_ingest.config import settings
 
 logger = structlog.get_logger()
 
@@ -82,7 +82,7 @@ def _get_semaphore() -> asyncio.Semaphore:
 _graphiti_client: Graphiti | None = None
 
 
-def _get_graphiti() -> "Graphiti":
+def _get_graphiti() -> Graphiti:
     """Return the shared Graphiti client (lazy init, process-singleton)."""
     if not _GRAPHITI_AVAILABLE:
         raise RuntimeError("graphiti-core is not installed — add it in /run SPEC-KB-011")
@@ -243,7 +243,7 @@ async def ingest_episode(
         return None
 
     graphiti = _get_graphiti()
-    reference_time = datetime.fromtimestamp(belief_time_start, tz=timezone.utc)
+    reference_time = datetime.fromtimestamp(belief_time_start, tz=UTC)
 
     max_attempts = 3
     episode_result: str | None = None
@@ -337,7 +337,7 @@ async def ingest_episode(
 
             except Exception as exc:
                 exc_str = str(exc).lower()
-                is_rate_limit = "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str
+                is_rate_limit = "rate limit" in exc_str or "429" in exc_str or "ratelimit" in exc_str  # noqa: E501
                 if attempt < max_attempts - 1:
                     # Rate limit: back off long enough for Mistral's sliding window to reset.
                     # Other errors: short exponential backoff (1s, 2s).

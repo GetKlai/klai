@@ -15,8 +15,8 @@ import warnings
 # Qdrant client warns about API key over HTTP; safe inside Docker network
 warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import (
+from qdrant_client import AsyncQdrantClient  # noqa: E402
+from qdrant_client.models import (  # noqa: E402
     Distance,
     FieldCondition,
     Filter,
@@ -32,8 +32,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from knowledge_ingest.config import settings
-from knowledge_ingest.embedder import EMBED_DIM
+from knowledge_ingest.config import settings  # noqa: E402
+from knowledge_ingest.embedder import EMBED_DIM  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ async def upsert_chunks(
             vector={"vector_chunk": vector},
             payload={**base_payload, "text": chunk, "chunk_index": i},
         )
-        for i, (chunk, vector) in enumerate(zip(chunks, vectors))
+        for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=False))
     ]
     await client.upsert(COLLECTION, points=points)
 
@@ -195,7 +195,7 @@ async def upsert_enriched_chunks(
 
     points = []
     for i, (ec, chunk_vec, q_vec, sparse_vec) in enumerate(
-        zip(enriched_chunks, chunk_vectors, question_vectors, sparse_vectors)
+        zip(enriched_chunks, chunk_vectors, question_vectors, sparse_vectors, strict=False)
     ):
         vectors: dict = {"vector_chunk": chunk_vec}
         if q_vec is not None:
@@ -282,7 +282,7 @@ async def search(
     user_id: str | None = None,
     sparse_vector: SparseVector | None = None,
     content_type_filter: str | None = None,
-    sparse_weight: float | None = None,  # AC-7: reserved for weighted convex combination; no behavioral effect yet
+    sparse_weight: float | None = None,  # AC-7: reserved for weighted convex combination; no behavioral effect yet  # noqa: E501
 ) -> list[dict]:
     """Search for chunks matching the query vector.
 
@@ -339,7 +339,7 @@ async def search(
     return [
         {
             "text": p.payload.get("text", "") if p.payload else "",
-            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}" if p.payload else "",
+            "source": f"{p.payload.get('kb_slug', '')}/{p.payload.get('path', '')}" if p.payload else "",  # noqa: E501
             "score": p.score,
             "metadata": {
                 k: v
