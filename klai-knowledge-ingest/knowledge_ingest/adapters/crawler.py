@@ -43,7 +43,7 @@ async def run_crawl_job(
     pages_done = 0
     pages_failed = 0
 
-    from knowledge_ingest.routes.crawl import _JS_OPEN_TOGGLES  # noqa: PLC0415
+    from knowledge_ingest.routes.crawl import _JS_PREPARE_PAGE  # noqa: PLC0415
 
     config = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
@@ -53,7 +53,7 @@ async def run_crawl_job(
             content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
         ),
         css_selector=content_selector or None,
-        js_code=_JS_OPEN_TOGGLES,
+        js_code=_JS_PREPARE_PAGE,
     )
 
     try:

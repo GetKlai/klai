@@ -33,8 +33,37 @@ class CrawlPreviewResponse(BaseModel):
     word_count: int
 
 
-# JS injected before content extraction: opens native <details> and Notion-style toggles
-_JS_OPEN_TOGGLES = """
+# JS injected before content extraction:
+#  1. Dismiss cookie/consent popups (click decline, then nuke DOM nodes)
+#  2. Open native <details> and JS-rendered toggles (Notion, etc.)
+_JS_PREPARE_PAGE = """
+// --- 1. Dismiss cookie banners ---
+const declineBtns = [
+  '[aria-label*="decline" i]', '[aria-label*="reject" i]', '[aria-label*="weiger" i]',
+  'button[id*="decline" i]', 'button[id*="reject" i]', 'button[id*="weiger" i]',
+  'button[class*="decline" i]', 'button[class*="reject" i]',
+  '.ppms_cm_popup__btn--secondary',  // Piwik PRO
+  '#onetrust-reject-all-handler',    // OneTrust
+  '.cc-deny',                        // cookieconsent
+  '[data-testid*="decline" i]',
+];
+for (const sel of declineBtns) {
+  const btn = document.querySelector(sel);
+  if (btn) { btn.click(); break; }
+}
+await new Promise(r => setTimeout(r, 300));
+
+// Remove leftover overlay containers
+[
+  '.ppms_cm_popup_overlay', '.ppms_cm_popup',
+  '#onetrust-banner-sdk', '#onetrust-consent-sdk',
+  '.cc-window', '.cookie-banner', '.cookie-notice', '.cookie-consent',
+  '[id*="cookie-banner" i]', '[id*="consent-banner" i]',
+  '[class*="cookie-banner" i]', '[class*="consent-banner" i]',
+  '[aria-label*="cookie" i]', '[aria-modal="true"]',
+].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+
+// --- 2. Open toggles ---
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
 document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
 await new Promise(r => setTimeout(r, 600));
@@ -58,7 +87,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
             ),
             css_selector=body.content_selector or None,
-            js_code=_JS_OPEN_TOGGLES,
+            js_code=_JS_PREPARE_PAGE,
         )
         async with AsyncWebCrawler() as crawler:
             result = await asyncio.wait_for(
