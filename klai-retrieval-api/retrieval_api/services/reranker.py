@@ -46,7 +46,8 @@ async def rerank(
             c["reranker_score"] = None
         return fallback
 
-    # data["results"] is a list of {"index": int, "score": float}
+    # data["results"] is a list of {"index": int, "score"|"relevance_score": float}
+    # TEI returns "score"; Infinity /v1/rerank returns "relevance_score"
     results_map = data.get("results", data) if isinstance(data, dict) else data
     if isinstance(results_map, dict):
         results_map = results_map.get("results", [])
@@ -57,7 +58,7 @@ async def rerank(
         idx = item["index"]
         if idx < len(candidates):
             candidate = candidates[idx].copy()
-            candidate["reranker_score"] = item["score"]
+            candidate["reranker_score"] = item.get("score", item.get("relevance_score"))
             reranked.append(candidate)
 
     reranked.sort(key=lambda x: x.get("reranker_score", 0), reverse=True)
