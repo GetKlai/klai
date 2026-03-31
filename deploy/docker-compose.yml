@@ -205,6 +205,7 @@ services:
       STORE_MODEL_IN_DB: "True"
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       DISABLE_ADMIN_UI: "True"
       KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
       KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
