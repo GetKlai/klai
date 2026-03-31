@@ -995,6 +995,13 @@
   "admin_connectors_webcrawler_preview_title": "KB content preview",
   "admin_connectors_webcrawler_preview_word_count": "~{count} words",
   "admin_connectors_webcrawler_preview_empty": "No content found. Try a different URL or add a content selector.",
+  "admin_connectors_webcrawler_step_details": "Details",
+  "admin_connectors_webcrawler_step_preview": "Preview",
+  "admin_connectors_webcrawler_step_settings": "Settings",
+  "admin_connectors_webcrawler_next": "Next",
+  "admin_connectors_webcrawler_back": "Back",
+  "admin_connectors_webcrawler_advanced_toggle": "Advanced: CSS selector",
+  "admin_connectors_webcrawler_preview_rerun": "Re-run preview",
 
   "admin_connectors_coming_soon": "Coming soon",
   "admin_connectors_create_submit": "Add connector",
