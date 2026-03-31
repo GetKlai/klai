@@ -80,7 +80,7 @@ class TokenRouter(CustomLogger):
             # KB-context present → never downgrade regardless of token count.
             # KB chunks are compact and pre-ranked; the safety-net is for scraped
             # web content, not knowledge base context.
-            if data.get("_klai_kb_meta"):
+            if data.get("metadata", {}).get("_klai_kb_meta"):
                 return data
 
             # Safety net: very long context without tool calls → nemo

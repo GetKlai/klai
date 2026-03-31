@@ -289,7 +289,7 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # If the retrieval-gate determined no KB context is needed, skip injection
         if result.get("retrieval_bypassed"):
-            data["_klai_kb_meta"] = {
+            data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
                 "user_id": user_id,
                 "chunks_injected": 0,
@@ -347,7 +347,8 @@ class KlaiKnowledgeHook(CustomLogger):
 
         data["messages"] = messages
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
-        data["_klai_kb_meta"] = {
+        # Stored in data["metadata"] so it is never forwarded to the LLM provider.
+        data.setdefault("metadata", {})["_klai_kb_meta"] = {
             "org_id": org_id,
             "user_id": user_id,
             "chunks_injected": len(chunks),
@@ -357,7 +358,7 @@ class KlaiKnowledgeHook(CustomLogger):
         return data
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
-        kb_meta = data.get("_klai_kb_meta")
+        kb_meta = data.get("metadata", {}).get("_klai_kb_meta")
         if kb_meta and not kb_meta.get("gate_bypassed"):
             logger.info(
                 "KB injection: org=%s user=%s chunks=%d retrieval_ms=%d",
