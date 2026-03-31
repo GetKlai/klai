@@ -120,8 +120,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
             ),
             css_selector=body.content_selector or None,
-            js_code_before_wait=_JS_REMOVE_CHROME,
-            wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
+            wait_for="js:() => (document.querySelector('main') || document.body).innerText.trim().split(/\\s+/).length > 30",
             js_code=_JS_CLEAN_POST_HYDRATION,
             remove_consent_popups=True,
             page_timeout=30000,
