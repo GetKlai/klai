@@ -107,12 +107,12 @@ interface MembersResponse {
 type ConnectorType = 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
 
 const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
-  { value: 'fact',        label: 'Feit',       description: 'Vastgesteld feit, documentatie, specs' },
-  { value: 'procedural',  label: 'Procedure',  description: "Stap-voor-stap instructies, how-to's" },
-  { value: 'claim',       label: 'Bewering',   description: 'Niet hard bewezen bewering' },
-  { value: 'quoted',      label: 'Citaat',     description: 'Letterlijk bronmateriaal' },
-  { value: 'speculation', label: 'Speculatie', description: 'Hypothesen, brainstorm' },
-  { value: 'unknown',     label: 'Onbekend',   description: 'Type niet gespecificeerd' },
+  { value: 'fact',        label: 'Fact',        description: 'Established fact, documentation, specs' },
+  { value: 'procedural',  label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
+  { value: 'claim',       label: 'Claim',       description: 'Not conclusively proven claim' },
+  { value: 'quoted',      label: 'Quote',       description: 'Literal source material' },
+  { value: 'speculation', label: 'Speculation', description: 'Hypotheses, brainstorm' },
+  { value: 'unknown',     label: 'Unknown',     description: 'Type not specified' },
 ]
 
 interface GitHubConfig {
@@ -470,6 +470,10 @@ function ConnectorsSection({
                       <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
                       <Input id="edit-conn-base-url" type="url" required value={editWebcrawlerConfig.base_url} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
+                      <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={editWebcrawlerConfig.content_selector} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
+                    </div>
                     <div>
                       <Button
                         type="button"
@@ -480,18 +484,6 @@ function ConnectorsSection({
                       >
                         {editPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
                       </Button>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
-                      <Input id="edit-conn-path-prefix" value={editWebcrawlerConfig.path_prefix} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
-                      <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={editWebcrawlerConfig.max_pages} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
-                      <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={editWebcrawlerConfig.content_selector} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
                     </div>
                     {editPreviewResult !== null && (
                       <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
@@ -506,6 +498,14 @@ function ConnectorsSection({
                         )}
                       </div>
                     )}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                      <Input id="edit-conn-path-prefix" value={editWebcrawlerConfig.path_prefix} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                      <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={editWebcrawlerConfig.max_pages} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                    </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
                       <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
@@ -664,6 +664,10 @@ function ConnectorsSection({
                     <Label htmlFor="conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
                     <Input id="conn-base-url" type="url" required placeholder={m.admin_connectors_webcrawler_base_url_placeholder()} value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
+                    <Input id="conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
+                  </div>
                   <div>
                     <Button
                       type="button"
@@ -674,18 +678,6 @@ function ConnectorsSection({
                     >
                       {createPreviewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
                     </Button>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
-                    <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
-                    <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
-                    <Input id="conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
                   </div>
                   {createPreviewResult !== null && (
                     <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
@@ -700,6 +692,14 @@ function ConnectorsSection({
                       )}
                     </div>
                   )}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                    <Input id="conn-path-prefix" placeholder={m.admin_connectors_webcrawler_path_prefix_placeholder()} value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                    <Input id="conn-max-pages" type="number" min="1" max="2000" placeholder={m.admin_connectors_webcrawler_max_pages_placeholder()} value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                  </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="conn-schedule-wc">{m.admin_connectors_field_schedule()}</Label>
                     <Input id="conn-schedule-wc" placeholder={m.admin_connectors_field_schedule_placeholder()} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
