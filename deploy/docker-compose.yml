@@ -612,7 +612,7 @@ services:
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "false"
       GRAPH_SEARCH_TIMEOUT: "60.0"
-      RERANKER_ENABLED: "false"
+      RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
