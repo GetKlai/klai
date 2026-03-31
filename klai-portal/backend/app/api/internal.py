@@ -314,7 +314,7 @@ async def notify_page_saved(
 
 
 class GapEventIn(BaseModel):
-    org_id: int
+    org_id: str  # Zitadel org ID from LiteLLM team key metadata
     user_id: str
     query_text: str
     gap_type: str
@@ -334,8 +334,13 @@ async def create_gap_event(
     _require_internal_token(request)
     from app.models.retrieval_gaps import PortalRetrievalGap
 
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == payload.org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
     gap = PortalRetrievalGap(
-        org_id=payload.org_id,
+        org_id=org.id,
         user_id=payload.user_id,
         query_text=payload.query_text,
         gap_type=payload.gap_type,
