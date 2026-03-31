@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # Internal service URLs
     docling_url: str = "http://docling-serve:5001"
     retrieval_api_url: str = ""
-    infinity_url: str = "http://tei:8080"
+    infinity_url: str = "http://172.18.0.1:7997"
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
     searxng_url: str = "http://searxng:8080"
