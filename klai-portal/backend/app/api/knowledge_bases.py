@@ -214,6 +214,9 @@ async def delete_knowledge_base(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the creator or an admin can delete a knowledge base",
         )
+    # Clean up all ingest data before committing the portal deletion.
+    # Raises on failure so the portal record is not orphaned from its ingest data.
+    await knowledge_ingest_client.delete_kb(org.zitadel_org_id, kb.slug)
     await db.delete(kb)
     await db.commit()
 

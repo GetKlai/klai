@@ -53,6 +53,25 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
         return None
 
 
+async def delete_kb(org_id: str, kb_slug: str) -> None:
+    """Delete all knowledge-ingest data for a KB: FalkorDB graph nodes, Qdrant chunks, PostgreSQL records.
+
+    Intentionally raises on failure (no try/except). The portal endpoint must not delete its own
+    record when ingest cleanup fails — letting the exception propagate to a 500 keeps both sides
+    consistent and forces an explicit retry rather than silently orphaning data.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+        timeout=30.0,
+    ) as client:
+        resp = await client.delete(
+            "/ingest/v1/kb",
+            params={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        resp.raise_for_status()
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 
