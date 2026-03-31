@@ -990,6 +990,11 @@
   "admin_connectors_webcrawler_max_pages_placeholder": "Default: 200, max: 2000",
   "admin_connectors_webcrawler_content_selector": "Content selector (optional)",
   "admin_connectors_webcrawler_content_selector_placeholder": "E.g. main, .article, .super-content",
+  "admin_connectors_webcrawler_preview_button": "Preview content",
+  "admin_connectors_webcrawler_preview_loading": "Loading...",
+  "admin_connectors_webcrawler_preview_title": "KB content preview",
+  "admin_connectors_webcrawler_preview_word_count": "~{count} words",
+  "admin_connectors_webcrawler_preview_empty": "No content found. Try a different URL or add a content selector.",
 
   "admin_connectors_coming_soon": "Coming soon",
   "admin_connectors_create_submit": "Add connector",

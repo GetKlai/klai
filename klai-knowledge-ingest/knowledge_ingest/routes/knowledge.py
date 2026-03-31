@@ -42,6 +42,7 @@ async def start_crawl(req: BulkCrawlRequest) -> BulkCrawlResponse:
         include_patterns=req.include_patterns,
         exclude_patterns=req.exclude_patterns,
         rate_limit=req.rate_limit,
+        content_selector=req.content_selector,
     )
 
     logger.info(

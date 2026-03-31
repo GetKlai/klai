@@ -93,6 +93,7 @@ class BulkCrawlRequest(BaseModel):
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     rate_limit: float = 2.0
+    content_selector: str | None = None
 
 
 class BulkCrawlResponse(BaseModel):
