@@ -1,3 +1,8 @@
+---
+paths:
+  - "**/backend/**/*.py"
+  - "**/api/**/*.py"
+---
 # Security Pitfalls
 
 > Authentication, authorization, and multi-tenancy mistakes in klai-mono.

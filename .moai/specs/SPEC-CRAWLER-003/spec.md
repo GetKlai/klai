@@ -1,7 +1,7 @@
 ---
 id: SPEC-CRAWLER-003
 version: "1.0"
-status: Planned
+status: completed
 created: 2026-04-01
 updated: 2026-04-01
 author: Mark Vletter

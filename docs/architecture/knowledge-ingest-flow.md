@@ -177,8 +177,9 @@ state per `(org_id, kb_slug, url)`:
   (SHA-256 of extracted markdown), `raw_markdown`, `crawled_at`. Used for deduplication and
   as a content cache for future re-ingest without re-crawling.
 - `page_links` — link graph: `from_url → to_url` pairs with `link_text`, extracted from
-  `result.links['internal']` by crawl4ai. Foundation for future PageRank scoring and
-  link-aware retrieval.
+  `result.links['internal']` by crawl4ai. Used by SPEC-CRAWLER-003 for link-graph
+  retrieval enrichment: anchor text augmentation (vocabulary bridging in `enriched_text`),
+  `incoming_link_count` authority boost, and 1-hop forward expansion in the retrieval API.
 
 **Dual-hash deduplication:** both `crawl_url` and the bulk crawler skip ingest in two stages:
 1. `raw_html_hash` unchanged → skip everything (JS/tracking noise ignored)
