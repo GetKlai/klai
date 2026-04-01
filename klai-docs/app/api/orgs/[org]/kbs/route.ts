@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuthOrService } from "@/lib/auth";
+import { requireAuthOrService, requireOrgAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import * as ki from "@/lib/knowledge_ingest";
@@ -11,11 +11,9 @@ export async function GET(
   { params }: { params: Promise<{ org: string }> }
 ) {
   const { org: orgSlug } = await params;
-  const payload = await requireAuthOrService(request);
-  if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await db.getOrgBySlug(orgSlug);
-  if (!org) return NextResponse.json([], { status: 200 });
+  const access = await requireOrgAccess(request, orgSlug);
+  if (access.error) return access.error;
+  const { org } = access;
 
   const kbs = await db.getKBsByOrg(org.id);
   return NextResponse.json(kbs);
@@ -41,9 +39,18 @@ export async function POST(
   // Auto-provision org record if it doesn't exist yet
   if (!org) {
     const zitadelOrgId =
-      (payload["urn:zitadel:iam:user:resourceowner:id"] as string) ?? orgSlug;
+      (payload["urn:zitadel:iam:user:resourceowner:id"] as string) ?? payload.org_id ?? orgSlug;
+    // Verify caller's org matches the org being created
+    if (payload.org_id && payload.org_id !== zitadelOrgId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     org = await db.createOrg(orgSlug, orgSlug, zitadelOrgId);
     await gitea.createOrg(`org-${orgSlug}`, orgSlug);
+  } else {
+    // Existing org: verify caller belongs to it
+    if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const giteaOrg = `org-${orgSlug}`;

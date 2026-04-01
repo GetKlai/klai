@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireOrgAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import {
@@ -12,27 +12,19 @@ import {
 
 type Params = { org: string; kb: string; path: string[] };
 
-async function resolveKB(orgSlug: string, kbSlug: string) {
-  const org = await db.getOrgBySlug(orgSlug);
-  if (!org) return null;
-  const kb = await db.getKB(org.id, kbSlug);
-  return kb ? { org, kb } : null;
-}
-
 // POST /api/orgs/{org}/kbs/{kb}/pages/{...path}/rename
 // Body: { newSlug: string, title: string, content: string, icon?: string }
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const payload = await requireAuth(request);
-  if (!payload?.sub)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { org: orgSlug, kb: kbSlug, path } = await params;
-  const resolved = await resolveKB(orgSlug, kbSlug);
-  if (!resolved)
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await requireOrgAccess(request, orgSlug);
+  if (access.error) return access.error;
+  const { org } = access;
+
+  const kb = await db.getKB(org.id, kbSlug);
+  if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const oldSlug = path.join("/");
   const oldFilePath = `${oldSlug}.md`;
@@ -46,11 +38,11 @@ export async function POST(
     return NextResponse.json({ error: "Slugs are identical" }, { status: 400 });
 
   // Read current file to get sha and existing frontmatter (for redirects)
-  const oldFile = await gitea.getFile(resolved.kb.gitea_repo, oldFilePath);
+  const oldFile = await gitea.getFile(kb.gitea_repo, oldFilePath);
   if (!oldFile)
     return NextResponse.json({ error: "Page not found" }, { status: 404 });
 
-  const oldRaw = await gitea.getFileContent(resolved.kb.gitea_repo, oldFilePath);
+  const oldRaw = await gitea.getFileContent(kb.gitea_repo, oldFilePath);
   const oldParsed = oldRaw ? parsePage(oldRaw) : { frontmatter: {}, content: "" };
 
   // Build updated frontmatter: carry over existing fields, add oldSlug to redirects
@@ -75,7 +67,7 @@ export async function POST(
 
   // Create new file
   await gitea.putFile(
-    resolved.kb.gitea_repo,
+    kb.gitea_repo,
     newFilePath,
     newFileContent,
     `Rename ${oldSlug} to ${newSlug}`
@@ -83,20 +75,20 @@ export async function POST(
 
   // Delete old file
   await gitea.deleteFile(
-    resolved.kb.gitea_repo,
+    kb.gitea_repo,
     oldFilePath,
     oldFile.sha,
     `Remove ${oldFilePath} after rename to ${newSlug}`
   );
 
   // Update _sidebar.yaml: rename slug in-place
-  const sidebarFile = await gitea.getFile(resolved.kb.gitea_repo, "_sidebar.yaml");
+  const sidebarFile = await gitea.getFile(kb.gitea_repo, "_sidebar.yaml");
   if (sidebarFile) {
-    const sidebarRaw = await gitea.getFileContent(resolved.kb.gitea_repo, "_sidebar.yaml");
+    const sidebarRaw = await gitea.getFileContent(kb.gitea_repo, "_sidebar.yaml");
     if (sidebarRaw) {
       const updated = renameSidebarSlug(parseSidebar(sidebarRaw), oldSlug, newSlug);
       await gitea.putFile(
-        resolved.kb.gitea_repo,
+        kb.gitea_repo,
         "_sidebar.yaml",
         serializeSidebar(updated),
         `Rename ${oldSlug} to ${newSlug} in navigation`,
