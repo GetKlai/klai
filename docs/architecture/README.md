@@ -19,8 +19,8 @@ Achterliggende onderzoeksdocumenten die de architecture-beslissingen onderbouwen
 
 | Bestand | Inhoud |
 |---------|--------|
-| [research/knowledge-system-fundamentals.md](research/knowledge-system-fundamentals.md) | 16 empirisch onderbouwde bevindingen over kennissystemen — entity types, retrieval, graph layer, taxonomie, monitoring (NL) |
-| [research/knowledge-pipeline-architecture.md](research/knowledge-pipeline-architecture.md) | Uitgebreid design-document: extractieschema, prompt-strategie, GDPR, gap detection, widget SDK evaluatie, publication layer (NL) |
+| [../research/knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md) | 16 empirisch onderbouwde bevindingen over kennissystemen — entity types, retrieval, graph layer, taxonomie, monitoring (NL) |
+| [../research/knowledge-pipeline-architecture.md](../research/knowledge-pipeline-architecture.md) | Uitgebreid design-document: extractieschema, prompt-strategie, GDPR, gap detection, widget SDK evaluatie, publication layer (NL) |
 
 De conclusies uit deze documenten zijn gedestilleerd in `platform.md §Knowledge System Design Principles`. De research-docs zijn het archief voor wie de redenering wil traceren.
 
