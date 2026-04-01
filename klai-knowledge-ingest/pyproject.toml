@@ -12,7 +12,6 @@ dependencies = [
     "asyncpg>=0.30",
     "qdrant-client>=1.12",
     "pyyaml>=6.0",
-    "html2text>=2024.2",
     "cachetools>=5.5",
     # procrastinate 3.x: PsycopgConnector, open_async(), run_worker_async() all unchanged.
     # DB schema was already 3.x-compatible (queueing_lock + full status enum added in 2.15).

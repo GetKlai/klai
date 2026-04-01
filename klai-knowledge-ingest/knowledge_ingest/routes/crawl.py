@@ -1,6 +1,6 @@
 """
 Crawl route:
-  POST /ingest/v1/crawl         — fetch a URL, convert HTML to markdown, and ingest
+  POST /ingest/v1/crawl         — fetch a URL with crawl4ai, convert to markdown, and ingest
   POST /ingest/v1/crawl/preview — fetch a URL with PruningContentFilter and return fit_markdown
 
 Pipeline selection (SPEC-CRAWL-001 / R-1):
@@ -16,8 +16,6 @@ import re
 import time
 from urllib.parse import urlparse
 
-import html2text
-import httpx
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -163,8 +161,8 @@ def _build_crawl_config(selector: str | None):  # type: ignore[return]
         )
 
 
-async def _run_crawl(url: str, selector: str | None) -> tuple[str, int]:
-    """Run crawl4ai and return (fit_markdown, word_count)."""
+async def _run_crawl(url: str, selector: str | None) -> tuple[str, int, str]:
+    """Run crawl4ai and return (fit_markdown, word_count, raw_html)."""
     from crawl4ai import AsyncWebCrawler  # noqa: PLC0415
 
     config = _build_crawl_config(selector)
@@ -175,6 +173,7 @@ async def _run_crawl(url: str, selector: str | None) -> tuple[str, int]:
         )
     raw_md = result.markdown.raw_markdown or ""
     fit_md_raw = result.markdown.fit_markdown or ""
+    raw_html = result.html or ""
     preview_logger.info(
         "Crawl4ai result",
         url=url,
@@ -184,7 +183,7 @@ async def _run_crawl(url: str, selector: str | None) -> tuple[str, int]:
         raw_preview=raw_md[:200],
     )
     fit_md = fit_md_raw or raw_md
-    return fit_md, len(fit_md.split())
+    return fit_md, len(fit_md.split()), raw_html
 
 
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
@@ -203,7 +202,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 effective_selector, selector_source = stored
 
         # Initial crawl
-        fit_md, word_count = await _run_crawl(body.url, effective_selector)
+        fit_md, word_count, _ = await _run_crawl(body.url, effective_selector)
         warnings: list[str] = _detect_nav_contamination(fit_md)
 
         # AI-assisted selector detection when result is too thin and no selector was used
@@ -214,7 +213,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 ai_selector = await detect_selector_via_llm(dom_summary)
                 if ai_selector:
                     try:
-                        recrawl_md, recrawl_wc = await _run_crawl(body.url, ai_selector)
+                        recrawl_md, recrawl_wc, _ = await _run_crawl(body.url, ai_selector)
                         if recrawl_wc >= _MIN_WORD_COUNT:
                             await upsert_domain_selector(
                                 extract_domain(body.url), body.org_id, ai_selector, "ai"
@@ -258,36 +257,16 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
 
 @router.post("/ingest/v1/crawl", response_model=CrawlResponse)
 async def crawl_url(request: CrawlRequest) -> CrawlResponse:
-    """Fetch a URL, convert HTML to markdown, and ingest via the standard pipeline."""
+    """Fetch a URL with crawl4ai and ingest via the standard pipeline.
+
+    Uses the same crawl4ai pipeline as the bulk crawler and preview endpoint,
+    so JS-rendered pages (SPAs) are handled correctly and content_hash is
+    consistent across all crawl paths.
+    """
     try:
         await validate_url(request.url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-    # WARNING (pipeline config change): modifying the html2text settings below
-    # (ignore_links, body_width, etc.) changes content_hash for every page even
-    # when the actual page content has not changed. After such a change, force a
-    # full re-ingest by clearing content_hash:
-    #   UPDATE knowledge.crawled_pages
-    #      SET content_hash = ''
-    #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
-
-    # Fetch URL
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False, verify=True) as client:
-        try:
-            resp = await client.get(request.url, headers={"User-Agent": "KlaiBot/1.0"})
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {exc}")
-
-    # Dual-hash dedup (see migration 012):
-    #   1. raw_html_hash unchanged → skip everything (fast path, skips html2text too)
-    #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
-    #   3. both changed → real content change → full ingest
-    raw_html_hash = hashlib.sha256(resp.text.encode()).hexdigest()
-    stored = await pg_store.get_crawled_page_stored(
-        request.org_id, request.kb_slug, request.url
-    )
 
     def _derive_path() -> str:
         if request.path:
@@ -296,19 +275,40 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         slug = parsed.path.strip("/").replace("/", "-") or parsed.netloc
         return f"{slug}.md"
 
+    # Resolve stored domain selector so the right pipeline is used
+    # SPEC-CRAWL-001 / R-2
+    effective_selector: str | None = None
+    if request.org_id:
+        stored_sel = await get_domain_selector(extract_domain(request.url), request.org_id)
+        if stored_sel:
+            effective_selector, _ = stored_sel
+
+    # WARNING (pipeline config change): modifying the crawl4ai settings in
+    # _build_crawl_config() — excluded_tags, PruningContentFilter threshold,
+    # JS removal scripts — changes content_hash for every page even when the
+    # actual page content has not changed. After such a change, force a full
+    # re-ingest by clearing content_hash:
+    #   UPDATE knowledge.crawled_pages
+    #      SET content_hash = ''
+    #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
+    fit_md, _word_count, raw_html = await _run_crawl(request.url, effective_selector)
+
+    # Dual-hash dedup (see migration 012):
+    #   1. raw_html_hash unchanged → skip everything (fast path)
+    #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
+    #   3. both changed → real content change → full ingest
+    raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
+    stored = await pg_store.get_crawled_page_stored(
+        request.org_id, request.kb_slug, request.url
+    )
+
     if stored is not None:
         stored_raw, _stored_content = stored
         if stored_raw is not None and stored_raw == raw_html_hash:
             logger.info("Crawl skipped (raw HTML unchanged): %s", request.url)
             return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
 
-    # Convert HTML to markdown (only reached when raw HTML has changed or is new)
-    converter = html2text.HTML2Text()
-    converter.ignore_links = False
-    converter.ignore_images = True
-    converter.body_width = 0
-    markdown = converter.handle(resp.text)
-    content_hash = hashlib.sha256(markdown.encode()).hexdigest()
+    content_hash = hashlib.sha256(fit_md.encode()).hexdigest()
 
     if stored is not None:
         _, stored_content = stored
@@ -321,7 +321,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
                 url=request.url,
                 raw_html_hash=raw_html_hash,
                 content_hash=content_hash,
-                raw_markdown=markdown,
+                raw_markdown=fit_md,
                 crawled_at=int(time.time()),
             )
             logger.info("Crawl skipped (HTML noise, content unchanged): %s", request.url)
@@ -333,7 +333,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         url=request.url,
         raw_html_hash=raw_html_hash,
         content_hash=content_hash,
-        raw_markdown=markdown,
+        raw_markdown=fit_md,
         crawled_at=int(time.time()),
     )
 
@@ -360,7 +360,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         org_id=request.org_id,
         kb_slug=request.kb_slug,
         path=path,
-        content=markdown,
+        content=fit_md,
         extra=extra,
     )
     result = await ingest_document(ingest_req)
