@@ -28,7 +28,7 @@ router_settings:
   provider_budget_config:
     mistral:
       rpm_limit: 60
-      tpm_limit: 135000
+      tpm_limit: 50000
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params
