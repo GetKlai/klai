@@ -149,8 +149,8 @@ parser.py`. The parsed plain text is then forwarded to `knowledge-ingest` via
 
 - `POST /ingest/v1/crawl/preview` — crawl wizard preview; returns `fit_markdown`, `word_count`,
   and any `warnings` (e.g. `navigation_detected`, `low_word_count`) without ingesting.
-- `POST /ingest/v1/crawl` — full ingest; fetches URL, converts HTML to markdown, deduplicates,
-  and ingests via the standard pipeline.
+- `POST /ingest/v1/crawl` — full ingest; fetches URL via crawl4ai (Playwright, JS rendering),
+  deduplicates via dual-hash, and ingests via the standard pipeline.
 
 **Smart pipeline switching (SPEC-CRAWL-001):** the pipeline is chosen based on whether a
 CSS selector is available:
@@ -170,9 +170,24 @@ it to `klai-fast` to identify the main content selector. If the AI selector prod
 on a re-crawl, it is stored in `crawl_domains` with `selector_source='ai'`. Otherwise the
 original result is returned with a `low_word_count` warning.
 
-**Dual-hash deduplication:** `crawl_url` skips ingest in two stages:
-1. `raw_html_hash` unchanged → skip everything (JS/tracking updates ignored)
-2. `content_hash` unchanged → update raw hash only, skip re-ingest
+**Crawl registry (SPEC-CRAWLER-002):** two tables in the `knowledge` schema persist crawl
+state per `(org_id, kb_slug, url)`:
+
+- `crawled_pages` — URL registry: `raw_html_hash` (SHA-256 of raw HTML), `content_hash`
+  (SHA-256 of extracted markdown), `raw_markdown`, `crawled_at`. Used for deduplication and
+  as a content cache for future re-ingest without re-crawling.
+- `page_links` — link graph: `from_url → to_url` pairs with `link_text`, extracted from
+  `result.links['internal']` by crawl4ai. Foundation for future PageRank scoring and
+  link-aware retrieval.
+
+**Dual-hash deduplication:** both `crawl_url` and the bulk crawler skip ingest in two stages:
+1. `raw_html_hash` unchanged → skip everything (JS/tracking noise ignored)
+2. `raw_html_hash` changed but `content_hash` unchanged → update raw hash only, skip re-ingest
+3. Both changed → full re-ingest and update both hashes
+
+The bulk crawler fetches all hashes for a crawl job in a single batch query
+(`get_crawled_page_hashes`) to avoid N+1 round-trips. On KB deletion, both `crawled_pages`
+and `page_links` rows are cleaned up in `delete_kb()`.
 
 **Source URL in artifacts:** every crawled artifact stores `{"source_url": "..."}` in
 `knowledge.artifacts.extra`, enabling traceability back to the origin page.
