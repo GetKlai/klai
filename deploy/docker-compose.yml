@@ -53,6 +53,7 @@ volumes:
   gitea-data:
   qdrant-data:
   vexa-recordings-data:
+  scribe-audio-data:
 
 services:
 
@@ -712,6 +713,8 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       WHISPER_SERVER_URL: http://172.18.0.1:8000
       ZITADEL_ISSUER: https://auth.${DOMAIN}
+    volumes:
+      - scribe-audio-data:/data/audio
     networks:
       - klai-net
       - net-postgres

@@ -28,7 +28,7 @@ function flushBuffer() {
   buffer.length = 0
 
   const blob = new Blob([payload], { type: 'application/json' })
-  navigator.sendBeacon('/api/vitals', blob)
+  navigator.sendBeacon('/api/perf', blob)
   perfLogger.debug('Flushed vitals buffer', { count: JSON.parse(payload).length })
 }
 

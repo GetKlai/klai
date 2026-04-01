@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Upload limits
     max_upload_mb: int = 100
 
+    # Audio file storage (persists recordings for retry on transcription failure)
+    audio_storage_dir: str = "/data/audio"
+
     # LiteLLM gateway (for AI summarization)
     litellm_base_url: str = "http://litellm:4000"
     litellm_master_key: str = ""
