@@ -1,7 +1,7 @@
 ---
 id: SPEC-CRAWLER-002
 version: "1.0"
-status: Planned
+status: Completed
 created: 2026-04-01
 updated: 2026-04-01
 author: Mark Vletter
@@ -13,6 +13,7 @@ priority: high
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-04-01 | Mark Vletter | Initial draft |
+| 1.1 | 2026-04-01 | Mark Vletter | Completed. Extras delivered: migration 012 adds `raw_html_hash` column; `crawl_url` migrated from html2text to crawl4ai (consistent hashing across both routes). |
 
 ---
 
