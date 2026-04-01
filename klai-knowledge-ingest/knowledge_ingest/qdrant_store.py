@@ -429,17 +429,23 @@ async def update_link_counts(
 
     async def _update_one(url: str, count: int) -> None:
         async with sem:
-            await client.set_payload(
-                COLLECTION,
-                payload={"incoming_link_count": count},
-                points=Filter(
-                    must=[
-                        FieldCondition(key="source_url", match=MatchValue(value=url)),
-                        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                        FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                    ]
-                ),
-            )
+            try:
+                await asyncio.wait_for(
+                    client.set_payload(
+                        COLLECTION,
+                        payload={"incoming_link_count": count},
+                        points=Filter(
+                            must=[
+                                FieldCondition(key="source_url", match=MatchValue(value=url)),
+                                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                            ]
+                        ),
+                    ),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug)
 
     t0 = time.time()
     await asyncio.gather(*(_update_one(url, count) for url, count in url_to_count.items()))
