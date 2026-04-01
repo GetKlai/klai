@@ -231,8 +231,73 @@ async def _search_knowledge(
             "ingested_at": r.payload.get("ingested_at"),
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
+            "source_url": r.payload.get("source_url"),
+            "links_to": r.payload.get("links_to", []),
+            "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }
         for r in result.points
+    ]
+
+
+async def fetch_chunks_by_urls(
+    urls: list[str],
+    request: RetrieveRequest,
+    limit: int,
+) -> list[dict]:
+    """Fetch chunks by source_url payload filter for 1-hop link expansion.
+
+    Uses client.scroll() (no vector query needed) with a 3-second timeout.
+    Returns chunks with score=0.0 -- scored by the reranker, not by vector similarity.
+    SPEC-CRAWLER-003 R14, R15.
+    """
+    if not urls:
+        return []
+
+    client = _get_client()
+
+    scope_conditions = _scope_filter(request)
+    url_filter = Filter(
+        must=[
+            *scope_conditions,
+            FieldCondition(key="source_url", match=MatchAny(any=urls)),
+            _invalid_at_filter(),
+        ]
+    )
+
+    try:
+        result, _ = await asyncio.wait_for(
+            client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=url_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=3.0,
+        )
+    except (asyncio.TimeoutError, Exception) as exc:
+        logger.warning("link_expand_failed", error=str(exc))
+        return []
+
+    return [
+        {
+            "chunk_id": str(r.id),
+            "text": r.payload.get("text", ""),
+            "score": 0.0,
+            "artifact_id": r.payload.get("artifact_id"),
+            "content_type": r.payload.get("content_type"),
+            "context_prefix": r.payload.get("context_prefix"),
+            "scope": r.payload.get("scope"),
+            "valid_at": r.payload.get("valid_at"),
+            "invalid_at": r.payload.get("invalid_at"),
+            "ingested_at": r.payload.get("ingested_at"),
+            "assertion_mode": r.payload.get("assertion_mode"),
+            "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
+            "source_url": r.payload.get("source_url"),
+            "links_to": r.payload.get("links_to", []),
+            "incoming_link_count": r.payload.get("incoming_link_count", 0),
+        }
+        for r in result
     ]
 
 
