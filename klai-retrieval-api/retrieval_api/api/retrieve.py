@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import math
 import os
 import time
 
@@ -78,6 +79,8 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     rerank_ms: float | None = None
     graph_results_count = 0
     graph_search_ms: float | None = None
+    link_expand_ms: float | None = None
+    link_expand_count = 0
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
@@ -108,6 +111,47 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 logger.warning("Graph search task failed", error=str(exc))
 
         candidates_retrieved = len(raw_results)
+
+        # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
+        if settings.link_expand_enabled and req.scope != "notebook" and raw_results:
+            t_expand = time.perf_counter()
+            seed_chunks = raw_results[: settings.link_expand_seed_k]
+            candidate_urls: list[str] = []
+            seen_urls: set[str] = set()
+            for chunk in seed_chunks:
+                for url in (chunk.get("links_to") or []):
+                    if url not in seen_urls:
+                        seen_urls.add(url)
+                        candidate_urls.append(url)
+                    if len(candidate_urls) >= settings.link_expand_max_urls:
+                        break
+                if len(candidate_urls) >= settings.link_expand_max_urls:
+                    break
+
+            if candidate_urls:
+                expansion_chunks = await search.fetch_chunks_by_urls(
+                    candidate_urls, req, settings.link_expand_candidates
+                )
+                existing_ids = {r["chunk_id"] for r in raw_results}
+                new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
+                link_expand_count = len(new_chunks)
+                raw_results = raw_results + new_chunks
+
+            link_expand_ms = (time.perf_counter() - t_expand) * 1000
+            step_latency_seconds.labels(step="link_expand").observe(link_expand_ms / 1000)
+            logger.debug(
+                "link_expand",
+                seed_k=len(seed_chunks),
+                candidate_urls=len(candidate_urls),
+                new_chunks=link_expand_count,
+            )
+
+        # 4c. Authority boost (SPEC-CRAWLER-003 R17)
+        if settings.link_expand_enabled and raw_results:
+            for r in raw_results:
+                incoming = r.get("incoming_link_count") or 0
+                if incoming > 0:
+                    r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
 
         # 5. Rerank (skip for notebook scope or when reranker disabled)
         if req.scope != "notebook" and raw_results and settings.reranker_enabled:
@@ -185,6 +229,8 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         retrieval_ms=round(retrieval_ms, 1),
         graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
         rerank_ms=round(rerank_ms, 1) if rerank_ms is not None else None,
+        link_expand_ms=round(link_expand_ms, 1) if link_expand_ms is not None else None,
+        link_expand_count=link_expand_count,
         gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
         retrieval_bypassed=bypassed,
     )

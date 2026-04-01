@@ -104,6 +104,11 @@ class TestRetrieveEndpoint:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_candidates = 20
             mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -218,6 +223,11 @@ class TestGraphMetadata:
         ):
             mock_settings.retrieval_candidates = 60
             mock_settings.graphiti_enabled = True
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -263,6 +273,11 @@ class TestGraphMetadata:
         ):
             mock_settings.retrieval_candidates = 60
             mock_settings.graphiti_enabled = True
+            mock_settings.link_expand_enabled = True
+            mock_settings.link_expand_seed_k = 10
+            mock_settings.link_expand_max_urls = 30
+            mock_settings.link_expand_candidates = 20
+            mock_settings.link_authority_boost = 0.05
             client.post(
                 "/retrieve",
                 json={"query": "test", "org_id": "org-1", "scope": "notebook",

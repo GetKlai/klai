@@ -83,6 +83,20 @@ async def ensure_collection() -> None:
             )
             logger.info("Created payload index for field '%s' on collection %s", field, COLLECTION)
 
+    # source_url: keyword index for payload-filter-based chunk lookup (SPEC-CRAWLER-003)
+    if "source_url" not in indexed_fields:
+        await client.create_payload_index(
+            COLLECTION, field_name="source_url", field_schema="keyword",
+        )
+        logger.info("Created payload index for field 'source_url' on collection %s", COLLECTION)
+
+    # incoming_link_count: integer index for authority boost queries (SPEC-CRAWLER-003)
+    if "incoming_link_count" not in indexed_fields:
+        await client.create_payload_index(
+            COLLECTION, field_name="incoming_link_count", field_schema="integer",
+        )
+        logger.info("Created payload index for field 'incoming_link_count' on collection %s", COLLECTION)
+
 
 async def upsert_chunks(
     org_id: str,
@@ -389,4 +403,40 @@ async def set_entity_graph_data(
         org_id=org_id,
         entity_count=len(entity_uuids),
         pagerank_max=round(pagerank_max, 6),
+    )
+
+
+async def update_link_counts(
+    org_id: str,
+    kb_slug: str,
+    url_to_count: dict[str, int],
+) -> None:
+    """Update incoming_link_count for all chunks of each URL in the dict.
+
+    Called after a bulk crawl run to refresh the count for all pages in the KB.
+    Uses set_payload() with a source_url filter -- same pattern as set_entity_graph_data().
+    """
+    if not url_to_count:
+        return
+
+    client = get_client()
+    t0 = time.time()
+    for url, count in url_to_count.items():
+        await client.set_payload(
+            COLLECTION,
+            payload={"incoming_link_count": count},
+            points=Filter(
+                must=[
+                    FieldCondition(key="source_url", match=MatchValue(value=url)),
+                    FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                    FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                ]
+            ),
+        )
+    logger.info(
+        "link_counts_updated",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        url_count=len(url_to_count),
+        duration_ms=int((time.time() - t0) * 1000),
     )

@@ -38,5 +38,12 @@ class Settings(BaseSettings):
     # Toggle via env var: RETRIEVAL_API_SYNTHESIS_MODEL=klai-claude
     synthesis_model: str = "klai-primary"
 
+    # Link-graph expansion (SPEC-CRAWLER-003, R19/R20)
+    link_expand_enabled: bool = True
+    link_expand_seed_k: int = 10
+    link_expand_max_urls: int = 30
+    link_expand_candidates: int = 20
+    link_authority_boost: float = 0.05
+
 
 settings = Settings()
