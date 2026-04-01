@@ -262,7 +262,7 @@ async def upsert_page_links(
     links: list[dict],
 ) -> None:
     """Upsert outgoing links for from_url. Resolves relative URLs before storing."""
-    from urllib.parse import urljoin  # noqa: PLC0415
+    from urllib.parse import urljoin
     pool = await get_pool()
     for link in links:
         href = link.get("href", "")
