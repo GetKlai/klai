@@ -55,10 +55,6 @@ async def test_bulk_crawl_skip_unchanged() -> None:
     mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text))
 
     with patch(
-        "knowledge_ingest.pg_store.get_crawled_page_hash",
-        new_callable=AsyncMock,
-        return_value=stored,
-    ), patch(
         "knowledge_ingest.pg_store.upsert_crawled_page",
         new_callable=AsyncMock,
     ) as mock_upsert, patch(
@@ -67,7 +63,8 @@ async def test_bulk_crawl_skip_unchanged() -> None:
     ) as mock_ingest:
         from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
         await _crawl_and_ingest_page(
-            mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0
+            mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0,
+            stored_hash=stored,
         )
 
     mock_ingest.assert_not_called()
@@ -84,10 +81,6 @@ async def test_bulk_crawl_reingest_on_change() -> None:
     mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text))
 
     with patch(
-        "knowledge_ingest.pg_store.get_crawled_page_hash",
-        new_callable=AsyncMock,
-        return_value=old_hash,
-    ), patch(
         "knowledge_ingest.pg_store.upsert_crawled_page",
         new_callable=AsyncMock,
     ) as mock_upsert, patch(
@@ -100,7 +93,8 @@ async def test_bulk_crawl_reingest_on_change() -> None:
     ) as mock_ingest:
         from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
         await _crawl_and_ingest_page(
-            mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0
+            mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0,
+            stored_hash=old_hash,
         )
 
     mock_ingest.assert_called_once()
@@ -116,10 +110,6 @@ async def test_bulk_crawl_new_page() -> None:
     mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text))
 
     with patch(
-        "knowledge_ingest.pg_store.get_crawled_page_hash",
-        new_callable=AsyncMock,
-        return_value=None,
-    ), patch(
         "knowledge_ingest.pg_store.upsert_crawled_page",
         new_callable=AsyncMock,
     ) as mock_upsert, patch(
@@ -132,7 +122,8 @@ async def test_bulk_crawl_new_page() -> None:
     ) as mock_ingest:
         from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
         await _crawl_and_ingest_page(
-            mock_crawler, MagicMock(), "https://example.com/new", "org1", "kb1", 0.0
+            mock_crawler, MagicMock(), "https://example.com/new", "org1", "kb1", 0.0,
+            stored_hash=None,
         )
 
     mock_ingest.assert_called_once()

@@ -16,8 +16,14 @@ import pytest
 
 def _make_mock_pool() -> MagicMock:
     pool = MagicMock()
-    pool.execute = AsyncMock(return_value=None)
+    pool.executemany = AsyncMock(return_value=None)
     return pool
+
+
+def _first_row(mock_pool: MagicMock) -> tuple:
+    """Return the first row tuple from the executemany call."""
+    rows = mock_pool.executemany.call_args.args[1]
+    return rows[0]
 
 
 @pytest.mark.asyncio
@@ -37,13 +43,12 @@ async def test_page_links_relative_url_resolution() -> None:
             links=[{"href": "../api/overview", "text": "API Overview"}],
         )
 
-    mock_pool.execute.assert_called_once()
-    call_args = mock_pool.execute.call_args
-    # $4 is to_url (positional index 3 in args after the SQL)
-    to_url = call_args.args[4]
-    assert to_url == "https://help.example.com/docs/../api/overview" or \
-           to_url == "https://help.example.com/api/overview", \
-           f"Unexpected to_url: {to_url}"
+    mock_pool.executemany.assert_called_once()
+    to_url = _first_row(mock_pool)[3]  # index 3 = to_url
+    assert to_url in (
+        "https://help.example.com/docs/../api/overview",
+        "https://help.example.com/api/overview",
+    ), f"Unexpected to_url: {to_url}"
 
 
 @pytest.mark.asyncio
@@ -63,7 +68,7 @@ async def test_page_links_absolute_url_stored_as_is() -> None:
             links=[{"href": "https://other.example.com/page", "text": "External"}],
         )
 
-    to_url = mock_pool.execute.call_args.args[4]
+    to_url = _first_row(mock_pool)[3]
     assert to_url == "https://other.example.com/page"
 
 
@@ -84,7 +89,7 @@ async def test_page_links_empty_href_skipped() -> None:
             links=[{"href": "", "text": "Bad link"}, {"href": None, "text": "Also bad"}],
         )
 
-    mock_pool.execute.assert_not_called()
+    mock_pool.executemany.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -105,15 +110,13 @@ async def test_page_links_link_text_truncated() -> None:
             links=[{"href": "/other", "text": long_text}],
         )
 
-    link_text_stored = mock_pool.execute.call_args.args[5]
+    link_text_stored = _first_row(mock_pool)[4]  # index 4 = link_text
     assert len(link_text_stored) == 500
 
 
 @pytest.mark.asyncio
 async def test_page_links_saved_in_bulk_crawl() -> None:
     """_crawl_and_ingest_page calls upsert_page_links with internal links."""
-    from unittest.mock import MagicMock
-
     internal_links = [
         {"href": "/docs/api", "text": "API docs"},
         {"href": "/docs/guide", "text": "Guide"},
@@ -132,9 +135,7 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
 
     mock_upsert_links = AsyncMock()
 
-    with patch("knowledge_ingest.pg_store.get_crawled_page_hash",
-               new_callable=AsyncMock, return_value=None), \
-         patch("knowledge_ingest.pg_store.upsert_crawled_page",
+    with patch("knowledge_ingest.pg_store.upsert_crawled_page",
                new_callable=AsyncMock), \
          patch("knowledge_ingest.pg_store.upsert_page_links", mock_upsert_links), \
          patch("knowledge_ingest.routes.ingest.ingest_document",
@@ -143,6 +144,7 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
         await _crawl_and_ingest_page(
             mock_crawler, MagicMock(),
             "https://help.example.com/page", "org1", "kb1", 0.0,
+            stored_hash=None,
         )
 
     mock_upsert_links.assert_called_once()

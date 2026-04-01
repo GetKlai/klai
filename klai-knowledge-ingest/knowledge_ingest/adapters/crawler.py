@@ -15,6 +15,8 @@ from knowledge_ingest.models import IngestRequest
 
 logger = logging.getLogger(__name__)
 
+_UNSET = object()  # sentinel: stored_hash not yet fetched from DB
+
 
 async def run_crawl_job(
     job_id: str,
@@ -81,10 +83,17 @@ async def run_crawl_job(
                 len(urls_to_crawl), int(time.time()), job_id,
             )
 
+            # Batch-fetch all known content hashes in a single query
+            known_hashes = await pg_store.get_crawled_page_hashes(org_id, kb_slug, urls_to_crawl)
+
             delay = 1.0 / rate_limit if rate_limit > 0 else 1.0
             for url in urls_to_crawl:
                 try:
-                    await _crawl_and_ingest_page(crawler, config, url, org_id, kb_slug, delay)
+                    await _crawl_and_ingest_page(
+                        crawler, config, url, org_id, kb_slug, delay,
+                        pool=pool,
+                        stored_hash=known_hashes.get(url),
+                    )
                     pages_done += 1
                 except Exception as exc:
                     logger.warning("Crawler skipping %s: %s (job=%s)", url, exc, job_id)
@@ -94,6 +103,20 @@ async def run_crawl_job(
                     "UPDATE knowledge.crawl_jobs SET pages_done=$1, updated_at=$2 WHERE id=$3",
                     pages_done, int(time.time()), job_id,
                 )
+
+        # SPEC-CRAWLER-003 R12: batch-update incoming link counts after full crawl
+        try:
+            from knowledge_ingest import link_graph  # noqa: PLC0415
+            from knowledge_ingest import qdrant_store  # noqa: PLC0415
+
+            url_to_count = await link_graph.compute_incoming_counts(org_id, kb_slug, pool)
+            if url_to_count:
+                await qdrant_store.update_link_counts(org_id, kb_slug, url_to_count)
+                logger.info(
+                    "link_counts_updated job=%s count=%d", job_id, len(url_to_count)
+                )
+        except Exception as exc:
+            logger.warning("link_counts_update_failed job=%s error=%s", job_id, exc)
 
         await _update_job(job_id, status="completed")
         logger.info("Crawl job %s complete: %d pages ingested, %d failed", job_id, pages_done, pages_failed)
@@ -110,6 +133,8 @@ async def _crawl_and_ingest_page(
     org_id: str,
     kb_slug: str,
     delay: float,
+    pool: object | None = None,
+    stored_hash: str | None | object = _UNSET,
 ) -> None:
     await asyncio.sleep(delay)
 
@@ -127,9 +152,12 @@ async def _crawl_and_ingest_page(
     text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
     front_matter = result.metadata.get("description", "") if result.metadata else ""
 
-    # Dedup: skip ingest if content is unchanged since last crawl
+    # Dedup: skip ingest if content is unchanged since last crawl.
+    # stored_hash is pre-fetched by run_crawl_job; fall back to a per-page DB
+    # query only when called in isolation (e.g. single-URL tests).
     content_hash = hashlib.sha256(text.encode()).hexdigest()
-    stored_hash = await pg_store.get_crawled_page_hash(org_id, kb_slug, url)
+    if stored_hash is _UNSET:
+        stored_hash = await pg_store.get_crawled_page_hash(org_id, kb_slug, url)
     if stored_hash is not None and stored_hash == content_hash:
         logger.info("crawl_skipped_unchanged url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug)
         return
@@ -154,6 +182,21 @@ async def _crawl_and_ingest_page(
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
+
+    # SPEC-CRAWLER-003 R11: populate link graph fields after page_links upsert
+    try:
+        from knowledge_ingest import link_graph  # noqa: PLC0415
+
+        outbound, anchors, incoming = await asyncio.gather(
+            link_graph.get_outbound_urls(url, org_id, kb_slug, pool),
+            link_graph.get_anchor_texts(url, org_id, kb_slug, pool),
+            link_graph.get_incoming_count(url, org_id, kb_slug, pool),
+        )
+        extra["links_to"] = outbound[:20]
+        extra["anchor_texts"] = anchors
+        extra["incoming_link_count"] = incoming
+    except Exception as exc:
+        logger.warning("link_graph_query_failed url=%s error=%s", url, exc)
 
     # Import here to avoid circular imports at module level
     from knowledge_ingest.routes.ingest import ingest_document
