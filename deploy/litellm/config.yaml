@@ -1,34 +1,40 @@
 model_list:
-  # Primary: Mistral Small 4 (119B MoE, 6.5B active) — default for user-facing tasks
+  # Primary: Claude Sonnet 4.6 — default for user-facing tasks
   # Routes through custom_router.py: may be upgraded to klai-large (tool calls)
   # or downgraded to klai-fast (web search content). Never use for internal services.
   - model_name: klai-primary
     litellm_params:
-      model: mistral/mistral-small-latest
-      api_key: os.environ/MISTRAL_API_KEY
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 200000
 
-  # Fast: Mistral Small 4 — bypasses custom_router.py routing
+  # Fast: Claude Haiku 4.5 — bypasses custom_router.py routing
   # Use for all internal services: enrichment, coreference, Graphiti extraction
   - model_name: klai-fast
     litellm_params:
-      model: mistral/mistral-small-latest
-      api_key: os.environ/MISTRAL_API_KEY
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 100000
 
-  # Large: Mistral Large 3 — agentic / tool use flows
+  # Large: Claude Sonnet 4.6 — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
   - model_name: klai-large
     litellm_params:
-      model: mistral/mistral-large-latest
-      api_key: os.environ/MISTRAL_API_KEY
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 200000
 
 router_settings:
   routing_strategy: simple-shuffle
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when provider budget is hit
   provider_budget_config:
-    mistral:
-      rpm_limit: 60
-      tpm_limit: 50000
+    anthropic:
+      rpm_limit: 50
+      tpm_limit: 200000
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params
