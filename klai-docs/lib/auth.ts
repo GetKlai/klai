@@ -11,6 +11,8 @@
  * Bearer validation. See docs/architecture.md for details.
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { NextResponse } from "next/server";
+import { db } from "./db";
 
 const ISSUER = process.env.AUTH_ZITADEL_ISSUER ?? "https://auth.getklai.com";
 
@@ -21,6 +23,8 @@ export type AuthPayload = JWTPayload & {
   sub: string;
   /** Zitadel org ID claim */
   "urn:zitadel:iam:user:resourceowner:id"?: string;
+  /** Resolved org ID — set from JWT claim or X-Org-ID header */
+  org_id?: string;
 };
 
 /**
@@ -68,8 +72,45 @@ export async function requireAuthOrService(
     if (incoming === secret) {
       const sub = request.headers.get("x-user-id");
       if (!sub) return null;
-      return { sub, iss: "internal-service" } as AuthPayload;
+      const org_id = request.headers.get("x-org-id") ?? undefined;
+      return { sub, org_id, iss: "internal-service" } as AuthPayload;
     }
   }
-  return validateBearer(request.headers.get("authorization"));
+  const payload = await validateBearer(request.headers.get("authorization"));
+  if (payload) {
+    payload.org_id =
+      (payload["urn:zitadel:iam:user:resourceowner:id"] as string) ?? undefined;
+  }
+  return payload;
+}
+
+type OrgAccessResult =
+  | { error: NextResponse; payload?: undefined; org?: undefined }
+  | { error?: undefined; payload: AuthPayload; org: { id: string; slug: string; zitadel_org_id: string; [k: string]: unknown } };
+
+/**
+ * Verify that the authenticated caller belongs to the org identified by `orgSlug`.
+ *
+ * Returns `{ payload, org }` on success, or `{ error: NextResponse }` on auth/access failure.
+ */
+export async function requireOrgAccess(
+  request: Request,
+  orgSlug: string
+): Promise<OrgAccessResult> {
+  const payload = await requireAuthOrService(request);
+  if (!payload?.sub) {
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+  }
+
+  const org = await db.getOrgBySlug(orgSlug);
+  if (!org) {
+    return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  }
+
+  // Verify the caller's org matches the requested org
+  if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+  }
+
+  return { payload, org };
 }
