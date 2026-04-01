@@ -41,7 +41,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to core-01
+      - name: Deploy to gpu-01 (via core-01 jump host)
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -49,10 +49,8 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
             set -e
-            source /opt/klai/.env
-            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
-            docker pull ghcr.io/getklai/whisper-server:latest
-            cd /opt/klai && docker compose up -d whisper-server
+            ssh -i /opt/klai/gpu-tunnel-key -o StrictHostKeyChecking=yes root@5.9.10.215 \
+              "docker pull ghcr.io/getklai/whisper-server:latest && cd /opt/klai-gpu && docker compose up -d whisper-server"
 
   scan:
     needs: build-push
