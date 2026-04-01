@@ -50,6 +50,15 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
 }
 ```
 
+### What each server does
+
+| Server | Purpose |
+|--------|---------|
+| **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
+| **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
+| **sequential-thinking** | Step-by-step reasoning for complex problems (UltraThink mode). Used by specialized agents for architecture decisions and deep analysis. |
+| **playwright** | Browser automation for E2E spot-checks and visual verification. Uses Brave Browser via a dedicated profile. |
+
 The `.playwright-mcp/config.json` is gitignored and must be created per machine.
 
 **macOS** (`.playwright-mcp/config.json`):
@@ -72,16 +81,23 @@ The `.playwright-mcp/config.json` is gitignored and must be created per machine.
 `"uvx"` with `--from git+...`). The uvx variant clones and rebuilds on every startup -> MCP
 timeout -> Serena never available.
 
-## 3. Disable Serena dashboard auto-open
+## 3. Disable Serena web dashboard
 
-By default Serena opens a browser tab every time Claude Code starts. Disable this in
-`~/.serena/serena_config.yml`:
+By default Serena starts a web dashboard and opens a browser tab on every Claude Code launch.
+Disable it completely in `~/.serena/serena_config.yml`:
 
 ```yaml
+web_dashboard: false
+```
+
+If you want the dashboard running but not auto-opening a tab, use this instead:
+
+```yaml
+web_dashboard: true
 web_dashboard_open_on_launch: false
 ```
 
-The dashboard remains available at `http://localhost:24282/dashboard/` when needed.
+The dashboard is then available at `http://localhost:24282/dashboard/` when needed.
 
 ## 4. Restore Serena memories and project config
 
