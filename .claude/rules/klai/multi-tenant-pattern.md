@@ -1,6 +1,6 @@
 ---
 paths:
-  - "portal/backend/app/api/**/*.py"
+  - "klai-portal/backend/app/api/**/*.py"
 ---
 
 # Multi-Tenant Security Pattern

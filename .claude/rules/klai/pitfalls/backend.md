@@ -17,6 +17,8 @@ paths:
 | [backend-config-default-vs-env](#backend-config-default-vs-env) | LOW | Config defaults should not silently override env vars |
 | [backend-prometheus-global-registry-tests](#backend-prometheus-global-registry-tests) | HIGH | Never use the global prometheus_client registry in tests |
 | [backend-sendbeacon-no-auth-header](#backend-sendbeacon-no-auth-header) | HIGH | `navigator.sendBeacon` cannot send Authorization headers — design the endpoint as intentionally unauthenticated |
+| [backend-crawl4ai-class-substring-selectors](#backend-crawl4ai-class-substring-selectors) | HIGH | Never use `[class*="sidebar"]` in JS DOM removal — substring selectors match layout wrappers and delete article content |
+| [backend-fastapi-required-field-breaks-callers](#backend-fastapi-required-field-breaks-callers) | MED | Adding a required field to a FastAPI request model breaks existing callers — use optional with a guard instead |
 
 ---
 
@@ -180,5 +182,61 @@ async def ingest_vitals(
 **Seen in:** `klai-portal/backend/app/api/vitals.py` — SPEC-PERF-001 Web Vitals pipeline.
 
 **See also:** MDN sendBeacon docs, `patterns/platform.md#platform-caddy-tenant-routing` for Caddy config
+
+---
+
+## backend-crawl4ai-class-substring-selectors
+
+**Severity:** HIGH
+
+**Trigger:** Writing JS DOM removal selectors for crawl4ai (or any headless browser scraper) that strip navigation/chrome elements before content extraction
+
+Substring class selectors like `[class*="sidebar"]` or `[class*="nav"]` match layout wrapper elements whose class lists contain those strings incidentally — e.g. `class="has-sidebar"` or `class="main-nav-wrapper"`. Removing the wrapper removes the article body inside it, producing `raw_words=0`.
+
+**Why it happens:**
+CSS attribute substring matching (`*=`) is greedy. A `<main class="layout has-sidebar">` wrapping the entire article content will match `[class*="sidebar"]` and be deleted along with everything inside it.
+
+**Prevention:**
+1. Use only semantic element selectors and ARIA role selectors for chrome removal — never substring class/id selectors:
+   ```js
+   // SAFE — structural semantics, unambiguous
+   const REMOVE = ['nav', 'header', 'footer', 'aside',
+                   '[role="navigation"]', '[role="banner"]',
+                   '[role="contentinfo"]', '[role="complementary"]'];
+   ```
+2. Never use `[class*="..."]`, `[id*="..."]`, `[class^="..."]`, or `[class$="..."]` in JS removal scripts.
+3. After any crawl config change, spot-check `raw_words` on a known-good page before deploying.
+
+**Seen in:** `klai-knowledge-ingest/knowledge_ingest/routes/crawl.py` — `_JS_REMOVE_CHROME` originally included `[class*="sidebar"]`, which zeroed out word counts on sites with `has-sidebar` wrapper classes. Fixed in SPEC-CRAWL-001.
+
+**See also:** `patterns/backend.md#backend-two-phase-crawl-ai-fallback`
+
+---
+
+## backend-fastapi-required-field-breaks-callers
+
+**Severity:** MED
+
+**Trigger:** Adding a new field to an existing FastAPI Pydantic request model that is called by a frontend or other service you do not control in the same deploy
+
+Making the field required (`field: str`) will cause all existing callers that don't send it to receive a `422 Unprocessable Entity`. In a monorepo where frontend and backend deploy independently, this creates a window where the old frontend breaks against the new backend.
+
+**Why it happens:**
+Pydantic V2 treats any field without a default as required. A missing required field fails validation before the endpoint body runs.
+
+**Prevention:**
+1. Add new fields as optional with a safe default: `field: str = ""`
+2. Guard usage with an explicit check rather than relying on truthiness alone when empty string is a valid value:
+   ```python
+   # CORRECT — degrades gracefully when caller omits org_id
+   org_id: str = ""
+
+   # in the endpoint:
+   if body.org_id:
+       stored = await domain_selectors.get(body.org_id, domain)
+   ```
+3. Only make a field required in a new endpoint, or when you can guarantee a coordinated deploy of all callers.
+
+**Seen in:** `klai-knowledge-ingest` `CrawlPreviewRequest` — adding `org_id` for per-tenant domain selector lookup (SPEC-CRAWL-001). Made optional so existing frontend callers without `org_id` continue to work; domain features degrade silently.
 
 ---

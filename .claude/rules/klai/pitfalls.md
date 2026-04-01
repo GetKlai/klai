@@ -46,5 +46,16 @@ Full descriptions with examples: `pitfalls/process.md` (on-demand).
 | Type | Location | Loading |
 |------|----------|---------|
 | Process rules (compact) | `pitfalls/process-rules.md` | Every session (in `.claude/rules/`) |
-| Process rules (full) | `pitfalls/process.md` | On-demand |
-| Domain pitfalls | `pitfalls/[category].md` | On-demand via `knowledge.md` |
+| Process rules (full) | `pitfalls/process.md` | On-demand (has `paths:` frontmatter) |
+| Domain pitfalls | `pitfalls/[category].md` | On-demand (has `paths:` frontmatter) |
+
+## [HARD] Auto-load rule for this directory
+
+Every `.md` file in `.claude/rules/` **without** `paths:` frontmatter loads into EVERY Claude session — even when completely irrelevant. This wastes tokens and degrades instruction compliance.
+
+**Before adding or moving a file into `.claude/rules/klai/pitfalls/` or `.claude/rules/klai/patterns/`:**
+- Add `paths:` frontmatter that restricts loading to relevant file types/paths
+- OR explicitly justify why it must always load (like `process-rules.md`)
+
+Files that should always load: `process-rules.md`, `git.md` — universal, small.
+Files that must have `paths:`: everything else in these subdirectories.

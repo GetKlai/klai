@@ -17,9 +17,9 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 
 ## Package instructions
 
-Before working on a specific package, read its CLAUDE.md:
+Each package has its own CLAUDE.md that loads automatically when you work in that directory:
 
-@klai-portal/CLAUDE.md
+- [klai-portal/CLAUDE.md](klai-portal/CLAUDE.md) — FastAPI backend + React/Vite frontend
 
 ## Knowledge base
 
