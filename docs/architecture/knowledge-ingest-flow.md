@@ -325,6 +325,12 @@ chunks, `front_matter` uses YAML metadata, and `most_recent` uses the most recen
 If the LLM call fails, the chunk falls back to its original text — enrichment failure
 never blocks a chunk from being retrievable.
 
+**Anchor text augmentation (SPEC-CRAWLER-003, crawled content only):** For documents
+ingested via the crawl pipeline, the chunk's `enriched_text` is extended with a
+deduplicated "Also known as: anchor1 | anchor2" block when anchor texts are available in
+`page_links`. This bridges the vocabulary gap between how other pages describe a URL and
+how the page itself uses language — a known cause of recall loss in sparse/keyword search.
+
 **Step B — Dense re-embedding.**
 The enriched text (`context_prefix + "\n\n" + original_chunk`) is re-embedded via TEI.
 This replaces the raw `vector_chunk` stored in Phase 1.
@@ -358,6 +364,11 @@ The enriched point is upserted with up to three named vectors:
 Payload per point includes: `org_id`, `kb_slug`, `path`, `artifact_id`, `content_type`,
 `visibility`, `valid_from`, `valid_until`, `text` (original), `text_enriched`,
 `context_prefix`, `questions`, `chunk_index`, `user_id`.
+
+For crawled content, additional link-graph fields are populated (SPEC-CRAWLER-003):
+`source_url` (keyword index — the crawled URL), `links_to` (outbound URLs, capped at 20),
+`anchor_texts` (texts used by other pages to link here), `incoming_link_count` (integer
+index — number of inbound links within the KB, refreshed after each bulk crawl).
 
 **Tenant isolation** is enforced by `org_id`: it's a payload index with `is_tenant: true`,
 and every search includes a mandatory `must: org_id = X` filter. All tenants share a
@@ -519,7 +530,20 @@ that?" becomes something more specific before embedding.
 fallback). If `settings.graphiti_enabled`, a Graphiti graph search fires concurrently
 and is RRF-merged with the Qdrant results.
 
-**4. Rerank.** The top candidates are reranked by `infinity-reranker`
+**4a. Link-graph enrichment (SPEC-CRAWLER-003, crawled KBs only):** After RRF merge, two
+link-graph signals are applied before reranking:
+
+- **1-hop forward expansion:** The outbound URLs from the top `link_expand_seed_k` (default
+  10) chunks are collected, and Qdrant is queried for any chunks whose `source_url` matches
+  one of those URLs (`fetch_chunks_by_urls()`). Matching chunks are added as candidates with
+  `score=0.0` so they pass through to the reranker, which scores them on actual relevance.
+  Skipped for `notebook` and `broad` scopes (Focus).
+- **Authority boost:** For every candidate chunk, `score += link_authority_boost × log(1 +
+  incoming_link_count)`. Pages with many inbound links within the KB are editorially
+  important — this boost surfaces them ahead of equally-similar but less-linked pages.
+  Default `link_authority_boost = 0.05` (configurable per deployment).
+
+**4b. Rerank.** The top candidates are reranked by `infinity-reranker`
 (bge-reranker-v2-m3 on GPU — gpu-01 via SSH tunnel at 172.18.0.1:7998). The reranker applies a cross-attention model that scores
 each (query, chunk) pair more precisely than vector distance alone. Top 5–10 survive.
 
