@@ -5,9 +5,11 @@ Uses crawl4ai for async crawling with robots.txt respect.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 
+from knowledge_ingest import pg_store
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import IngestRequest
 
@@ -30,9 +32,9 @@ async def run_crawl_job(
     Updates knowledge.crawl_jobs progress as pages are processed.
     """
     try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode  # noqa: PLC0415
-        from crawl4ai.content_filter_strategy import PruningContentFilter  # noqa: PLC0415
-        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator  # noqa: PLC0415
+        from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
+        from crawl4ai.content_filter_strategy import PruningContentFilter
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
     except ImportError:
         logger.error("crawl4ai not installed - cannot run crawl job %s", job_id)
         await _update_job(job_id, status="failed", error="crawl4ai not installed")
@@ -43,7 +45,7 @@ async def run_crawl_job(
     pages_done = 0
     pages_failed = 0
 
-    from knowledge_ingest.routes.crawl import _JS_REMOVE_CHROME, _JS_EXPAND_TOGGLES  # noqa: PLC0415
+    from knowledge_ingest.routes.crawl import _JS_EXPAND_TOGGLES, _JS_REMOVE_CHROME
 
     config = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
@@ -125,12 +127,36 @@ async def _crawl_and_ingest_page(
     text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
     front_matter = result.metadata.get("description", "") if result.metadata else ""
 
+    # Dedup: skip ingest if content is unchanged since last crawl
+    content_hash = hashlib.sha256(text.encode()).hexdigest()
+    stored_hash = await pg_store.get_crawled_page_hash(org_id, kb_slug, url)
+    if stored_hash is not None and stored_hash == content_hash:
+        logger.info("crawl_skipped_unchanged url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug)
+        return
+
+    await pg_store.upsert_crawled_page(
+        org_id=org_id,
+        kb_slug=kb_slug,
+        url=url,
+        content_hash=content_hash,
+        raw_markdown=text,
+        crawled_at=int(time.time()),
+    )
+
+    if result.links:
+        await pg_store.upsert_page_links(
+            org_id=org_id,
+            kb_slug=kb_slug,
+            from_url=url,
+            links=result.links.get("internal", []),
+        )
+
     extra: dict = {"source_url": url, "crawled_at": int(time.time())}
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
     # Import here to avoid circular imports at module level
-    from knowledge_ingest.routes.ingest import ingest_document  # noqa: PLC0415
+    from knowledge_ingest.routes.ingest import ingest_document
 
     await ingest_document(IngestRequest(
         org_id=org_id,
