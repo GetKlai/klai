@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY pyproject.toml ./
+ENV UV_BREAK_SYSTEM_PACKAGES=1
 RUN pip install --no-cache-dir --break-system-packages uv && \
     uv pip install --system --no-cache -r pyproject.toml
 
