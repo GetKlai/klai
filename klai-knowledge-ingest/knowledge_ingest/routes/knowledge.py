@@ -3,7 +3,7 @@ Knowledge management routes:
   POST /knowledge/v1/crawl - enqueue a bulk web crawl job
 """
 import json
-import logging
+import structlog
 import time
 import uuid
 
@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import BulkCrawlRequest, BulkCrawlResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 router = APIRouter()
 
 

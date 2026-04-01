@@ -9,12 +9,12 @@ Cache TTL: 60 seconds. NOTIFY evicts specific KB immediately on config change.
 from __future__ import annotations
 
 import asyncio
-import logging
+import structlog
 
 import asyncpg
 import cachetools
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _cache: cachetools.TTLCache = cachetools.TTLCache(maxsize=100_000, ttl=60)
 
@@ -93,4 +93,4 @@ def _on_kb_config_changed(
 ) -> None:
     if payload in _cache:
         del _cache[payload]
-        logger.info("Evicted kb_config cache for %s", payload)
+        logger.info("kb_config_cache_evicted", payload=payload)

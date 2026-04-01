@@ -8,7 +8,7 @@ Single collection: klai_knowledge
 Tenant isolation via org_id payload filter.
 """
 import asyncio
-import logging
+import structlog
 import time
 import uuid
 import warnings
@@ -36,7 +36,7 @@ from qdrant_client.models import (  # noqa: E402
 from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.embedder import EMBED_DIM  # noqa: E402
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 COLLECTION = "klai_knowledge"
 
@@ -71,7 +71,7 @@ async def ensure_collection() -> None:
                 ),
             },
         )
-        logger.info("Created Qdrant collection %s with named + sparse vectors", COLLECTION)
+        logger.info("qdrant_collection_created", collection=COLLECTION)
 
     # Always ensure payload indexes exist — idempotent on existing collections.
     # This handles newly added fields (e.g. user_id) on pre-existing collections.
@@ -82,21 +82,21 @@ async def ensure_collection() -> None:
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema="keyword",
             )
-            logger.info("Created payload index for field '%s' on collection %s", field, COLLECTION)
+            logger.info("qdrant_payload_index_created", field=field, collection=COLLECTION)
 
     # source_url: keyword index for payload-filter-based chunk lookup (SPEC-CRAWLER-003)
     if "source_url" not in indexed_fields:
         await client.create_payload_index(
             COLLECTION, field_name="source_url", field_schema="keyword",
         )
-        logger.info("Created payload index for field 'source_url' on collection %s", COLLECTION)
+        logger.info("qdrant_payload_index_created", field="source_url", collection=COLLECTION)
 
     # incoming_link_count: integer index for authority boost queries (SPEC-CRAWLER-003)
     if "incoming_link_count" not in indexed_fields:
         await client.create_payload_index(
             COLLECTION, field_name="incoming_link_count", field_schema="integer",
         )
-        logger.info("Created payload index for field 'incoming_link_count' on collection %s", COLLECTION)
+        logger.info("qdrant_payload_index_created", field="incoming_link_count", collection=COLLECTION)
 
 
 async def upsert_chunks(
@@ -262,7 +262,7 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
             ]
         ),
     )
-    logger.info("Deleted all chunks for KB %s/%s", org_id, kb_slug)
+    logger.info("kb_chunks_deleted", org_id=org_id, kb_slug=kb_slug)
 
 
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
@@ -278,7 +278,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
             ]
         ),
     )
-    logger.info("Updated visibility to %s for KB %s/%s", visibility, org_id, kb_slug)
+    logger.info("kb_visibility_updated", org_id=org_id, kb_slug=kb_slug, visibility=visibility)
 
 
 _ALLOWED_METADATA_FIELDS = frozenset({

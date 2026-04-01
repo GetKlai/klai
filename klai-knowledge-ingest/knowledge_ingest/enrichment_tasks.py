@@ -124,6 +124,12 @@ def _register_tasks(procrastinate_app: Any) -> None:
         This ensures enrichment LLM calls complete before Graphiti starts, preventing
         both from competing on the same 1 req/s upstream rate limit simultaneously.
         """
+        logger.info(
+            "graphiti_episode_started",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            content_type=content_type,
+        )
         from knowledge_ingest import graph as graph_module  # noqa: PLC0415
         from knowledge_ingest import pg_store  # noqa: PLC0415
         episode_id = await graph_module.ingest_episode(
