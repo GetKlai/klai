@@ -7,6 +7,7 @@ Single collection: klai_knowledge
   - vector_sparse (sparse): BM25-style lexical matching via BGE-M3
 Tenant isolation via org_id payload filter.
 """
+import asyncio
 import logging
 import time
 import uuid
@@ -421,8 +422,8 @@ async def update_link_counts(
 
     client = get_client()
     t0 = time.time()
-    for url, count in url_to_count.items():
-        await client.set_payload(
+    await asyncio.gather(*(
+        client.set_payload(
             COLLECTION,
             payload={"incoming_link_count": count},
             points=Filter(
@@ -433,6 +434,8 @@ async def update_link_counts(
                 ]
             ),
         )
+        for url, count in url_to_count.items()
+    ))
     logger.info(
         "link_counts_updated",
         org_id=org_id,
