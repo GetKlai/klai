@@ -21,7 +21,8 @@ ENV WHISPER_COMPUTE_TYPE=float16
 ENV WHISPER_DOWNLOAD_ROOT=/models
 ENV LOG_LEVEL=INFO
 
-RUN adduser --disabled-password --gecos "" klai
+RUN adduser --disabled-password --gecos "" klai && \
+    mkdir -p /models && chown klai:klai /models
 
 EXPOSE 8000
 
