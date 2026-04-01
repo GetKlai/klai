@@ -13,6 +13,7 @@ paths:
 | Pattern | When to use |
 |---|---|
 | [backend-prometheus-fastapi-metrics](#backend-prometheus-fastapi-metrics) | Adding Prometheus metrics + `/metrics` endpoint to a FastAPI service |
+| [backend-two-phase-crawl-ai-fallback](#backend-two-phase-crawl-ai-fallback) | Crawling a page when content selectors are unknown and word count may be too low |
 
 ---
 
@@ -101,6 +102,65 @@ prometheus.scrape "portal_api" {
 **Rule:** One `CollectorRegistry` per `ServiceMetrics` instance. Never register metrics on the default global registry in a service with tests.
 
 **See also:** `pitfalls/backend.md#backend-prometheus-global-registry-tests`
+
+---
+
+## backend-two-phase-crawl-ai-fallback
+
+**When to use:** Crawling a page when you don't know the content selector upfront and a full-page crawl may return too few words (navigation-heavy or JS-heavy sites)
+
+Run a first crawl with the full pipeline (no selector). If `word_count` is below a threshold, extract a DOM summary and ask an LLM to identify the content selector. Re-crawl with the detected selector and return the best result. Keep the entire flow synchronous inside the endpoint — no background tasks — so the response always reflects the best result achieved.
+
+```python
+_MIN_WORDS = 100  # below this, try AI selector detection
+
+async def crawl_preview(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
+    # Phase 1 — full pipeline, no selector
+    result = await _run_crawl(url=body.url, selector=body.selector or None)
+
+    if result.word_count >= _MIN_WORDS or body.selector:
+        return result  # good enough, or caller already provided a selector
+
+    # Phase 2 — AI fallback: extract DOM summary, ask LLM for selector
+    dom_summary = await _extract_dom_summary(body.url)
+    detected = await _ask_llm_for_selector(dom_summary)  # returns None on failure
+
+    if detected:
+        result2 = await _run_crawl(url=body.url, selector=detected)
+        if result2.word_count >= _MIN_WORDS:
+            await domain_selectors.store(org_id, domain, detected)  # persist for future
+            return result2
+
+    return result  # return phase-1 result if AI fallback didn't improve things
+```
+
+**DOM summary for LLM input** — rank elements by word count, take the top N:
+```python
+async def _extract_dom_summary(url: str) -> str:
+    """Return a ranked list of DOM elements with their word counts for LLM analysis."""
+    # Use headless browser to get rendered DOM
+    # Score each element: word_count * depth_penalty
+    # Return top 25 as a compact text block: "tag.class#id: N words"
+```
+
+**LLM prompt shape** (send to `klai-fast` — short structured output):
+```
+Given these DOM elements ranked by word count:
+{dom_summary}
+
+Return the single CSS selector most likely to contain the main article content.
+Reply with ONLY the selector string, nothing else.
+```
+
+**Key rules:**
+- Use `klai-fast` for selector detection — it's a short structured output task, not user-facing synthesis.
+- Only persist the AI-detected selector if the re-crawl actually meets the word threshold — don't store selectors that didn't help.
+- The threshold for storing is the same as the threshold for triggering the fallback (`_MIN_WORDS`).
+- Keeping this synchronous (not a background task) means callers always get the best available result in one request.
+
+**Rule:** Two-phase crawl: full pipeline first, AI selector detection only when word count is too low. Store the selector only on confirmed success.
+
+**See also:** `pitfalls/backend.md#backend-crawl4ai-class-substring-selectors`
 
 ---
 
