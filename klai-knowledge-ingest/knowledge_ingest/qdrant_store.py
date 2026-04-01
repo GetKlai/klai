@@ -407,6 +407,9 @@ async def set_entity_graph_data(
     )
 
 
+_LINK_COUNT_CONCURRENCY = 20  # max parallel set_payload calls per bulk crawl
+
+
 async def update_link_counts(
     org_id: str,
     kb_slug: str,
@@ -416,26 +419,30 @@ async def update_link_counts(
 
     Called after a bulk crawl run to refresh the count for all pages in the KB.
     Uses set_payload() with a source_url filter -- same pattern as set_entity_graph_data().
+    Concurrency bounded by _LINK_COUNT_CONCURRENCY to avoid Qdrant overload.
     """
     if not url_to_count:
         return
 
     client = get_client()
+    sem = asyncio.Semaphore(_LINK_COUNT_CONCURRENCY)
+
+    async def _update_one(url: str, count: int) -> None:
+        async with sem:
+            await client.set_payload(
+                COLLECTION,
+                payload={"incoming_link_count": count},
+                points=Filter(
+                    must=[
+                        FieldCondition(key="source_url", match=MatchValue(value=url)),
+                        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                        FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                    ]
+                ),
+            )
+
     t0 = time.time()
-    await asyncio.gather(*(
-        client.set_payload(
-            COLLECTION,
-            payload={"incoming_link_count": count},
-            points=Filter(
-                must=[
-                    FieldCondition(key="source_url", match=MatchValue(value=url)),
-                    FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                    FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                ]
-            ),
-        )
-        for url, count in url_to_count.items()
-    ))
+    await asyncio.gather(*(_update_one(url, count) for url, count in url_to_count.items()))
     logger.info(
         "link_counts_updated",
         org_id=org_id,
