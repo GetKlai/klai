@@ -22,7 +22,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from knowledge_ingest import link_graph, pg_store
+from knowledge_ingest import pg_store
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.domain_selectors import extract_domain, get_domain_selector, upsert_domain_selector
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
@@ -344,6 +344,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     # SPEC-CRAWLER-003 R11: populate link graph fields when source_url present
     extra: dict = {"source_url": request.url}
     try:
+        from knowledge_ingest import link_graph  # noqa: PLC0415
         pool = await get_pool()
         outbound, anchors, incoming = await asyncio.gather(
             link_graph.get_outbound_urls(request.url, request.org_id, request.kb_slug, pool),
