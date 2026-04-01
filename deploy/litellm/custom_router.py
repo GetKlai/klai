@@ -95,7 +95,7 @@ class TokenRouter(CustomLogger):
                     data["model"] = "klai-large"
                     return data
 
-            # Web search: scraped content → nemo (fast/cheap)
+            # Web search: scraped content → klai-fast
             if _looks_like_search(messages):
                 data["model"] = "klai-fast"
                 return data
@@ -106,7 +106,7 @@ class TokenRouter(CustomLogger):
             if data.get("metadata", {}).get("_klai_kb_meta"):
                 return data
 
-            # Safety net: very long context without tool calls → nemo
+            # Safety net: very long context without tool calls → klai-fast
             token_count = litellm.token_counter(
                 model="mistral/mistral-small-latest",
                 messages=messages,
