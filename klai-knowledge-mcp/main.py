@@ -354,10 +354,15 @@ async def save_to_docs(
                         "X-Org-ID": identity.org_id,
                     },
                 )
-        except httpx.RequestError:
+        except httpx.RequestError as exc:
+            logger.error("KB list fetch failed: %s", exc)
             return _ERR_SAVE
 
         if resp.status_code != 200:
+            logger.error(
+                "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
+                resp.status_code, resp.text[:200], org_slug, identity.org_id,
+            )
             return _ERR_SAVE
 
         kbs = resp.json()
