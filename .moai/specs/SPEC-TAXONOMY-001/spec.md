@@ -307,7 +307,7 @@ Stap 1-3 kunnen als één commit. Stap 4 (Alembic migratie) is een aparte commit
 
 ### Openstaand
 
-- PostgreSQL-migratie `010_assertion_mode_taxonomy.sql` moet nog worden uitgevoerd op productie.
+- ~~PostgreSQL-migratie `010_assertion_mode_taxonomy.sql` moet nog worden uitgevoerd op productie.~~ ✓ Uitgevoerd op 2026-04-01 (761 rijen gemigreerd: `factual` → `fact`).
 
 ---
 
