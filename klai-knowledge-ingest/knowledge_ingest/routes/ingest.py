@@ -474,9 +474,23 @@ async def gitea_webhook(request: Request) -> dict:
                 logger.warning("ingest_failed", path=path, error=str(exc))
 
     # Delete removed files — immediate, no debounce needed
+    # Order: Qdrant → fetch episode IDs → Graphiti → PG metadata → PG soft-delete
     for path in removed:
         try:
             await qdrant_store.delete_document(org_id, kb_slug, path)
+
+            # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
+            if settings.graphiti_enabled:
+                try:
+                    episode_ids = await pg_store.get_page_episode_ids(org_id, kb_slug, path)
+                    if episode_ids:
+                        await graph_module.delete_kb_episodes(org_id, episode_ids)
+                except Exception as graph_exc:
+                    logger.warning("page_graph_cleanup_failed", path=path, error=str(graph_exc))
+
+            # Metadata cleanup: derivations, artifact_entities, embedding_queue
+            await pg_store.cleanup_page_metadata(org_id, kb_slug, path)
+
             await pg_store.soft_delete_artifact(org_id, kb_slug, path)
             deleted += 1
         except Exception as exc:
