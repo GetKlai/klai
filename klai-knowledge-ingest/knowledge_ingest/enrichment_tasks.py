@@ -206,7 +206,7 @@ async def _enrich_document(
         anchor_texts_raw = extra_payload.get("anchor_texts", []) if extra_payload else []
         if anchor_texts_raw:
             unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-            anchor_block = "\n\nAnder pagina's noemen deze pagina: " + " | ".join(unique_anchors)
+            anchor_block = "\n\nAlso known as: " + " | ".join(unique_anchors)
             for ec in enriched_chunks:
                 ec.enriched_text += anchor_block
 
