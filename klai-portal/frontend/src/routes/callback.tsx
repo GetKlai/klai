@@ -78,12 +78,8 @@ function CallbackPage() {
             } catch (err) {
               authLogger.warn('Billing status check failed during post-login routing', err)
             }
-            window.location.replace('/admin')
-          } else if (isGroupAdmin) {
-            window.location.replace('/admin')
-          } else {
-            window.location.replace('/app')
           }
+          window.location.replace('/app')
           return
         }
       } catch (err) {
