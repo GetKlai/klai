@@ -176,26 +176,22 @@ async def test_bulk_crawl_new_page() -> None:
 @pytest.mark.asyncio
 async def test_single_url_skip_unchanged() -> None:
     """crawl_url returns chunks_ingested=0 when raw HTML hash matches stored."""
-    html = "<html><body><h1>Hello</h1></body></html>"
-    stored = (_sha256(html), "some-content-hash")  # raw_html_hash matches → fast skip
-
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    raw_html = "<html><body><h1>Hello</h1></body></html>"
+    fit_md = "# Hello"
+    # stored raw_html_hash matches what _run_crawl returns → fast skip
+    stored = (_sha256(raw_html), "some-content-hash")
 
     with patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
+         patch("knowledge_ingest.routes.crawl.get_domain_selector",
+               new_callable=AsyncMock, return_value=None), \
+         patch("knowledge_ingest.routes.crawl._run_crawl",
+               new_callable=AsyncMock, return_value=(fit_md, 2, raw_html)), \
          patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_stored",
                new_callable=AsyncMock, return_value=stored), \
          patch("knowledge_ingest.routes.crawl.pg_store.upsert_crawled_page",
                new_callable=AsyncMock) as mock_upsert, \
          patch("knowledge_ingest.routes.crawl.ingest_document",
-               new_callable=AsyncMock) as mock_ingest, \
-         patch("httpx.AsyncClient", return_value=mock_client):
+               new_callable=AsyncMock) as mock_ingest:
         from knowledge_ingest.models import CrawlRequest
         from knowledge_ingest.routes.crawl import crawl_url
         result = await crawl_url(CrawlRequest(
@@ -210,27 +206,21 @@ async def test_single_url_skip_unchanged() -> None:
 @pytest.mark.asyncio
 async def test_single_url_url_key() -> None:
     """crawled_pages is keyed on request.url, not the derived path."""
-    html = "<html><body><p>Content</p></body></html>"
     url = "https://example.com/docs/api/overview"
-
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
+    raw_html = "<html><body><p>Content</p></body></html>"
+    fit_md = "Content"
     mock_upsert = AsyncMock()
 
     with patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
+         patch("knowledge_ingest.routes.crawl.get_domain_selector",
+               new_callable=AsyncMock, return_value=None), \
+         patch("knowledge_ingest.routes.crawl._run_crawl",
+               new_callable=AsyncMock, return_value=(fit_md, 1, raw_html)), \
          patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_stored",
                new_callable=AsyncMock, return_value=None), \
          patch("knowledge_ingest.routes.crawl.pg_store.upsert_crawled_page", mock_upsert), \
          patch("knowledge_ingest.routes.crawl.ingest_document",
-               new_callable=AsyncMock, return_value={"status": "ok", "chunks": 1}), \
-         patch("httpx.AsyncClient", return_value=mock_client):
+               new_callable=AsyncMock, return_value={"status": "ok", "chunks": 1}):
         from knowledge_ingest.models import CrawlRequest
         from knowledge_ingest.routes.crawl import crawl_url
         await crawl_url(CrawlRequest(org_id="org1", kb_slug="kb1", url=url))
