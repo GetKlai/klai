@@ -207,7 +207,7 @@ These are purely infrastructure costs. Margin, development and support are on to
 
 ## Knowledge System Design Principles
 
-> Research session 2026-03-25. Full empirics and source citations: [research/knowledge-system-fundamentals.md](research/knowledge-system-fundamentals.md)
+> Research session 2026-03-25. Full empirics and source citations: [../research/knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md)
 
 These principles are empirically derived from studying 8 independent knowledge systems built between 2001 and 2024. They directly shaped the Klai Knowledge architecture (Phase 2).
 
