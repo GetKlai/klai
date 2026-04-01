@@ -1,6 +1,6 @@
 # Klai Platform: Technical Decisions
 
-*Last updated: 2026-03-22. For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md).*
+*Last updated: 2026-04-01. For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md).*
 
 ## Stack
 
@@ -204,6 +204,81 @@ Fixed infrastructure: ~€1,570/mo (H100 €1,500 + servers €70). H100 capacit
 | 1,500 | €1.05 | Second H100 needed, costs halve after |
 
 These are purely infrastructure costs. Margin, development and support are on top.
+
+## Knowledge System Design Principles
+
+> Research session 2026-03-25. Full empirics and source citations: [research/knowledge-system-fundamentals.md](research/knowledge-system-fundamentals.md)
+
+These principles are empirically derived from studying 8 independent knowledge systems built between 2001 and 2024. They directly shaped the Klai Knowledge architecture (Phase 2).
+
+### Five universal entity types
+
+Eight independent systems — from Wikipedia to enterprise knowledge graphs to recent AI-memory systems — converged on the same five categories without coordination:
+
+| # | Type | Examples |
+|---|---|---|
+| 1 | People and organizations | User, company, customer, team |
+| 2 | Documents and messages | Email, manual, decision, Slack message |
+| 3 | Containers | Project, department, folder |
+| 4 | Events | Meeting, conversation, deployment |
+| 5 | Categories | "Billing", "Support", taxonomy labels |
+
+A sixth type — **Decision** — is added as the intentional layer: capturing *why* something was decided, not just what exists.
+
+Six universal relationships cover all organizational knowledge: `created`, `owns`, `contains`, `linked_to`, `classified_as`, `member_of`.
+
+### Quality is determined at ingest, not retrieval
+
+The most consequential finding: adding contextual metadata at storage time reduces retrieval errors by 49% (Anthropic research). No retrieval technique compensates for a poor ingest. The moment something is ingested is the most important moment in the system.
+
+**In Klai:** `knowledge-ingest` performs contextual enrichment (HyPE question generation, content profile metadata, source context) before storage — not as post-processing. See [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
+
+### Hybrid processing: 90% automatic, 10% human review
+
+Fully automated extraction produces 20–45% errors on standard business documents. The hybrid approach: 90% of documents are processed automatically; only the 10–15% where the system itself has low confidence are flagged for human review. Near-human quality at 500× less effort.
+
+**In Klai:** `assertion_mode` is `shadow` in Phase 2. Full hybrid review is a Phase 3 target — tracked in `klai-knowledge-architecture.md §7.4`.
+
+### Three storage layers — each wins at something different
+
+| Layer | Technology | Wins at |
+|---|---|---|
+| Relational | PostgreSQL | Precise filtering: "all documents from team X, Jan–Mar" |
+| Vector | Qdrant (BGE-M3 dense + sparse) | Semantic similarity: finds relevant results even when exact words differ |
+| Graph | FalkorDB + Graphiti | Multi-hop relationships: "which decisions connect to this document?" |
+
+All three are needed. The combination consistently outperforms any single approach. PostgreSQL and Qdrant are live; FalkorDB is deployed but not yet activated for retrieval (Phase 3).
+
+### Build order (followed by Klai)
+
+1. Define entity types and relationships — the universal core
+2. Build taxonomy — categories as a hierarchy on top of the core
+3. Ingest with context — enrichment at storage time; human review only for low-confidence items
+4. Index taxonomy labels — integral to the search index, not post-processing
+5. Combine at retrieval — SQL for filters, vector for semantics, graph for connections
+
+**The classification at storage is primary. The retrieval technique is secondary.**
+
+### Knowledge graph: FalkorDB + Graphiti (Phase 3)
+
+FalkorDB is deployed on core-01 (not yet activated for retrieval). Key decisions:
+
+- **FalkorDB** over Apache AGE: PostgreSQL major version upgrades break AGE — unacceptable for a long-lived system. Both are supported by Graphiti, migration minimal if ever needed.
+- **Graphiti** for extraction: entity resolution, deduplication, and temporality handled automatically.
+- **Temporal tracking at relationship level**: each edge has `valid_at`, `invalid_at`, `expired_at` — enables "what did the system know on date X?" Full details in the research doc.
+- **reference_time rule**: when ingesting a historical document, pass the document date as `reference_time`, not today's date.
+- **Density target**: ≥2 connections per node. Back-linking each entity to its source document achieves ~6 connections/node in production (HippoRAG2, independently verified).
+
+### Retrieval enrichment: HyPE, not Contextual Retrieval
+
+HyPE (Hypothetical Prompt Embeddings) and Contextual Retrieval solve different problems:
+
+- **Contextual Retrieval** — adds surrounding context to each chunk at storage time. Solves chunk boundary loss.
+- **HyPE** — generates hypothetical questions a chunk would answer. Solves the vocabulary gap between user queries and document language.
+
+Klai uses HyPE because vocabulary gap is the primary retrieval problem for business knowledge. HyPE questions are stored as a separate index in Qdrant and contribute to hybrid RRF retrieval scoring via Dual-Index Fusion.
+
+---
 
 ## RAG stack (Phase 2 — deployed March 2026)
 
