@@ -3,7 +3,7 @@ Stats routes:
   GET /ingest/v1/graph-stats?org_id={org_id}  — entity/edge counts from FalkorDB
   GET /ingest/v1/source-count?org_id={org_id}&kb_slug={kb_slug}  — artifact count from PostgreSQL
 """
-import logging
+import structlog
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from knowledge_ingest import db
 from knowledge_ingest.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 router = APIRouter()
 
 # Lazy-init FalkorDB client singleton — avoids new TCP connection per request.
@@ -54,7 +54,7 @@ async def get_source_count(
         )
         return SourceCountResponse(source_count=count)
     except Exception as exc:
-        logger.warning("Could not fetch source count for org=%s kb=%s: %s", org_id, kb_slug, exc)
+        logger.warning("stats_source_count_failed", org_id=org_id, kb_slug=kb_slug, error=str(exc))
         return SourceCountResponse()
 
 
@@ -93,5 +93,5 @@ async def get_graph_stats(org_id: str = Query(..., description="Zitadel org ID")
         logger.warning("falkordb package not available — skipping graph stats")
         return GraphStatsResponse()
     except Exception as exc:
-        logger.warning("Could not fetch graph stats for org %s: %s", org_id, exc)
+        logger.warning("stats_graph_stats_failed", org_id=org_id, error=str(exc))
         return GraphStatsResponse()

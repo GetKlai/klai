@@ -6,14 +6,14 @@ Per-org override: knowledge.org_config table. NULL = use global default (enabled
 Cache TTL: 60 seconds. NOTIFY evicts specific org immediately on config change.
 """
 import asyncio
-import logging
+import structlog
 
 import asyncpg
 import cachetools
 
 from knowledge_ingest.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _cache: cachetools.TTLCache = cachetools.TTLCache(maxsize=20_000, ttl=60)
 
@@ -68,4 +68,4 @@ def _on_org_config_changed(
     org_id = payload
     if org_id in _cache:
         del _cache[org_id]
-        logger.info("Evicted org_config cache for org_id=%s", org_id)
+        logger.info("org_config_cache_evicted", org_id=org_id)

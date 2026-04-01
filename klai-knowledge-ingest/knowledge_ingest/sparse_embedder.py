@@ -6,14 +6,14 @@ Falls back gracefully when the sidecar is unavailable.
 """
 from __future__ import annotations
 
-import logging
+import structlog
 
 import httpx
 from qdrant_client.models import SparseVector
 
 from knowledge_ingest.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 async def embed_sparse_batch(texts: list[str]) -> list[SparseVector | None]:
@@ -46,7 +46,7 @@ async def embed_sparse_batch(texts: list[str]) -> list[SparseVector | None]:
                         )
                     )
         except Exception as exc:
-            logger.warning("sparse_sidecar_batch_unavailable: %s", exc)
+            logger.warning("sparse_sidecar_batch_unavailable", error=str(exc))
             results.extend([None] * len(sub_batch))
 
     return results

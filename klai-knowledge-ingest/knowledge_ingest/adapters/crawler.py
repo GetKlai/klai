@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
+import structlog
 import time
 
 from knowledge_ingest import pg_store
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import IngestRequest
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
@@ -38,7 +38,7 @@ async def run_crawl_job(
         from crawl4ai.content_filter_strategy import PruningContentFilter
         from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
     except ImportError:
-        logger.error("crawl4ai not installed - cannot run crawl job %s", job_id)
+        logger.error("crawl_job_failed", job_id=job_id, error="crawl4ai not installed")
         await _update_job(job_id, status="failed", error="crawl4ai not installed")
         return
 
@@ -96,7 +96,7 @@ async def run_crawl_job(
                     )
                     pages_done += 1
                 except Exception as exc:
-                    logger.warning("Crawler skipping %s: %s (job=%s)", url, exc, job_id)
+                    logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
                     pages_failed += 1
 
                 await pool.execute(
@@ -113,16 +113,16 @@ async def run_crawl_job(
             if url_to_count:
                 await qdrant_store.update_link_counts(org_id, kb_slug, url_to_count)
                 logger.info(
-                    "link_counts_updated job=%s count=%d", job_id, len(url_to_count)
+                    "link_counts_updated", job_id=job_id, count=len(url_to_count)
                 )
         except Exception as exc:
-            logger.warning("link_counts_update_failed job=%s error=%s", job_id, exc)
+            logger.warning("link_counts_update_failed", job_id=job_id, error=str(exc))
 
         await _update_job(job_id, status="completed")
-        logger.info("Crawl job %s complete: %d pages ingested, %d failed", job_id, pages_done, pages_failed)
+        logger.info("crawl_job_complete", job_id=job_id, pages_done=pages_done, pages_failed=pages_failed)
 
     except Exception as exc:
-        logger.error("Crawl job %s failed: %s", job_id, exc, exc_info=True)
+        logger.error("crawl_job_error", job_id=job_id, error=str(exc), exc_info=True)
         await _update_job(job_id, status="failed", error=str(exc))
 
 
@@ -172,7 +172,7 @@ async def _crawl_and_ingest_page(
     if stored is not None:
         stored_raw, _stored_content = stored  # type: ignore[misc]
         if stored_raw is not None and stored_raw == raw_html_hash:
-            logger.info("crawl_skipped_unchanged url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug)
+            logger.info("crawl_skipped_unchanged", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
     text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
@@ -193,9 +193,7 @@ async def _crawl_and_ingest_page(
                 raw_markdown=text,
                 crawled_at=int(time.time()),
             )
-            logger.info(
-                "crawl_skipped_html_noise url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug
-            )
+            logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
     await pg_store.upsert_crawled_page(
@@ -233,7 +231,7 @@ async def _crawl_and_ingest_page(
         extra["anchor_texts"] = anchors
         extra["incoming_link_count"] = incoming
     except Exception as exc:
-        logger.warning("link_graph_query_failed url=%s error=%s", url, exc)
+        logger.warning("link_graph_query_failed", url=url, error=str(exc))
 
     # Import here to avoid circular imports at module level
     from knowledge_ingest.routes.ingest import ingest_document

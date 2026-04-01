@@ -3,7 +3,7 @@ Personal knowledge item routes:
   GET    /knowledge/v1/personal/items              — list personal artifacts
   DELETE /knowledge/v1/personal/items/{artifact_id} — soft-delete a personal artifact
 """
-import logging
+import structlog
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.models import ArtifactSummary, PersonalItemsResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 router = APIRouter()
 
 
@@ -67,7 +67,7 @@ async def delete_personal_item(
     await qdrant_store.delete_document(org_id, "personal", path)
 
     logger.info(
-        "Deleted personal artifact %s (path=%s) for user %s in org %s",
-        artifact_id, path, user_id, org_id,
+        "personal_artifact_deleted",
+        artifact_id=artifact_id, path=path, user_id=user_id, org_id=org_id,
     )
     return {"status": "ok"}

@@ -9,13 +9,13 @@ When a crawl yields too little content (< 100 words), this module:
 SPEC-CRAWL-001 / R-4
 """
 import json
-import logging
+import structlog
 
 import httpx
 
 from knowledge_ingest.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # JS injected into the page to extract a DOM summary.
 # Appends a <pre> element off-screen (NOT display:none — innerText returns ""
@@ -87,7 +87,7 @@ async def extract_dom_summary(url: str) -> list[dict] | None:
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(raw)
     except Exception as exc:
-        logger.warning("DOM summary extraction failed for %s: %s", url, exc)
+        logger.warning("crawl_dom_summary_failed", url=url, error=str(exc))
         return None
 
 
@@ -118,5 +118,5 @@ async def detect_selector_via_llm(dom_summary: list[dict]) -> str | None:
             return None
         return selector
     except Exception as exc:
-        logger.warning("LLM selector detection failed: %s", exc)
+        logger.warning("crawl_llm_selector_failed", error=str(exc))
         return None

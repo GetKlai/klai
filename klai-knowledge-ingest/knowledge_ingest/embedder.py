@@ -5,13 +5,13 @@ Note: TEI uses the OpenAI-compatible /v1/embeddings API — do not confuse with
 Infinity (port 7998), which is a separate service used exclusively for reranking.
 """
 import asyncio
-import logging
+import structlog
 
 import httpx
 
 from knowledge_ingest.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 EMBED_DIM = 1024  # BGE-M3 dense output dimension
 _EMBED_MODEL = "BAAI/bge-m3"
@@ -39,10 +39,10 @@ async def _embed_batch(
             last_exc = exc
             wait = 2**attempt
             logger.warning(
-                "TEI embed timeout (attempt %d/3, %d texts), retrying in %ds",
-                attempt + 1,
-                len(texts),
-                wait,
+                "tei_embed_timeout",
+                attempt=attempt + 1,
+                texts=len(texts),
+                wait_s=wait,
             )
             await asyncio.sleep(wait)
         except httpx.HTTPStatusError as exc:
@@ -50,10 +50,10 @@ async def _embed_batch(
                 last_exc = exc
                 wait = 2**attempt
                 logger.warning(
-                    "TEI embed 5xx (attempt %d/3, status %d), retrying in %ds",
-                    attempt + 1,
-                    exc.response.status_code,
-                    wait,
+                    "tei_embed_5xx",
+                    attempt=attempt + 1,
+                    status=exc.response.status_code,
+                    wait_s=wait,
                 )
                 await asyncio.sleep(wait)
             else:

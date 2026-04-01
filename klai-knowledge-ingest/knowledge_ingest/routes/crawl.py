@@ -11,7 +11,6 @@ Pipeline selection (SPEC-CRAWL-001 / R-1):
 """
 import asyncio
 import hashlib
-import logging
 import re
 import time
 from urllib.parse import urlparse
@@ -28,8 +27,7 @@ from knowledge_ingest.routes.ingest import ingest_document
 from knowledge_ingest.selector_ai import detect_selector_via_llm, extract_dom_summary
 from knowledge_ingest.utils.url_validator import validate_url
 
-logger = logging.getLogger(__name__)
-preview_logger = structlog.get_logger()
+logger = structlog.get_logger()
 router = APIRouter()
 
 
@@ -174,8 +172,8 @@ async def _run_crawl(url: str, selector: str | None) -> tuple[str, int, str]:
     raw_md = result.markdown.raw_markdown or ""
     fit_md_raw = result.markdown.fit_markdown or ""
     raw_html = result.html or ""
-    preview_logger.info(
-        "Crawl4ai result",
+    logger.info(
+        "crawl4ai_result",
         url=url,
         selector=selector,
         raw_words=len(raw_md.split()),
@@ -189,7 +187,7 @@ async def _run_crawl(url: str, selector: str | None) -> tuple[str, int, str]:
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
 async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
     """Fetch a URL with PruningContentFilter and return the filtered markdown preview."""
-    preview_logger.info("Preview crawl requested", url=body.url)
+    logger.info("crawl_preview_started", url=body.url)
     try:
         # Resolve effective selector: user-provided wins, then stored domain selector
         # SPEC-CRAWL-001 / R-2, R-6
@@ -228,8 +226,8 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                             if "low_word_count" not in warnings:
                                 warnings.append("low_word_count")
                     except Exception as exc:
-                        preview_logger.warning(
-                            "AI re-crawl failed",
+                        logger.warning(
+                            "crawl_ai_recrawl_failed",
                             url=body.url,
                             ai_selector=ai_selector,
                             error=str(exc),
@@ -251,7 +249,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             warnings=warnings,
         )
     except Exception as exc:
-        preview_logger.warning("Preview crawl failed", url=body.url, error=str(exc))
+        logger.warning("crawl_preview_failed", url=body.url, error=str(exc))
         return CrawlPreviewResponse(url=body.url, fit_markdown="", word_count=0)
 
 
@@ -305,7 +303,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     if stored is not None:
         stored_raw, _stored_content = stored
         if stored_raw is not None and stored_raw == raw_html_hash:
-            logger.info("Crawl skipped (raw HTML unchanged): %s", request.url)
+            logger.info("crawl_skipped_unchanged", url=request.url)
             return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
 
     content_hash = hashlib.sha256(fit_md.encode()).hexdigest()
@@ -324,7 +322,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
                 raw_markdown=fit_md,
                 crawled_at=int(time.time()),
             )
-            logger.info("Crawl skipped (HTML noise, content unchanged): %s", request.url)
+            logger.info("crawl_skipped_html_noise", url=request.url)
             return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
 
     await pg_store.upsert_crawled_page(
@@ -355,7 +353,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         extra["anchor_texts"] = anchors
         extra["incoming_link_count"] = incoming
     except Exception as exc:
-        logger.warning("link_graph_query_failed url=%s error=%s", request.url, exc)
+        logger.warning("link_graph_query_failed", url=request.url, error=str(exc))
     ingest_req = IngestRequest(
         org_id=request.org_id,
         kb_slug=request.kb_slug,
@@ -366,5 +364,5 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     result = await ingest_document(ingest_req)
     n_chunks = result.get("chunks", 0)
 
-    logger.info("Crawled and ingested %s -> %s (%d chunks)", request.url, path, n_chunks)
+    logger.info("crawl_ingest_complete", url=request.url, path=path, chunks=n_chunks)
     return CrawlResponse(url=request.url, path=path, chunks_ingested=n_chunks)
