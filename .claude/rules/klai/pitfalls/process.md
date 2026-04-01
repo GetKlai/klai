@@ -1,6 +1,12 @@
+---
+paths:
+  - "**/.workflow/specs/**"
+  - "**/docs/specs/**"
+  - "**/SPEC*.md"
+---
 # Process Pitfalls
 
-> AI-assisted development workflow. Universal rules for every session.
+> AI-assisted development workflow. Full descriptions — see process-rules.md for the compact always-loaded version.
 
 ## Index
 > Keep this index in sync — add a row when adding an entry below.

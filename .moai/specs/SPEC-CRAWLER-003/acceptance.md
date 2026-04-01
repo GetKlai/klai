@@ -1,7 +1,7 @@
 # SPEC-CRAWLER-003: Link-Graph Retrieval Enrichment -- Acceptance Criteria
 
 **SPEC:** SPEC-CRAWLER-003
-**Status:** Planned
+**Status:** completed
 
 ---
 

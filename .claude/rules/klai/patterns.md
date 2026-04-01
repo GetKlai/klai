@@ -29,4 +29,8 @@
 
 ## Context loading
 
-Pattern files load on-demand via `knowledge.md` references, not every session.
+Pattern files load on-demand via `paths:` frontmatter, not every session.
+
+## [HARD] Auto-load rule for this directory
+
+Every `.md` file in `.claude/rules/` **without** `paths:` frontmatter loads into EVERY Claude session. Before adding or moving a file into `.claude/rules/klai/patterns/`: add `paths:` frontmatter, or explicitly justify always-loading.
