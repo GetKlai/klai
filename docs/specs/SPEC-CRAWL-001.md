@@ -1,6 +1,6 @@
 # SPEC-CRAWL-001: Crawl Wizard Improvements
 
-**Status:** Planned
+**Status:** Completed
 **Priority:** High
 **Service:** klai-knowledge-ingest
 **Primary file:** `klai-knowledge-ingest/knowledge_ingest/routes/crawl.py`

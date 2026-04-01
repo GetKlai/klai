@@ -145,7 +145,41 @@ This means a large repo with no changes costs almost nothing. Supported files: `
 parser.py`. The parsed plain text is then forwarded to `knowledge-ingest` via
 `POST /ingest/v1/document`. Maximum file size: 50 MB.
 
-**Web crawls (live):** uses Crawl4AI with sitemap awareness for deep site crawls.
+**Web crawls (live):** the crawl wizard uses Crawl4AI (Playwright-backed) with two endpoints:
+
+- `POST /ingest/v1/crawl/preview` — crawl wizard preview; returns `fit_markdown`, `word_count`,
+  and any `warnings` (e.g. `navigation_detected`, `low_word_count`) without ingesting.
+- `POST /ingest/v1/crawl` — full ingest; fetches URL, converts HTML to markdown, deduplicates,
+  and ingests via the standard pipeline.
+
+**Smart pipeline switching (SPEC-CRAWL-001):** the pipeline is chosen based on whether a
+CSS selector is available:
+
+| Condition | JS chrome removal | `excluded_tags` | `css_selector` | Pruning filter |
+|---|---|---|---|---|
+| No selector | `_JS_REMOVE_CHROME` (semantic tags only) | nav, footer, header, aside, script, style | — | Yes (0.45) |
+| Selector present (user or stored) | disabled | `[]` | selector value | Yes (0.45) |
+
+**Domain selector storage:** resolved selectors are persisted per `(domain, org_id)` in
+`knowledge.crawl_domains`. On subsequent crawls for the same domain, the stored selector is
+reused automatically. User-provided selectors always win over stored or AI-detected ones.
+
+**AI-assisted selector detection:** when a preview crawl yields fewer than 100 words and no
+selector was used, the system extracts a DOM summary (top 25 elements by word count) and sends
+it to `klai-fast` to identify the main content selector. If the AI selector produces ≥ 100 words
+on a re-crawl, it is stored in `crawl_domains` with `selector_source='ai'`. Otherwise the
+original result is returned with a `low_word_count` warning.
+
+**Dual-hash deduplication:** `crawl_url` skips ingest in two stages:
+1. `raw_html_hash` unchanged → skip everything (JS/tracking updates ignored)
+2. `content_hash` unchanged → update raw hash only, skip re-ingest
+
+**Source URL in artifacts:** every crawled artifact stores `{"source_url": "..."}` in
+`knowledge.artifacts.extra`, enabling traceability back to the origin page.
+
+**Navigation contamination detection:** the preview endpoint scores link density in the returned
+markdown; if >35% of lines are link-only and the first 25 lines are >45% link-only, a
+`navigation_detected` warning is returned so the user can add a selector.
 
 **Planned connectors:**
 - Google Drive — on the roadmap
