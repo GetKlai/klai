@@ -255,31 +255,56 @@ async def get_crawled_page_hash(org_id: str, kb_slug: str, url: str) -> str | No
     )
 
 
+async def get_crawled_page_hashes(
+    org_id: str,
+    kb_slug: str,
+    urls: list[str],
+) -> dict[str, str]:
+    """Return {url: content_hash} for all known URLs in the list (single query)."""
+    if not urls:
+        return {}
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT url, content_hash FROM knowledge.crawled_pages "
+        "WHERE org_id = $1 AND kb_slug = $2 AND url = ANY($3::text[])",
+        org_id, kb_slug, urls,
+    )
+    return {row["url"]: row["content_hash"] for row in rows}
+
+
 async def upsert_page_links(
     org_id: str,
     kb_slug: str,
     from_url: str,
     links: list[dict],
 ) -> None:
-    """Upsert outgoing links for from_url. Resolves relative URLs before storing."""
+    """Upsert outgoing links for from_url in a single batch round-trip."""
     from urllib.parse import urljoin
-    pool = await get_pool()
+    rows = []
     for link in links:
         href = link.get("href", "")
         if not href:
             continue
-        to_url = urljoin(from_url, href)
-        link_text = (link.get("text", "") or "")[:500]
-        await pool.execute(
-            """
-            INSERT INTO knowledge.page_links
-                (org_id, kb_slug, from_url, to_url, link_text)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (org_id, kb_slug, from_url, to_url)
-            DO UPDATE SET link_text = EXCLUDED.link_text
-            """,
-            org_id, kb_slug, from_url, to_url, link_text,
-        )
+        rows.append((
+            org_id,
+            kb_slug,
+            from_url,
+            urljoin(from_url, href),
+            (link.get("text", "") or "")[:500],
+        ))
+    if not rows:
+        return
+    pool = await get_pool()
+    await pool.executemany(
+        """
+        INSERT INTO knowledge.page_links
+            (org_id, kb_slug, from_url, to_url, link_text)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (org_id, kb_slug, from_url, to_url)
+        DO UPDATE SET link_text = EXCLUDED.link_text
+        """,
+        rows,
+    )
 
 
 async def update_artifact_extra(artifact_id: str, extra_patch: dict) -> None:
