@@ -28,22 +28,21 @@ async def log_event(
 ) -> None:
     """Write an immutable audit log entry.
 
-    Uses flush() (not commit()) so the entry participates in the caller's
-    transaction. If the audit write fails, the exception is logged but does
-    not roll back the parent transaction -- audit failures must not block
+    Uses a SAVEPOINT (begin_nested) so a failure rolls back only the audit
+    insert, not the caller's transaction. Audit failures must not block
     business operations.
     """
     try:
-        entry = PortalAuditLog(
-            org_id=org_id,
-            actor_user_id=actor,
-            action=action,
-            resource_type=resource_type,
-            resource_id=str(resource_id),
-            details=details,
-        )
-        db.add(entry)
-        await db.flush()
+        async with db.begin_nested():
+            entry = PortalAuditLog(
+                org_id=org_id,
+                actor_user_id=actor,
+                action=action,
+                resource_type=resource_type,
+                resource_id=str(resource_id),
+                details=details,
+            )
+            db.add(entry)
     except Exception:
         logger.exception(
             "Audit log write failed (non-fatal): action=%s resource_type=%s resource_id=%s",
