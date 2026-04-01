@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_product
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.groups import PortalGroup
 from app.models.meetings import VexaMeeting
 from app.models.portal import PortalUser
@@ -58,6 +58,8 @@ async def _get_user_and_org(
 
     portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
     org_id = portal_user.org_id if portal_user else None
+    if org_id is not None:
+        await set_tenant(db, org_id)
     return user_id, org_id
 
 
