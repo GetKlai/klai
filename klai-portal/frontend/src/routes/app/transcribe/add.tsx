@@ -6,8 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Input } from '@/components/ui/input'
-import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square } from 'lucide-react'
+import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square, RotateCcw } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
@@ -32,14 +31,16 @@ export const Route = createFileRoute('/app/transcribe/add')({
   ),
 })
 
-interface TranscriptionDraft {
-  name?: string | null
-  text: string
-  language: string
-  duration_seconds: number
+interface TranscriptionResponse {
+  id: string
+  name: string | null
+  status: string
+  text: string | null
+  language: string | null
+  duration_seconds: number | null
   inference_time_seconds: number | null
-  provider: string
-  model: string
+  summary_json: Record<string, unknown> | null
+  created_at: string
 }
 
 function formatDuration(seconds: number): string {
@@ -57,8 +58,7 @@ function AddTranscribePage() {
   const { tab: tabParam } = Route.useSearch()
   const activeTab: Tab = tabParam ?? 'record'
   const [language, setLanguage] = useState<string>('')
-  const [result, setResult] = useState<TranscriptionDraft | null>(null)
-  const [name, setName] = useState('')
+  const [result, setResult] = useState<TranscriptionResponse | null>(null)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -95,11 +95,15 @@ function AddTranscribePage() {
         const body = await res.json().catch(() => ({}))
         throw new Error(body?.detail ?? m.app_transcribe_error_generic())
       }
-      return res.json() as Promise<TranscriptionDraft>
+      return res.json() as Promise<TranscriptionResponse>
     },
     onSuccess: (data) => {
-      setResult(data)
-      setName('')
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      if (data.status === 'transcribed') {
+        void navigate({ to: '/app/transcribe/$transcriptionId', params: { transcriptionId: data.id } })
+      } else {
+        setResult(data)
+      }
       setSelectedFile(null)
     },
     onError: (err: Error) => {
@@ -107,21 +111,27 @@ function AddTranscribePage() {
     },
   })
 
-  const saveMutation = useMutation({
-    mutationFn: async (draft: TranscriptionDraft) => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions`, {
+  const retryMutation = useMutation({
+    mutationFn: async (txnId: string) => {
+      setError(null)
+      const params = language ? `?language=${encodeURIComponent(language)}` : ''
+      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${txnId}/retry${params}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body?.detail ?? m.app_transcribe_error_generic())
       }
+      return res.json() as Promise<TranscriptionResponse>
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
-      void navigate({ to: '/app/transcribe' })
+      if (data.status === 'transcribed') {
+        void navigate({ to: '/app/transcribe/$transcriptionId', params: { transcriptionId: data.id } })
+      } else {
+        setResult(data)
+      }
     },
     onError: (err: Error) => {
       setError(err.message)
@@ -139,7 +149,7 @@ function AddTranscribePage() {
   }
 
   const handleCopy = () => {
-    if (!result) return
+    if (!result?.text) return
     void navigator.clipboard.writeText(result.text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
@@ -262,7 +272,7 @@ function AddTranscribePage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [activeTab, recording, startRecording, stopRecording])
 
-  const isTranscribing = transcribeMutation.isPending
+  const isTranscribing = transcribeMutation.isPending || retryMutation.isPending
 
   return (
     <div className="p-8 max-w-lg">
@@ -475,53 +485,58 @@ function AddTranscribePage() {
           </CardContent>
         </Card>
 
-        {result && (
+        {result && result.status === 'failed' && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle>{m.app_transcribe_status_failed()}</CardTitle>
+              <CardDescription>{m.app_transcribe_failed_hint()}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-3 pt-2">
+                <Button
+                  disabled={retryMutation.isPending}
+                  onClick={() => retryMutation.mutate(result.id)}
+                >
+                  {retryMutation.isPending ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{m.app_transcribe_processing()}</>
+                  ) : (
+                    <><RotateCcw className="mr-2 h-4 w-4" />{m.app_transcribe_retry_button()}</>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={retryMutation.isPending}
+                  onClick={() => { setResult(null); setError(null) }}
+                >
+                  {m.app_transcribe_back()}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {result && result.status === 'transcribed' && result.text && (
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <CardTitle>{m.app_transcribe_result_title()}</CardTitle>
-                  <CardDescription>
-                    {m.app_transcribe_result_meta({
-                      language: result.language.toUpperCase(),
-                      duration: formatDuration(result.duration_seconds),
-                    })}
-                  </CardDescription>
+                  {result.language && result.duration_seconds != null && (
+                    <CardDescription>
+                      {m.app_transcribe_result_meta({
+                        language: result.language.toUpperCase(),
+                        duration: formatDuration(result.duration_seconds),
+                      })}
+                    </CardDescription>
+                  )}
                 </div>
                 <Button variant="outline" size="sm" onClick={handleCopy}>
                   {copied ? <CheckCheck className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="txn-name">{m.app_transcribe_name_label()}</Label>
-                <Input
-                  id="txn-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={m.app_transcribe_name_placeholder()}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
+            <CardContent>
               <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.text}</p>
-              <div className="flex gap-3 pt-2">
-                <Button
-                  disabled={saveMutation.isPending}
-                  onClick={() => saveMutation.mutate({ ...result, name: name.trim() || null })}
-                >
-                  {saveMutation.isPending ? (
-                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{m.app_transcribe_processing()}</>
-                  ) : m.app_transcribe_save_button()}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={saveMutation.isPending}
-                  onClick={() => { setResult(null); setName(''); setError(null) }}
-                >
-                  {m.app_transcribe_discard_button()}
-                </Button>
-              </div>
             </CardContent>
           </Card>
         )}

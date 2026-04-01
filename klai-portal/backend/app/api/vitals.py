@@ -1,6 +1,6 @@
 """Web Vitals ingestion and Prometheus metrics exposition.
 
-POST /api/vitals — receives web-vitals reports from the browser.
+POST /api/perf   — receives web-vitals reports from the browser.
 GET /metrics     — exposes Prometheus-format metrics for scraping.
 """
 
@@ -111,7 +111,7 @@ _metrics = VitalsMetrics()
 router = APIRouter()
 
 
-@router.post("/api/vitals", status_code=204)
+@router.post("/api/perf", status_code=204)
 async def ingest_vitals(
     metrics: Annotated[list[VitalMetric], Body(max_length=10)],
 ) -> Response:

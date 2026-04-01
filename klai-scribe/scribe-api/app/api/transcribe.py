@@ -1,12 +1,12 @@
 """
 Transcription API endpoints:
 
-  POST /v1/transcribe              - upload + transcribe (does NOT save)
-  POST /v1/transcriptions          - save a transcription draft
-  GET  /v1/transcriptions          - list user's transcripts
-  GET  /v1/transcriptions/{id}     - get single transcript
-  PATCH /v1/transcriptions/{id}    - update name
-  DELETE /v1/transcriptions/{id}   - delete transcript
+  POST /v1/transcribe                    - upload + persist audio + transcribe
+  POST /v1/transcriptions/{id}/retry     - retry failed transcription
+  GET  /v1/transcriptions                - list user's transcripts
+  GET  /v1/transcriptions/{id}           - get single transcript
+  PATCH /v1/transcriptions/{id}          - update name
+  DELETE /v1/transcriptions/{id}         - delete transcript + audio file
   POST /v1/transcriptions/{id}/summarize - AI summarization
   POST /v1/transcriptions/{id}/ingest    - ingest into knowledge base
 """
@@ -14,6 +14,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -37,25 +38,13 @@ router = APIRouter(prefix="/v1", tags=["transcription"])
 
 # -- Response models -----------------------------------------------------------
 
-class TranscriptionDraft(BaseModel):
-    """Result of transcription - not yet persisted."""
-    name: str | None = None
-    text: str
-    language: str
-    duration_seconds: float
-    inference_time_seconds: float | None = None
-    provider: str
-    model: str
-    segments: list[dict] | None = None  # whisper segment boundaries
-    recording_type: str | None = None  # "meeting" or "recording"
-
-
 class TranscriptionResponse(BaseModel):
     id: str
     name: str | None = None
-    text: str
-    language: str
-    duration_seconds: float
+    status: str = "transcribed"
+    text: str | None = None
+    language: str | None = None
+    duration_seconds: float | None = None
     inference_time_seconds: float | None = None
     summary_json: dict | None = None
     created_at: datetime
@@ -67,9 +56,10 @@ class TranscriptionResponse(BaseModel):
 class TranscriptionListItem(BaseModel):
     id: str
     name: str | None = None
-    text: str
-    language: str
-    duration_seconds: float
+    status: str = "transcribed"
+    text: str | None = None
+    language: str | None = None
+    duration_seconds: float | None = None
     created_at: datetime
     has_summary: bool = False
 
@@ -95,15 +85,70 @@ class SummarizeResponse(BaseModel):
     summary_json: dict
 
 
-# -- POST /v1/transcribe -------------------------------------------------------
+# -- Audio storage helpers ----------------------------------------------------
 
-@router.post("/transcribe", response_model=TranscriptionDraft, status_code=200)
+def _audio_dir(user_id: str) -> Path:
+    d = Path(settings.audio_storage_dir) / user_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _save_audio(user_id: str, txn_id: str, wav_bytes: bytes) -> str:
+    """Save WAV bytes to disk. Returns the relative path."""
+    rel = f"{user_id}/{txn_id}.wav"
+    path = Path(settings.audio_storage_dir) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(wav_bytes)
+    return rel
+
+
+def _read_audio(audio_path: str) -> bytes:
+    """Read WAV bytes from disk."""
+    path = Path(settings.audio_storage_dir) / audio_path
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Audio bestand niet meer beschikbaar",
+        )
+    return path.read_bytes()
+
+
+def _delete_audio(audio_path: str | None) -> None:
+    """Delete audio file from disk if it exists."""
+    if not audio_path:
+        return
+    path = Path(settings.audio_storage_dir) / audio_path
+    path.unlink(missing_ok=True)
+
+
+def _to_response(record: Transcription) -> TranscriptionResponse:
+    return TranscriptionResponse(
+        id=record.id,
+        name=record.name,
+        status=record.status,
+        text=record.text,
+        language=record.language,
+        duration_seconds=float(record.duration_seconds) if record.duration_seconds else None,
+        inference_time_seconds=float(record.inference_time_seconds) if record.inference_time_seconds else None,
+        summary_json=record.summary_json,
+        created_at=record.created_at,
+    )
+
+
+# -- POST /v1/transcribe ------------------------------------------------------
+
+@router.post("/transcribe", response_model=TranscriptionResponse, status_code=201)
 async def transcribe(
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
     user_id: str = Depends(get_current_user_id),
-) -> TranscriptionDraft:
-    """Transcribe audio. Does NOT save to database - call POST /v1/transcriptions to persist."""
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptionResponse:
+    """Upload audio, persist to disk, attempt transcription.
+
+    Audio is always saved before transcription starts. If whisper fails,
+    the record stays with status='failed' and the audio is retained for retry.
+    """
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:
         raise HTTPException(
@@ -113,60 +158,111 @@ async def transcribe(
 
     filename = file.filename or "upload"
 
+    # Normalize audio (validates format + converts to WAV 16kHz mono)
     loop = asyncio.get_event_loop()
     wav_bytes = await loop.run_in_executor(None, normalize_audio, raw, filename)
 
-    provider = get_provider()
-    result = await provider.transcribe(wav_bytes, language)
-
-    return TranscriptionDraft(
-        text=result.text,
-        language=result.language,
-        duration_seconds=result.duration_seconds,
-        inference_time_seconds=result.inference_time_seconds,
-        provider=result.provider,
-        model=result.model,
-    )
-
-
-# -- POST /v1/transcriptions ---------------------------------------------------
-
-@router.post("/transcriptions", response_model=TranscriptionResponse, status_code=201)
-async def save_transcription(
-    body: TranscriptionDraft,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-) -> TranscriptionResponse:
-    """Persist a transcription draft. Called only when the user explicitly saves."""
+    # Generate ID and save audio to disk FIRST
     txn_id = "txn_" + uuid.uuid4().hex
+    audio_path = await loop.run_in_executor(None, _save_audio, user_id, txn_id, wav_bytes)
+
+    # Create DB record with status=processing
     record = Transcription(
         id=txn_id,
         user_id=user_id,
-        name=body.name or None,
-        text=body.text,
-        language=body.language,
-        duration_seconds=body.duration_seconds,
-        inference_time_seconds=body.inference_time_seconds or 0,
-        provider=body.provider,
-        model=body.model,
-        recording_type=body.recording_type,
-        segments_json=body.segments,
+        name=filename if filename != "upload" else None,
+        status="processing",
+        audio_path=audio_path,
         created_at=datetime.utcnow(),
     )
     db.add(record)
     await db.commit()
+
+    # Attempt transcription
+    try:
+        provider = get_provider()
+        result = await provider.transcribe(wav_bytes, language)
+    except HTTPException:
+        record.status = "failed"
+        await db.commit()
+        await db.refresh(record)
+        logger.warning("Transcription failed for %s, audio preserved at %s", txn_id, audio_path)
+        return _to_response(record)
+
+    # Success — update record
+    record.status = "transcribed"
+    record.text = result.text
+    record.language = result.language
+    record.duration_seconds = result.duration_seconds
+    record.inference_time_seconds = result.inference_time_seconds
+    record.provider = result.provider
+    record.model = result.model
+    await db.commit()
     await db.refresh(record)
 
-    return TranscriptionResponse(
-        id=record.id,
-        name=record.name,
-        text=record.text,
-        language=record.language,
-        duration_seconds=float(record.duration_seconds),
-        inference_time_seconds=float(record.inference_time_seconds),
-        summary_json=None,
-        created_at=record.created_at,
+    return _to_response(record)
+
+
+# -- POST /v1/transcriptions/{id}/retry ----------------------------------------
+
+@router.post("/transcriptions/{txn_id}/retry", response_model=TranscriptionResponse)
+async def retry_transcription(
+    txn_id: str,
+    language: str | None = Query(default=None),
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptionResponse:
+    """Retry transcription for a failed record using the preserved audio file."""
+    result = await db.execute(
+        select(Transcription).where(
+            Transcription.id == txn_id,
+            Transcription.user_id == user_id,
+        )
     )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+
+    if record.status not in ("failed", "processing"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Alleen mislukte transcripties kunnen opnieuw worden geprobeerd",
+        )
+
+    if not record.audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Audio bestand niet meer beschikbaar",
+        )
+
+    # Read audio from disk
+    loop = asyncio.get_event_loop()
+    wav_bytes = await loop.run_in_executor(None, _read_audio, record.audio_path)
+
+    record.status = "processing"
+    await db.commit()
+
+    try:
+        provider = get_provider()
+        transcription_result = await provider.transcribe(wav_bytes, language)
+    except HTTPException:
+        record.status = "failed"
+        await db.commit()
+        await db.refresh(record)
+        logger.warning("Retry failed for %s", txn_id)
+        return _to_response(record)
+
+    record.status = "transcribed"
+    record.text = transcription_result.text
+    record.language = transcription_result.language
+    record.duration_seconds = transcription_result.duration_seconds
+    record.inference_time_seconds = transcription_result.inference_time_seconds
+    record.provider = transcription_result.provider
+    record.model = transcription_result.model
+    await db.commit()
+    await db.refresh(record)
+
+    return _to_response(record)
 
 
 # -- GET /v1/transcriptions ----------------------------------------------------
@@ -197,9 +293,10 @@ async def list_transcriptions(
             TranscriptionListItem(
                 id=t.id,
                 name=t.name,
+                status=t.status,
                 text=t.text,
                 language=t.language,
-                duration_seconds=float(t.duration_seconds),
+                duration_seconds=float(t.duration_seconds) if t.duration_seconds else None,
                 created_at=t.created_at,
                 has_summary=t.summary_json is not None,
             )
@@ -227,16 +324,7 @@ async def get_transcription(
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
 
-    return TranscriptionResponse(
-        id=record.id,
-        name=record.name,
-        text=record.text,
-        language=record.language,
-        duration_seconds=float(record.duration_seconds),
-        inference_time_seconds=float(record.inference_time_seconds),
-        summary_json=record.summary_json,
-        created_at=record.created_at,
-    )
+    return _to_response(record)
 
 
 # -- PATCH /v1/transcriptions/{id} ---------------------------------------------
@@ -263,16 +351,7 @@ async def patch_transcription(
     await db.commit()
     await db.refresh(record)
 
-    return TranscriptionResponse(
-        id=record.id,
-        name=record.name,
-        text=record.text,
-        language=record.language,
-        duration_seconds=float(record.duration_seconds),
-        inference_time_seconds=float(record.inference_time_seconds),
-        summary_json=record.summary_json,
-        created_at=record.created_at,
-    )
+    return _to_response(record)
 
 
 # -- DELETE /v1/transcriptions/{id} --------------------------------------------
@@ -292,6 +371,9 @@ async def delete_transcription(
     record = result.scalar_one_or_none()
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
+
+    # Clean up audio file
+    _delete_audio(record.audio_path)
 
     await db.execute(
         delete(Transcription).where(

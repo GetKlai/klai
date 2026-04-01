@@ -19,6 +19,7 @@ import {
   Video,
   Square,
   FileText,
+  RotateCcw,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -43,9 +44,10 @@ const ACTIVE_MEETING_STATUSES = ['pending', 'joining', 'recording', 'processing'
 interface TranscriptionItem {
   id: string
   name: string | null
-  text: string
-  language: string
-  duration_seconds: number
+  status: string
+  text: string | null
+  language: string | null
+  duration_seconds: number | null
   created_at: string
   has_summary?: boolean
 }
@@ -90,6 +92,7 @@ interface UnifiedItem {
 }
 
 function toUnified(item: TranscriptionItem): UnifiedItem {
+  const statusMap: Record<string, string> = { transcribed: 'done', processing: 'processing', failed: 'failed' }
   return {
     id: item.id,
     source: 'upload',
@@ -98,7 +101,7 @@ function toUnified(item: TranscriptionItem): UnifiedItem {
     language: item.language,
     duration_seconds: item.duration_seconds,
     created_at: item.created_at,
-    status: 'done',
+    status: statusMap[item.status] ?? 'done',
     uploadName: item.name,
     has_summary: item.has_summary,
   }
@@ -144,14 +147,14 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function MeetingStatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, source }: { status: string; source: Source }) {
   const config: Record<string, { label: string; classes: string }> = {
     pending:    { label: m.app_meetings_status_pending(),    classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)]' },
     joining:    { label: m.app_meetings_status_joining(),    classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
     recording:  { label: m.app_meetings_status_recording(),  classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)] animate-pulse' },
-    processing: { label: m.app_meetings_status_processing(), classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
+    processing: { label: source === 'upload' ? m.app_transcribe_status_processing() : m.app_meetings_status_processing(), classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
     done:       { label: m.app_meetings_status_done(),       classes: 'bg-[var(--color-success)]/10 text-[var(--color-success)]' },
-    failed:     { label: m.app_meetings_status_failed(),     classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]' },
+    failed:     { label: m.app_transcribe_status_failed(),   classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]' },
   }
   const c = config[status] ?? { label: status, classes: 'bg-[var(--color-sand-mid)] text-[var(--color-purple-deep)]' }
   return (
@@ -268,6 +271,17 @@ function TranscribePage() {
       if (!res.ok) throw new Error('Stoppen mislukt')
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings', token] }),
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${id}/retry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Opnieuw proberen mislukt')
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] }),
   })
 
   function startEdit(item: UnifiedItem) {
@@ -438,6 +452,8 @@ function TranscribePage() {
                       const isCopied = copiedId === item.id
                       const isActive = item.source === 'meeting' && ACTIVE_MEETING_STATUSES.includes(item.status)
                       const isStopping = stopMutation.isPending && stopMutation.variables === item.id
+                      const isFailed = item.source === 'upload' && item.status === 'failed'
+                      const isRetrying = retryMutation.isPending && retryMutation.variables === item.id
 
                       return (
                         <tr
@@ -477,7 +493,7 @@ function TranscribePage() {
                                   {item.title ? (
                                     <div>
                                       <div className="flex items-center gap-1.5">
-                                        {(item.source === 'meeting' && item.status === 'done') || item.source === 'upload' ? (
+                                        {item.status === 'done' ? (
                                           <button
                                             type="button"
                                             className="block truncate font-medium text-left hover:underline cursor-pointer"
@@ -503,9 +519,9 @@ function TranscribePage() {
                                   ) : (
                                     <span className="block truncate">{item.text ?? item.meeting_url ?? '—'}</span>
                                   )}
-                                  {item.source === 'meeting' && item.status !== 'done' && (
+                                  {item.status !== 'done' && (
                                     <div className="mt-1">
-                                      <MeetingStatusBadge status={item.status} />
+                                      <StatusBadge status={item.status} source={item.source} />
                                     </div>
                                   )}
                                 </div>
@@ -631,6 +647,24 @@ function TranscribePage() {
                                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                       ) : (
                                         <Square className="h-3.5 w-3.5" />
+                                      )}
+                                    </button>
+                                  </Tooltip>
+                                )}
+
+                                {/* Retry failed transcription */}
+                                {isFailed && (
+                                  <Tooltip label={m.app_transcribe_retry_button()}>
+                                    <button
+                                      onClick={() => retryMutation.mutate(item.id)}
+                                      disabled={isRetrying}
+                                      aria-label={m.app_transcribe_retry_button()}
+                                      className="flex h-7 w-7 items-center justify-center text-[var(--color-purple-accent)] transition-opacity hover:opacity-70"
+                                    >
+                                      {isRetrying ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <RotateCcw className="h-3.5 w-3.5" />
                                       )}
                                     </button>
                                   </Tooltip>
