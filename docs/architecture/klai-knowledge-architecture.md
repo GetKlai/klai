@@ -405,36 +405,46 @@ Concrete query patterns:
 
 ## 4. Ingestion Architecture
 
+> **Engineering reference:** [knowledge-ingest-flow.md](knowledge-ingest-flow.md) — verified against the live codebase on core-01.
+
 Klai Knowledge accepts knowledge from multiple source types. Each source type has a dedicated adapter that normalizes input into a standard format before passing it to the unified ingest pipeline.
 
 ### 4.1 Ingestion adapters
 
-| Source type | Adapter | Output |
+| Source type | Adapter | How it reaches knowledge-ingest |
 |---|---|---|
-| Help articles (web/HTML) | Crawl4AI → markdown | Chunks with section metadata |
-| Documents (PDF, DOCX, XLSX) | docling-serve HybridChunker | Structured chunks with element type labels |
-| Helpdesk transcripts (JSON) | Instructor + LLM extraction | Structured contribution records |
-| Human-authored content | BlockNote editor → markdown | Markdown with YAML frontmatter |
-| Research notebooks | Direct (already markdown) | Chunks |
+| Human-authored content | KB editor (BlockNote) → markdown | Direct API call on every save (debounced 3s) |
+| Help articles (web/HTML) | Crawl4AI → markdown | klai-connector webcrawler via Gitea webhook |
+| GitHub repositories | klai-connector → raw markdown | klai-connector Gitea webhook |
+| Documents (PDF, DOCX, XLSX) | docling-serve HybridChunker | klai-connector file upload endpoint |
+| Meeting transcripts | scribe-api → transcript JSON | scribe-api calls `/ingest/v1/meetings` after Whisper |
+| MCP writes (personal/org) | klai-knowledge-mcp | MCP server calls `/ingest/v1/personal` or `/ingest/v1/org` |
 
-All adapters deliver to a **Unified Ingest API**. The API owns the processing pipeline: chunking (if not already chunked), enrichment (Contextual Retrieval, HyPE), embedding (BGE-M3 dense + sparse), and storage (Qdrant, per-tenant collection).
-
-Adapters do not write directly to Qdrant. This is enforced at the architecture level.
+All adapters deliver to `knowledge-ingest`. Adapters do not write directly to Qdrant — this is enforced at the architecture level.
 
 ### 4.2 Enrichment pipeline
 
-Three enrichment steps are applied after chunking, before embedding:
+Ingestion runs in two phases to keep the document searchable immediately while enrichment happens in the background.
 
-**Step 1: Contextual Retrieval**
-Each chunk receives a 1–2 sentence context prefix situating the chunk within its parent document. Measured effect: 49% fewer retrieval failures; 67% fewer with reranking (Anthropic, 2024 — technique is model-agnostic). Model selection: see §13.6.
+**Phase 1 — Immediate (synchronous, < 1s)**
 
-**Step 2: HyPE (Hypothetical Prompt Embeddings)**
-Generate 3–5 questions that the chunk answers; embed those questions instead of the raw chunk text. Queries are questions; chunks are answers — question-to-question matching is more precise than question-to-document matching. Measured result: +42 pp precision, +45 pp recall vs. direct embedding (Vake et al., 2025). Model selection: see §13.6.
+1. Parse and chunk (docling HybridChunker or markdown splitter)
+2. Embed chunks with BGE-M3 dense vectors (gpu-01 via SSH tunnel)
+3. Store in Qdrant with basic metadata → document is immediately searchable
 
-> **Calibration note**: These numbers are from a single paper on a specific benchmark. Real-world improvement on B2B helpdesk content in Dutch will be lower. Validate on your own corpus before treating as a design assumption.
+**Phase 2 — Async enrichment (Procrastinate job queue, background)**
 
-**Step 3: BGE-M3 embedding**
-Dense (1024-dim) + sparse (SPLADE-style) in a single model pass. The only production-compatible approach for BGE-M3 sparse is `FlagEmbedding` — not TEI (open bug since June 2024) and not FastEmbed.
+A. **Contextual prefix** — LLM generates a 1–2 sentence prefix situating each chunk within its parent document. Addresses chunk boundary loss. Prefix is prepended to the chunk text before re-embedding.
+
+B. **Dense re-embed** — BGE-M3 dense vectors recomputed on the context-enriched text (replaces Phase 1 vectors).
+
+C. **Sparse embed** — BGE-M3 sparse vectors (SPLADE-style) via the `bge-m3-sparse` FlagEmbedding sidecar. BGE-M3 sparse is not supported in TEI (open bug since June 2024) — FlagEmbedding is the only production-compatible path.
+
+D. **HyPE questions** — LLM generates 3–5 hypothetical questions the chunk answers. These are embedded and stored as a separate `vector_questions` index in Qdrant. Bridges the vocabulary gap between user query language and document language. Result: +42 pp precision, +45 pp recall vs. direct embedding (Vake et al., 2025 — single benchmark, real-world gains will be lower; validate on your corpus).
+
+E. **Knowledge graph** — Graphiti entity/relationship extraction → FalkorDB. Gated by `settings.graphiti_enabled` (default off in production). See §5.3.
+
+> Model selection for Phase 2 LLM calls: see §13.6.
 
 ### 4.3 Helpdesk transcript extraction (one adapter in detail)
 
@@ -455,7 +465,7 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 
 ### 5.1 Vector store: Qdrant, single collection with tenant isolation
 
-**One Qdrant collection for all tenants.** Tenant isolation via `tenant_id` payload field with `is_tenant: true` index flag (Qdrant 1.12+ native multitenancy). Every query includes a mandatory `must: tenant_id = X` filter, enforced at the API layer — not optional, not configurable.
+**One Qdrant collection for all tenants (`klai_knowledge`).** Tenant isolation via `org_id` payload field with `is_tenant: true` index flag (Qdrant 1.12+ native multitenancy). Every query includes a mandatory `must: org_id = X` filter, enforced at the API layer — not optional, not configurable.
 
 **Why not collection-per-tenant:** Qdrant's own documentation explicitly discourages more than ~10 collections. Each collection carries independent memory overhead, file descriptors, HNSW index state, and background processes. At 50+ tenants this causes OOM and cluster instability. This was the previous design — it is wrong at scale.
 
@@ -467,7 +477,7 @@ A two-pass extraction strategy improves recall on the critical `unanswered_quest
 
 **Scopes tracked in the collection payload:**
 
-| `tenant_id` pattern | Scope | Accessible by |
+| `org_id` value | Scope | Accessible by |
 |---|---|---|
 | `org_{org_uuid}` | Org knowledge | All org members |
 | `user_{org_uuid}_{user_uuid}` | User personal knowledge | That user only |
@@ -557,9 +567,11 @@ SELECT * FROM lineage;
 
 The `id` is the shared key across both stores. Qdrant point ID = PostgreSQL `artifacts.id`.
 
-### 5.3 Knowledge graph: DEFERRED
+### 5.3 Knowledge graph: IMPLEMENTED — feature-flagged
 
-**Decision: do not add a graph layer for V1. The evidence does not support it for B2B knowledge base query patterns.**
+**Deployed but not yet active in production retrieval.** FalkorDB runs on core-01. Graphiti integration is built into `knowledge-ingest` Phase 2 enrichment (Step E). Activated per-org via `settings.graphiti_enabled` (default: off).
+
+**Original decision rationale (V1 gate):** do not activate the graph layer until query analysis justifies it for B2B knowledge base query patterns.
 
 Research finding (GraphRAG-Bench, ICLR 2026; RAG vs. GraphRAG systematic evaluation, 2025; SAP enterprise study, 2025):
 
@@ -732,15 +744,48 @@ Estimate per Argilla/Prodigy active learning research: a single reviewer spendin
 
 ## 7. Retrieval Architecture
 
-### 7.1 Three-layer retrieval
+> **Engineering reference:** [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) — verified against the live codebase on core-01.
+
+### 7.1 Six-step retrieval pipeline
+
+The retrieval pipeline runs inside the LiteLLM hook before every chat message reaches the model. It has six steps:
 
 ```
-Query
-  ├── BGE-M3 sparse retrieval (top-50)    ← exact keywords, error codes, product names
-  ├── BGE-M3 dense retrieval (top-50)     ← semantic meaning
-  └── RRF fusion (k=60)
-       └── bge-reranker-v2-m3 (top-5 to top-10)
-            └── LLM with retrieved context + metadata
+User message
+  │
+  ▼
+Step 1: Coreference resolution
+  klai-fast rewrites the query to be self-contained
+  ("what about the second one?" → "what about plan B pricing?")
+  │
+  ▼
+Step 2: Parallel embeddings
+  BGE-M3 dense (gpu-01) + BGE-M3 sparse (bge-m3-sparse sidecar)
+  computed in parallel
+  │
+  ▼
+Step 3: Retrieval gate
+  Trivial check: skip retrieval if < 8 chars or matches greeting/ack regex
+  │
+  ▼
+Step 4: Hybrid search in Qdrant (3-leg RRF)
+  Leg 1: dense query on vector_chunk   ← semantic meaning of raw text
+  Leg 2: dense query on vector_questions (HyPE) ← query-to-question match
+  Leg 3: sparse query on vector_sparse  ← exact keywords, error codes
+  RRF fusion (k=60), top-20 candidates
+  │
+  ▼
+Step 5: Cross-encoder reranking
+  bge-reranker-v2-m3 scores query+chunk pairs together
+  Top 5 chunks selected for context injection
+  │
+  ▼
+Step 6: Evidence tier scoring (shadow mode)
+  Adjusts scores by content_type weight + temporal decay
+  Currently logs only — does not reorder results (EVIDENCE_SHADOW_MODE=true)
+  │
+  ▼
+System message injection → model
 ```
 
 Hybrid search is not optional for B2B knowledge: error codes, product names, and exact procedure steps are keyword matches that pure semantic search misses.
@@ -761,11 +806,11 @@ Bi-encoder retrieval (top-20) → Cross-encoder reranking (top-5) → LLM classi
 
 The cross-encoder reads query + document together and assesses relevance at claim level, not topic level. This is what distinguishes "Windows vs. Mac" when the topic is the same but the coverage is not.
 
-### 7.4 Evidence-weighted scoring [PLANNED — research complete]
+### 7.4 Evidence-weighted scoring [LIVE — shadow mode]
 
 > Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md)
 
-After RRF fusion produces ranked results, an evidence-weighted scoring step adjusts the ranking based on metadata signals. This is a **post-retrieval reranking adjustment**, not a replacement for semantic search.
+Evidence-weighted scoring runs in Step 6 of the retrieval pipeline. Currently in shadow mode (`EVIDENCE_SHADOW_MODE=true`): scores are computed and logged but do not reorder results. This is a **post-retrieval scoring adjustment**, not a replacement for semantic search.
 
 **Four scoring dimensions:**
 
@@ -988,7 +1033,7 @@ LibreChat (per-tenant container)
           3. _get_kb_feature(user_id, org_id) — fail-closed: skip if not enabled
           4. scope = "both" if kb_personal_enabled else "org"
           5. kb_slugs = kb_slugs_filter (None = all org KBs)
-          6. POST {KNOWLEDGE_RETRIEVE_URL}/retrieve  (timeout: 2s, graceful degrade)
+          6. POST {KNOWLEDGE_RETRIEVE_URL}/retrieve  (timeout: 3s, graceful degrade)
              — sends conversation_history for coreference resolution
           7. Inject chunks as system message prefix
           8. _classify_gap(chunks) + _fire_gap_event(...)  (fire-and-forget)
@@ -1042,7 +1087,7 @@ Truncation: server-side in the retrieval API. Chunks ranked by score. Greedily f
 #### Query classifier
 
 Heuristic only — no LLM call:
-1. `len(query) < 15` → skip retrieval
+1. `len(query) < 8` → skip retrieval
 2. Regex match against trivial patterns (acks, greetings, continuations in NL/EN) → skip
 3. Otherwise → retrieve
 

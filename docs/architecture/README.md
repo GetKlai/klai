@@ -1,32 +1,32 @@
 # Architecture
 
-Platform-brede architectuurbeslissingen die relevant zijn voor alle Klai repos.
+Platform-wide architectural decisions relevant to all Klai repositories.
 
-## Bestanden
+## Files
 
-| Bestand | Inhoud |
-|---------|--------|
-| [platform.md](platform.md) | Stack-keuzes, server layout, fasen, modellen, knowledge system design principles, RAG stack, Compatibility Review |
-| [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | Klai Knowledge platform architectuur — §§0-14 incl. knowledge model, ingestion, retrieval (+ evidence-weighted scoring §7.4), gap detection, AI interface, multi-tenancy |
-| [knowledge-ingest-flow.md](knowledge-ingest-flow.md) | **Engineering reference** — het draaiende ingest-systeem op core-01: content sources, pipeline phases, Qdrant scope, Procrastinate scheduling, HyPE, docling |
-| [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** — het draaiende retrieval-systeem: LiteLLM hook, 6-staps pipeline, context injection, UI toggles, config values |
+| File | Contents |
+|------|----------|
+| [platform.md](platform.md) | Stack choices, server layout, phases, models, knowledge system design principles, RAG stack, Compatibility Review |
+| [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | Klai Knowledge platform architecture — §§0-14 incl. knowledge model, ingestion, retrieval (+ evidence-weighted scoring §7.4), gap detection, AI interface, multi-tenancy |
+| [knowledge-ingest-flow.md](knowledge-ingest-flow.md) | **Engineering reference** — the running ingest system on core-01: content sources, pipeline phases, Qdrant scope, Procrastinate scheduling, HyPE, docling |
+| [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** — the running retrieval system: LiteLLM hook, 6-step pipeline, context injection, UI toggles, config values |
 
-> **Engineering references zijn leidend.** Bij verschil tussen een architecture-doc en een engineering reference geldt de engineering reference — die is geverifieerd tegen de live code.
+> **Engineering references are authoritative.** When there is a conflict between an architecture doc and an engineering reference, the engineering reference wins — it is verified against live code.
 
 ## Research
 
-Achterliggende onderzoeksdocumenten die de architecture-beslissingen onderbouwen:
+Background research documents that underpin the architecture decisions:
 
-| Bestand | Inhoud |
-|---------|--------|
-| [../research/knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md) | 16 empirisch onderbouwde bevindingen over kennissystemen — entity types, retrieval, graph layer, taxonomie, monitoring (NL) |
-| [../research/knowledge-pipeline-architecture.md](../research/knowledge-pipeline-architecture.md) | Uitgebreid design-document: extractieschema, prompt-strategie, GDPR, gap detection, widget SDK evaluatie, publication layer (NL) |
+| File | Contents |
+|------|----------|
+| [../research/knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md) | 16 empirically grounded findings on knowledge system design — entity types, retrieval, graph layer, taxonomy, monitoring |
+| [../research/knowledge-pipeline-architecture.md](../research/knowledge-pipeline-architecture.md) | Detailed design document: extraction schema, prompt strategy, GDPR, gap detection, widget SDK evaluation, publication layer |
 
-De conclusies uit deze documenten zijn gedestilleerd in `platform.md §Knowledge System Design Principles`. De research-docs zijn het archief voor wie de redenering wil traceren.
+The conclusions from these documents are distilled in `platform.md § Knowledge System Design Principles`. The research docs are the archive for anyone who wants to trace the reasoning.
 
-Het research programme dat de evidence-weighted scoring onderbouwt leeft in [`docs/research/`](../research/README.md). Vier dimensies onderzocht: content type, assertion mode, temporal decay, cross-source corroboration.
+The research programme underpinning evidence-weighted scoring lives in [`docs/research/`](../research/README.md). Four dimensions studied: content type, assertion mode, temporal decay, cross-source corroboration.
 
 ## Scope
 
-Deze directory bevat beslissingen over het **gehele Klai-platform** — niet website-specifiek, niet repo-specifiek.
-Project-specifieke architectuurdocumentatie leeft in het eigen `docs/` van dat project.
+This directory contains decisions about the **entire Klai platform** — not website-specific, not repo-specific.
+Project-specific architecture documentation lives in that project's own `docs/` directory.
