@@ -18,7 +18,9 @@ from knowledge_ingest.config import settings
 logger = logging.getLogger(__name__)
 
 # JS injected into the page to extract a DOM summary.
-# Appends a hidden <pre> element containing JSON — captured via css_selector.
+# Appends a <pre> element off-screen (NOT display:none — innerText returns ""
+# for hidden elements, which would break crawl4ai's text extraction).
+# Captured via css_selector="#__klai_dom_summary__".
 # Uses only direct selector construction (id, classes) to avoid compound paths
 # that differ between crawl passes.
 _DOM_SUMMARY_JS = """
@@ -41,7 +43,7 @@ _DOM_SUMMARY_JS = """
 
   const pre = document.createElement('pre');
   pre.id = '__klai_dom_summary__';
-  pre.style.display = 'none';
+  pre.style.cssText = 'position:absolute;left:-9999px;top:-9999px;';
   pre.textContent = JSON.stringify(els);
   document.body.appendChild(pre);
 })();
