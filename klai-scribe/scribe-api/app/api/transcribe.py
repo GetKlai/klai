@@ -182,7 +182,7 @@ async def transcribe(
     try:
         provider = get_provider()
         result = await provider.transcribe(wav_bytes, language)
-    except HTTPException:
+    except Exception:
         record.status = "failed"
         await db.commit()
         await db.refresh(record)
@@ -245,7 +245,7 @@ async def retry_transcription(
     try:
         provider = get_provider()
         transcription_result = await provider.transcribe(wav_bytes, language)
-    except HTTPException:
+    except Exception:
         record.status = "failed"
         await db.commit()
         await db.refresh(record)
