@@ -124,6 +124,7 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
     mock_result = MagicMock()
     mock_result.success = True
     mock_result.error_message = ""
+    mock_result.html = "<html><body>Page</body></html>"
     mock_result.markdown.fit_markdown = "# Page"
     mock_result.markdown.raw_markdown = "# Page"
     mock_result.response_headers = {}
@@ -144,7 +145,7 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
         await _crawl_and_ingest_page(
             mock_crawler, MagicMock(),
             "https://help.example.com/page", "org1", "kb1", 0.0,
-            stored_hash=None,
+            stored=None,
         )
 
     mock_upsert_links.assert_called_once()

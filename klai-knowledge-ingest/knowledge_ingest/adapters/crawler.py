@@ -92,7 +92,7 @@ async def run_crawl_job(
                     await _crawl_and_ingest_page(
                         crawler, config, url, org_id, kb_slug, delay,
                         pool=pool,
-                        stored_hash=known_hashes.get(url),
+                        stored=known_hashes.get(url),
                     )
                     pages_done += 1
                 except Exception as exc:
@@ -134,8 +134,15 @@ async def _crawl_and_ingest_page(
     kb_slug: str,
     delay: float,
     pool: object | None = None,
-    stored_hash: str | None | object = _UNSET,
+    stored: "pg_store.PageHashes | None | object" = _UNSET,
 ) -> None:
+    # WARNING (pipeline config change): modifying the extraction settings in
+    # run_crawl_job() — excluded_tags, PruningContentFilter threshold, the JS
+    # removal scripts — changes content_hash for every page even when the actual
+    # page content has not changed. After such a change, force a full re-ingest:
+    #   UPDATE knowledge.crawled_pages
+    #      SET content_hash = ''
+    #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
     await asyncio.sleep(delay)
 
     result = await crawler.arun(url=url, config=config)
@@ -149,23 +156,53 @@ async def _crawl_and_ingest_page(
     is_pdf = "application/pdf" in content_type_header or url.lower().endswith(".pdf")
     content_type = "pdf_document" if is_pdf else "kb_article"
 
+    # Dual-hash dedup (see migration 012):
+    #   1. raw_html_hash unchanged → skip everything (source HTML is identical)
+    #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
+    #   3. both changed → real content change → full ingest
+    #
+    # stored is pre-fetched by run_crawl_job; falls back to a per-page DB query
+    # only when called without pre-fetched hashes (e.g. direct test calls).
+    if stored is _UNSET:
+        stored = await pg_store.get_crawled_page_stored(org_id, kb_slug, url)
+
+    raw_html = result.html or ""
+    raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
+
+    if stored is not None:
+        stored_raw, _stored_content = stored  # type: ignore[misc]
+        if stored_raw is not None and stored_raw == raw_html_hash:
+            logger.info("crawl_skipped_unchanged url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug)
+            return
+
     text = result.markdown.fit_markdown or result.markdown.raw_markdown or ""
     front_matter = result.metadata.get("description", "") if result.metadata else ""
 
-    # Dedup: skip ingest if content is unchanged since last crawl.
-    # stored_hash is pre-fetched by run_crawl_job; fall back to a per-page DB
-    # query only when called in isolation (e.g. single-URL tests).
     content_hash = hashlib.sha256(text.encode()).hexdigest()
-    if stored_hash is _UNSET:
-        stored_hash = await pg_store.get_crawled_page_hash(org_id, kb_slug, url)
-    if stored_hash is not None and stored_hash == content_hash:
-        logger.info("crawl_skipped_unchanged url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug)
-        return
+    if stored is not None:
+        _, stored_content = stored  # type: ignore[misc]
+        if stored_content is not None and stored_content == content_hash:
+            # HTML changed (JS / tracking pixel) but article content is identical
+            # → update raw_html_hash so future crawls hit the fast path, skip ingest
+            await pg_store.upsert_crawled_page(
+                org_id=org_id,
+                kb_slug=kb_slug,
+                url=url,
+                raw_html_hash=raw_html_hash,
+                content_hash=content_hash,
+                raw_markdown=text,
+                crawled_at=int(time.time()),
+            )
+            logger.info(
+                "crawl_skipped_html_noise url=%s org_id=%s kb_slug=%s", url, org_id, kb_slug
+            )
+            return
 
     await pg_store.upsert_crawled_page(
         org_id=org_id,
         kb_slug=kb_slug,
         url=url,
+        raw_html_hash=raw_html_hash,
         content_hash=content_hash,
         raw_markdown=text,
         crawled_at=int(time.time()),

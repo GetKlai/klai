@@ -224,52 +224,65 @@ async def upsert_crawled_page(
     org_id: str,
     kb_slug: str,
     url: str,
+    raw_html_hash: str | None,
     content_hash: str,
     raw_markdown: str,
     crawled_at: int,
 ) -> None:
-    """Insert or update a crawled page record (URL dedup registry + raw content cache)."""
+    """Insert or update a crawled page record (URL dedup registry + raw content cache).
+
+    Stores both raw_html_hash (pre-extraction) and content_hash (post-extraction)
+    to support dual-hash deduplication — see migration 012 for the skip logic.
+    """
     pool = await get_pool()
     await pool.execute(
         """
         INSERT INTO knowledge.crawled_pages
-            (org_id, kb_slug, url, content_hash, raw_markdown, crawled_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (org_id, kb_slug, url, raw_html_hash, content_hash, raw_markdown, crawled_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (org_id, kb_slug, url)
         DO UPDATE SET
-            content_hash = EXCLUDED.content_hash,
+            raw_html_hash = EXCLUDED.raw_html_hash,
+            content_hash  = EXCLUDED.content_hash,
             raw_markdown  = EXCLUDED.raw_markdown,
             crawled_at    = EXCLUDED.crawled_at
         """,
-        org_id, kb_slug, url, content_hash, raw_markdown, crawled_at,
+        org_id, kb_slug, url, raw_html_hash, content_hash, raw_markdown, crawled_at,
     )
 
 
-async def get_crawled_page_hash(org_id: str, kb_slug: str, url: str) -> str | None:
-    """Return the stored content_hash for this URL, or None if not yet crawled."""
+# PageHashes = (raw_html_hash, content_hash) — either may be None for legacy rows
+PageHashes = tuple[str | None, str | None]
+
+
+async def get_crawled_page_stored(
+    org_id: str, kb_slug: str, url: str
+) -> PageHashes | None:
+    """Return (raw_html_hash, content_hash) for this URL, or None if not yet crawled."""
     pool = await get_pool()
-    return await pool.fetchval(
-        "SELECT content_hash FROM knowledge.crawled_pages "
+    row = await pool.fetchrow(
+        "SELECT raw_html_hash, content_hash FROM knowledge.crawled_pages "
         "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
         org_id, kb_slug, url,
     )
+    return (row["raw_html_hash"], row["content_hash"]) if row else None
 
 
 async def get_crawled_page_hashes(
     org_id: str,
     kb_slug: str,
     urls: list[str],
-) -> dict[str, str]:
-    """Return {url: content_hash} for all known URLs in the list (single query)."""
+) -> dict[str, PageHashes]:
+    """Return {url: (raw_html_hash, content_hash)} for all known URLs (single query)."""
     if not urls:
         return {}
     pool = await get_pool()
     rows = await pool.fetch(
-        "SELECT url, content_hash FROM knowledge.crawled_pages "
+        "SELECT url, raw_html_hash, content_hash FROM knowledge.crawled_pages "
         "WHERE org_id = $1 AND kb_slug = $2 AND url = ANY($3::text[])",
         org_id, kb_slug, urls,
     )
-    return {row["url"]: row["content_hash"] for row in rows}
+    return {row["url"]: (row["raw_html_hash"], row["content_hash"]) for row in rows}
 
 
 async def upsert_page_links(

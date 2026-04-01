@@ -1,17 +1,16 @@
 """
-Tests for crawl-registry deduplication.
+Tests for crawl-registry deduplication (dual-hash strategy).
 
 Covers _crawl_and_ingest_page (bulk crawler) and crawl_url (single-URL route):
-- Unchanged content → ingest_document NOT called
-- Changed content   → ingest_document IS called and crawled_pages updated
-- New URL           → insert + ingest
-- skip path returns chunks_ingested=0
+- raw HTML unchanged        → skip everything, ingest_document NOT called
+- HTML noise, content same  → update raw_html_hash, skip ingest
+- Content changed           → ingest_document IS called and crawled_pages updated
+- New URL                   → insert + ingest
 - crawled_pages keyed on request.url, not derived path
 """
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +25,7 @@ def _sha256(text: str) -> str:
 
 def _make_crawl_result(
     text: str = "# Hello\nPage content here.",
+    html: str = "<html><body>Hello</body></html>",
     links: dict | None = None,
     success: bool = True,
 ) -> MagicMock:
@@ -33,6 +33,7 @@ def _make_crawl_result(
     result = MagicMock()
     result.success = success
     result.error_message = ""
+    result.html = html
     result.markdown.fit_markdown = text
     result.markdown.raw_markdown = text
     result.response_headers = {}
@@ -47,12 +48,13 @@ def _make_crawl_result(
 
 @pytest.mark.asyncio
 async def test_bulk_crawl_skip_unchanged() -> None:
-    """When stored_hash == new hash, ingest_document is NOT called."""
+    """When raw_html_hash matches stored, ingest_document is NOT called."""
+    html = "<html><body>Hello</body></html>"
     text = "# Hello\nPage content here."
-    stored = _sha256(text)
+    stored = (_sha256(html), _sha256(text))  # (raw_html_hash, content_hash)
 
     mock_crawler = MagicMock()
-    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text))
+    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text, html=html))
 
     with patch(
         "knowledge_ingest.pg_store.upsert_crawled_page",
@@ -64,7 +66,7 @@ async def test_bulk_crawl_skip_unchanged() -> None:
         from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
         await _crawl_and_ingest_page(
             mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0,
-            stored_hash=stored,
+            stored=stored,
         )
 
     mock_ingest.assert_not_called()
@@ -72,13 +74,45 @@ async def test_bulk_crawl_skip_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bulk_crawl_reingest_on_change() -> None:
-    """When hash differs, ingest_document IS called and crawled_pages is updated."""
-    text = "# Updated content"
-    old_hash = _sha256("# Old content")
+async def test_bulk_crawl_skip_html_noise() -> None:
+    """When raw HTML changed but content hash is identical, skip ingest but update raw_html_hash."""
+    text = "# Article content"
+    old_html = "<html><body>Article</body></html>"
+    new_html = "<html><body>Article<script>analytics()</script></body></html>"
+    # old raw_html_hash ≠ new, but content_hash is the same
+    stored = (_sha256(old_html), _sha256(text))
 
     mock_crawler = MagicMock()
-    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text))
+    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text, html=new_html))
+
+    with patch(
+        "knowledge_ingest.pg_store.upsert_crawled_page",
+        new_callable=AsyncMock,
+    ) as mock_upsert, patch(
+        "knowledge_ingest.routes.ingest.ingest_document",
+        new_callable=AsyncMock,
+    ) as mock_ingest:
+        from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
+        await _crawl_and_ingest_page(
+            mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0,
+            stored=stored,
+        )
+
+    mock_ingest.assert_not_called()
+    # raw_html_hash must be updated so the next crawl hits the fast path
+    mock_upsert.assert_called_once()
+    assert mock_upsert.call_args.kwargs["raw_html_hash"] == _sha256(new_html)
+
+
+@pytest.mark.asyncio
+async def test_bulk_crawl_reingest_on_change() -> None:
+    """When content hash differs, ingest_document IS called and crawled_pages is updated."""
+    text = "# Updated content"
+    html = "<html><body>Updated</body></html>"
+    old_stored = (_sha256("old html"), _sha256("# Old content"))
+
+    mock_crawler = MagicMock()
+    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text, html=html))
 
     with patch(
         "knowledge_ingest.pg_store.upsert_crawled_page",
@@ -94,7 +128,7 @@ async def test_bulk_crawl_reingest_on_change() -> None:
         from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
         await _crawl_and_ingest_page(
             mock_crawler, MagicMock(), "https://example.com/page", "org1", "kb1", 0.0,
-            stored_hash=old_hash,
+            stored=old_stored,
         )
 
     mock_ingest.assert_called_once()
@@ -105,9 +139,10 @@ async def test_bulk_crawl_reingest_on_change() -> None:
 async def test_bulk_crawl_new_page() -> None:
     """When URL is not in crawled_pages (None), insert + ingest."""
     text = "# Brand new page"
+    html = "<html><body>New</body></html>"
 
     mock_crawler = MagicMock()
-    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text))
+    mock_crawler.arun = AsyncMock(return_value=_make_crawl_result(text=text, html=html))
 
     with patch(
         "knowledge_ingest.pg_store.upsert_crawled_page",
@@ -123,13 +158,14 @@ async def test_bulk_crawl_new_page() -> None:
         from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
         await _crawl_and_ingest_page(
             mock_crawler, MagicMock(), "https://example.com/new", "org1", "kb1", 0.0,
-            stored_hash=None,
+            stored=None,
         )
 
     mock_ingest.assert_called_once()
     mock_upsert.assert_called_once()
     call_kwargs = mock_upsert.call_args.kwargs
     assert call_kwargs["url"] == "https://example.com/new"
+    assert call_kwargs["raw_html_hash"] == _sha256(html)
     assert call_kwargs["content_hash"] == _sha256(text)
 
 
@@ -137,30 +173,11 @@ async def test_bulk_crawl_new_page() -> None:
 # Single-URL crawl: crawl_url
 # ---------------------------------------------------------------------------
 
-def _patch_crawl_url_deps(stored_hash: Any, ingest_return: dict) -> list:
-    """Return a list of patch context managers for crawl_url tests."""
-    return [
-        patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock),
-        patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_hash",
-              new_callable=AsyncMock, return_value=stored_hash),
-        patch("knowledge_ingest.routes.crawl.pg_store.upsert_crawled_page",
-              new_callable=AsyncMock),
-        patch("knowledge_ingest.routes.crawl.ingest_document",
-              new_callable=AsyncMock, return_value=ingest_return),
-    ]
-
-
 @pytest.mark.asyncio
 async def test_single_url_skip_unchanged() -> None:
-    """crawl_url returns chunks_ingested=0 when hash matches stored hash."""
+    """crawl_url returns chunks_ingested=0 when raw HTML hash matches stored."""
     html = "<html><body><h1>Hello</h1></body></html>"
-    import html2text as h2t
-    conv = h2t.HTML2Text()
-    conv.ignore_links = False
-    conv.ignore_images = True
-    conv.body_width = 0
-    markdown = conv.handle(html)
-    stored = _sha256(markdown)
+    stored = (_sha256(html), "some-content-hash")  # raw_html_hash matches → fast skip
 
     mock_resp = MagicMock()
     mock_resp.text = html
@@ -172,7 +189,7 @@ async def test_single_url_skip_unchanged() -> None:
     mock_client.get = AsyncMock(return_value=mock_resp)
 
     with patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
-         patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_hash",
+         patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_stored",
                new_callable=AsyncMock, return_value=stored), \
          patch("knowledge_ingest.routes.crawl.pg_store.upsert_crawled_page",
                new_callable=AsyncMock) as mock_upsert, \
@@ -208,7 +225,7 @@ async def test_single_url_url_key() -> None:
     mock_upsert = AsyncMock()
 
     with patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
-         patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_hash",
+         patch("knowledge_ingest.routes.crawl.pg_store.get_crawled_page_stored",
                new_callable=AsyncMock, return_value=None), \
          patch("knowledge_ingest.routes.crawl.pg_store.upsert_crawled_page", mock_upsert), \
          patch("knowledge_ingest.routes.crawl.ingest_document",

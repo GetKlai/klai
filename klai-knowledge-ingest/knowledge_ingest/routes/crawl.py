@@ -22,7 +22,8 @@ import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from knowledge_ingest import pg_store
+from knowledge_ingest import link_graph, pg_store
+from knowledge_ingest.db import get_pool
 from knowledge_ingest.domain_selectors import extract_domain, get_domain_selector, upsert_domain_selector
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
@@ -263,6 +264,14 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # WARNING (pipeline config change): modifying the html2text settings below
+    # (ignore_links, body_width, etc.) changes content_hash for every page even
+    # when the actual page content has not changed. After such a change, force a
+    # full re-ingest by clearing content_hash:
+    #   UPDATE knowledge.crawled_pages
+    #      SET content_hash = ''
+    #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
+
     # Fetch URL
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False, verify=True) as client:
         try:
@@ -271,52 +280,87 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {exc}")
 
-    # Convert HTML to markdown
+    # Dual-hash dedup (see migration 012):
+    #   1. raw_html_hash unchanged → skip everything (fast path, skips html2text too)
+    #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
+    #   3. both changed → real content change → full ingest
+    raw_html_hash = hashlib.sha256(resp.text.encode()).hexdigest()
+    stored = await pg_store.get_crawled_page_stored(
+        request.org_id, request.kb_slug, request.url
+    )
+
+    def _derive_path() -> str:
+        if request.path:
+            return request.path
+        parsed = urlparse(request.url)
+        slug = parsed.path.strip("/").replace("/", "-") or parsed.netloc
+        return f"{slug}.md"
+
+    if stored is not None:
+        stored_raw, _stored_content = stored
+        if stored_raw is not None and stored_raw == raw_html_hash:
+            logger.info("Crawl skipped (raw HTML unchanged): %s", request.url)
+            return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
+
+    # Convert HTML to markdown (only reached when raw HTML has changed or is new)
     converter = html2text.HTML2Text()
     converter.ignore_links = False
     converter.ignore_images = True
     converter.body_width = 0
     markdown = converter.handle(resp.text)
-
-    # Dedup: skip ingest if content is unchanged since last crawl (keyed on URL, not path)
     content_hash = hashlib.sha256(markdown.encode()).hexdigest()
-    stored_hash = await pg_store.get_crawled_page_hash(
-        request.org_id, request.kb_slug, request.url
-    )
-    if stored_hash is not None and stored_hash == content_hash:
-        logger.info("Crawl skipped (unchanged): %s", request.url)
-        # Derive path so the response is consistent even on skip
-        path = request.path
-        if not path:
-            parsed = urlparse(request.url)
-            slug = parsed.path.strip("/").replace("/", "-") or parsed.netloc
-            path = f"{slug}.md"
-        return CrawlResponse(url=request.url, path=path, chunks_ingested=0)
+
+    if stored is not None:
+        _, stored_content = stored
+        if stored_content is not None and stored_content == content_hash:
+            # HTML changed (JS / tracking pixel) but article content is identical
+            # → update raw_html_hash so future crawls hit the fast path, skip ingest
+            await pg_store.upsert_crawled_page(
+                org_id=request.org_id,
+                kb_slug=request.kb_slug,
+                url=request.url,
+                raw_html_hash=raw_html_hash,
+                content_hash=content_hash,
+                raw_markdown=markdown,
+                crawled_at=int(time.time()),
+            )
+            logger.info("Crawl skipped (HTML noise, content unchanged): %s", request.url)
+            return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
 
     await pg_store.upsert_crawled_page(
         org_id=request.org_id,
         kb_slug=request.kb_slug,
         url=request.url,
+        raw_html_hash=raw_html_hash,
         content_hash=content_hash,
         raw_markdown=markdown,
         crawled_at=int(time.time()),
     )
 
-    # Derive path from URL if not provided
-    path = request.path
-    if not path:
-        parsed = urlparse(request.url)
-        slug = parsed.path.strip("/").replace("/", "-") or parsed.netloc
-        path = f"{slug}.md"
+    path = _derive_path()
 
     # Ingest using existing pipeline (expects IngestRequest, returns dict)
     # SPEC-CRAWL-001 / R-5: include source_url in extra
+    # SPEC-CRAWLER-003 R11: populate link graph fields when source_url present
+    extra: dict = {"source_url": request.url}
+    try:
+        pool = await get_pool()
+        outbound, anchors, incoming = await asyncio.gather(
+            link_graph.get_outbound_urls(request.url, request.org_id, request.kb_slug, pool),
+            link_graph.get_anchor_texts(request.url, request.org_id, request.kb_slug, pool),
+            link_graph.get_incoming_count(request.url, request.org_id, request.kb_slug, pool),
+        )
+        extra["links_to"] = outbound[:20]
+        extra["anchor_texts"] = anchors
+        extra["incoming_link_count"] = incoming
+    except Exception as exc:
+        logger.warning("link_graph_query_failed url=%s error=%s", request.url, exc)
     ingest_req = IngestRequest(
         org_id=request.org_id,
         kb_slug=request.kb_slug,
         path=path,
         content=markdown,
-        extra={"source_url": request.url},
+        extra=extra,
     )
     result = await ingest_document(ingest_req)
     n_chunks = result.get("chunks", 0)
