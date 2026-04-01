@@ -196,16 +196,6 @@ async def _crawl_and_ingest_page(
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
-    await pg_store.upsert_crawled_page(
-        org_id=org_id,
-        kb_slug=kb_slug,
-        url=url,
-        raw_html_hash=raw_html_hash,
-        content_hash=content_hash,
-        raw_markdown=text,
-        crawled_at=int(time.time()),
-    )
-
     if result.links:
         await pg_store.upsert_page_links(
             org_id=org_id,
@@ -246,6 +236,18 @@ async def _crawl_and_ingest_page(
         synthesis_depth=1,
         extra=extra,
     ))
+
+    # Save hashes only after successful ingest — if ingest_document raises, the
+    # hashes are not persisted so the next crawl will retry the full ingest.
+    await pg_store.upsert_crawled_page(
+        org_id=org_id,
+        kb_slug=kb_slug,
+        url=url,
+        raw_html_hash=raw_html_hash,
+        content_hash=content_hash,
+        raw_markdown=text,
+        crawled_at=int(time.time()),
+    )
 
 
 async def _update_job(job_id: str, status: str, error: str | None = None) -> None:
