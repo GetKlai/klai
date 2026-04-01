@@ -210,6 +210,76 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
                 "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1 AND kb_slug = $2",
                 org_id, kb_slug,
             )
+            await conn.execute(
+                "DELETE FROM knowledge.crawled_pages WHERE org_id = $1 AND kb_slug = $2",
+                org_id, kb_slug,
+            )
+            await conn.execute(
+                "DELETE FROM knowledge.page_links WHERE org_id = $1 AND kb_slug = $2",
+                org_id, kb_slug,
+            )
+
+
+async def upsert_crawled_page(
+    org_id: str,
+    kb_slug: str,
+    url: str,
+    content_hash: str,
+    raw_markdown: str,
+    crawled_at: int,
+) -> None:
+    """Insert or update a crawled page record (URL dedup registry + raw content cache)."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO knowledge.crawled_pages
+            (org_id, kb_slug, url, content_hash, raw_markdown, crawled_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (org_id, kb_slug, url)
+        DO UPDATE SET
+            content_hash = EXCLUDED.content_hash,
+            raw_markdown  = EXCLUDED.raw_markdown,
+            crawled_at    = EXCLUDED.crawled_at
+        """,
+        org_id, kb_slug, url, content_hash, raw_markdown, crawled_at,
+    )
+
+
+async def get_crawled_page_hash(org_id: str, kb_slug: str, url: str) -> str | None:
+    """Return the stored content_hash for this URL, or None if not yet crawled."""
+    pool = await get_pool()
+    return await pool.fetchval(
+        "SELECT content_hash FROM knowledge.crawled_pages "
+        "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
+        org_id, kb_slug, url,
+    )
+
+
+async def upsert_page_links(
+    org_id: str,
+    kb_slug: str,
+    from_url: str,
+    links: list[dict],
+) -> None:
+    """Upsert outgoing links for from_url. Resolves relative URLs before storing."""
+    from urllib.parse import urljoin  # noqa: PLC0415
+    pool = await get_pool()
+    for link in links:
+        href = link.get("href", "")
+        if not href:
+            continue
+        to_url = urljoin(from_url, href)
+        link_text = (link.get("text", "") or "")[:500]
+        await pool.execute(
+            """
+            INSERT INTO knowledge.page_links
+                (org_id, kb_slug, from_url, to_url, link_text)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (org_id, kb_slug, from_url, to_url)
+            DO UPDATE SET link_text = EXCLUDED.link_text
+            """,
+            org_id, kb_slug, from_url, to_url, link_text,
+        )
 
 
 async def update_artifact_extra(artifact_id: str, extra_patch: dict) -> None:
