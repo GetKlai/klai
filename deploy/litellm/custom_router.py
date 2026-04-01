@@ -4,9 +4,10 @@ Context-aware model routing for LiteLLM proxy.
 Intercepts klai-primary requests via pre_call_hook and routes based on
 conversation context:
 
-  Tool call history detected  →  klai-large    (mistral-large, agentic/MCP flows)
-  Web search content detected →  klai-fast     (mistral-small, speed for synthesis)
-  Default                     →  klai-primary  (mistral-small, normal chat)
+  Tool call history detected         →  klai-large    (mistral-large, agentic/MCP flows)
+  Long user message detected         →  klai-large    (complex analytical request)
+  Web search content detected        →  klai-fast     (mistral-small, speed for synthesis)
+  Default                            →  klai-primary  (mistral-small, normal chat)
 
 Scope: LibreChat/chat traffic only. Internal background services (Graphiti,
 enrichment, batch pipelines) use klai-fast directly, which bypasses this router
@@ -14,6 +15,9 @@ entirely — the hook returns early for any model != "klai-primary".
 
 Detection:
   - Tool calls: any message with role="tool" → agentic flow, needs strong reasoning
+  - Long user message: last user message > USER_MESSAGE_THRESHOLD tokens → complex
+    analytical request. Counts only role="user" messages so KB chunks and system
+    prompts injected by klai_knowledge_hook do not trigger false positives.
   - Web search: any message with >= MIN_SEARCH_URLS URLs → scraped content injection
   - Hard ceiling: token count > SEARCH_TOKEN_THRESHOLD → fast (safety net)
 
@@ -30,6 +34,10 @@ MIN_SEARCH_URLS = 3
 
 # Hard token ceiling fallback (safety net, not primary signal)
 SEARCH_TOKEN_THRESHOLD = 3000
+
+# Last user message token count above this → complex analytical request → klai-large.
+# ~300 tokens ≈ 225 words; casual chat stays well below 80 tokens.
+USER_MESSAGE_THRESHOLD = 300
 
 _URL_RE = re.compile(r"https?://\S+")
 
@@ -71,6 +79,21 @@ class TokenRouter(CustomLogger):
             if _has_tool_calls(messages):
                 data["model"] = "klai-large"
                 return data
+
+            # Long user message → complex analytical request → mistral-large.
+            # Only the last user message is counted so KB chunks injected by
+            # klai_knowledge_hook (role=system/assistant) don't trigger this.
+            last_user = next(
+                (m for m in reversed(messages) if m.get("role") == "user"), None
+            )
+            if last_user:
+                user_tokens = litellm.token_counter(
+                    model="mistral/mistral-small-latest",
+                    messages=[last_user],
+                )
+                if user_tokens > USER_MESSAGE_THRESHOLD:
+                    data["model"] = "klai-large"
+                    return data
 
             # Web search: scraped content → nemo (fast/cheap)
             if _looks_like_search(messages):
