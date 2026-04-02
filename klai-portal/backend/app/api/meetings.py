@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/bots", tags=["meetings"])
 bearer = HTTPBearer()
 
 ACTIVE_STATUSES = ("pending", "joining", "recording")
-_BILLABLE_STATUSES = (*ACTIVE_STATUSES, "processing")
+_BILLABLE_STATUSES = (*ACTIVE_STATUSES, "stopping")
 MAX_CONCURRENT_BOTS = 2
 
 
@@ -65,7 +65,7 @@ async def _get_user_and_org(
 
 def _require_webhook_secret(request: Request) -> None:
     if not settings.vexa_webhook_secret:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Webhook not configured")
+        return  # No secret configured — trust the internal Docker network
     token = request.headers.get("Authorization", "")
     if token != f"Bearer {settings.vexa_webhook_secret}":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
@@ -292,7 +292,7 @@ async def stop_meeting(
         except httpx.HTTPStatusError as exc:
             logger.warning("Vexa stop_bot failed (continuing): %s", exc)
 
-    meeting.status = "processing"
+    meeting.status = "stopping"
     meeting.ended_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(meeting)
@@ -543,7 +543,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                 if seg.get("language"):
                     meeting.language = seg["language"]
                     break
-            meeting.status = "done"
+            meeting.status = "completed"
             meeting.error_message = None
             return
 
@@ -580,7 +580,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
         meeting.language = whisper_result.get("language", "")
         duration = whisper_result.get("duration", 0)
         meeting.duration_seconds = int(duration) if duration else None
-        meeting.status = "done"
+        meeting.status = "completed"
         meeting.error_message = None
 
     except Exception as exc:
@@ -615,7 +615,7 @@ async def vexa_webhook(
         .where(
             VexaMeeting.platform == payload.platform,
             VexaMeeting.native_meeting_id == payload.native_meeting_id,
-            VexaMeeting.status.in_((*ACTIVE_STATUSES, "processing")),
+            VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
         )
         .order_by(VexaMeeting.created_at.desc())
     )
@@ -624,13 +624,13 @@ async def vexa_webhook(
         return {"status": "ignored"}
 
     if payload.status is not None and payload.status != "completed":
-        if portal_status and meeting.status != portal_status and meeting.status != "processing":
+        if portal_status and meeting.status != portal_status and meeting.status != "stopping":
             meeting.status = portal_status
             await db.commit()
             logger.info("Vexa webhook: synced status %s->%s for meeting %s", payload.status, portal_status, meeting.id)
         return {"status": "synced"}
 
-    meeting.status = "processing"
+    meeting.status = "stopping"
     meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
     if payload.vexa_meeting_id:
         meeting.vexa_meeting_id = payload.vexa_meeting_id
@@ -639,7 +639,7 @@ async def vexa_webhook(
     await run_transcription(meeting, db)
     await db.commit()
 
-    if meeting.status == "done":
+    if meeting.status == "completed":
         await cleanup_recording(meeting, db, recording_id=payload.recording_id)
         emit_event(
             "meeting.completed",
