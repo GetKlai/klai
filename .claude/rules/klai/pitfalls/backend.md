@@ -20,6 +20,7 @@ paths:
 | [backend-crawl4ai-class-substring-selectors](#backend-crawl4ai-class-substring-selectors) | HIGH | Never use `[class*="sidebar"]` in JS DOM removal — substring selectors match layout wrappers and delete article content |
 | [backend-fastapi-required-field-breaks-callers](#backend-fastapi-required-field-breaks-callers) | MED | Adding a required field to a FastAPI request model breaks existing callers — use optional with a guard instead |
 | [backend-silent-error-swallowing](#backend-silent-error-swallowing) | HIGH | Always log actual error details (status code, response body) before returning a generic user message |
+| [backend-ruff-catches-refactor-bugs](#backend-ruff-catches-refactor-bugs) | HIGH | Run `ruff check` after each refactor step — F821/F401 catch real runtime bugs |
 
 ---
 
@@ -291,5 +292,25 @@ async def save_to_docs(self, content: str, org_slug: str) -> str:
 **Seen in:** `klai-knowledge-mcp` `save_to_docs` tool — returned `_ERR_SAVE` without logging the HTTP status or response body, making it impossible to distinguish a 403 (IDOR) from a 422 (Zod `.strict()`) from a 500.
 
 **See also:** `pitfalls/docs-app.md#platform-docs-app-error-logging`
+
+---
+
+## backend-ruff-catches-refactor-bugs
+
+**Severity:** HIGH
+
+**Trigger:** After removing or consolidating functions/imports during a refactor
+
+Ruff's F821 (undefined name) and F401 (unused import) catch real runtime bugs that would otherwise surface in production. After SPEC-BACKEND-001, ruff caught three real issues: an undefined `zitadel` variable (F821 — would crash at runtime), an unused `PortalOrg` import (F401), and an import sorting break (I001).
+
+**Why it matters:**
+When consolidating duplicate auth helpers across files, removing a helper also removes its imports. If the file still uses one of those imports directly (not through the helper), F821 catches the undefined name before it becomes a production `NameError`.
+
+**Prevention:**
+1. Run `ruff check` after each refactor step, not only at the end
+2. Treat F821 as a blocker — it is always a runtime crash
+3. After removing a function, grep for all symbols it imported to verify none are used elsewhere in the file
+
+**Seen in:** SPEC-BACKEND-001 — removing `_get_org` from `billing.py` also removed its `zitadel` import, but `zitadel.get_userinfo()` was still called directly for Moneybird contact creation.
 
 ---
