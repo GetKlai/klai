@@ -10,10 +10,10 @@ Two responsibilities:
 """
 
 import asyncio
-import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import structlog
 from sqlalchemy import select
 
 from app.api.meetings import ACTIVE_STATUSES, run_transcription
@@ -22,7 +22,7 @@ from app.models.meetings import VexaMeeting
 from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Vexa meeting statuses that mean the bot is still active / in progress
 _BOT_ACTIVE = {"requested", "joining", "awaiting_admission", "active", "stopping"}
@@ -38,15 +38,15 @@ async def _bot_ended(meeting: VexaMeeting) -> tuple[bool, int | None]:
     try:
         resp = await vexa.get_bot_status(ref.platform, ref.native_meeting_id)
         bot_status = resp.get("status", "")
-        vexa_id = resp.get("id")
+        vexa_id = resp.get("meeting_id") or resp.get("id")
         ended = bool(bot_status) and bot_status not in _BOT_ACTIVE
         return ended, vexa_id if ended else None
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return True, None  # bot session is gone — meeting ended
-        logger.warning("Bot status check failed for meeting %s: %s", meeting.id, exc)
+        logger.warning("Bot status check failed", meeting_id=str(meeting.id), error=str(exc))
     except Exception as exc:
-        logger.warning("Bot status check error for meeting %s: %s", meeting.id, exc)
+        logger.warning("Bot status check error", meeting_id=str(meeting.id), error=str(exc))
     return False, None
 
 
@@ -75,7 +75,7 @@ async def poll_loop() -> None:
                 if not ended:
                     continue
 
-                logger.info("Bot poll: meeting %s ended — triggering transcription", meeting.id)
+                logger.info("Bot poll: meeting ended, triggering transcription", meeting_id=str(meeting.id))
                 async with AsyncSessionLocal() as db:
                     # Re-fetch with status guard to prevent race with the webhook
                     m = await db.scalar(
@@ -101,9 +101,9 @@ async def poll_loop() -> None:
 
             for meeting in stuck:
                 logger.warning(
-                    "Bot poll: meeting %s stuck in processing for >%d min — retrying transcription",
-                    meeting.id,
-                    PROCESSING_TIMEOUT_MINUTES,
+                    "Bot poll: meeting stuck in processing",
+                    meeting_id=str(meeting.id),
+                    timeout_minutes=PROCESSING_TIMEOUT_MINUTES,
                 )
                 async with AsyncSessionLocal() as db:
                     m = await db.scalar(
