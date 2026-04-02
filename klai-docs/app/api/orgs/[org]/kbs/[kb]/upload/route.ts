@@ -34,11 +34,15 @@ export async function POST(
     const raw = await file.text();
     const parsed = parsePage(raw);
 
-    // Derive title from frontmatter if set, otherwise from the filename.
+    // Derive title: frontmatter > first H1 heading > filename.
     // Inject the title into frontmatter if it was missing so the editor
     // shows the correct page title without triggering an auto-rename on
     // first open (doSave compares slugify(title) against the file slug).
-    const title = parsed.frontmatter.title ?? file.name.replace(/\.md$/, "");
+    const h1Match = parsed.content.match(/^#\s+(.+)$/m);
+    const title =
+      parsed.frontmatter.title ??
+      h1Match?.[1]?.trim() ??
+      file.name.replace(/\.md$/, "");
     let fileContent = raw;
     if (!parsed.frontmatter.title) {
       fileContent = serializePage({ ...parsed.frontmatter, title }, parsed.content);
