@@ -67,6 +67,43 @@ async def _handle_meeting_ended(meeting: VexaMeeting) -> None:
             await cleanup_recording(m, db)
 
 
+async def _fetch_running_keys_safe(active: list[VexaMeeting]) -> set[tuple[str, str]] | None:
+    """Return the set of (platform, native_meeting_id) for all running Vexa bots.
+
+    Returns None if the Vexa API call fails (caller must skip end-detection that cycle).
+    """
+    if not active:
+        return None
+    try:
+        running_bots = await vexa.get_running_bots()
+        return {(b["platform"], b["native_meeting_id"]) for b in running_bots}
+    except Exception as exc:
+        logger.warning("Bot status poll failed — skipping end detection this cycle", error=str(exc))
+        return None
+
+
+async def _recover_stuck_meeting(meeting: VexaMeeting) -> None:
+    """Force-transcribe a meeting that has been stuck in 'stopping' too long."""
+    logger.warning(
+        "Bot poll: meeting stuck in stopping",
+        meeting_id=str(meeting.id),
+        timeout_minutes=PROCESSING_TIMEOUT_MINUTES,
+    )
+    async with AsyncSessionLocal() as db:
+        m = await db.scalar(
+            select(VexaMeeting).where(
+                VexaMeeting.id == meeting.id,
+                VexaMeeting.status == "stopping",
+            )
+        )
+        if m is None:
+            return
+        await run_transcription(m, db)
+        await db.commit()
+        if m.status == "completed":
+            await cleanup_recording(m, db)
+
+
 async def poll_loop() -> None:
     """Async task: run forever, polling Vexa for active meetings."""
     await asyncio.sleep(15)  # let the app finish starting up
@@ -89,13 +126,7 @@ async def poll_loop() -> None:
 
             # Fetch running bots once per cycle — a meeting has ended when its
             # (platform, native_meeting_id) is absent from this list.
-            running_keys: set[tuple[str, str]] | None = None
-            if active:
-                try:
-                    running_bots = await vexa.get_running_bots()
-                    running_keys = {(b["platform"], b["native_meeting_id"]) for b in running_bots}
-                except Exception as exc:
-                    logger.warning("Bot status poll failed — skipping end detection this cycle", error=str(exc))
+            running_keys = await _fetch_running_keys_safe(active)
 
             for meeting in active:
                 if running_keys is None:
@@ -113,24 +144,7 @@ async def poll_loop() -> None:
                 await _handle_meeting_ended(meeting)
 
             for meeting in stuck:
-                logger.warning(
-                    "Bot poll: meeting stuck in stopping",
-                    meeting_id=str(meeting.id),
-                    timeout_minutes=PROCESSING_TIMEOUT_MINUTES,
-                )
-                async with AsyncSessionLocal() as db:
-                    m = await db.scalar(
-                        select(VexaMeeting).where(
-                            VexaMeeting.id == meeting.id,
-                            VexaMeeting.status == "stopping",
-                        )
-                    )
-                    if m is None:
-                        continue
-                    await run_transcription(m, db)
-                    await db.commit()
-                    if m.status == "completed":
-                        await cleanup_recording(m, db)
+                await _recover_stuck_meeting(meeting)
 
         except asyncio.CancelledError:
             break
