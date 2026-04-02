@@ -11,7 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
-import { STORAGE_KEYS } from '@/lib/storage'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 type GapsSearch = { days?: number; gapType?: string }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
@@ -61,7 +61,8 @@ const GAP_TYPE_CLASSES: Record<string, string> = {
 function GapsPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
-  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const { user } = useCurrentUser()
+  const isAdmin = user?.isAdmin === true
   const navigate = useNavigate({ from: '/app/gaps/' })
 
   const { days: daysParam, gapType: gapTypeParam } = Route.useSearch()

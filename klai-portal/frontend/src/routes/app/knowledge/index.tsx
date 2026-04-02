@@ -4,11 +4,12 @@ import { useQuery } from '@tanstack/react-query'
 import { Brain, MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTriangle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
-import { STORAGE_KEYS } from '@/lib/storage'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -92,7 +93,8 @@ function KnowledgePage() {
     retry: false,
   })
 
-  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const { user: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.isAdmin === true
 
   const { data: gapSummary } = useQuery<GapSummary>({
     queryKey: ['gap-summary'],
@@ -108,7 +110,7 @@ function KnowledgePage() {
     retry: false,
   })
 
-  const { data: kbsData, isLoading: kbsLoading } = useQuery<KBsResponse>({
+  const { data: kbsData, isLoading: kbsLoading, error: kbsError, refetch: refetchKbs } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases'],
     queryFn: async () => {
       try {
@@ -142,7 +144,9 @@ function KnowledgePage() {
         {m.knowledge_page_intro_body()}
       </p>
 
-      <div className="flex flex-col gap-6">
+      {kbsError ? (
+        <QueryErrorState error={kbsError instanceof Error ? kbsError : new Error(String(kbsError))} onRetry={() => void refetchKbs()} />
+      ) : <div className="flex flex-col gap-6">
         {/* Personal knowledge base (chat RAG) */}
         <Link to="/app/knowledge/$kbSlug" params={{ kbSlug: 'personal' }}>
         <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
@@ -314,7 +318,7 @@ function KnowledgePage() {
             </Card>
           </Link>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

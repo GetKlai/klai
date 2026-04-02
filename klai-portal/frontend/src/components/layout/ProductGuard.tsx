@@ -1,19 +1,7 @@
 import type { ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 import * as m from '@/paraglide/messages'
-import { STORAGE_KEYS } from '@/lib/storage'
-
-function getStoredProducts(): string[] {
-  try {
-    return JSON.parse(sessionStorage.getItem(STORAGE_KEYS.products) ?? '[]') as string[]
-  } catch {
-    return []
-  }
-}
-
-function isAdmin(): boolean {
-  return sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
-}
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 interface ProductGuardProps {
   product: string
@@ -21,7 +9,8 @@ interface ProductGuardProps {
 }
 
 export function ProductGuard({ product, children }: ProductGuardProps) {
-  if (isAdmin() || getStoredProducts().includes(product)) {
+  const { user } = useCurrentUser()
+  if (user?.isAdmin || user?.products.includes(product)) {
     return <>{children}</>
   }
 
