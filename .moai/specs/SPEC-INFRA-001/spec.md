@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-001
-version: "3.0.0"
-status: draft
+version: "3.1.0"
+status: partial
 created: 2026-04-02
 updated: 2026-04-02
 author: MoAI
@@ -14,6 +14,7 @@ priority: high
 
 | Versie | Datum | Auteur | Wijziging |
 |--------|-------|--------|-----------|
+| 3.1.0 | 2026-04-02 | MoAI | Status update: jezweb vervangen door Twenty built-in MCP; DB-driven implementatie geparkeerd pending MCP management onderzoek |
 | 3.0.0 | 2026-04-02 | MoAI | MCP Catalog + encrypted secrets in DB; interne service URL voor klai-knowledge |
 | 2.0.0 | 2026-04-02 | MoAI | DB-driven MCP configuratie (was: statische yaml bestanden) |
 | 1.0.0 | 2026-04-02 | MoAI | Initieel SPEC document |
@@ -87,7 +88,7 @@ Secrets worden **Fernet-encrypted opgeslagen** (met de portal-api `SECRET_KEY`).
 
 **[A-002]** De LibreChat Docker image (`ghcr.io/danny-avila/librechat:latest`) bevat `npx` voor het uitvoeren van stdio MCP-servers. **Confidence: High** — bevestigd in productie. Kanttekening: `npx -y <package> start` faalt in de LibreChat container omdat turbo de LibreChat monorepo-workspace oppikt. Workaround: `npm install --prefix /tmp/<pkg> <package> && node /tmp/<pkg>/node_modules/<package>/dist/index.js`.
 
-**[A-003]** De Twenty CRM MCP-server (`twenty-mcp-server` npm package) is stabiel genoeg voor productie-gebruik. **Confidence: Medium** — 29 tools, actief onderhouden (maart 2026).
+**[A-003]** ~~De Twenty CRM MCP-server (`twenty-mcp-server` npm package) is stabiel genoeg voor productie-gebruik.~~ **VERVALLEN** — jezweb/twenty-mcp community package is abandoned: 20/29 tools broken. Twee bevestigde bugs: `create_note` gebruikt `body` i.p.v. `bodyV2`; `create_comment` gebruikt `CommentCreateInput` dat niet meer bestaat in de API. **Vervangen door Twenty built-in MCP server** (zie §4.1 update).
 
 **[A-004]** PyYAML is beschikbaar in de portal-backend omgeving voor yaml generatie. **Confidence: High** — standaard Python dependency.
 
@@ -125,7 +126,19 @@ Secrets worden **Fernet-encrypted opgeslagen** (met de portal-api `SECRET_KEY`).
 
 ### 4.1 MCP Catalog
 
-Nieuw bestand `deploy/librechat/mcp_catalog.yaml` met ondersteunde MCP servers:
+> **Status update (v3.1.0):** de `jezweb/twenty-mcp-server` stdio-aanpak is vervangen door de built-in MCP server die Twenty zelf levert. De Twenty MCP server is beschikbaar op `https://crm.getklai.com/mcp` (streamable-http transport, JSON-RPC). De `IS_AI_ENABLED` feature flag is handmatig ingesteld in de PostgreSQL `core.featureFlag` tabel en de Redis workspace-cache is gecleared. De huidige `librechat.yaml` voor getklai tenant is al bijgewerkt op de server.
+
+**Huidige config (getklai, `/opt/klai/librechat/getklai/librechat.yaml` op core-01):**
+
+```yaml
+twenty-crm:
+  type: streamable-http
+  url: https://crm.getklai.com/mcp
+  headers:
+    Authorization: 'Bearer ${TWENTY_API_KEY}'
+```
+
+**Gewenste config_template in `mcp_catalog.yaml` (DB-driven, nog niet geïmplementeerd):**
 
 ```yaml
 servers:
@@ -135,16 +148,25 @@ servers:
       - TWENTY_API_KEY
       - TWENTY_BASE_URL
     config_template:
-      type: stdio
-      command: /bin/sh
-      args:
-        - "-c"
-        - "npm install --prefix /tmp/twenty twenty-mcp-server --prefer-offline --silent 2>/dev/null; node /tmp/twenty/node_modules/twenty-mcp-server/dist/index.js"
-      timeout: 60000
-      initTimeout: 120000
-      env:
-        TWENTY_API_KEY: "${TWENTY_API_KEY}"
-        TWENTY_BASE_URL: "${TWENTY_BASE_URL}"
+      type: streamable-http
+      url: "${TWENTY_BASE_URL}/mcp"
+      headers:
+        Authorization: "Bearer ${TWENTY_API_KEY}"
+```
+
+**Beschikbare tools via Twenty MCP:** `http_request` (Twenty REST API), `send_email`, `search_help_center`.
+
+**System prompt (huidig, actief in librechat.yaml):**
+
+```yaml
+systemPrompt: >-
+  You are a helpful AI assistant. Always respond in the same language the user
+  writes in — if they write Dutch, reply in Dutch; if English, reply in English.
+  ## Twenty CRM
+  Use http_request_mcp_twenty-crm tool. Base URL already configured.
+  Notes require bodyV2 (NOT body):
+    { "title": "...", "bodyV2": { "markdown": "...", "blocknote": null } }
+  POST /objects/noteTargets to link notes to records.
 ```
 
 ### 4.2 Database schema
@@ -259,12 +281,20 @@ servers:
 | Component | Status | Aanpak |
 |-----------|--------|--------|
 | `PortalOrg.mcp_servers` DB kolom | ✅ | JSON, migration `d2e3f4a5b6c7` |
-| `_generate_librechat_yaml()` in provisioning.py | ✅ | Mergt base yaml + DB config |
-| twenty-crm voor getklai | ✅ | stdio in LibreChat container (tijdelijk) |
-| Secrets encrypted in DB | ❌ | Env vars in `.env`, plaintext |
+| `_generate_librechat_yaml()` in provisioning.py | ❌ | Niet geïmplementeerd — geparkeerd |
+| twenty-crm voor getklai | ✅ | Twenty built-in MCP, streamable-http naar `crm.getklai.com/mcp` |
+| `IS_AI_ENABLED` feature flag | ✅ | Handmatig in `core.featureFlag` tabel + Redis cache gecleared |
+| Auth header in MCP verbinding | ✅ | `Authorization: Bearer ${TWENTY_API_KEY}` in librechat.yaml headers |
+| Auth header in http_request calls | ✅ workaround | Token hardcoded in system prompt (Twenty http_request injecteert geen auth) |
+| API key in container env | ✅ | `TWENTY_API_KEY` in `/opt/klai/.env` |
+| Secrets encrypted in DB | ❌ | Niet geïmplementeerd |
 | Per-tenant MCP containers | ❌ | Toekomstige architectuur |
 | MCP Catalog yaml | ❌ | Toekomstige architectuur |
-| klai-knowledge interne URL | ⚠️ | getklai gebruikt nog SSE via public URL |
+| klai-knowledge interne URL | ⚠️ | getklai gebruikt nog public URL |
+
+**Bekende beperking (hardcoded token):** De Twenty `http_request` tool injecteert de Bearer token niet automatisch. De AI moet hem zelf meegeven in elke call. Omdat `${TWENTY_API_KEY}` niet geëxpandeerd wordt in de LibreChat `systemPrompt`, is de token tijdelijk hardcoded in de system prompt op de server (`/opt/klai/librechat/getklai/librechat.yaml`). Dit is een workaround — bij rotatie van de API key moet de system prompt handmatig bijgewerkt worden.
+
+**DB-driven implementatie geparkeerd:** De volledige DB-driven aanpak (`_generate_librechat_yaml()`, MCP Catalog, Fernet-encrypted secrets) is geparkeerd. Zie GetKlai/klai#87 voor vervolgonderzoek en oplossingsrichtingen.
 
 ---
 
