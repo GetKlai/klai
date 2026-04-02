@@ -60,9 +60,7 @@ async def count_accessible_meetings(
     db: AsyncSession,
 ) -> int:
     """Return count of meetings accessible by this user."""
-    result = await db.execute(
-        select(func.count(VexaMeeting.id)).where(*_accessible_meetings_filter(user_id, org_id))
-    )
+    result = await db.execute(select(func.count(VexaMeeting.id)).where(*_accessible_meetings_filter(user_id, org_id)))
     return result.scalar_one()
 
 
