@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
@@ -46,11 +46,9 @@ function McpTestButton({ serverId, token }: { serverId: string; token: string })
     setTesting(true)
     setResult(null)
     try {
-      const res = await fetch(`${API_BASE}/api/mcp-servers/${serverId}/test`, {
+      const data = await apiFetch<TestResult>(`/api/mcp-servers/${serverId}/test`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      const data = (await res.json()) as TestResult
       setResult(data)
     } catch (err) {
       queryLogger.error('MCP test request failed', { serverId, err })
@@ -131,16 +129,10 @@ function McpServerCard({
         if (v && v !== '••••••••') env[k] = v
         else if (server.configured_env_vars.includes(k)) env[k] = v // keep placeholder — backend ignores blanks
       }
-      const res = await fetch(`${API_BASE}/api/mcp-servers/${server.id}`, {
+      return apiFetch(`/api/mcp-servers/${server.id}`, token, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled, env }),
       })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text)
-      }
-      return res.json()
     },
     onSuccess: () => {
       setSuccessMsg(m.admin_integrations_save_success())
@@ -252,13 +244,7 @@ function IntegrationsPage() {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['mcp-servers'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/mcp-servers`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`${res.status}`)
-      return res.json() as Promise<{ servers: McpServer[] }>
-    },
+    queryFn: async () => apiFetch<{ servers: McpServer[] }>('/api/mcp-servers', token),
     enabled: !!token,
   })
 

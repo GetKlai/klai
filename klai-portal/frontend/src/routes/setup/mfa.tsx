@@ -5,7 +5,7 @@ import QRCode from 'react-qr-code'
 import { ArrowRight, Fingerprint, Mail, Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { STORAGE_KEYS } from '@/lib/storage'
@@ -124,12 +124,9 @@ function PasskeySetup({
     setLoading(true)
     try {
       // 1. Get registration options from backend
-      const setupRes = await fetch(`${API_BASE}/api/auth/passkey/setup`, {
+      const { passkey_id, options } = await apiFetch<{ passkey_id: string; options: { publicKey: PublicKeyCredentialCreationOptions & { challenge: string; user: { id: string } & PublicKeyCredentialUserEntity; excludeCredentials?: { id: string; type: string }[] } } }>(`/api/auth/passkey/setup`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (!setupRes.ok) throw new Error('setup_failed')
-      const { passkey_id, options } = await setupRes.json()
       // Zitadel wraps WebAuthn options under publicKeyCredentialCreationOptions.publicKey
       const pk = options.publicKey
 
@@ -144,6 +141,7 @@ function PasskeySetup({
         excludeCredentials: pk.excludeCredentials?.map((c: { id: string; type: string }) => ({
           ...c,
           id: base64urlToBuffer(c.id),
+          type: c.type as 'public-key',
         })) ?? [],
       }
 
@@ -152,18 +150,13 @@ function PasskeySetup({
       if (!credential) throw new Error('cancelled')
 
       // 4. Send credential to backend for verification
-      const confirmRes = await fetch(`${API_BASE}/api/auth/passkey/confirm`, {
+      await apiFetch(`/api/auth/passkey/confirm`, token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({
           passkey_id,
           public_key_credential: encodeCredential(credential),
         }),
       })
-      if (!confirmRes.ok) throw new Error('confirm_failed')
 
       onSuccess()
     } catch (err) {
@@ -255,11 +248,7 @@ function EmailOTPSetup({
     setError(null)
     setSending(true)
     try {
-      const res = await fetch(`${API_BASE}/api/auth/email-otp/setup`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error()
+      await apiFetch(`/api/auth/email-otp/setup`, token, { method: 'POST' })
       setPhase('verify')
       setResendAt(Date.now() + 30_000)
     } catch {
@@ -273,11 +262,7 @@ function EmailOTPSetup({
     setError(null)
     setSending(true)
     try {
-      const res = await fetch(`${API_BASE}/api/auth/email-otp/resend`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error()
+      await apiFetch(`/api/auth/email-otp/resend`, token, { method: 'POST' })
       setResendAt(Date.now() + 30_000)
     } catch {
       setError(m.error_connection())
@@ -291,19 +276,10 @@ function EmailOTPSetup({
     setError(null)
     setVerifying(true)
     try {
-      const res = await fetch(`${API_BASE}/api/auth/email-otp/confirm`, {
+      await apiFetch(`/api/auth/email-otp/confirm`, token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ code }),
       })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        setError(data?.detail ?? m.setup_mfa_email_error_invalid())
-        return
-      }
       onSuccess()
     } catch {
       setError(m.error_connection())
@@ -428,14 +404,7 @@ function TOTPSetup({
     setUri(null)
     setSecret(null)
     setLoadError(null)
-    fetch(`${API_BASE}/api/auth/totp/setup`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error()
-        return r.json()
-      })
+    apiFetch<{ uri: string; secret: string }>(`/api/auth/totp/setup`, token, { method: 'POST' })
       .then((data) => {
         setUri(data.uri)
         setSecret(data.secret)
@@ -448,19 +417,10 @@ function TOTPSetup({
     setError(null)
     setLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/api/auth/totp/confirm`, {
+      await apiFetch(`/api/auth/totp/confirm`, token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ code }),
       })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        setError(data?.detail ?? m.setup_2fa_error_invalid_code())
-        return
-      }
       onSuccess()
     } catch {
       setError(m.error_connection())

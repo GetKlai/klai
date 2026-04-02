@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { SyncStatusBadge, ASSERTION_MODE_OPTIONS } from './-kb-helpers'
 import type { ConnectorSummary, MembersResponse, GitHubConfig, WebCrawlerConfig } from './-kb-types'
 
@@ -51,13 +51,7 @@ function ConnectorsTab() {
   // Determine ownership from cached members query
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Members laden mislukt')
-      return res.json() as Promise<MembersResponse>
-    },
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
     enabled: !!token,
   })
   const myUserId = auth.user?.profile?.sub
@@ -74,13 +68,7 @@ function ConnectorsTab() {
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_connectors_error_fetch({ status: String(res.status) }))
-      return res.json() as Promise<ConnectorSummary[]>
-    },
+    queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token),
     enabled: !!token,
     refetchInterval: (query) => {
       const data = query.state.data
@@ -127,11 +115,7 @@ function ConnectorsTab() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_connectors_delete_error({ status: String(res.status) }))
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, token, { method: 'DELETE' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] }),
   })
@@ -154,9 +138,8 @@ function ConnectorsTab() {
         if (editWebcrawlerConfig.max_pages) config.max_pages = Number(editWebcrawlerConfig.max_pages)
         if (editWebcrawlerConfig.content_selector) config.content_selector = editWebcrawlerConfig.content_selector
       }
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, token, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editName,
           config,
@@ -164,7 +147,6 @@ function ConnectorsTab() {
           allowed_assertion_modes: editAllowedAssertionModes.length > 0 ? editAllowedAssertionModes : null,
         }),
       })
-      if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
@@ -174,13 +156,15 @@ function ConnectorsTab() {
 
   const editPreviewMutation = useMutation({
     mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, content_selector: content_selector || null }),
-      })
-      if (!res.ok) return { fit_markdown: '', word_count: 0, warnings: [] }
-      return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
+      try {
+        return await apiFetch<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>(
+          `/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`,
+          token,
+          { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null }) },
+        )
+      } catch {
+        return { fit_markdown: '', word_count: 0, warnings: [] as string[] }
+      }
     },
     onSuccess: (data) => setEditPreviewResult(data),
     onError: () => setEditPreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
@@ -217,15 +201,12 @@ function ConnectorsTab() {
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
     try {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        queryClient.setQueryData(['kb-connectors-portal', kbSlug], (old: ConnectorSummary[] | undefined) =>
-          old?.map((c) => c.id === id ? { ...c, last_sync_status: 'running' } : c)
-        )
-      }
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, token, { method: 'POST' })
+      queryClient.setQueryData(['kb-connectors-portal', kbSlug], (old: ConnectorSummary[] | undefined) =>
+        old?.map((c) => c.id === id ? { ...c, last_sync_status: 'running' } : c)
+      )
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+    } catch {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
     } finally {
       setSyncingIds((prev) => { const next = new Set(prev); next.delete(id); return next })

@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { taxonomyLogger } from '@/lib/logger'
 import type { KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal } from './-kb-types'
 
@@ -202,25 +202,13 @@ function TaxonomyTab() {
   // Derive permissions from cached queries
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('KB laden mislukt')
-      return res.json() as Promise<KnowledgeBase>
-    },
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
     enabled: !!token,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Members laden mislukt')
-      return res.json() as Promise<MembersResponse>
-    },
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
     enabled: !!token && !!kb,
   })
 
@@ -237,14 +225,12 @@ function TaxonomyTab() {
   const nodesQuery = useQuery<{ nodes: TaxonomyNode[] }>({
     queryKey: ['taxonomy-nodes', kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        taxonomyLogger.warn('Taxonomy nodes fetch failed', { slug: kbSlug, status: res.status })
-        throw new Error(m.knowledge_taxonomy_error_fetch())
+      try {
+        return await apiFetch<{ nodes: TaxonomyNode[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, token)
+      } catch (err) {
+        taxonomyLogger.warn('Taxonomy nodes fetch failed', { slug: kbSlug, error: err })
+        throw err
       }
-      return res.json() as Promise<{ nodes: TaxonomyNode[] }>
     },
     enabled: !!token,
   })
@@ -252,26 +238,22 @@ function TaxonomyTab() {
   const proposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
     queryKey: ['taxonomy-proposals', kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        taxonomyLogger.warn('Taxonomy proposals fetch failed', { slug: kbSlug, status: res.status })
-        throw new Error(m.knowledge_taxonomy_error_fetch())
+      try {
+        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, token)
+      } catch (err) {
+        taxonomyLogger.warn('Taxonomy proposals fetch failed', { slug: kbSlug, error: err })
+        throw err
       }
-      return res.json() as Promise<{ proposals: TaxonomyProposal[] }>
     },
     enabled: !!token,
   })
 
   const createNodeMutation = useMutation({
     mutationFn: async ({ name, parentId }: { name: string; parentId: number | null }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, parent_id: parentId }),
       })
-      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_create())
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
@@ -283,34 +265,24 @@ function TaxonomyTab() {
 
   const renameNodeMutation = useMutation({
     mutationFn: async ({ nodeId, name }: { nodeId: number; name: string }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, token, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       })
-      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_rename())
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
   })
 
   const deleteNodeMutation = useMutation({
     mutationFn: async (nodeId: number) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_delete())
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, token, { method: 'DELETE' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
   })
 
   const approveMutation = useMutation({
     mutationFn: async (proposalId: number) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/approve`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_approve())
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/approve`, token, { method: 'POST' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
@@ -320,12 +292,10 @@ function TaxonomyTab() {
 
   const rejectMutation = useMutation({
     mutationFn: async ({ proposalId, reason }: { proposalId: number; reason: string }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/reject`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/reject`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       })
-      if (!res.ok) throw new Error(m.knowledge_taxonomy_error_reject())
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })

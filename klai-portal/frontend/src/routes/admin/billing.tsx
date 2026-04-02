@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { number } from '@/paraglide/registry'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin/billing')({
   component: BillingPage,
@@ -137,10 +137,7 @@ function BillingPage() {
 
   useEffect(() => {
     if (!token) return
-    fetch(`${API_BASE}/api/billing/status`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
+    apiFetch<BillingStatusResponse>(`/api/billing/status`, token)
       .then(setBillingStatus)
       .catch(() => setFetchError(m.admin_billing_error_fetch()))
       .finally(() => setLoadingStatus(false))
@@ -244,22 +241,10 @@ function SetupView({
       if (form.billing_email) body.billing_email = form.billing_email
       if (form.internal_reference) body.internal_reference = form.internal_reference
 
-      const res = await fetch(`${API_BASE}/api/billing/mandate`, {
+      const data = await apiFetch<{ mandate_url?: string }>(`/api/billing/mandate`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(body),
       })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        setError(data?.detail ?? m.admin_billing_error_server({ status: String(res.status) }))
-        return
-      }
-
-      const data = await res.json()
 
       if (data.mandate_url) {
         window.location.href = data.mandate_url
@@ -272,8 +257,8 @@ function SetupView({
           moneybird_contact_id: null,
         })
       }
-    } catch {
-      setError(m.admin_billing_error_connection())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : m.admin_billing_error_connection())
     } finally {
       setLoading(false)
     }
@@ -530,11 +515,7 @@ function ActiveView({
     setLoadingInvoices(true)
     setActionError(null)
     try {
-      const res = await fetch(`${API_BASE}/api/billing/invoices`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error()
-      const data = await res.json()
+      const data = await apiFetch<{ portal_url: string }>(`/api/billing/invoices`, token)
       window.open(data.portal_url, '_blank')
     } catch {
       setActionError(m.admin_billing_error_invoices())
@@ -547,11 +528,7 @@ function ActiveView({
     setCancelling(true)
     setActionError(null)
     try {
-      const res = await fetch(`${API_BASE}/api/billing/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error()
+      await apiFetch(`/api/billing/cancel`, token, { method: 'POST' })
       onCancel({ ...status, billing_status: 'cancelled' })
     } catch {
       setActionError(m.admin_billing_error_cancel())

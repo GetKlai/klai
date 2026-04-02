@@ -5,7 +5,7 @@ import { Brain, MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTrian
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { STORAGE_KEYS } from '@/lib/storage'
@@ -81,14 +81,12 @@ function KnowledgePage() {
   const { data: stats, isLoading: statsLoading } = useQuery<KnowledgeStats>({
     queryKey: ['knowledge-stats'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/knowledge/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Knowledge stats fetch failed', { status: res.status })
-        throw new Error('Stats laden mislukt')
+      try {
+        return await apiFetch<KnowledgeStats>(`/api/knowledge/stats`, token)
+      } catch (err) {
+        queryLogger.warn('Knowledge stats fetch failed', { err })
+        throw err
       }
-      return res.json() as Promise<KnowledgeStats>
     },
     enabled: !!token,
     retry: false,
@@ -97,16 +95,14 @@ function KnowledgePage() {
   const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
 
   const { data: gapSummary } = useQuery<GapSummary>({
-    queryKey: ['gap-summary', token],
+    queryKey: ['gap-summary'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/gaps/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Gap summary fetch failed', { status: res.status })
-        throw new Error(`${res.status}`)
+      try {
+        return await apiFetch<GapSummary>(`/api/app/gaps/summary`, token)
+      } catch (err) {
+        queryLogger.warn('Gap summary fetch failed', { err })
+        throw err
       }
-      return res.json() as Promise<GapSummary>
     },
     enabled: !!token && isAdmin,
     retry: false,
@@ -115,14 +111,12 @@ function KnowledgePage() {
   const { data: kbsData, isLoading: kbsLoading } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Knowledge bases fetch failed', { status: res.status })
-        throw new Error('Kennisbanken laden mislukt')
+      try {
+        return await apiFetch<KBsResponse>(`/api/app/knowledge-bases`, token)
+      } catch (err) {
+        queryLogger.warn('Knowledge bases fetch failed', { err })
+        throw err
       }
-      return res.json() as Promise<KBsResponse>
     },
     enabled: !!token,
     retry: false,

@@ -22,6 +22,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 type TranscribeSearch = { search?: string }
@@ -188,26 +189,14 @@ function TranscribePage() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const { data: transcriptionsData, isLoading: transcriptionsLoading } = useQuery<TranscriptionListResponse>({
-    queryKey: ['transcriptions', token],
-    queryFn: async () => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions?limit=50`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json()
-    },
+    queryKey: ['transcriptions'],
+    queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token),
     enabled: !!token,
   })
 
   const { data: meetingsData, isLoading: meetingsLoading } = useQuery<MeetingListResponse>({
-    queryKey: ['meetings', token],
-    queryFn: async () => {
-      const res = await fetch(`${BOTS_BASE}/meetings?limit=50`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json()
-    },
+    queryKey: ['meetings'],
+    queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token),
     enabled: !!token,
     refetchInterval: (query) => {
       const data = query.state.data
@@ -228,61 +217,43 @@ function TranscribePage() {
 
   const deleteUploadMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
+      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}`, token, { method: 'DELETE' })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions'] }),
   })
 
   const deleteMeetingMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${BOTS_BASE}/meetings/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
+      await apiFetch(`${BOTS_BASE}/meetings/${id}`, token, { method: 'DELETE' })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings', token] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings'] }),
   })
 
   const renameMutation = useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string | null }) => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${id}`, {
+      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}`, token, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       })
-      if (!res.ok) throw new Error('Opslaan mislukt')
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions'] })
       setEditingId(null)
     },
   })
 
   const stopMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${BOTS_BASE}/meetings/${id}/stop`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Stoppen mislukt')
+      await apiFetch(`${BOTS_BASE}/meetings/${id}/stop`, token, { method: 'POST' })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings', token] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings'] }),
   })
 
   const retryMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${id}/retry`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Opnieuw proberen mislukt')
+      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}/retry`, token, { method: 'POST' })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions'] }),
   })
 
   function startEdit(item: UnifiedItem) {

@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { roleBadge } from './-kb-helpers'
 import type { KnowledgeBase, MembersResponse } from './-kb-types'
 
@@ -45,25 +45,13 @@ function MembersTab() {
   // Reuse cached KB data from parent layout
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('KB laden mislukt')
-      return res.json() as Promise<KnowledgeBase>
-    },
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
     enabled: !!token,
   })
 
   const { data: members, isLoading } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Members laden mislukt')
-      return res.json() as Promise<MembersResponse>
-    },
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
     enabled: !!token,
   })
 
@@ -73,13 +61,10 @@ function MembersTab() {
 
   const inviteUserMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/users`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       })
-      if (res.status === 404) throw new Error(m.knowledge_members_invite_not_found())
-      if (!res.ok) throw new Error(m.knowledge_members_invite_error())
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
@@ -91,12 +76,10 @@ function MembersTab() {
 
   const inviteGroupMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/groups`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ group_id: Number(inviteGroupId), role: inviteRole }),
       })
-      if (!res.ok) throw new Error('Groep toevoegen mislukt')
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] })
@@ -108,22 +91,18 @@ function MembersTab() {
 
   const removeUserMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/users/${id}`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users/${id}`, token, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
   })
 
   const removeGroupMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members/groups/${id}`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups/${id}`, token, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
   })

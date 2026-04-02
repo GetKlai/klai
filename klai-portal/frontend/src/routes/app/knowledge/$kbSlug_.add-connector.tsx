@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 // -- Types -------------------------------------------------------------------
 
@@ -109,9 +109,8 @@ function AddConnectorPage() {
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
       }
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           connector_type: selectedType,
@@ -120,7 +119,6 @@ function AddConnectorPage() {
           allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
-      if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
@@ -132,16 +130,13 @@ function AddConnectorPage() {
 
   const previewMutation = useMutation({
     mutationFn: async ({ url, content_selector, try_ai }: { url: string; content_selector?: string; try_ai?: boolean }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false }),
-      })
-      if (!res.ok) throw new Error(`Preview failed (${String(res.status)})`)
-      return res.json() as Promise<{
+      return apiFetch<{
         fit_markdown: string; word_count: number; warnings: string[]; url: string
         content_selector: string | null; selector_source: string | null
-      }>
+      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, token, {
+        method: 'POST',
+        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false }),
+      })
     },
     onSuccess: (data) => {
       setPreviewResult(data)

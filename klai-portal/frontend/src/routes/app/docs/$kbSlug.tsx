@@ -16,6 +16,7 @@ import {
 } from '@/lib/kb-editor/tree-utils'
 import type { NavNode } from '@/lib/kb-editor/tree-utils'
 
+import { apiFetch } from '@/lib/apiFetch'
 import { editorLogger, treeLogger } from '@/lib/logger'
 import { BlockPageEditor } from '@/components/kb-editor/BlockPageEditor'
 import type { BlockPageEditorHandle } from '@/components/kb-editor/BlockPageEditor'
@@ -147,17 +148,10 @@ function KBEditorPage() {
   editTitleRef.current = editTitle
   pageIconRef.current = pageIcon
 
-  const authHeader = `Bearer ${token}`
 
   const { data: tree = [], refetch: refetchTree } = useQuery<NavNode[]>({
     queryKey: ['docs-tree', orgSlug, kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`, {
-        headers: { Authorization: authHeader },
-      })
-      if (!res.ok) throw new Error('Failed')
-      return res.json()
-    },
+    queryFn: async () => apiFetch<NavNode[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`, token),
     enabled: !!token,
     select: (data) => data,
   })
@@ -171,25 +165,18 @@ function KBEditorPage() {
 
   const { data: page } = useQuery<PageData>({
     queryKey: ['docs-page', orgSlug, kbSlug, selectedPath],
-    queryFn: async () => {
-      const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`,
-        { headers: { Authorization: authHeader } }
-      )
-      if (!res.ok) throw new Error('Failed')
-      return res.json()
-    },
+    queryFn: async () => apiFetch<PageData>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token),
     enabled: !!token && !!selectedPath,
   })
 
   const { data: pageIndex = [] } = useQuery<Array<{ id: string | null; slug: string; title: string; icon?: string }>>({
     queryKey: ['docs-page-index', orgSlug, kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`, {
-        headers: { Authorization: authHeader },
-      })
-      if (!res.ok) return []
-      return res.json()
+      try {
+        return await apiFetch<Array<{ id: string | null; slug: string; title: string; icon?: string }>>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`, token)
+      } catch {
+        return []
+      }
     },
     enabled: !!token,
   })
@@ -243,15 +230,10 @@ function KBEditorPage() {
     }
 
     try {
-      const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`,
-        {
-          method: 'PUT',
-          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: newPageTitle, content: '' }),
-        }
-      )
-      if (!res.ok) throw new Error('Aanmaken mislukt')
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ title: newPageTitle, content: '' }),
+      })
 
       if (parentPath !== null) {
         // Insert the new slug as a child of parentPath in the sidebar
@@ -278,33 +260,19 @@ function KBEditorPage() {
     mutationFn: async (file: File) => {
       const form = new FormData()
       form.append('file', file)
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/upload`, {
+      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/upload`, token, {
         method: 'POST',
-        headers: { Authorization: authHeader },
         body: form,
       })
-      if (!res.ok) throw new Error('Upload failed')
-      return res.json()
     },
     onSuccess: () => refetchTree(),
   })
 
   const deleteMutation = useMutation({
     mutationFn: async (path: string) => {
-      const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`,
-        { method: 'DELETE', headers: { Authorization: authHeader } },
-      )
-      if (!res.ok) {
-        let detail = m.docs_page_delete_error()
-        try {
-          const data = await res.json()
-          detail = data.error ?? detail
-        } catch {
-          // keep default detail
-        }
-        throw new Error(detail)
-      }
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`, token, {
+        method: 'DELETE',
+      })
     },
     onSuccess: (_data, path) => {
       // If the deleted page was the currently selected page, clear editor
@@ -337,15 +305,10 @@ function KBEditorPage() {
     if (newSlug !== currentSlug) {
       // Title changed enough to alter the slug — rename instead of a plain save
       try {
-        const res = await fetch(
-          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ newSlug, title, content, icon: pageIconRef.current }),
-          }
-        )
-        if (!res.ok) throw new Error('Rename failed')
+        await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`, tok, {
+          method: 'POST',
+          body: JSON.stringify({ newSlug, title, content, icon: pageIconRef.current }),
+        })
         // Update local selection to new slug
         selectedPathRef.current = newSlug
         setSelectedPath(newSlug)
@@ -362,15 +325,10 @@ function KBEditorPage() {
 
     // Normal save — slug unchanged
     try {
-      const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`,
-        {
-          method: 'PUT',
-          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, content, icon: pageIconRef.current }),
-        }
-      )
-      if (!res.ok) throw new Error('Save failed')
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
+        method: 'PUT',
+        body: JSON.stringify({ title, content, icon: pageIconRef.current }),
+      })
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
       void refetchTree()
@@ -393,15 +351,10 @@ function KBEditorPage() {
     const editAccess = accessMode === 'org' ? 'org' : accessUsers
     setAccessSaveStatus('saving')
     try {
-      const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`,
-        {
-          method: 'PUT',
-          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: editTitleRef.current, content, icon: pageIconRef.current, edit_access: editAccess }),
-        }
-      )
-      if (!res.ok) throw new Error('Save failed')
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ title: editTitleRef.current, content, icon: pageIconRef.current, edit_access: editAccess }),
+      })
       setAccessSaveStatus('saved')
       setTimeout(() => setAccessSaveStatus('idle'), 2000)
     } catch (err) {
@@ -410,7 +363,7 @@ function KBEditorPage() {
       setTimeout(() => setAccessSaveStatus('idle'), 3000)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setAccessSaveStatus is a wrapper around setAccessState (stable setter); adding it recreates this callback every render
-  }, [selectedPath, orgSlug, kbSlug, authHeader, accessMode, accessUsers])
+  }, [selectedPath, orgSlug, kbSlug, token, accessMode, accessUsers])
 
   // Called by NavTree when the user reorders items via drag-and-drop.
   // newTree is the full updated tree after the operation.
@@ -421,22 +374,17 @@ function KBEditorPage() {
 
     const pages = navToSidebarEntries(newTree)
     try {
-      const res = await fetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/sidebar`,
-        {
-          method: 'PUT',
-          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pages }),
-        }
-      )
-      if (!res.ok) throw new Error('Sidebar update failed')
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/sidebar`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ pages }),
+      })
       // Clear optimistic state — next refetch gives fresh data
       await refetchTree()
     } catch (err) {
       treeLogger.error('Sidebar reorder failed, reverting', err)
       setLocalTree(previousTree)
     }
-  }, [orgSlug, kbSlug, authHeader, localTree, tree, refetchTree])
+  }, [orgSlug, kbSlug, token, localTree, tree, refetchTree])
 
   // Opens the new-page input anchored under a specific parent
   const handleAddSubpage = useCallback((parentPath: string) => {

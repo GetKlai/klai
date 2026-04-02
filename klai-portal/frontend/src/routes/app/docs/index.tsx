@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/docs/')({
   component: () => (
@@ -33,13 +33,7 @@ function DocsPage() {
 
   const { data: kbs = [], isLoading, error } = useQuery<KBWithAccess[]>({
     queryKey: ['docs-kbs-with-access'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases-with-access`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Laden mislukt')
-      return res.json() as Promise<KBWithAccess[]>
-    },
+    queryFn: async () => apiFetch<KBWithAccess[]>(`/api/app/knowledge-bases-with-access`, token),
     enabled: !!token,
   })
 

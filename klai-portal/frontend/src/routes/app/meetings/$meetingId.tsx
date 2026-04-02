@@ -9,6 +9,7 @@ import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/meetings/$meetingId')({
   component: () => (
@@ -120,14 +121,8 @@ function MeetingDetailPage() {
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const { data: meeting, isLoading } = useQuery<MeetingDetail>({
-    queryKey: ['meeting', meetingId, token],
-    queryFn: async () => {
-      const res = await fetch(`${BOTS_BASE}/meetings/${meetingId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json() as Promise<MeetingDetail>
-    },
+    queryKey: ['meeting', meetingId],
+    queryFn: async () => apiFetch<MeetingDetail>(`${BOTS_BASE}/meetings/${meetingId}`, token),
     enabled: !!token,
     refetchInterval: (query) =>
       query.state.data && ACTIVE_STATUSES.includes(query.state.data.status) ? 3000 : false,
@@ -135,32 +130,20 @@ function MeetingDetailPage() {
 
   const stopMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${BOTS_BASE}/meetings/${meetingId}/stop`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Stoppen mislukt')
+      await apiFetch(`${BOTS_BASE}/meetings/${meetingId}/stop`, token, { method: 'POST' })
     },
     onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId, token] }),
+      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId] }),
   })
 
   const summarizeMutation = useMutation({
     mutationFn: async (force: boolean) => {
       const url = `${BOTS_BASE}/meetings/${meetingId}/summarize${force ? '?force=true' : ''}`
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-        throw new Error(err.detail ?? 'Summarization failed')
-      }
-      return res.json()
+      return apiFetch(url, token, { method: 'POST' })
     },
     onSuccess: () => {
       setSummaryError(null)
-      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId] })
     },
     onError: (err: Error) => {
       setSummaryError(err.message)

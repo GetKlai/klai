@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/account')({
   component: AccountPage,
@@ -24,13 +24,13 @@ function AccountPage() {
 
   // Fetch current user's preferred language from the portal DB
   const { data: meData } = useQuery({
-    queryKey: ['me-language', token],
+    queryKey: ['me-language'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return null
-      return res.json() as Promise<{ preferred_language?: 'nl' | 'en' }>
+      try {
+        return await apiFetch<{ preferred_language?: 'nl' | 'en' }>(`/api/me`, token)
+      } catch {
+        return null
+      }
     },
     enabled: !!token,
   })
@@ -43,15 +43,10 @@ function AccountPage() {
 
   const saveMutation = useMutation({
     mutationFn: async (preferred_language: 'nl' | 'en') => {
-      const res = await fetch(`${API_BASE}/api/me/language`, {
+      await apiFetch(`/api/me/language`, token, {
         method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ preferred_language }),
       })
-      if (!res.ok) throw new Error(m.account_error_save())
       return preferred_language
     },
     onSuccess: (lang) => {
@@ -63,12 +58,7 @@ function AccountPage() {
 
   const sarMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/me/sar-export`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.account_sar_error())
-      return res.json()
+      return apiFetch(`/api/me/sar-export`, token, { method: 'POST' })
     },
     onSuccess: (data: unknown) => {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
