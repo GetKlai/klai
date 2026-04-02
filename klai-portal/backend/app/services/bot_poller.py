@@ -28,6 +28,45 @@ POLL_INTERVAL = 10  # seconds — Vexa's own documented polling interval
 PROCESSING_TIMEOUT_MINUTES = 10  # retry transcription after this many minutes stuck in "processing"
 
 
+async def _upgrade_joining_to_recording(meeting_id: object) -> None:
+    """Set meeting status joining→recording when the bot is confirmed active."""
+    async with AsyncSessionLocal() as db:
+        m = await db.scalar(
+            select(VexaMeeting).where(
+                VexaMeeting.id == meeting_id,
+                VexaMeeting.status == "joining",
+            )
+        )
+        if m is not None:
+            m.status = "recording"
+            await db.commit()
+            logger.info("Bot poll: bot active, updated status joining→recording", meeting_id=str(meeting_id))
+
+
+async def _handle_meeting_ended(meeting: VexaMeeting) -> None:
+    """Bot is gone from Vexa — transition meeting to stopping and run transcription."""
+    logger.info("Bot poll: meeting ended, triggering transcription", meeting_id=str(meeting.id))
+    async with AsyncSessionLocal() as db:
+        m = await db.scalar(
+            select(VexaMeeting).where(
+                VexaMeeting.id == meeting.id,
+                VexaMeeting.status.in_(ACTIVE_STATUSES),
+            )
+        )
+        if m is None:
+            return  # webhook already handled it
+
+        m.status = "stopping"
+        m.ended_at = m.ended_at or datetime.now(UTC)
+        await db.commit()
+        await db.refresh(m)
+
+        await run_transcription(m, db)
+        await db.commit()
+        if m.status == "completed":
+            await cleanup_recording(m, db)
+
+
 async def poll_loop() -> None:
     """Async task: run forever, polling Vexa for active meetings."""
     await asyncio.sleep(15)  # let the app finish starting up
@@ -67,42 +106,11 @@ async def poll_loop() -> None:
                     continue
 
                 if (ref.platform, ref.native_meeting_id) in running_keys:
-                    # Bot is running — upgrade joining → recording so the UI shows correct status
                     if meeting.status == "joining":
-                        async with AsyncSessionLocal() as db:
-                            m = await db.scalar(
-                                select(VexaMeeting).where(
-                                    VexaMeeting.id == meeting.id,
-                                    VexaMeeting.status == "joining",
-                                )
-                            )
-                            if m is not None:
-                                m.status = "recording"
-                                await db.commit()
-                                logger.info("Bot poll: bot active, updated status joining→recording", meeting_id=str(meeting.id))
+                        await _upgrade_joining_to_recording(meeting.id)
                     continue  # bot is still running
 
-                logger.info("Bot poll: meeting ended, triggering transcription", meeting_id=str(meeting.id))
-                async with AsyncSessionLocal() as db:
-                    # Re-fetch with status guard to prevent race with the webhook
-                    m = await db.scalar(
-                        select(VexaMeeting).where(
-                            VexaMeeting.id == meeting.id,
-                            VexaMeeting.status.in_(ACTIVE_STATUSES),
-                        )
-                    )
-                    if m is None:
-                        continue  # webhook already handled it
-
-                    m.status = "stopping"
-                    m.ended_at = m.ended_at or datetime.now(UTC)
-                    await db.commit()
-                    await db.refresh(m)
-
-                    await run_transcription(m, db)
-                    await db.commit()
-                    if m.status == "completed":
-                        await cleanup_recording(m, db)
+                await _handle_meeting_ended(meeting)
 
             for meeting in stuck:
                 logger.warning(
