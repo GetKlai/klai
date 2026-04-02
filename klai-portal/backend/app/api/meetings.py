@@ -543,7 +543,9 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                     )
                     await asyncio.sleep(15)
             except Exception as exc:
-                logger.warning("Segment fetch failed for meeting %s (attempt %d/6): %s", meeting.id, seg_attempt + 1, exc)
+                logger.warning(
+                    "Segment fetch failed for meeting %s (attempt %d/6): %s", meeting.id, seg_attempt + 1, exc
+                )
                 if seg_attempt < 5:
                     await asyncio.sleep(15)
 
