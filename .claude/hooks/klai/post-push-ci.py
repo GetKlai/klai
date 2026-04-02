@@ -23,7 +23,9 @@ def main():
         return
 
     command = data.get("tool_input", {}).get("command", "")
-    if not re.search(r"\bgit\s+push\b", command):
+    # Match git push only as an actual command — at the start or after a
+    # shell operator (&&, ;, |) — not inside commit messages or strings.
+    if not re.search(r"(?:^|&&|;|\|)\s*git\s+push\b", command):
         return
 
     print(
