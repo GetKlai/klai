@@ -515,6 +515,13 @@
   "docs_tree_collapse": "Inklappen",
   "docs_tree_cancel": "Annuleren",
 
+  "docs_page_delete": "Pagina verwijderen",
+  "docs_page_delete_title": "Pagina verwijderen",
+  "docs_page_delete_description": "Dit verwijdert deze pagina en alle ge\u00efndexeerde content permanent.",
+  "docs_page_delete_warning": "Deze actie kan niet ongedaan worden gemaakt.",
+  "docs_page_delete_confirm": "Verwijderen",
+  "docs_page_delete_error": "Verwijderen mislukt",
+
   "help_toggle_label": "Help aan/uit",
   "help_btn_label": "Help",
   "help_btn_enable": "Help aanzetten",

@@ -21,6 +21,7 @@ import { BlockPageEditor } from '@/components/kb-editor/BlockPageEditor'
 import type { BlockPageEditorHandle } from '@/components/kb-editor/BlockPageEditor'
 import { AccessControlPanel } from '@/components/kb-editor/AccessControlPanel'
 import { EditorHeader } from '@/components/kb-editor/EditorHeader'
+import { DeletePageModal } from '@/components/kb-editor/DeletePageModal'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
 
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -78,6 +79,9 @@ function KBEditorPage() {
 
   // Optimistic local tree (null = use server tree)
   const [localTree, setLocalTree] = useState<NavNode[] | null>(null)
+
+  // Page deletion state — path of page pending delete confirmation (null = modal closed)
+  const [deletePagePath, setDeletePagePath] = useState<string | null>(null)
 
   // Convenience aliases
   const selectedPath = currentPage.path
@@ -285,6 +289,39 @@ function KBEditorPage() {
     onSuccess: () => refetchTree(),
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: async (path: string) => {
+      const res = await fetch(
+        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`,
+        { method: 'DELETE', headers: { Authorization: authHeader } },
+      )
+      if (!res.ok) {
+        let detail = m.docs_page_delete_error()
+        try {
+          const data = await res.json()
+          detail = data.error ?? detail
+        } catch {
+          // keep default detail
+        }
+        throw new Error(detail)
+      }
+    },
+    onSuccess: (_data, path) => {
+      // If the deleted page was the currently selected page, clear editor
+      if (selectedPath === path) {
+        setSelectedPath(null)
+        setEditTitle('')
+        setEditContent('')
+        setEditorKey((k) => k + 1)
+      }
+      setDeletePagePath(null)
+      void refetchTree()
+    },
+    onError: (err: Error) => {
+      editorLogger.error('Page delete failed', { error: err.message })
+    },
+  })
+
   const doSave = useCallback(async () => {
     const path = selectedPathRef.current
     const title = editTitleRef.current
@@ -432,6 +469,7 @@ function KBEditorPage() {
         }}
         onSidebarUpdate={handleSidebarUpdate}
         onAddSubpage={handleAddSubpage}
+        onDeletePage={setDeletePagePath}
         onShowNewPage={() => { setNewPageParent(null); setShowNewPage(true) }}
         onNewPageTitleChange={setNewPageTitle}
         onNewPageConfirm={handleNewPage}
@@ -451,6 +489,7 @@ function KBEditorPage() {
               onTitleChange={setEditTitle}
               onScheduleSave={scheduleSave}
               onToggleAccessPanel={() => setShowAccessPanel((v) => !v)}
+              onDeletePage={() => { if (selectedPath) setDeletePagePath(selectedPath) }}
             />
             {showAccessPanel && (
               <AccessControlPanel
@@ -541,6 +580,13 @@ function KBEditorPage() {
           </div>
         </div>
       )}
+      <DeletePageModal
+        open={!!deletePagePath}
+        onOpenChange={(open) => { if (!open) setDeletePagePath(null) }}
+        pageTitle={pageIndex.find((p) => p.slug === deletePagePath)?.title ?? deletePagePath ?? ''}
+        onConfirm={() => { if (deletePagePath) deleteMutation.mutate(deletePagePath) }}
+        isPending={deleteMutation.isPending}
+      />
     </div>
   )
 }

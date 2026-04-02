@@ -5,6 +5,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
@@ -26,6 +27,7 @@ export interface TreeItemProps {
   activePath?: string | null
   onSidebarUpdate: (newTree: NavNode[]) => void
   onAddSubpage: (parentPath: string) => void
+  onDeletePage: (path: string) => void
   addingSubpageUnder: string | null
   newPageTitle: string
   onNewPageTitleChange: (val: string) => void
@@ -47,6 +49,7 @@ export function TreeItem({
   activePath,
   onSidebarUpdate,
   onAddSubpage,
+  onDeletePage,
   addingSubpageUnder,
   newPageTitle,
   onNewPageTitleChange,
@@ -243,6 +246,17 @@ export function TreeItem({
                     <DropdownMenuItem className="text-xs text-[var(--color-muted-foreground)] italic" disabled>
                       {m.docs_tree_already_at_root()}
                     </DropdownMenuItem>
+                  )}
+                  {!isDir && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-xs text-[var(--color-destructive)]"
+                        onSelect={() => onDeletePage(nodePath)}
+                      >
+                        {m.docs_page_delete()}
+                      </DropdownMenuItem>
+                    </>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>

@@ -14,6 +14,7 @@ export interface EditorHeaderProps {
   onTitleChange: (title: string) => void
   onScheduleSave: () => void
   onToggleAccessPanel: () => void
+  onDeletePage: () => void
 }
 
 export function EditorHeader({
@@ -24,6 +25,7 @@ export function EditorHeader({
   onTitleChange,
   onScheduleSave,
   onToggleAccessPanel,
+  onDeletePage,
 }: EditorHeaderProps) {
   const [showIconPicker, setShowIconPicker] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
@@ -138,6 +140,13 @@ export function EditorHeader({
                 onClick={() => { setShowMenu(false); onToggleAccessPanel() }}
               >
                 {m.docs_access_panel_title()}…
+              </button>
+              <hr className="my-1 border-[var(--color-border)]" />
+              <button
+                className="w-full text-left px-3 py-1.5 text-sm text-[var(--color-destructive)] hover:bg-[var(--color-secondary)]"
+                onClick={() => { setShowMenu(false); onDeletePage() }}
+              >
+                {m.docs_page_delete()}
               </button>
             </div>
           )}
