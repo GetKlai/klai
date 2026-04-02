@@ -1,7 +1,7 @@
 ---
 id: SPEC-BACKEND-001
 version: "1.0.0"
-status: draft
+status: completed
 created: 2026-04-02
 updated: 2026-04-02
 author: MoAI
@@ -13,6 +13,7 @@ priority: P1
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-04-02 | 1.0.0 | Initial draft from code review findings |
+| 2026-04-02 | 1.1.0 | Implementation complete — R5 dropped (not applicable), R1-R4/R6-R10 implemented |
 
 # SPEC-BACKEND-001: Backend Architecture Hardening
 
@@ -99,3 +100,29 @@ Address backend architecture issues discovered during comprehensive code review 
 ## Acceptance Criteria
 
 See `acceptance.md` for Given/When/Then scenarios.
+
+## Implementation Notes
+
+**Commit:** `a839ec0` — `refactor(backend): consolidate auth dependencies and harden access control`
+
+**R5 dropped:** LibreChat image is not provisioned by portal-api; not applicable.
+
+**Implementation summary:**
+| Req | Status | Files Changed |
+|-----|--------|---------------|
+| R1 | Done | `database.py`, `config.py` — pool config from env vars |
+| R2 | Done | `zitadel.py` — 60s TTL dict cache with eviction at 500 entries |
+| R3 | Done | `groups.py` — explicit product query after create/update |
+| R4 | Done | `billing.py`, `mcp_servers.py`, `meetings.py` — consolidated to `_get_caller_org` |
+| R5 | Dropped | Not applicable |
+| R6 | Done | `access.py`, `meetings.py` — DB-level LIMIT/OFFSET + count query |
+| R7 | Done | `mcp_servers.py` — `asyncio.to_thread()` for YAML loading |
+| R8 | Done | `dependencies.py` — structlog `bind_contextvars` in `_get_caller_org` |
+| R9 | Done | `billing.py` — generic error message, full exception logged |
+| R10 | Done | `signup.py` — password minimum 8→12 |
+
+**Behavior changes:**
+- `meetings.py` now returns 404 (via `_get_caller_org`) instead of empty list when user has no org
+- Password minimum increased from 8 to 12 characters (new signups only)
+
+**Verified via Playwright:** Groups, Billing, Scribe, Users, Integrations pages all load correctly after deploy.
