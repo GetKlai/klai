@@ -257,6 +257,7 @@ services:
       FIRECRAWL_API_KEY: ${FIRECRAWL_INTERNAL_KEY}
       JINA_API_URL: "http://172.18.0.1:7998/v1/rerank"
       JINA_API_KEY: "klai-internal"
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -277,8 +278,9 @@ services:
       - ./librechat/getklai/.env
     environment:
       REDIS_URI: ${REDIS_URI}
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     volumes:
-      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images
       # Persistent patches - survive image updates until fixed upstream
       - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro

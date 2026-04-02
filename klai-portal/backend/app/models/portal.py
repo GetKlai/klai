@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import ARRAY, CheckConstraint, DateTime, ForeignKey, LargeBinary, String, Text, func
+from sqlalchemy import ARRAY, CheckConstraint, DateTime, ForeignKey, JSON, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -34,6 +34,7 @@ class PortalOrg(Base):
     mfa_policy: Mapped[Literal["optional", "recommended", "required"]] = mapped_column(
         String(16), nullable=False, default="optional", server_default="optional"
     )
+    mcp_servers: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 
