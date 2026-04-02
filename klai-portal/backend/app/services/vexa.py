@@ -63,6 +63,11 @@ class VexaClient:
                 "native_meeting_id": native_meeting_id,
                 "recording_enabled": False,
                 "bot_name": "Klai",
+                "automatic_leave": {
+                    "max_time_left_alone": 30000,  # 30s after everyone leaves
+                    "no_one_joined_timeout": 120000,  # 2 min if no one joins
+                    "max_wait_for_admission": 120000,  # 2 min in waiting room
+                },
             },
         )
         resp.raise_for_status()

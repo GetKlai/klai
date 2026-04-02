@@ -746,7 +746,7 @@ services:
       TRANSCRIPTION_SERVICE_TOKEN: internal
       STORAGE_BACKEND: local
       RECORDING_ENABLED: "false"
-      POST_MEETING_HOOKS: https://${DOMAIN}/api/bots/internal/webhook
+      POST_MEETING_HOOKS: http://portal-api:8010/api/bots/internal/webhook?token=${VEXA_WEBHOOK_SECRET}
       TRANSCRIPTION_COLLECTOR_URL: http://vexa-meeting-api:8080
     depends_on:
       postgres:
