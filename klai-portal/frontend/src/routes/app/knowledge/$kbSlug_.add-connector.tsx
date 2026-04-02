@@ -131,11 +131,11 @@ function AddConnectorPage() {
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   const previewMutation = useMutation({
-    mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
+    mutationFn: async ({ url, content_selector, try_ai }: { url: string; content_selector?: string; try_ai?: boolean }) => {
       const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, content_selector: content_selector || null }),
+        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false }),
       })
       if (!res.ok) throw new Error(`Preview failed (${String(res.status)})`)
       return res.json() as Promise<{
@@ -143,7 +143,14 @@ function AddConnectorPage() {
         content_selector: string | null; selector_source: string | null
       }>
     },
-    onSuccess: (data) => { setPreviewResult(data); setPreviewError(null) },
+    onSuccess: (data) => {
+      setPreviewResult(data)
+      setPreviewError(null)
+      // Auto-expand CSS selector section when there are problems
+      if (data.word_count === 0 || (data.warnings ?? []).length > 0) {
+        setShowAdvancedSelector(true)
+      }
+    },
     onError: (err) => { setPreviewError(err instanceof Error ? err.message : 'Preview failed'); setPreviewResult(null) },
   })
 
@@ -349,6 +356,21 @@ function AddConnectorPage() {
                         />
                       </div>
                     )}
+                    {!webcrawlerConfig.content_selector && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                        disabled={previewMutation.isPending || !wcPreviewUrl}
+                        onClick={() => {
+                          setPreviewResult(null)
+                          setPreviewError(null)
+                          previewMutation.mutate({ url: wcPreviewUrl, try_ai: true })
+                        }}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {m.admin_connectors_webcrawler_try_ai()}
+                      </button>
+                    )}
                     {/* Single run preview button */}
                     <Button
                       type="button"
@@ -388,10 +410,26 @@ function AddConnectorPage() {
                         <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
                       </div>
                     )}
-                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && (
-                      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                        <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
+                      <div className="space-y-2">
+                        <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                        </div>
+                        {!webcrawlerConfig.content_selector && (
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors"
+                            onClick={() => {
+                              setPreviewResult(null)
+                              setPreviewError(null)
+                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true })
+                            }}
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            {m.admin_connectors_webcrawler_try_ai()}
+                          </button>
+                        )}
                       </div>
                     )}
                     {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
