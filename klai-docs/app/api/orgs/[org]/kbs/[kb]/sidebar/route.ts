@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth";
+import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import { serializeSidebar, type SidebarEntry } from "@/lib/markdown";
@@ -14,10 +14,12 @@ export async function PUT(
   const { org: orgSlug, kb: kbSlug } = await params;
   const access = await requireOrgAccess(request, orgSlug);
   if (access.error) return access.error;
-  const { org } = access;
+  const { payload, org } = access;
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const body = await request.json();
   const pages: SidebarEntry[] = body.pages ?? [];

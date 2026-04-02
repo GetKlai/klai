@@ -41,10 +41,13 @@ export const db = {
     return rows[0] ?? null;
   },
 
-  async getKBsByOrg(orgId: string) {
+  async getKBsByOrg(orgId: string, userId?: string) {
     const { rows } = await pool.query(
-      "SELECT * FROM docs.knowledge_bases WHERE org_id = $1 ORDER BY created_at",
-      [orgId]
+      `SELECT * FROM docs.knowledge_bases
+       WHERE org_id = $1
+         AND (kb_type = 'org' OR created_by = $2)
+       ORDER BY created_at`,
+      [orgId, userId ?? null]
     );
     return rows;
   },
@@ -73,13 +76,15 @@ export const db = {
     slug: string,
     name: string,
     visibility: "public" | "private",
-    giteaRepo: string
+    giteaRepo: string,
+    kbType: "org" | "personal" = "org",
+    createdBy?: string
   ) {
     const { rows } = await pool.query(
-      `INSERT INTO docs.knowledge_bases (org_id, slug, name, visibility, gitea_repo)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO docs.knowledge_bases (org_id, slug, name, visibility, gitea_repo, kb_type, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [orgId, slug, name, visibility, giteaRepo]
+      [orgId, slug, name, visibility, giteaRepo, kbType, createdBy ?? null]
     );
     return rows[0];
   },

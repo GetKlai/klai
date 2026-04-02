@@ -84,6 +84,21 @@ export async function requireAuthOrService(
   return payload;
 }
 
+/**
+ * Check if the user has access to a specific KB.
+ * Personal KBs are only accessible by their creator.
+ * Returns a 403 NextResponse if denied, null if allowed.
+ */
+export function checkKBAccess(
+  kb: { kb_type: string; created_by: string | null; [k: string]: unknown },
+  userId: string
+): NextResponse | null {
+  if (kb.kb_type === "personal" && kb.created_by !== userId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return null;
+}
+
 type OrgAccessResult =
   | { error: NextResponse; payload?: undefined; org?: undefined }
   | { error?: undefined; payload: AuthPayload; org: { id: string; slug: string; zitadel_org_id: string; [k: string]: unknown } };
