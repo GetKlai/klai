@@ -224,7 +224,7 @@ async def update_mcp_server(
         from app.services.provisioning import _flush_redis_and_restart_librechat
 
         try:
-            await loop.run_in_executor(None, _flush_redis_and_restart_librechat, org.slug)
+            await loop.run_in_executor(None, _flush_redis_and_restart_librechat, org.slug, current)
         except Exception as exc:
             logger.warning("Async restart mislukt voor tenant %s: %s", org.slug, exc)
 
