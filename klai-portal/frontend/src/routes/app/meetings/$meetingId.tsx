@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from 'lucide-react'
+import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson, CircleCheck } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -363,6 +363,31 @@ function MeetingDetailPage() {
               {m.app_meetings_summary_error()}
             </p>
             <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{summaryError}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {meeting.summary_json?.structured?.action_items?.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-medium">
+              {m.app_meetings_action_items_title()}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {meeting.summary_json.structured.action_items.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-purple-deep)]" />
+                  <span>
+                    {item.owner && (
+                      <span className="font-medium text-[var(--color-purple-deep)]">{item.owner}: </span>
+                    )}
+                    {item.task}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
       )}
