@@ -201,7 +201,11 @@ async def start_meeting(
                 detail="Not a member of the specified group",
             )
 
-    active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(_BILLABLE_STATUSES), VexaMeeting.org_id == org_id))
+    active_count = await db.scalar(
+        select(func.count(VexaMeeting.id)).where(
+            VexaMeeting.status.in_(_BILLABLE_STATUSES), VexaMeeting.org_id == org_id
+        )
+    )
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
