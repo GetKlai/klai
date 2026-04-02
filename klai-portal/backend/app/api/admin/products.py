@@ -134,7 +134,6 @@ async def assign_product(
     )
     await db.flush()
     await log_event(
-        db,
         org_id=org.id,
         actor=admin_user_id,
         action="product.assigned",
@@ -170,7 +169,6 @@ async def revoke_product(
 
     await db.delete(row)
     await log_event(
-        db,
         org_id=org.id,
         actor=admin_user_id,
         action="product.revoked",

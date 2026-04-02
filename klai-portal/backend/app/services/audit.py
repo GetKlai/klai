@@ -9,13 +9,13 @@ against portal_audit_log from this module or anywhere in the application.
 """
 
 import json
-import logging
 
+import structlog
 from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Raw SQL avoids ORM's implicit INSERT...RETURNING which triggers the
 # SELECT RLS policy. That policy fails when app.current_org_id is unset
@@ -28,7 +28,6 @@ _INSERT_SQL = text(
 
 
 async def log_event(
-    db: object,  # kept for caller compat, ignored
     org_id: int,
     actor: str,
     action: str,
@@ -58,8 +57,8 @@ async def log_event(
             await session.commit()
     except Exception:
         logger.exception(
-            "Audit log write failed (non-fatal): action=%s resource_type=%s resource_id=%s",
-            action,
-            resource_type,
-            resource_id,
+            "Audit log write failed (non-fatal)",
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
         )

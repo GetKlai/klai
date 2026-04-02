@@ -395,7 +395,6 @@ async def add_member(
         ) from exc
 
     await log_event(
-        db,
         org_id=group.org_id,
         actor=caller_id,
         action="group.member_added",
@@ -441,7 +440,6 @@ async def remove_member(
 
     await db.delete(membership)
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_id,
         action="group.member_removed",
@@ -554,7 +552,6 @@ async def assign_group_product(
         ) from exc
 
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_user_id,
         action="group_product.assigned",
@@ -591,7 +588,6 @@ async def revoke_group_product(
 
     await db.delete(row)
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_user_id,
         action="group_product.revoked",
