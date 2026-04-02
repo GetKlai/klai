@@ -786,6 +786,8 @@ services:
       ALLOW_PRIVATE_CALLBACKS: "true"
       PROFILES_PATH: /app/profiles.yaml
       LOG_LEVEL: INFO
+    group_add:
+      - "988"   # docker GID on core-01 — required for socket access
     volumes:
       - ./vexa/profiles.yaml:/app/profiles.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
