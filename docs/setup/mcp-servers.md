@@ -54,7 +54,7 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+      "args": ["@playwright/mcp@latest", "--isolated", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
       "env": {}
     }
   }
@@ -71,6 +71,16 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
 
 Browser config is passed as direct CLI args — no config file needed. The `--executable-path` is the standard Brave install location on macOS (same for all users).
 
+**`--isolated` flag (required)**
+
+The `--isolated` flag starts each session with a fresh temporary profile directory. Without it, a crashed or leftover browser process holds a lock on the profile and the next request fails with:
+
+```
+Error: Browser is already in use for .../mcp-chrome-for-testing-..., use --isolated to run multiple instances
+```
+
+Trade-off: login sessions are not preserved between Claude Code restarts. Use `PLAYWRIGHT_MCP_USER_DATA_DIR` (below) if you need persistent sessions.
+
 **Persistent login sessions (required for autonomous testing)**
 
 The `--user-data-dir` is NOT in `.mcp.json` because it contains a username-specific path. Instead, set it once in your shell profile so the MCP server inherits it automatically:
@@ -82,7 +92,7 @@ export PLAYWRIGHT_MCP_USER_DATA_DIR=~/.claude/mcp-brave-profile
 
 Then `source ~/.zshrc` (or open a new terminal) and restart Claude Code. The `~` is expanded by the shell before the MCP server starts, so this works correctly.
 
-Without this env var, Playwright uses a temporary directory and login sessions are lost on every restart.
+Note: when using a persistent `--user-data-dir`, the `--isolated` flag is still recommended to avoid profile locking issues across sessions.
 
 For session management rules (when to open/close the browser, profile locking), see
 `.claude/rules/klai/patterns/testing.md`.
