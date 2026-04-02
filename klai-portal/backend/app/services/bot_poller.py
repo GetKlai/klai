@@ -4,8 +4,8 @@ Background task: poll Vexa for active meetings and trigger transcription when do
 Two responsibilities:
 1. Detect meetings that ended naturally (host closed Google Meet) — Vexa doesn't
    send a webhook in that case. Detects via get_bot_status() every POLL_INTERVAL.
-2. Recover meetings stuck in "processing" — if the "completed" webhook from Vexa
-   never arrives after stop_bot(), the meeting would stay in "processing" forever.
+2. Recover meetings stuck in "stopping" — if the "completed" webhook from Vexa
+   never arrives after stop_bot(), the meeting would stay in "stopping" forever.
    After PROCESSING_TIMEOUT_MINUTES, the poller tries to transcribe directly.
 """
 
@@ -59,11 +59,11 @@ async def poll_loop() -> None:
                 result = await db.execute(select(VexaMeeting).where(VexaMeeting.status.in_(ACTIVE_STATUSES)))
                 active = list(result.scalars().all())
 
-                # Also pick up meetings stuck in "processing" (webhook never arrived)
+                # Also pick up meetings stuck in "stopping" (webhook never arrived)
                 timeout_cutoff = datetime.now(UTC) - timedelta(minutes=PROCESSING_TIMEOUT_MINUTES)
                 stuck_result = await db.execute(
                     select(VexaMeeting).where(
-                        VexaMeeting.status == "processing",
+                        VexaMeeting.status == "stopping",
                         VexaMeeting.ended_at < timeout_cutoff,
                         VexaMeeting.vexa_meeting_id.is_not(None),
                     )
@@ -87,7 +87,7 @@ async def poll_loop() -> None:
                     if m is None:
                         continue  # webhook already handled it
 
-                    m.status = "processing"
+                    m.status = "stopping"
                     m.ended_at = m.ended_at or datetime.now(UTC)
                     if vexa_meeting_id and not m.vexa_meeting_id:
                         m.vexa_meeting_id = vexa_meeting_id
@@ -96,12 +96,12 @@ async def poll_loop() -> None:
 
                     await run_transcription(m, db)
                     await db.commit()
-                    if m.status == "done":
+                    if m.status == "completed":
                         await cleanup_recording(m, db)
 
             for meeting in stuck:
                 logger.warning(
-                    "Bot poll: meeting stuck in processing",
+                    "Bot poll: meeting stuck in stopping",
                     meeting_id=str(meeting.id),
                     timeout_minutes=PROCESSING_TIMEOUT_MINUTES,
                 )
@@ -109,14 +109,14 @@ async def poll_loop() -> None:
                     m = await db.scalar(
                         select(VexaMeeting).where(
                             VexaMeeting.id == meeting.id,
-                            VexaMeeting.status == "processing",
+                            VexaMeeting.status == "stopping",
                         )
                     )
                     if m is None:
                         continue
                     await run_transcription(m, db)
                     await db.commit()
-                    if m.status == "done":
+                    if m.status == "completed":
                         await cleanup_recording(m, db)
 
         except asyncio.CancelledError:
