@@ -48,6 +48,20 @@ def main() -> None:
         log("ALLOW: stop_hook_active=true (anti-loop)")
         return
 
+    # --- Completion signal detection ---
+    # Only enforce confidence on completion claims, not conversational turns.
+    # Without this, the hook blocks every turn pause (e.g. waiting for user input).
+    completion_pattern = re.compile(
+        r"confidence:\s*\d+|"
+        r"\b(done|complete[d]?|finished|klaar|afgerond)\b|"
+        r"\b(implemented|committed|pushed|deployed|fixed|resolved)\b|"
+        r"\btask.*(complete|done|finished)\b",
+        re.IGNORECASE,
+    )
+    if not completion_pattern.search(last_message):
+        log("ALLOW: no completion signal in last message (conversational turn)")
+        return
+
     # --- Build search text: last message + transcript tail ---
     search_text = last_message
     if transcript_path and os.path.isfile(transcript_path):

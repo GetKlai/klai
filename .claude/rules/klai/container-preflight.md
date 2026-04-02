@@ -1,3 +1,10 @@
+---
+paths:
+  - "**/docker-compose*.yml"
+  - "**/Dockerfile*"
+  - "deploy/**"
+  - "klai-infra/**"
+---
 # Container Restart Pre-flight Check
 
 **[HARD] Before running `docker compose up -d [service]`, complete all pre-flight steps. Before moving on after a restart, verify the service is healthy.**

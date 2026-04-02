@@ -1,3 +1,17 @@
+---
+paths:
+  - "klai-portal/backend/**/*.py"
+  - "klai-connector/**/*.py"
+  - "klai-knowledge-mcp/**/*.py"
+  - "klai-mailer/**/*.py"
+  - "klai-retrieval-api/**/*.py"
+  - "klai-scribe/**/*.py"
+  - "klai-focus/**/*.py"
+  - "klai-knowledge-ingest/**/*.py"
+  - "**/logging_setup.py"
+  - "**/alloy/**"
+  - "**/docker-compose*.yml"
+---
 # Logging Patterns
 
 > Structured logging with structlog, querying VictoriaLogs via LogsQL, and debugging production issues.
