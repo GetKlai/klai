@@ -770,6 +770,7 @@
   "app_meetings_status_recording": "Recording",
   "app_meetings_status_processing": "Processing...",
   "app_meetings_status_done": "Done",
+  "app_meetings_status_stopping": "Stopping...",
   "app_meetings_status_failed": "Failed",
   "app_meetings_stop_button": "Stop recording",
   "app_meetings_delete_button": "Delete",

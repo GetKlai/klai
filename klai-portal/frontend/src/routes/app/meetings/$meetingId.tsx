@@ -19,7 +19,7 @@ export const Route = createFileRoute('/app/meetings/$meetingId')({
 })
 
 const BOTS_BASE = '/api/bots'
-const ACTIVE_STATUSES = ['pending', 'joining', 'recording', 'processing']
+const ACTIVE_STATUSES = ['pending', 'joining', 'recording', 'stopping', 'processing']
 
 interface TranscriptSegment {
   start: number
@@ -73,6 +73,7 @@ function StatusBadge({ status }: { status: string }) {
     pending:    { label: m.app_meetings_status_pending(),    variant: 'secondary' },
     joining:    { label: m.app_meetings_status_joining(),    variant: 'default',     pulse: true },
     recording:  { label: m.app_meetings_status_recording(),  variant: 'destructive', pulse: true },
+    stopping:   { label: m.app_meetings_status_stopping(),   variant: 'warning',     pulse: true },
     processing: { label: m.app_meetings_status_processing(), variant: 'warning',     pulse: true },
     done:       { label: m.app_meetings_status_done(),       variant: 'success' },
     failed:     { label: m.app_meetings_status_failed(),     variant: 'destructive' },

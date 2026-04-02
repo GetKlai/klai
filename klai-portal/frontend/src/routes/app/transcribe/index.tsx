@@ -39,7 +39,7 @@ export const Route = createFileRoute('/app/transcribe/')({
 
 const SCRIBE_BASE = '/scribe/v1'
 const BOTS_BASE = '/api/bots'
-const ACTIVE_MEETING_STATUSES = ['pending', 'joining', 'recording', 'processing']
+const ACTIVE_MEETING_STATUSES = ['pending', 'joining', 'recording', 'stopping', 'processing']
 
 interface TranscriptionItem {
   id: string

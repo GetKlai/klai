@@ -770,6 +770,7 @@
   "app_meetings_status_recording": "Aan het opnemen",
   "app_meetings_status_processing": "Bezig met verwerken...",
   "app_meetings_status_done": "Klaar",
+  "app_meetings_status_stopping": "Bezig met stoppen...",
   "app_meetings_status_failed": "Mislukt",
   "app_meetings_stop_button": "Stop opname",
   "app_meetings_delete_button": "Verwijderen",
