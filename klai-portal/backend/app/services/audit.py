@@ -10,7 +10,7 @@ against portal_audit_log from this module or anywhere in the application.
 
 import logging
 
-from sqlalchemy import insert
+from sqlalchemy import Table, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import PortalAuditLog
@@ -19,7 +19,7 @@ from app.models.audit import PortalAuditLog
 # PostgreSQL evaluates SELECT RLS policies on RETURNING clauses;
 # the tenant_isolation_read policy fails when app.current_org_id is
 # unset (login/logout events with org_id=0).
-_table = PortalAuditLog.__table__
+_table: Table = PortalAuditLog.__table__  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
