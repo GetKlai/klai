@@ -71,6 +71,7 @@ class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
     org_id: str = ""  # optional for backwards compatibility; required for domain selector lookup
+    try_ai: bool = False  # explicit opt-in for AI selector detection
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -205,9 +206,9 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
         fit_md, word_count, _ = await _run_crawl(body.url, effective_selector)
         warnings: list[str] = _detect_nav_contamination(fit_md)
 
-        # AI-assisted selector detection when result is too thin and no selector was used
+        # AI-assisted selector detection — only when explicitly requested via try_ai flag
         # SPEC-CRAWL-001 / R-4
-        if word_count < _MIN_WORD_COUNT and not effective_selector and body.org_id:
+        if body.try_ai and word_count < _MIN_WORD_COUNT and not effective_selector and body.org_id:
             dom_summary = await extract_dom_summary(body.url)
             if dom_summary:
                 ai_selector = await detect_selector_via_llm(dom_summary)
