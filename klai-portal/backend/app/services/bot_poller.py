@@ -3,7 +3,8 @@ Background task: poll Vexa for active meetings and trigger transcription when do
 
 Two responsibilities:
 1. Detect meetings that ended naturally (host closed Google Meet) — Vexa doesn't
-   send a webhook in that case. Detects via get_bot_status() every POLL_INTERVAL.
+   send a webhook in that case. Polls GET /bots/status every POLL_INTERVAL seconds
+   and triggers transcription when a meeting's native_meeting_id is no longer present.
 2. Recover meetings stuck in "stopping" — if the "completed" webhook from Vexa
    never arrives after stop_bot(), the meeting would stay in "stopping" forever.
    After PROCESSING_TIMEOUT_MINUTES, the poller tries to transcribe directly.
@@ -12,7 +13,6 @@ Two responsibilities:
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-import httpx
 import structlog
 from sqlalchemy import select
 
@@ -24,30 +24,8 @@ from app.services.vexa import parse_meeting_url, vexa
 
 logger = structlog.get_logger()
 
-# Vexa meeting statuses that mean the bot is still active / in progress
-_BOT_ACTIVE = {"requested", "joining", "awaiting_admission", "active", "stopping"}
 POLL_INTERVAL = 10  # seconds — Vexa's own documented polling interval
 PROCESSING_TIMEOUT_MINUTES = 10  # retry transcription after this many minutes stuck in "processing"
-
-
-async def _bot_ended(meeting: VexaMeeting) -> tuple[bool, int | None]:
-    """Return (ended, vexa_meeting_id) — ended=True if the Vexa bot has left this meeting."""
-    ref = parse_meeting_url(meeting.meeting_url)
-    if ref is None:
-        return False, None
-    try:
-        resp = await vexa.get_bot_status(ref.platform, ref.native_meeting_id)
-        bot_status = resp.get("status", "")
-        vexa_id = resp.get("meeting_id") or resp.get("id")
-        ended = bool(bot_status) and bot_status not in _BOT_ACTIVE
-        return ended, vexa_id if ended else None
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            return True, None  # bot session is gone — meeting ended
-        logger.warning("Bot status check failed", meeting_id=str(meeting.id), error=str(exc))
-    except Exception as exc:
-        logger.warning("Bot status check error", meeting_id=str(meeting.id), error=str(exc))
-    return False, None
 
 
 async def poll_loop() -> None:
@@ -70,10 +48,26 @@ async def poll_loop() -> None:
                 )
                 stuck = list(stuck_result.scalars().all())
 
+            # Fetch running bots once per cycle — a meeting has ended when its
+            # (platform, native_meeting_id) is absent from this list.
+            running_keys: set[tuple[str, str]] | None = None
+            if active:
+                try:
+                    running_bots = await vexa.get_running_bots()
+                    running_keys = {(b["platform"], b["native_meeting_id"]) for b in running_bots}
+                except Exception as exc:
+                    logger.warning("Bot status poll failed — skipping end detection this cycle", error=str(exc))
+
             for meeting in active:
-                ended, vexa_meeting_id = await _bot_ended(meeting)
-                if not ended:
+                if running_keys is None:
+                    continue  # poll failed; don't trigger transcription based on missing data
+
+                ref = parse_meeting_url(meeting.meeting_url)
+                if ref is None:
                     continue
+
+                if (ref.platform, ref.native_meeting_id) in running_keys:
+                    continue  # bot is still running
 
                 logger.info("Bot poll: meeting ended, triggering transcription", meeting_id=str(meeting.id))
                 async with AsyncSessionLocal() as db:
@@ -89,8 +83,6 @@ async def poll_loop() -> None:
 
                     m.status = "stopping"
                     m.ended_at = m.ended_at or datetime.now(UTC)
-                    if vexa_meeting_id and not m.vexa_meeting_id:
-                        m.vexa_meeting_id = vexa_meeting_id
                     await db.commit()
                     await db.refresh(m)
 

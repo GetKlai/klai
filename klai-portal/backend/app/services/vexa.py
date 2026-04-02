@@ -73,15 +73,16 @@ class VexaClient:
         resp = await self._http.delete(f"/bots/{platform}/{native_meeting_id}")
         resp.raise_for_status()
 
-    async def get_bot_status(self, platform: str, native_meeting_id: str) -> dict:
-        """Get the current status of a bot.
+    async def get_running_bots(self) -> list[dict]:
+        """Return the list of currently running bot containers from Vexa.
 
-        Uses the direct /bots/{platform}/{id}/status endpoint.
-        Raises httpx.HTTPStatusError on 404 (bot not found / meeting ended).
+        Uses GET /bots/status which returns {"running_bots": [...]}.
+        Each entry has: platform, native_meeting_id, status, normalized_status, container_id.
+        Returns an empty list if the call fails — treated as "unknown, assume still running".
         """
-        resp = await self._http.get(f"/bots/{platform}/{native_meeting_id}/status")
+        resp = await self._http.get("/bots/status")
         resp.raise_for_status()
-        return resp.json()
+        return resp.json().get("running_bots", [])
 
     async def get_recording(self, vexa_meeting_id: int) -> tuple[bytes, str]:
         """Download the raw audio recording from Vexa.
