@@ -40,13 +40,13 @@ Do not add commentary. If a field has no data, use an empty array.
 
 _SYNTHESIS_SYSTEM = """\
 You are a professional meeting summarizer. Write a clear, concise meeting summary
-based on the extracted facts provided. Use the language specified. Structure:
+based on the extracted facts provided. Use the language specified in the user message.
+Structure (use headings in the target language):
 1. A short executive summary paragraph (2-3 sentences).
-2. ## Beslissingen / Decisions (if any)
-3. ## Actiepunten / Action Items (if any, with owner)
-4. ## Open vragen / Open Questions (if any)
-5. ## Volgende stappen / Next Steps (if any)
-Adapt section headings to the target language.
+2. A decisions section (if any decisions were made)
+3. An open questions section (if any)
+4. A next steps section (if any)
+Do NOT include an action items section — those are displayed separately in the UI.
 """
 
 
