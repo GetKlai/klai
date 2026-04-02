@@ -19,6 +19,7 @@ paths:
 | [backend-sendbeacon-no-auth-header](#backend-sendbeacon-no-auth-header) | HIGH | `navigator.sendBeacon` cannot send Authorization headers — design the endpoint as intentionally unauthenticated |
 | [backend-crawl4ai-class-substring-selectors](#backend-crawl4ai-class-substring-selectors) | HIGH | Never use `[class*="sidebar"]` in JS DOM removal — substring selectors match layout wrappers and delete article content |
 | [backend-fastapi-required-field-breaks-callers](#backend-fastapi-required-field-breaks-callers) | MED | Adding a required field to a FastAPI request model breaks existing callers — use optional with a guard instead |
+| [backend-silent-error-swallowing](#backend-silent-error-swallowing) | HIGH | Always log actual error details (status code, response body) before returning a generic user message |
 
 ---
 
@@ -238,5 +239,57 @@ Pydantic V2 treats any field without a default as required. A missing required f
 3. Only make a field required in a new endpoint, or when you can guarantee a coordinated deploy of all callers.
 
 **Seen in:** `klai-knowledge-ingest` `CrawlPreviewRequest` — adding `org_id` for per-tenant domain selector lookup (SPEC-CRAWL-001). Made optional so existing frontend callers without `org_id` continue to work; domain features degrade silently.
+
+---
+
+## backend-silent-error-swallowing
+
+**Severity:** HIGH
+
+**Trigger:** Writing error handling in MCP tools, service integrations, or any code that returns a generic user-facing error message
+
+Returning a generic error message (e.g. `"An error occurred"`) to the caller without first logging the actual HTTP status code, response body, and context variables makes debugging impossible. The tool just says "error occurred" with no trace in logs — you cannot distinguish a 403 from a 500 from a network timeout.
+
+**Why it happens:**
+Developers focus on the user experience (clean error message) and forget that someone will need to debug the failure later. The actual error details are available in the exception but discarded before the generic message is returned.
+
+**Wrong:**
+```python
+# BAD — actual error details are lost forever
+async def save_to_docs(self, content: str, org_slug: str) -> str:
+    try:
+        resp = await self.client.post(f"/api/orgs/{org_slug}/pages", json={"content": content})
+        resp.raise_for_status()
+        return "Saved successfully"
+    except httpx.HTTPStatusError:
+        return _ERR_SAVE  # "An error occurred while saving" — no logging!
+```
+
+**Correct:**
+```python
+# GOOD — log everything, then return the generic message
+async def save_to_docs(self, content: str, org_slug: str) -> str:
+    try:
+        resp = await self.client.post(f"/api/orgs/{org_slug}/pages", json={"content": content})
+        resp.raise_for_status()
+        return "Saved successfully"
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "save_to_docs failed",
+            org_slug=org_slug,
+            status_code=exc.response.status_code,
+            response_text=exc.response.text[:500],
+        )
+        return _ERR_SAVE
+```
+
+**Prevention:**
+1. Before every `return <generic_error>`, add a `logger.error()` with: status code, response body (truncated), and all relevant context variables (org_slug, kb_id, etc.)
+2. For `ConnectError` (no `.response` attribute), log the exception message and target URL
+3. In code review, search for generic error returns and verify each has a preceding log statement
+
+**Seen in:** `klai-knowledge-mcp` `save_to_docs` tool — returned `_ERR_SAVE` without logging the HTTP status or response body, making it impossible to distinguish a 403 (IDOR) from a 422 (Zod `.strict()`) from a 500.
+
+**See also:** `pitfalls/docs-app.md#platform-docs-app-error-logging`
 
 ---
