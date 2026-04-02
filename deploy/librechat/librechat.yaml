@@ -18,7 +18,7 @@ interface:
   multiConvo: false
   presets: false
   mcpServers:
-    use: false
+    use: true
     create: false
     share: false
   fileSearch: false
