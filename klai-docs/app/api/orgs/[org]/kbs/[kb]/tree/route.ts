@@ -17,6 +17,11 @@ export async function GET(
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Personal KBs are not served via the public tree endpoint
+  if (kb.kb_type === "personal") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const tree = await buildNavTree(kb.gitea_repo);
   return NextResponse.json(tree);
 }

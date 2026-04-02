@@ -46,6 +46,11 @@ export async function GET(
   const resolved = await resolveKB(orgSlug, kbSlug);
   if (!resolved) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Personal KBs are not served via the public reader
+  if (resolved.kb.kb_type === "personal") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const filePath = `${path.join("/")}.md`;
   const raw = await gitea.getFileContent(resolved.kb.gitea_repo, filePath);
   if (!raw) return NextResponse.json({ error: "Not found" }, { status: 404 });
