@@ -7,7 +7,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse, TaxonomyProposal } from './-kb-types'
@@ -57,14 +57,12 @@ function KbLayout() {
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('KB fetch failed', { slug: kbSlug, status: res.status })
-        throw new Error('KB laden mislukt')
+      try {
+        return await apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token)
+      } catch (err) {
+        queryLogger.warn('KB fetch failed', { slug: kbSlug, error: err })
+        throw err
       }
-      return res.json() as Promise<KnowledgeBase>
     },
     enabled: !!token,
     retry: false,
@@ -72,25 +70,13 @@ function KbLayout() {
 
   const { data: stats } = useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Stats laden mislukt')
-      return res.json() as Promise<KBStats>
-    },
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
     enabled: !!token && !!kb,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Members laden mislukt')
-      return res.json() as Promise<MembersResponse>
-    },
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
     enabled: !!token && !!kb,
   })
 
@@ -101,11 +87,11 @@ function KbLayout() {
   const pendingProposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
     queryKey: ['taxonomy-proposals-count', kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return { proposals: [] }
-      return res.json() as Promise<{ proposals: TaxonomyProposal[] }>
+      try {
+        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, token)
+      } catch {
+        return { proposals: [] }
+      }
     },
     enabled: !!token && !!kb,
   })

@@ -12,6 +12,9 @@ import './index.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+    },
     mutations: {
       onError: (error) => Sentry.captureException(error),
     },

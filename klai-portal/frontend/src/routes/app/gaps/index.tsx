@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { STORAGE_KEYS } from '@/lib/storage'
@@ -70,32 +70,24 @@ function GapsPage() {
   const [activePicker, setActivePicker] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<GapsResponse>({
-    queryKey: ['app-gaps', token, days, gapType],
+    queryKey: ['app-gaps', days, gapType],
     queryFn: async () => {
       const params = new URLSearchParams({ days: String(days), limit: '100' })
       if (gapType) params.set('gap_type', gapType)
-      const res = await fetch(`${API_BASE}/api/app/gaps?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Gaps fetch failed', { status: res.status })
-        throw new Error(`${res.status}`)
+      try {
+        return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`, token)
+      } catch (err) {
+        queryLogger.warn('Gaps fetch failed', { error: err })
+        throw err
       }
-      return res.json() as Promise<GapsResponse>
     },
     enabled: !!token && isAdmin,
     retry: false,
   })
 
   const { data: kbsData } = useQuery<KBsResponse>({
-    queryKey: ['app-knowledge-bases-for-gaps', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`${res.status}`)
-      return res.json() as Promise<KBsResponse>
-    },
+    queryKey: ['app-knowledge-bases-for-gaps'],
+    queryFn: async () => apiFetch<KBsResponse>('/api/app/knowledge-bases', token),
     enabled: !!token && isAdmin,
     retry: false,
   })

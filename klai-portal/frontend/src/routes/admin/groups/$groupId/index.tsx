@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin/groups/$groupId/')({
   component: AdminGroupDetail,
@@ -83,39 +83,20 @@ function AdminGroupDetail() {
 
   const { data: groupData, isLoading: groupLoading } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch groups (${res.status})`)
-      return res.json() as Promise<{ groups: Group[] }>
-    },
+    queryFn: async () => apiFetch<{ groups: Group[] }>(`/api/admin/groups`, token),
     enabled: !!token,
     select: (data) => data.groups.find((g) => g.id === Number(groupId)),
   })
 
   const { data: membersData, isLoading: membersLoading } = useQuery({
     queryKey: ['admin-group-members', groupId],
-    queryFn: async () => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/members`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      if (!res.ok) throw new Error(`Failed to fetch members (${res.status})`)
-      return res.json() as Promise<{ members: Member[] }>
-    },
+    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`, token),
     enabled: !!token,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`)
-      return res.json() as Promise<{ users: OrgUser[] }>
-    },
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`, token),
     enabled: !!token,
   })
 
@@ -129,14 +110,7 @@ function AdminGroupDetail() {
 
   const removeMemberMutation = useMutation({
     mutationFn: async (userId: string) => {
-      const res = await fetch(
-        `${API_BASE}/api/admin/groups/${groupId}/members/${userId}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      )
-      if (!res.ok) throw new Error(`Failed to remove member (${res.status})`)
+      await apiFetch(`/api/admin/groups/${groupId}/members/${userId}`, token, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-group-members', groupId] })

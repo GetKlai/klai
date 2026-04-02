@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch, ApiError } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/knowledge/new')({
@@ -53,28 +53,17 @@ function KnowledgeNewPage() {
 
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases`, {
+      return apiFetch<{ slug: string }>(`/api/app/knowledge-bases`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name, slug, visibility, owner_type: ownerType }),
       })
-      if (res.status === 409) {
-        throw new Error('conflict')
-      }
-      if (!res.ok) {
-        throw new Error('generic')
-      }
-      return res.json() as Promise<{ slug: string }>
     },
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
       void navigate({ to: '/app/knowledge/$kbSlug', params: { kbSlug: data.slug } })
     },
     onError: (err: Error) => {
-      setErrorKey(err.message === 'conflict' ? 'conflict' : 'generic')
+      setErrorKey(err instanceof ApiError && err.status === 409 ? 'conflict' : 'generic')
     },
   })
 

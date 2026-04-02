@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
   component: () => (
@@ -44,13 +45,9 @@ function EditKBPage() {
   const [visibility, setVisibility] = useState<'public' | 'private'>('private')
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: ['docs-kb', orgSlug, kbSlug, token],
+    queryKey: ['docs-kb', orgSlug, kbSlug],
     queryFn: async () => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Laden mislukt')
-      const kbs: KnowledgeBase[] = await res.json()
+      const kbs = await apiFetch<KnowledgeBase[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, token)
       const found = kbs.find((k) => k.slug === kbSlug)
       if (!found) throw new Error('Kennisbank niet gevonden')
       return found
@@ -67,19 +64,10 @@ function EditKBPage() {
 
   const editMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}`, {
+      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}`, token, {
         method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name, visibility }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error ?? 'Opslaan mislukt')
-      }
-      return res.json()
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })

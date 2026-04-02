@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { DeleteKbModal } from '@/components/ui/delete-kb-modal'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import type { KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/settings')({
@@ -20,38 +20,20 @@ function SettingsTab() {
   // Reuse cached data from parent layout
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('KB laden mislukt')
-      return res.json() as Promise<KnowledgeBase>
-    },
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
     enabled: !!token,
   })
 
   const { data: stats } = useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Stats laden mislukt')
-      return res.json() as Promise<KBStats>
-    },
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
     enabled: !!token && !!kb,
   })
 
   // Guard: only owners can see this tab (also enforced by route.tsx tab visibility)
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Members laden mislukt')
-      return res.json() as Promise<MembersResponse>
-    },
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
     enabled: !!token && !!kb,
   })
 

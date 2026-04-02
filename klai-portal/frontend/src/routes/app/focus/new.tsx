@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/focus/new')({
   component: () => (
@@ -50,12 +51,8 @@ function NewFocusPage() {
 
   const createMutation = useMutation({
     mutationFn: async (data: NotebookForm) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks`, {
+      return apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           name: data.name,
           description: data.description || null,
@@ -63,8 +60,6 @@ function NewFocusPage() {
           default_mode: data.default_mode,
         }),
       })
-      if (!res.ok) throw new Error(m.app_focus_create_submit() + ' mislukt')
-      return res.json() as Promise<NotebookResponse>
     },
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })

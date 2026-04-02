@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch, ApiError } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin/groups/new')({
   component: NewGroupPage,
@@ -35,17 +35,10 @@ function NewGroupPage() {
 
   const createMutation = useMutation({
     mutationFn: async (body: { name: string; description: string }) => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
+      return apiFetch<Group>(`/api/admin/groups`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(body),
       })
-      if (res.status === 409) throw new Error('duplicate')
-      if (!res.ok) throw new Error(`Failed to create group (${res.status})`)
-      return res.json() as Promise<Group>
     },
     onSuccess: (group) => {
       void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
@@ -53,7 +46,7 @@ function NewGroupPage() {
       void navigate({ to: '/admin/groups/$groupId', params: { groupId: String(group.id) } })
     },
     onError: (err: Error) => {
-      if (err.message === 'duplicate') {
+      if (err instanceof ApiError && err.status === 409) {
         setDuplicateError(true)
       } else {
         toast.error(err.message)

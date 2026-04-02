@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select'
 import { ArrowLeft, Loader2, Copy, CheckCheck, Download } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/transcribe/$transcriptionId')({
   component: TranscriptionDetailPage,
@@ -52,39 +53,24 @@ function TranscriptionDetailPage() {
   const [recordingType, setRecordingType] = useState<'meeting' | 'recording'>('recording')
 
   const { data: transcription, isLoading } = useQuery<TranscriptionDetail>({
-    queryKey: ['transcription', transcriptionId, token],
-    queryFn: async () => {
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json()
-    },
+    queryKey: ['transcription', transcriptionId],
+    queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`, token),
     enabled: !!token,
   })
 
   const summarizeMutation = useMutation({
     mutationFn: async (force: boolean) => {
       const url = `${SCRIBE_BASE}/transcriptions/${transcriptionId}/summarize${force ? '?force=true' : ''}`
-      const res = await fetch(url, {
+      return apiFetch(url, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           recording_type: recordingType,
           language: transcription?.language ?? null,
         }),
       })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-        throw new Error(err.detail ?? 'Summarization failed')
-      }
-      return res.json()
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['transcription', transcriptionId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['transcription', transcriptionId] })
     },
   })
 

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { ArrowLeft, Upload, Copy, CheckCheck, Loader2, Mic, Square, RotateCcw } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 const SCRIBE_BASE = '/scribe/v1'
@@ -86,19 +87,13 @@ function AddTranscribePage() {
       const form = new FormData()
       form.append('file', file)
       if (language) form.append('language', language)
-      const res = await fetch(`${SCRIBE_BASE}/transcribe`, {
+      return apiFetch<TranscriptionResponse>(`${SCRIBE_BASE}/transcribe`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: form,
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body?.detail ?? m.app_transcribe_error_generic())
-      }
-      return res.json() as Promise<TranscriptionResponse>
     },
     onSuccess: (data) => {
-      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions'] })
       if (data.status === 'transcribed') {
         void navigate({ to: '/app/transcribe/$transcriptionId', params: { transcriptionId: data.id } })
       } else {
@@ -115,18 +110,12 @@ function AddTranscribePage() {
     mutationFn: async (txnId: string) => {
       setError(null)
       const params = language ? `?language=${encodeURIComponent(language)}` : ''
-      const res = await fetch(`${SCRIBE_BASE}/transcriptions/${txnId}/retry${params}`, {
+      return apiFetch<TranscriptionResponse>(`${SCRIBE_BASE}/transcriptions/${txnId}/retry${params}`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body?.detail ?? m.app_transcribe_error_generic())
-      }
-      return res.json() as Promise<TranscriptionResponse>
     },
     onSuccess: (data) => {
-      void queryClient.invalidateQueries({ queryKey: ['transcriptions', token] })
+      void queryClient.invalidateQueries({ queryKey: ['transcriptions'] })
       if (data.status === 'transcribed') {
         void navigate({ to: '/app/transcribe/$transcriptionId', params: { transcriptionId: data.id } })
       } else {

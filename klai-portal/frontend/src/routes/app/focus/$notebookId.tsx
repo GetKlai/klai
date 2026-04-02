@@ -23,6 +23,7 @@ import { useState, useRef, useEffect } from 'react'
 import * as m from '@/paraglide/messages'
 import { SaveToKnowledgeModal } from '@/components/knowledge/SaveToKnowledgeModal'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/focus/$notebookId')({
   component: () => (
@@ -120,28 +121,18 @@ function NotebookDetailPage() {
   // ── Notebook ────────────────────────────────────────────────────────────────
 
   const { data: notebook } = useQuery<Notebook>({
-    queryKey: ['focus-notebook', notebookId, token],
-    queryFn: async () => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Niet gevonden')
-      return res.json()
-    },
+    queryKey: ['focus-notebook', notebookId],
+    queryFn: async () => apiFetch<Notebook>(`${FOCUS_BASE}/notebooks/${notebookId}`, token),
     enabled: !!token,
   })
 
   // ── Sources ─────────────────────────────────────────────────────────────────
 
   const { data: sources = [] } = useQuery<Source[]>({
-    queryKey: ['focus-sources', notebookId, token],
+    queryKey: ['focus-sources', notebookId],
     queryFn: async () => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Ophalen mislukt')
-      const data = await res.json()
-      return data.items ?? data
+      const data = await apiFetch<{ items?: Source[] } | Source[]>(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, token)
+      return (data as { items?: Source[] }).items ?? (data as Source[])
     },
     enabled: !!token,
     refetchInterval: (query) => {
@@ -156,57 +147,40 @@ function NotebookDetailPage() {
 
   const deleteSrcMutation = useMutation({
     mutationFn: async (srcId: string) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/${srcId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
+      await apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/${srcId}`, token, { method: 'DELETE' })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId] })
     },
   })
 
   // ── History ──────────────────────────────────────────────────────────────────
 
   const { data: historyData } = useQuery<{ items: HistoryMessage[] }>({
-    queryKey: ['focus-history', notebookId, token],
-    queryFn: async () => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Geschiedenis ophalen mislukt')
-      return res.json()
-    },
+    queryKey: ['focus-history', notebookId],
+    queryFn: async () => apiFetch<{ items: HistoryMessage[] }>(`${FOCUS_BASE}/notebooks/${notebookId}/history`, token),
     enabled: !!token && notebook?.save_history === true,
   })
 
   const toggleHistoryMutation = useMutation({
     mutationFn: async (saveHistory: boolean) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}`, token, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ save_history: saveHistory }),
       })
-      if (!res.ok) throw new Error('Instelling opslaan mislukt')
-      return res.json()
     },
     onSuccess: () => {
       // Only refreshes notebook metadata — does NOT reset the current chat session
-      void queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-notebook', notebookId] })
     },
   })
 
   const clearHistoryMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Wissen mislukt')
+      await apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, token, { method: 'DELETE' })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['focus-history', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-history', notebookId] })
       setMessages([])
     },
   })

@@ -6,7 +6,7 @@ import { List } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import type { PersonalItemsResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/items')({
@@ -22,24 +22,16 @@ function ItemsTab() {
 
   const { data, isLoading } = useQuery<PersonalItemsResponse>({
     queryKey: ['personal-knowledge', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/knowledge/personal/items`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Items laden mislukt')
-      return res.json() as Promise<PersonalItemsResponse>
-    },
+    queryFn: async () => apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items', token),
     enabled: !!token,
   })
 
   const deleteMutation = useMutation({
     mutationFn: async (artifactId: string) => {
       setDeletingId(artifactId)
-      const res = await fetch(`${API_BASE}/api/knowledge/personal/items/${artifactId}`, {
+      await apiFetch(`/api/knowledge/personal/items/${artifactId}`, token, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('Verwijderen mislukt')
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['personal-knowledge'] })

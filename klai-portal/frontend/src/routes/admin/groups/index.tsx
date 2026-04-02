@@ -30,7 +30,7 @@ function avatarColor(uid: string): string {
 }
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 type GroupsSearch = { create?: true }
 
@@ -114,37 +114,19 @@ function AdminGroups() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch groups (${res.status})`)
-      return res.json() as Promise<{ groups: Group[] }>
-    },
+    queryFn: async () => apiFetch<{ groups: Group[] }>('/api/admin/groups', token),
     enabled: !!token,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`)
-      return res.json() as Promise<{ users: OrgUser[] }>
-    },
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>('/api/admin/users', token),
     enabled: !!token,
   })
 
   const { data: membershipsData } = useQuery({
     queryKey: ['admin-group-memberships'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/group-memberships`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch memberships (${res.status})`)
-      return res.json() as Promise<{ memberships: Record<string, { id: number }[]> }>
-    },
+    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number }[]> }>('/api/admin/group-memberships', token),
     enabled: !!token,
   })
 
@@ -166,16 +148,10 @@ function AdminGroups() {
 
   const createMutation = useMutation({
     mutationFn: async (name: string) => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
+      return apiFetch('/api/admin/groups', token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name }),
       })
-      if (!res.ok) throw new Error(`Failed to create group (${res.status})`)
-      return res.json()
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })

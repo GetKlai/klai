@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { STORAGE_KEYS } from '@/lib/storage'
 import { DashboardSection } from './-kb-helpers'
 import type { KnowledgeBase, KBStats } from './-kb-types'
@@ -24,25 +24,13 @@ function OverviewTab() {
   // serves cached data without re-fetching.
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('KB laden mislukt')
-      return res.json() as Promise<KnowledgeBase>
-    },
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
     enabled: !!token,
   })
 
   const { data: stats } = useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Stats laden mislukt')
-      return res.json() as Promise<KBStats>
-    },
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
     enabled: !!token && !!kb,
   })
 
