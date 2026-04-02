@@ -47,9 +47,7 @@ class TestCharacterizeSyncRemoveContainer:
 
         with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
             mock_docker.errors.NotFound = type("NotFound", (Exception,), {})
-            mock_docker.from_env.return_value.containers.get.side_effect = (
-                mock_docker.errors.NotFound("not found")
-            )
+            mock_docker.from_env.return_value.containers.get.side_effect = mock_docker.errors.NotFound("not found")
             # Should not raise
             _sync_remove_container("nonexistent")
 
