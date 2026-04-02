@@ -33,6 +33,7 @@ networks:
     name: klai-net-meilisearch
     internal: true   # only Meilisearch <-> LibreChat containers
   vexa-bots:
+    name: vexa-bots
     driver: bridge
     # NOT internal — bot containers need internet egress to join meeting platforms
 
@@ -763,6 +764,7 @@ services:
       - klai-net
       - net-postgres
       - net-redis
+      - vexa-bots   # bots call back to meeting-api via this network
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
