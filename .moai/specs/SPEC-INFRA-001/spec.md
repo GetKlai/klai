@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-001
 version: "2.0.0"
-status: draft
+status: completed
 created: 2026-04-02
 updated: 2026-04-02
 author: MoAI
