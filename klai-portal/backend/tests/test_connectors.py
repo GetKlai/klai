@@ -63,6 +63,7 @@ class TestConnectorOut:
             created_at=datetime.now(UTC),
             created_by="user-1",
             content_type="kb_article",
+            allowed_assertion_modes=[],
         )
         assert out.content_type == "kb_article"
 
@@ -83,6 +84,7 @@ class TestConnectorOut:
             created_at=datetime.now(UTC),
             created_by="user-1",
             content_type=None,
+            allowed_assertion_modes=[],
         )
         assert out.content_type is None
 
