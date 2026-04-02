@@ -16,6 +16,8 @@ paths:
 | [platform-docs-app-basepath](#platform-docs-app-basepath) | HIGH | All routes under `/docs/api/...`, not `/api/...` |
 | [platform-docs-app-visibility-values](#platform-docs-app-visibility-values) | HIGH | Map portal `internal` → docs-app `private` |
 | [platform-docs-app-error-logging](#platform-docs-app-error-logging) | MED | Log status code + response text; catch ConnectError |
+| [platform-docs-app-zod-strict-422](#platform-docs-app-zod-strict-422) | HIGH | Never use `.strict()` on Zod API schemas — use `.passthrough()` |
+| [platform-docs-app-auto-provision-org-id](#platform-docs-app-auto-provision-org-id) | HIGH | Auto-provisioning must store the real Zitadel org ID, not the slug |
 
 ---
 
@@ -108,6 +110,85 @@ log.error(
 ```
 
 Also catch `httpx.ConnectError` separately — it has no `.response` attribute and accessing it raises `AttributeError`.
+
+---
+
+## platform-docs-app-zod-strict-422
+
+**Severity:** HIGH
+
+**Trigger:** Using `.strict()` on Zod schemas in klai-docs API route validation
+
+Zod's `.strict()` mode rejects any fields not explicitly listed in the schema, returning a 422. When the MCP server or portal-api sends new frontmatter fields that the TypeScript type already supports, `.strict()` rejects them because the Zod schema hasn't been updated yet.
+
+**Why it happens:**
+`.strict()` is the opposite of forward-compatible. Any field added by a caller that isn't in the schema causes immediate rejection — even if the underlying TypeScript type and database column already support it. This creates tight coupling between caller and schema.
+
+**Wrong:**
+```typescript
+// BAD — rejects unknown fields, breaks when callers add new ones
+const kbSchema = z.object({
+  title: z.string(),
+  visibility: z.enum(["public", "private"]),
+}).strict();
+```
+
+**Correct:**
+```typescript
+// GOOD — validates known fields, passes unknown ones through
+const kbSchema = z.object({
+  title: z.string(),
+  visibility: z.enum(["public", "private"]),
+}).passthrough();
+```
+
+**Prevention:**
+1. Use `.passthrough()` on all API input schemas — validate what you know, ignore what you don't
+2. Only use `.strict()` for internal config objects where unknown fields indicate a bug
+3. When adding new fields to an MCP tool or API client, check if the receiving API uses `.strict()` before deploying
+
+**Seen in:** klai-docs API routes — MCP `save_to_docs` added new frontmatter fields, docs-app returned 422 because Zod `.strict()` rejected them.
+
+---
+
+## platform-docs-app-auto-provision-org-id
+
+**Severity:** HIGH
+
+**Trigger:** Auto-provisioning an organization in klai-docs when it doesn't exist yet
+
+When klai-docs auto-provisions an org (e.g. a POST to `/kbs` creates the org if not found), it stored the org slug string as `zitadel_org_id` instead of the real Zitadel org ID from the `X-Org-ID` header. After adding org access verification (`requireOrgAccess()`), this caused 403 errors because the stored ID didn't match the real one.
+
+**Why it happens:**
+The auto-provisioning code path was written before org access verification existed. It used whatever identifier was convenient (the slug from the URL) rather than the authoritative org ID from the auth header. The mismatch was invisible until the `requireOrgAccess()` check compared `org.zitadelOrgId` against the header value.
+
+**Wrong:**
+```typescript
+// BAD — stores the slug as zitadel_org_id
+await db.insert(organizations).values({
+  slug: orgSlug,
+  zitadelOrgId: orgSlug,  // this is the slug, not the real Zitadel org ID!
+});
+```
+
+**Correct:**
+```typescript
+// GOOD — stores the real org ID from the auth header
+const realOrgId = req.headers.get("X-Org-ID");
+await db.insert(organizations).values({
+  slug: orgSlug,
+  zitadelOrgId: realOrgId,
+});
+```
+
+**Prevention:**
+1. Auto-provisioning must always extract the org ID from the trusted auth header (`X-Org-ID`), never from URL parameters
+2. After adding any auth verification to an existing system, check if auto-provisioned data matches what the new verification expects
+3. If data is already wrong in production: `UPDATE docs.organizations SET zitadel_org_id = '<real-id>' WHERE slug = '<slug>'`
+
+**Seen in:** klai-docs — auto-provisioned orgs had slug as `zitadel_org_id`, causing 403 after IDOR fix. Required manual DB UPDATE to correct.
+
+**See also:** `security-idor-url-org-slug-trusted` in `pitfalls/security.md`
 
 ---
 

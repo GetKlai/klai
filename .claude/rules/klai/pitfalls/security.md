@@ -2,10 +2,19 @@
 paths:
   - "**/backend/**/*.py"
   - "**/api/**/*.py"
+  - "klai-docs/**"
 ---
 # Security Pitfalls
 
 > Authentication, authorization, and multi-tenancy mistakes in klai-mono.
+
+## Index
+> Keep this index in sync — add a row when adding an entry below.
+
+| Entry | Sev | Rule |
+|---|---|---|
+| [security-idor-missing-org-scope](#security-idor-missing-org-scope) | CRIT | Every resource lookup must include org_id scope |
+| [security-idor-url-org-slug-trusted](#security-idor-url-org-slug-trusted) | CRIT | Never trust org_slug from URL — verify caller belongs to that org via token |
 
 ---
 
@@ -57,6 +66,60 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> Knowled
 4. New helpers must always include `org_id` as a parameter
 
 **See also:** `.claude/rules/klai/multi-tenant-pattern.md` — active enforcement rule with path triggers
+
+---
+
+## security-idor-url-org-slug-trusted
+
+**Severity:** CRIT
+
+**Trigger:** Any multi-tenant API where the org identifier comes from the URL path (e.g. `/api/orgs/{org_slug}/...`)
+
+The klai-docs API trusted the `org_slug` from the URL path without verifying the caller actually belongs to that organization. All `/api/orgs/{org}/...` endpoints were affected — any authenticated user could access any org's knowledge bases by changing the slug in the URL.
+
+**Why it happens:**
+URL path parameters are user-controlled input. Without explicit verification, the API assumes the caller is authorized for any org they name in the URL. This is a classic IDOR: the "direct object reference" is the org slug.
+
+**Wrong:**
+```typescript
+// BAD — trusts org_slug from URL, no ownership check
+export async function GET(req: Request, { params }: { params: { org: string } }) {
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.slug, params.org),
+  });
+  // proceeds to return org's data...
+}
+```
+
+**Correct — centralized `requireOrgAccess()` helper:**
+```typescript
+// lib/auth.ts — checks payload.org_id matches the org's zitadel_org_id
+export async function requireOrgAccess(
+  req: Request,
+  orgSlug: string,
+): Promise<Organization> {
+  const orgId = req.headers.get("X-Org-ID");
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.slug, orgSlug),
+  });
+  if (!org || org.zitadelOrgId !== orgId) {
+    throw new HttpError(403, "Not authorized for this organization");
+  }
+  return org;
+}
+
+// In every route handler:
+const org = await requireOrgAccess(req, params.org);
+```
+
+**Seen in:** klai-docs — all 8+ route files under `app/docs/api/orgs/[org]/` were vulnerable. Fixed by adding `requireOrgAccess()` to every route handler.
+
+**Prevention:**
+1. Centralize org access verification in a single helper — never inline the check
+2. Apply the helper to ALL org-scoped routes, not just "sensitive" ones
+3. The helper must compare a trusted source (auth token / header from reverse proxy) against the DB record — never compare URL params against each other
+
+**See also:** `security-idor-missing-org-scope` (same class of bug in Python/FastAPI)
 
 ---
 

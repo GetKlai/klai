@@ -28,6 +28,8 @@ paths:
 | [platform-zitadel-user-role-assignment](#platform-zitadel-user-role-assignment) | Assigning a Zitadel project role to a user |
 | [platform-vexa-bot-lifecycle](#platform-vexa-bot-lifecycle) | Debugging a meeting stuck in status |
 | [platform-hetzner-dns-wildcard-tls](#platform-hetzner-dns-wildcard-tls) | Building Caddy with wildcard TLS for `*.getklai.com` |
+| [platform-docker-network-testing](#platform-docker-network-testing) | Testing internal services from within the Docker network |
+| [platform-db-debug-multi-tenant](#platform-db-debug-multi-tenant) | Debugging multi-tenant auth failures by inspecting org data |
 
 ---
 
@@ -601,5 +603,88 @@ HETZNER_DNS_TOKEN=your_hetzner_dns_api_token
 **Do not use Cloud86** — no Caddy plugin available.
 
 **Source:** `architecture/platform.md` — Per-Tenant Routing: Wildcard TLS
+
+---
+
+## platform-docker-network-testing
+
+**When to use:** Testing internal services that are not exposed externally (e.g. docs-app, knowledge-ingest, internal APIs behind reverse proxy)
+
+Use `docker exec` to test from within the Docker network. Check which HTTP client is available in the container first — Alpine-based images have `wget` but not `curl`.
+
+### Step 1: Find the available tool
+
+```bash
+# Check what's available in the container
+ssh core-01 "docker exec klai-core-docs-app-1 which curl wget"
+```
+
+### Step 2: Test the endpoint
+
+```bash
+# Alpine containers (wget) — docs-app, Next.js, Node-based
+ssh core-01 "docker exec klai-core-docs-app-1 wget -qO- \
+  'http://localhost:3000/docs/api/orgs/myorg/kbs' \
+  --header='X-Internal-Secret: <secret>' \
+  --header='X-Org-ID: <zitadel-org-id>'"
+
+# Debian/Ubuntu containers (curl) — Python, FastAPI
+ssh core-01 "docker exec klai-core-portal-api-1 curl -s \
+  'http://localhost:8010/api/health'"
+```
+
+### When to use this vs external testing
+
+| Scenario | Method |
+|---|---|
+| Service has no external port | `docker exec` (only option) |
+| Testing internal API with `X-Internal-Secret` | `docker exec` (secret not routed externally) |
+| Testing public endpoint | `curl` from anywhere |
+| Testing service-to-service communication | `docker exec` from the calling container |
+
+**Rule:** Don't flail with multiple approaches. Check `which curl wget` first, then use the right tool for the container's base image.
+
+---
+
+## platform-db-debug-multi-tenant
+
+**When to use:** Debugging org-level auth failures (403s), data visibility issues, or any multi-tenant problem where the wrong org sees wrong data
+
+When org-level authentication fails, always check the `organizations` table for data mismatches first. The stored org identifier must match what the auth layer sends.
+
+### Quick diagnostic queries
+
+```bash
+# klai-docs: check org identifiers
+ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai_docs -c \
+  \"SELECT slug, zitadel_org_id, created_at FROM docs.organizations\""
+
+# portal: check org identifiers
+ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai -c \
+  \"SELECT id, slug, zitadel_org_id FROM portal_orgs\""
+
+# Compare stored ID with what the auth header sends
+# The zitadel_org_id in the DB must match the X-Org-ID header value
+```
+
+### Common data mismatches
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| 403 after adding org verification | Auto-provisioned org stored slug as `zitadel_org_id` | `UPDATE ... SET zitadel_org_id = '<real-id>'` |
+| User sees empty data for their org | Org exists in auth but not in service DB | Check auto-provisioning code path |
+| User sees another org's data | Missing org scope in query | Add org_id filter (see `pitfalls/security.md`) |
+
+### Fix mismatched org data
+
+```bash
+# Correct a wrong zitadel_org_id (after verifying the real ID)
+ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai_docs -c \
+  \"UPDATE docs.organizations SET zitadel_org_id = '<real-zitadel-org-id>' WHERE slug = '<org-slug>'\""
+```
+
+**Rule:** Always inspect the DB before theorizing. A 5-second query saves hours of code debugging.
+
+**See also:** `pitfalls/security.md#security-idor-url-org-slug-trusted`, `pitfalls/docs-app.md#platform-docs-app-auto-provision-org-id`
 
 ---
