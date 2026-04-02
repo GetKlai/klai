@@ -296,10 +296,7 @@ async def test_mcp_server(
     # Expand ${VAR} placeholders in URL and headers
     for var_name, var_value in decrypted_env.items():
         mcp_url = mcp_url.replace(f"${{{var_name}}}", var_value)
-        headers_template = {
-            k: v.replace(f"${{{var_name}}}", var_value)
-            for k, v in headers_template.items()
-        }
+        headers_template = {k: v.replace(f"${{{var_name}}}", var_value) for k, v in headers_template.items()}
 
     if not mcp_url:
         return McpTestResponse(status="error", error="MCP server URL not configured")
