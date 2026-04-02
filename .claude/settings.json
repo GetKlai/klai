@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/confidence-check.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/confidence-check.py\"",
             "timeout": 10000
           }
         ]

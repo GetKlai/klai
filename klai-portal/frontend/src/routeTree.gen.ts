@@ -37,6 +37,7 @@ import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
+import { Route as AdminIntegrationsIndexRouteImport } from './routes/admin/integrations/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
@@ -200,6 +201,11 @@ const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminIntegrationsIndexRoute = AdminIntegrationsIndexRouteImport.update({
+  id: '/integrations/',
+  path: '/integrations/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
   id: '/groups/',
   path: '/groups/',
@@ -352,6 +358,7 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
+  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
@@ -402,6 +409,7 @@ export interface FileRoutesByTo {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
+  '/admin/integrations': typeof AdminIntegrationsIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
@@ -455,6 +463,7 @@ export interface FileRoutesById {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
+  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
@@ -509,6 +518,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups/'
+    | '/admin/integrations/'
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
@@ -559,6 +569,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups'
+    | '/admin/integrations'
     | '/admin/users'
     | '/app/docs'
     | '/app/focus'
@@ -611,6 +622,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups/'
+    | '/admin/integrations/'
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
@@ -842,6 +854,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/integrations/': {
+      id: '/admin/integrations/'
+      path: '/integrations'
+      fullPath: '/admin/integrations/'
+      preLoaderRoute: typeof AdminIntegrationsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/groups/': {
       id: '/admin/groups/'
       path: '/groups'
@@ -1020,6 +1039,7 @@ interface AdminRouteRouteChildren {
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
+  AdminIntegrationsIndexRoute: typeof AdminIntegrationsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
@@ -1034,6 +1054,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminGroupsNewRoute: AdminGroupsNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
+  AdminIntegrationsIndexRoute: AdminIntegrationsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
