@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson, CircleCheck } from 'lucide-react'
+import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -83,6 +83,18 @@ function StatusBadge({ status }: { status: string }) {
       {c.label}
     </Badge>
   )
+}
+
+/** Build a markdown action items section from structured data */
+function buildActionItemsMd(
+  items: { owner: string | null; task: string }[],
+  title: string,
+): string {
+  if (!items.length) return ''
+  const lines = items.map((item) =>
+    item.owner ? `- **${item.owner}**: ${item.task}` : `- ${item.task}`,
+  )
+  return `\n\n## ${title}\n\n${lines.join('\n')}`
 }
 
 /** Strip markdown syntax to produce plain text for clipboard copy */
@@ -172,9 +184,17 @@ function MeetingDetailPage() {
     URL.revokeObjectURL(url)
   }
 
+  const fullSummaryMd = meeting?.summary_json
+    ? meeting.summary_json.markdown +
+      buildActionItemsMd(
+        meeting.summary_json.structured?.action_items ?? [],
+        m.app_meetings_action_items_title(),
+      )
+    : ''
+
   async function copySummaryText() {
-    if (!meeting?.summary_json?.markdown) return
-    await navigator.clipboard.writeText(stripMarkdown(meeting.summary_json.markdown))
+    if (!fullSummaryMd) return
+    await navigator.clipboard.writeText(stripMarkdown(fullSummaryMd))
     setSummaryCopied('text')
     setTimeout(() => setSummaryCopied(null), 2000)
   }
@@ -191,8 +211,8 @@ function MeetingDetailPage() {
   }
 
   async function copySummaryMarkdown() {
-    if (!meeting?.summary_json?.markdown) return
-    await navigator.clipboard.writeText(meeting.summary_json.markdown)
+    if (!fullSummaryMd) return
+    await navigator.clipboard.writeText(fullSummaryMd)
     setSummaryCopied('markdown')
     setTimeout(() => setSummaryCopied(null), 2000)
   }
@@ -367,31 +387,6 @@ function MeetingDetailPage() {
         </Card>
       )}
 
-      {meeting.summary_json && meeting.summary_json.structured?.action_items && meeting.summary_json.structured.action_items.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-medium">
-              {m.app_meetings_action_items_title()}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2">
-              {meeting.summary_json.structured.action_items.map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
-                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-purple-deep)]" />
-                  <span>
-                    {item.owner && (
-                      <span className="font-medium text-[var(--color-purple-deep)]">{item.owner}: </span>
-                    )}
-                    {item.task}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
       {meeting.summary_json && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3">
@@ -429,7 +424,7 @@ function MeetingDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="text-sm text-[var(--color-foreground)] space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
-              <Markdown>{meeting.summary_json.markdown}</Markdown>
+              <Markdown>{fullSummaryMd}</Markdown>
             </div>
           </CardContent>
         </Card>
