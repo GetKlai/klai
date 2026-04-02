@@ -54,7 +54,7 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
+      "args": ["@playwright/mcp@latest", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
       "env": {}
     }
   }
@@ -69,26 +69,20 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Uses Brave Browser via a dedicated profile. |
 
-The `.playwright-mcp/config.json` is tracked in git with the macOS config (default dev machine).
-For Windows, overwrite it locally — git will show a diff but the file won't be gitignored.
+Browser config is passed as direct CLI args — no config file needed. The `--executable-path` is the standard Brave install location on macOS (same for all users).
 
-**macOS** (committed, default):
-```json
-{
-  "browser": "chromium",
-  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-  "userDataDir": "/Users/mark/.claude/mcp-brave-profile"
-}
+**Persistent login sessions (required for autonomous testing)**
+
+The `--user-data-dir` is NOT in `.mcp.json` because it contains a username-specific path. Instead, set it once in your shell profile so the MCP server inherits it automatically:
+
+```bash
+# Add to ~/.zshrc (or ~/.bashrc)
+export PLAYWRIGHT_MCP_USER_DATA_DIR=~/.claude/mcp-brave-profile
 ```
 
-**Windows** (local override):
-```json
-{
-  "browser": "chromium",
-  "executablePath": "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
-  "userDataDir": "C:/Users/markv/.claude/mcp-brave-profile"
-}
-```
+Then `source ~/.zshrc` (or open a new terminal) and restart Claude Code. The `~` is expanded by the shell before the MCP server starts, so this works correctly.
+
+Without this env var, Playwright uses a temporary directory and login sessions are lost on every restart.
 
 For session management rules (when to open/close the browser, profile locking), see
 `.claude/rules/klai/patterns/testing.md`.
