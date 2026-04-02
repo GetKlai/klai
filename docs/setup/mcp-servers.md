@@ -9,8 +9,25 @@
 uv tool install git+https://github.com/oraios/serena
 ```
 
-Do NOT use `uvx --from git+...` in `.mcp.json` — that clones and rebuilds Serena on every Claude
-Code startup, which exceeds the MCP timeout and causes Serena to fail silently.
+This places a permanent symlink at `~/.local/bin/serena`. Verify after install:
+
+```bash
+which serena   # should print ~/.local/bin/serena
+serena --version
+```
+
+**Why `uv tool install` and not `uvx`?**
+
+`uvx` creates a temporary cached environment in `~/.cache/uv/environments-v2/`. This cache is
+**not permanent** — uv garbage-collects old environments automatically. When the cache is pruned,
+the `serena` binary silently disappears and the MCP server fails to start on the next Claude Code
+session. `uv tool install` avoids this by creating a persistent installation.
+
+Do NOT use `uvx --from git+...` in `.mcp.json` — besides the cache eviction risk, it clones and
+rebuilds Serena on every Claude Code startup, which exceeds the MCP timeout.
+
+**If Serena stops working after it was previously fine:** the most likely cause is uv cache
+eviction. Re-run `uv tool install git+https://github.com/oraios/serena` and restart Claude Code.
 
 ## 2. Configure `.mcp.json`
 
@@ -81,9 +98,14 @@ For Windows, overwrite it locally — git will show a diff but the file won't be
 For session management rules (when to open/close the browser, profile locking), see
 `.claude/rules/klai/patterns/testing.md`.
 
-**Common failure mode:** If Serena stops loading, check that the `command` is `"serena"` (not
-`"uvx"` with `--from git+...`). The uvx variant clones and rebuilds on every startup -> MCP
-timeout -> Serena never available.
+**Common failure modes:**
+
+1. **Binary missing** — `which serena` returns nothing. Cause: uv cache eviction removed the
+   environment, or Serena was never installed with `uv tool install`. Fix: `uv tool install git+https://github.com/oraios/serena`
+2. **uvx in .mcp.json** — If `command` is `"uvx"` instead of `"serena"`, it clones and rebuilds
+   on every startup → MCP timeout → Serena never available. Fix: use `"command": "serena"`.
+3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
+   file patterns.
 
 ## 3. Disable Serena web dashboard
 
