@@ -781,13 +781,14 @@ services:
     environment:
       REDIS_URL: redis://vexa-redis:6379/0
       ORCHESTRATOR_BACKEND: docker
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: vexa-bots
       ALLOW_PRIVATE_CALLBACKS: "true"
       PROFILES_PATH: /app/profiles.yaml
       LOG_LEVEL: INFO
     volumes:
       - ./vexa/profiles.yaml:/app/profiles.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       vexa-redis:
         condition: service_healthy
@@ -798,7 +799,6 @@ services:
           memory: 256M
     networks:
       - net-redis
-      - socket-proxy
       - vexa-bots
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
