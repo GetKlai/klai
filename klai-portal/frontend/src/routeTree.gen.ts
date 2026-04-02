@@ -44,7 +44,6 @@ import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/t
 import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
 import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
 import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
-import { Route as AppKnowledgeKbSlugRouteImport } from './routes/app/knowledge/$kbSlug'
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
@@ -52,8 +51,16 @@ import { Route as AppDocsKbSlugRouteImport } from './routes/app/docs/$kbSlug'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
+import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
+import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
+import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
+import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
+import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/knowledge/$kbSlug/overview'
+import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
+import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
+import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 import { Route as AppFocusNotebookIdAddSourceRouteImport } from './routes/app/focus/$notebookId_.add-source'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
@@ -237,11 +244,6 @@ const AppKnowledgeNewRoute = AppKnowledgeNewRouteImport.update({
   path: '/knowledge/new',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppKnowledgeKbSlugRoute = AppKnowledgeKbSlugRouteImport.update({
-  id: '/knowledge/$kbSlug',
-  path: '/knowledge/$kbSlug',
-  getParentRoute: () => AppRouteRoute,
-} as any)
 const AppFocusNewRoute = AppFocusNewRouteImport.update({
   id: '/focus/new',
   path: '/focus/new',
@@ -277,6 +279,16 @@ const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
   path: '/password/forgot',
   getParentRoute: () => LocaleRouteRoute,
 } as any)
+const AppKnowledgeKbSlugRouteRoute = AppKnowledgeKbSlugRouteRouteImport.update({
+  id: '/knowledge/$kbSlug',
+  path: '/knowledge/$kbSlug',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppKnowledgeKbSlugIndexRoute = AppKnowledgeKbSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+} as any)
 const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   id: '/groups/$groupId/',
   path: '/groups/$groupId/',
@@ -287,6 +299,41 @@ const AppKnowledgeKbSlugAddConnectorRoute =
     id: '/knowledge/$kbSlug_/add-connector',
     path: '/knowledge/$kbSlug/add-connector',
     getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugTaxonomyRoute =
+  AppKnowledgeKbSlugTaxonomyRouteImport.update({
+    id: '/taxonomy',
+    path: '/taxonomy',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugSettingsRoute =
+  AppKnowledgeKbSlugSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugOverviewRoute =
+  AppKnowledgeKbSlugOverviewRouteImport.update({
+    id: '/overview',
+    path: '/overview',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugMembersRoute =
+  AppKnowledgeKbSlugMembersRouteImport.update({
+    id: '/members',
+    path: '/members',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugItemsRoute = AppKnowledgeKbSlugItemsRouteImport.update({
+  id: '/items',
+  path: '/items',
+  getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+} as any)
+const AppKnowledgeKbSlugConnectorsRoute =
+  AppKnowledgeKbSlugConnectorsRouteImport.update({
+    id: '/connectors',
+    path: '/connectors',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
 const AppFocusNotebookIdEditRoute = AppFocusNotebookIdEditRouteImport.update({
   id: '/focus/$notebookId_/edit',
@@ -344,6 +391,7 @@ export interface FileRoutesByFullPath {
   '/setup/mfa': typeof SetupMfaRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
@@ -351,7 +399,6 @@ export interface FileRoutesByFullPath {
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
-  '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
@@ -371,8 +418,15 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
+  '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
+  '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
+  '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
+  '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
+  '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -402,7 +456,6 @@ export interface FileRoutesByTo {
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
-  '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
@@ -422,8 +475,15 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
+  '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
+  '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
+  '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
+  '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
+  '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -449,6 +509,7 @@ export interface FileRoutesById {
   '/setup/mfa': typeof SetupMfaRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
@@ -456,7 +517,6 @@ export interface FileRoutesById {
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
-  '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRoute
   '/app/knowledge/new': typeof AppKnowledgeNewRoute
   '/app/meetings/$meetingId': typeof AppMeetingsMeetingIdRoute
   '/app/meetings/start': typeof AppMeetingsStartRoute
@@ -476,8 +536,15 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
+  '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
+  '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
+  '/app/knowledge/$kbSlug/overview': typeof AppKnowledgeKbSlugOverviewRoute
+  '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
+  '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
+  '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -504,6 +571,7 @@ export interface FileRouteTypes {
     | '/setup/mfa'
     | '/admin/'
     | '/app/'
+    | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
     | '/admin/users/invite'
@@ -511,7 +579,6 @@ export interface FileRouteTypes {
     | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
-    | '/app/knowledge/$kbSlug'
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
@@ -531,8 +598,15 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/knowledge/$kbSlug/connectors'
+    | '/app/knowledge/$kbSlug/items'
+    | '/app/knowledge/$kbSlug/members'
+    | '/app/knowledge/$kbSlug/overview'
+    | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/admin/groups/$groupId/'
+    | '/app/knowledge/$kbSlug/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -562,7 +636,6 @@ export interface FileRouteTypes {
     | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
-    | '/app/knowledge/$kbSlug'
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
@@ -582,8 +655,15 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/knowledge/$kbSlug/connectors'
+    | '/app/knowledge/$kbSlug/items'
+    | '/app/knowledge/$kbSlug/members'
+    | '/app/knowledge/$kbSlug/overview'
+    | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
     | '/admin/groups/$groupId'
+    | '/app/knowledge/$kbSlug'
   id:
     | '__root__'
     | '/'
@@ -608,6 +688,7 @@ export interface FileRouteTypes {
     | '/setup/mfa'
     | '/admin/'
     | '/app/'
+    | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
     | '/admin/users/invite'
@@ -615,7 +696,6 @@ export interface FileRouteTypes {
     | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
-    | '/app/knowledge/$kbSlug'
     | '/app/knowledge/new'
     | '/app/meetings/$meetingId'
     | '/app/meetings/start'
@@ -635,8 +715,15 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug_/edit'
     | '/app/focus/$notebookId_/add-source'
     | '/app/focus/$notebookId_/edit'
+    | '/app/knowledge/$kbSlug/connectors'
+    | '/app/knowledge/$kbSlug/items'
+    | '/app/knowledge/$kbSlug/members'
+    | '/app/knowledge/$kbSlug/overview'
+    | '/app/knowledge/$kbSlug/settings'
+    | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
     | '/admin/groups/$groupId/'
+    | '/app/knowledge/$kbSlug/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -903,13 +990,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeNewRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/knowledge/$kbSlug': {
-      id: '/app/knowledge/$kbSlug'
-      path: '/knowledge/$kbSlug'
-      fullPath: '/app/knowledge/$kbSlug'
-      preLoaderRoute: typeof AppKnowledgeKbSlugRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/app/focus/new': {
       id: '/app/focus/new'
       path: '/focus/new'
@@ -959,6 +1039,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LocalePasswordForgotRouteImport
       parentRoute: typeof LocaleRouteRoute
     }
+    '/app/knowledge/$kbSlug': {
+      id: '/app/knowledge/$kbSlug'
+      path: '/knowledge/$kbSlug'
+      fullPath: '/app/knowledge/$kbSlug'
+      preLoaderRoute: typeof AppKnowledgeKbSlugRouteRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/$kbSlug/': {
+      id: '/app/knowledge/$kbSlug/'
+      path: '/'
+      fullPath: '/app/knowledge/$kbSlug/'
+      preLoaderRoute: typeof AppKnowledgeKbSlugIndexRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
     '/admin/groups/$groupId/': {
       id: '/admin/groups/$groupId/'
       path: '/groups/$groupId'
@@ -972,6 +1066,48 @@ declare module '@tanstack/react-router' {
       fullPath: '/app/knowledge/$kbSlug/add-connector'
       preLoaderRoute: typeof AppKnowledgeKbSlugAddConnectorRouteImport
       parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/$kbSlug/taxonomy': {
+      id: '/app/knowledge/$kbSlug/taxonomy'
+      path: '/taxonomy'
+      fullPath: '/app/knowledge/$kbSlug/taxonomy'
+      preLoaderRoute: typeof AppKnowledgeKbSlugTaxonomyRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/settings': {
+      id: '/app/knowledge/$kbSlug/settings'
+      path: '/settings'
+      fullPath: '/app/knowledge/$kbSlug/settings'
+      preLoaderRoute: typeof AppKnowledgeKbSlugSettingsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/overview': {
+      id: '/app/knowledge/$kbSlug/overview'
+      path: '/overview'
+      fullPath: '/app/knowledge/$kbSlug/overview'
+      preLoaderRoute: typeof AppKnowledgeKbSlugOverviewRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/members': {
+      id: '/app/knowledge/$kbSlug/members'
+      path: '/members'
+      fullPath: '/app/knowledge/$kbSlug/members'
+      preLoaderRoute: typeof AppKnowledgeKbSlugMembersRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/items': {
+      id: '/app/knowledge/$kbSlug/items'
+      path: '/items'
+      fullPath: '/app/knowledge/$kbSlug/items'
+      preLoaderRoute: typeof AppKnowledgeKbSlugItemsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/connectors': {
+      id: '/app/knowledge/$kbSlug/connectors'
+      path: '/connectors'
+      fullPath: '/app/knowledge/$kbSlug/connectors'
+      preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
     '/app/focus/$notebookId_/edit': {
       id: '/app/focus/$notebookId_/edit'
@@ -1066,16 +1202,42 @@ const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
   AdminRouteRouteChildren,
 )
 
+interface AppKnowledgeKbSlugRouteRouteChildren {
+  AppKnowledgeKbSlugConnectorsRoute: typeof AppKnowledgeKbSlugConnectorsRoute
+  AppKnowledgeKbSlugItemsRoute: typeof AppKnowledgeKbSlugItemsRoute
+  AppKnowledgeKbSlugMembersRoute: typeof AppKnowledgeKbSlugMembersRoute
+  AppKnowledgeKbSlugOverviewRoute: typeof AppKnowledgeKbSlugOverviewRoute
+  AppKnowledgeKbSlugSettingsRoute: typeof AppKnowledgeKbSlugSettingsRoute
+  AppKnowledgeKbSlugTaxonomyRoute: typeof AppKnowledgeKbSlugTaxonomyRoute
+  AppKnowledgeKbSlugIndexRoute: typeof AppKnowledgeKbSlugIndexRoute
+}
+
+const AppKnowledgeKbSlugRouteRouteChildren: AppKnowledgeKbSlugRouteRouteChildren =
+  {
+    AppKnowledgeKbSlugConnectorsRoute: AppKnowledgeKbSlugConnectorsRoute,
+    AppKnowledgeKbSlugItemsRoute: AppKnowledgeKbSlugItemsRoute,
+    AppKnowledgeKbSlugMembersRoute: AppKnowledgeKbSlugMembersRoute,
+    AppKnowledgeKbSlugOverviewRoute: AppKnowledgeKbSlugOverviewRoute,
+    AppKnowledgeKbSlugSettingsRoute: AppKnowledgeKbSlugSettingsRoute,
+    AppKnowledgeKbSlugTaxonomyRoute: AppKnowledgeKbSlugTaxonomyRoute,
+    AppKnowledgeKbSlugIndexRoute: AppKnowledgeKbSlugIndexRoute,
+  }
+
+const AppKnowledgeKbSlugRouteRouteWithChildren =
+  AppKnowledgeKbSlugRouteRoute._addFileChildren(
+    AppKnowledgeKbSlugRouteRouteChildren,
+  )
+
 interface AppRouteRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppChatRoute: typeof AppChatRoute
   AppScribeRoute: typeof AppScribeRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppKnowledgeKbSlugRouteRoute: typeof AppKnowledgeKbSlugRouteRouteWithChildren
   AppDocsKbSlugRoute: typeof AppDocsKbSlugRoute
   AppDocsNewRoute: typeof AppDocsNewRoute
   AppFocusNotebookIdRoute: typeof AppFocusNotebookIdRoute
   AppFocusNewRoute: typeof AppFocusNewRoute
-  AppKnowledgeKbSlugRoute: typeof AppKnowledgeKbSlugRoute
   AppKnowledgeNewRoute: typeof AppKnowledgeNewRoute
   AppMeetingsMeetingIdRoute: typeof AppMeetingsMeetingIdRoute
   AppMeetingsStartRoute: typeof AppMeetingsStartRoute
@@ -1097,11 +1259,11 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppChatRoute: AppChatRoute,
   AppScribeRoute: AppScribeRoute,
   AppIndexRoute: AppIndexRoute,
+  AppKnowledgeKbSlugRouteRoute: AppKnowledgeKbSlugRouteRouteWithChildren,
   AppDocsKbSlugRoute: AppDocsKbSlugRoute,
   AppDocsNewRoute: AppDocsNewRoute,
   AppFocusNotebookIdRoute: AppFocusNotebookIdRoute,
   AppFocusNewRoute: AppFocusNewRoute,
-  AppKnowledgeKbSlugRoute: AppKnowledgeKbSlugRoute,
   AppKnowledgeNewRoute: AppKnowledgeNewRoute,
   AppMeetingsMeetingIdRoute: AppMeetingsMeetingIdRoute,
   AppMeetingsStartRoute: AppMeetingsStartRoute,
