@@ -367,7 +367,7 @@ function MeetingDetailPage() {
         </Card>
       )}
 
-      {meeting.summary_json?.structured?.action_items?.length > 0 && (
+      {meeting.summary_json && meeting.summary_json.structured?.action_items && meeting.summary_json.structured.action_items.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-medium">
