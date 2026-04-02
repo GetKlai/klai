@@ -81,7 +81,7 @@ summarize_model:   str = "klai-primary"  # meeting/transcription
 body = {"model": settings.coreference_model, ...}  # never a literal string
 ```
 
-**See also:** `model-policy.md` for the full alias table and forbidden model names
+**See also:** `CLAUDE.md` § Model policy for the HARD rule on forbidden model names
 
 ---
 

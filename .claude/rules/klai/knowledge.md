@@ -37,6 +37,8 @@ Check the project's CLAUDE.md for the full list.
 - **Working on frontend UI** → `styleguide.md` + `portal-patterns.md` or `website-patterns.md` auto-load for matching files
 - **Writing Python logging** → `python-logging.md` auto-loads for all Klai Python files; full guide in `.claude/rules/klai/patterns/logging.md`
 - **Writing portal backend endpoints that access resources by ID** → read `.claude/rules/klai/pitfalls/security.md` — rule auto-loads via `.claude/rules/klai/multi-tenant-pattern.md`
+- **Using external libraries** → use context7 MCP for current docs (not for internal code or business logic)
+- **SPEC plan phase with external dependencies** → run context7 during research sub-phase
 - **Working on a project-specific domain** → read that project's relevant domain files
 - **Before reporting task completion** → confidence protocol loads automatically; provides evidence scoring and adversarial check guidance
 

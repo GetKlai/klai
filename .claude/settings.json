@@ -11,6 +11,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/klai/post-push-ci.py"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

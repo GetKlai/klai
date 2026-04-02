@@ -31,10 +31,27 @@ Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md
 
 ## Shared rules
 
-@.claude/rules/klai/context7.md
 @.claude/rules/klai/knowledge.md
 @.claude/rules/klai/server-secrets.md
 @.claude/rules/klai/serena.md
+
+## Model policy
+
+**[HARD] Never use OpenAI, Anthropic, or other US cloud provider model names anywhere in Klai code.**
+
+Klai is a privacy-first, EU-only platform. Using OpenAI/Anthropic model names in code would route data to US providers, violate GDPR, and break the product promise.
+
+**Forbidden:** `gpt-*`, `claude-*`, `text-davinci-*`, `text-embedding-*`, or any model from openai.com, anthropic.com, cohere.com.
+
+**Use ONLY these LiteLLM tier aliases:**
+
+| Alias | Use for |
+|---|---|
+| `klai-fast` | Lightweight, high-volume, latency-sensitive |
+| `klai-primary` | Standard quality, user-facing |
+| `klai-large` | Agentic, tool use, MCP flows |
+
+For tier details and model mappings, see `patterns/platform.md`.
 
 ## Tech stack
 

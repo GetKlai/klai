@@ -1,5 +1,9 @@
 ---
-description: Require CI verification and deploy health check after every git push in klai projects
+paths:
+  - "**/.github/workflows/**"
+  - "**/deploy/**"
+  - "**/Dockerfile*"
+  - "**/docker-compose*.yml"
 ---
 
 # CI Verification & Deploy Health Check After Push
