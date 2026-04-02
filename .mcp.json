@@ -15,13 +15,6 @@
       "args": ["-y", "@upstash/context7-mcp@latest"],
       "env": {}
     },
-    "sequential-thinking": {
-      "$comment": "Step-by-step reasoning for complex problems (UltraThink mode)",
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-      "env": {}
-    },
     "playwright": {
       "$comment": "Browser automation for E2E spot-checks. Config in .playwright-mcp/config.json (tracked in git). Uses persistent Brave profile for login state.",
       "type": "stdio",

@@ -51,12 +51,6 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
       "args": ["-y", "@upstash/context7-mcp@latest"],
       "env": {}
     },
-    "sequential-thinking": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-      "env": {}
-    },
     "playwright": {
       "type": "stdio",
       "command": "npx",
@@ -73,7 +67,6 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
 |--------|---------|
 | **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
-| **sequential-thinking** | Step-by-step reasoning for complex problems (UltraThink mode). Used by specialized agents for architecture decisions and deep analysis. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Uses Brave Browser via a dedicated profile. |
 
 The `.playwright-mcp/config.json` is tracked in git with the macOS config (default dev machine).
