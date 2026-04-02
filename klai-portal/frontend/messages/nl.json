@@ -1021,6 +1021,9 @@
   "admin_connectors_webcrawler_run_preview": "Voorvertoning starten",
   "admin_connectors_webcrawler_preview_looks_good": "Content ziet er goed uit — {count} woorden schoon geëxtraheerd.",
   "admin_connectors_webcrawler_warning_nav_detected": "Navigatiemenu gedetecteerd in de preview. Voeg een CSS selector toe om alleen het artikelgebied te laden (bijv. article, main, .article-body).",
+  "admin_connectors_webcrawler_ai_selector_detected": "AI heeft een content selector gevonden: {selector} — {count} woorden geëxtraheerd.",
+  "admin_connectors_webcrawler_ai_selector_use": "Gebruik deze selector",
+  "admin_connectors_webcrawler_preview_loading_ai": "Paginastructuur analyseren met AI...",
 
   "admin_connectors_coming_soon": "Binnenkort",
   "admin_connectors_create_submit": "Connector toevoegen",

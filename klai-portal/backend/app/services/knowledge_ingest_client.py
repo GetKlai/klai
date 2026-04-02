@@ -72,7 +72,9 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
         resp.raise_for_status()
 
 
-async def preview_crawl(url: str, content_selector: str | None = None) -> dict:
+async def preview_crawl(
+    url: str, content_selector: str | None = None, org_id: str = ""
+) -> dict:
     """Call knowledge-ingest preview endpoint and return fit_markdown + word_count.
 
     Returns {"fit_markdown": "", "word_count": 0, "url": url} on any failure so the caller
@@ -86,7 +88,7 @@ async def preview_crawl(url: str, content_selector: str | None = None) -> dict:
         ) as client:
             resp = await client.post(
                 "/ingest/v1/crawl/preview",
-                json={"url": url, "content_selector": content_selector},
+                json={"url": url, "content_selector": content_selector, "org_id": org_id},
             )
             resp.raise_for_status()
             return resp.json()  # type: ignore[no-any-return]

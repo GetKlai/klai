@@ -1021,6 +1021,9 @@
   "admin_connectors_webcrawler_run_preview": "Run preview",
   "admin_connectors_webcrawler_preview_looks_good": "Content looks good — {count} words extracted cleanly.",
   "admin_connectors_webcrawler_warning_nav_detected": "Navigation content detected in preview. Add a CSS selector to target only the article area (e.g. article, main, .article-body).",
+  "admin_connectors_webcrawler_ai_selector_detected": "AI detected a content selector: {selector} — {count} words extracted.",
+  "admin_connectors_webcrawler_ai_selector_use": "Use this selector",
+  "admin_connectors_webcrawler_preview_loading_ai": "Analyzing page structure with AI...",
 
   "admin_connectors_coming_soon": "Coming soon",
   "admin_connectors_create_submit": "Add connector",

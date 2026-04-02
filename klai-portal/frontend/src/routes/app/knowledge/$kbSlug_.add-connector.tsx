@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2,
+  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -83,7 +83,10 @@ function AddConnectorPage() {
   const [wcStep, setWcStep] = useState<WcStep>('details')
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
+  const [previewResult, setPreviewResult] = useState<{
+    fit_markdown: string; word_count: number; warnings: string[]
+    content_selector: string | null; selector_source: string | null
+  } | null>(null)
 
   function goBack() {
     void navigate({ to: '/app/knowledge/$kbSlug', params: { kbSlug }, search: { tab: 'connectors' } })
@@ -135,7 +138,10 @@ function AddConnectorPage() {
         body: JSON.stringify({ url, content_selector: content_selector || null }),
       })
       if (!res.ok) throw new Error(`Preview failed (${String(res.status)})`)
-      return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
+      return res.json() as Promise<{
+        fit_markdown: string; word_count: number; warnings: string[]; url: string
+        content_selector: string | null; selector_source: string | null
+      }>
     },
     onSuccess: (data) => { setPreviewResult(data); setPreviewError(null) },
     onError: (err) => { setPreviewError(err instanceof Error ? err.message : 'Preview failed'); setPreviewResult(null) },
@@ -386,6 +392,28 @@ function AddConnectorPage() {
                       <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                         <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                         <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                      </div>
+                    )}
+                    {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
+                      <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
+                        <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]">
+                          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                          <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
+                        </div>
+                        {webcrawlerConfig.content_selector !== previewResult.content_selector && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7"
+                            onClick={() => {
+                              setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! }))
+                              setShowAdvancedSelector(true)
+                            }}
+                          >
+                            {m.admin_connectors_webcrawler_ai_selector_use()}
+                          </Button>
+                        )}
                       </div>
                     )}
                     {!previewResult && !previewMutation.isPending && (

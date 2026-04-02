@@ -866,6 +866,9 @@ class CrawlPreviewResponse(BaseModel):
     url: str
     fit_markdown: str
     word_count: int
+    warnings: list[str] = []
+    content_selector: str | None = None
+    selector_source: str | None = None
 
 
 @router.post("/knowledge-bases/{kb_slug}/connectors/crawl-preview", response_model=CrawlPreviewResponse)
@@ -882,9 +885,13 @@ async def crawl_preview(
     result = await knowledge_ingest_client.preview_crawl(
         url=body.url,
         content_selector=body.content_selector,
+        org_id=org.id,
     )
     return CrawlPreviewResponse(
         url=result.get("url", body.url),
         fit_markdown=result.get("fit_markdown", ""),
         word_count=result.get("word_count", 0),
+        warnings=result.get("warnings", []),
+        content_selector=result.get("content_selector"),
+        selector_source=result.get("selector_source"),
     )
