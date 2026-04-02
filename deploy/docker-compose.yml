@@ -736,7 +736,7 @@ services:
       DB_USER: vexa
       DB_PASSWORD: ${VEXA_DB_PASSWORD}
       DB_SSL_MODE: disable
-      REDIS_URL: redis://vexa-redis:6379/0
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
       API_KEYS: ${VEXA_API_KEY}
       ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
       RUNTIME_API_URL: http://vexa-runtime-api:8090
@@ -778,7 +778,7 @@ services:
     image: vexa-runtime-api:klai
     restart: unless-stopped
     environment:
-      REDIS_URL: redis://vexa-redis:6379/0
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
       ORCHESTRATOR_BACKEND: docker
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: vexa-bots
