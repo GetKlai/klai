@@ -59,9 +59,10 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
 | **sequential-thinking** | Step-by-step reasoning for complex problems (UltraThink mode). Used by specialized agents for architecture decisions and deep analysis. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Uses Brave Browser via a dedicated profile. |
 
-The `.playwright-mcp/config.json` is gitignored and must be created per machine.
+The `.playwright-mcp/config.json` is tracked in git with the macOS config (default dev machine).
+For Windows, overwrite it locally — git will show a diff but the file won't be gitignored.
 
-**macOS** (`.playwright-mcp/config.json`):
+**macOS** (committed, default):
 ```json
 {
   "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
@@ -69,13 +70,16 @@ The `.playwright-mcp/config.json` is gitignored and must be created per machine.
 }
 ```
 
-**Windows** (`.playwright-mcp/config.json`):
+**Windows** (local override):
 ```json
 {
   "executablePath": "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
   "userDataDir": "C:/Users/markv/.claude/mcp-brave-profile"
 }
 ```
+
+For session management rules (when to open/close the browser, profile locking), see
+`.claude/rules/klai/patterns/testing.md`.
 
 **Common failure mode:** If Serena stops loading, check that the `command` is `"serena"` (not
 `"uvx"` with `--from git+...`). The uvx variant clones and rebuilds on every startup -> MCP

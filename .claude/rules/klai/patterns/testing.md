@@ -15,8 +15,9 @@ paths:
 
 | Section | When to use |
 |---|---|
-| [Setup](#setup) | Initial Playwright MCP configuration |
+| [Setup](#setup) | Initial Playwright MCP configuration and profile |
 | [Standard workflow](#standard-workflow) | Step-by-step browser testing process |
+| [Session management rules](#session-management-rules) | When to open/close browser, profile locking |
 | [Checking HTTP headers](#checking-http-headers) | Verifying response headers in tests |
 | [Debugging with GlitchTip](#debugging-with-glitchtip) | Using GlitchTip for error monitoring |
 
@@ -24,10 +25,20 @@ paths:
 
 ## Setup
 
-The Playwright MCP is configured to use **Brave Browser** from `/Applications/Brave Browser.app`.
-This is a persistent browser profile stored at `~/.cache/ms-playwright/klai-profile`.
+The Playwright MCP is configured in `.mcp.json` with `.playwright-mcp/config.json` (tracked in git).
 
-Because it's a persistent profile, login sessions survive across test runs — you typically only need to log in once.
+**Browser:** Brave Browser at `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser`
+**Profile:** Persistent profile at `~/.claude/mcp-brave-profile` — login sessions survive across test runs.
+
+Because it's a persistent profile, you typically only need to log in once. Cookies, localStorage, and session data carry over between Claude Code sessions.
+
+**Config file** (`.playwright-mcp/config.json`):
+```json
+{
+  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "userDataDir": "/Users/mark/.claude/mcp-brave-profile"
+}
+```
 
 ---
 
@@ -35,8 +46,7 @@ Because it's a persistent profile, login sessions survive across test runs — y
 
 ### 1. Kill Brave before starting
 
-Playwright cannot launch its own Brave instance while Brave is already running.
-Always kill it first:
+Playwright cannot launch Brave while it's already running — Chrome/Brave locks the profile directory (`SingletonLock`). Always kill it first:
 
 ```bash
 pkill -x "Brave Browser"
@@ -83,19 +93,41 @@ Always use the `ref` from a snapshot, not CSS selectors:
 browser_click({ ref: 'e66', element: 'Start recording button' })
 ```
 
-### 5. Close tabs and browser when done
+### 5. Close tabs and browser when done (HARD)
 
-Close all open tabs first, then close the browser so Brave can resume normally:
+**[HARD] Always close all tabs and the browser after testing.** Leaving it open blocks other Claude Code sessions from using Playwright.
+
+Close procedure — execute in order:
 
 ```js
-// Close all non-essential tabs (repeat for each open tab)
-browser_tabs({ action: 'close', index: 1 })
+// 1. List open tabs
+browser_tabs({ action: 'list' })
 
-// Then close the browser entirely
+// 2. Close all tabs except the first (repeat from highest index down)
+browser_tabs({ action: 'close', index: N })  // N = highest tab index
+browser_tabs({ action: 'close', index: 1 })  // keep closing until only tab 0 remains
+
+// 3. Close the browser entirely
 browser_close()
 ```
 
-**Always close the browser after testing.** Leaving it open blocks the next Playwright session.
+**Why this matters:**
+- Brave/Chrome locks `userDataDir` with `SingletonLock` — only one process can use it
+- If a previous session left the browser open, the next session gets "Profile already in use"
+- The persistent profile preserves login state even after `browser_close()` — closing is safe
+
+**If browser_close() fails or reports "Browser is already in use":**
+```bash
+pkill -x "Brave Browser"
+```
+
+### Session management rules
+
+1. **Start of testing:** kill Brave, then `browser_navigate`
+2. **During testing:** use snapshots over screenshots, interact via refs
+3. **End of testing:** close all tabs, then `browser_close()` — do this IMMEDIATELY when done
+4. **Never leave the browser open** between tasks or when switching to non-Playwright work
+5. **Login state persists** in the profile — no need to re-login after closing
 
 ---
 

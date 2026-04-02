@@ -23,7 +23,7 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Browser automation for E2E spot-checks. Platform-specific paths in .playwright-mcp/config.json (gitignored, create per machine).",
+      "$comment": "Browser automation for E2E spot-checks. Config in .playwright-mcp/config.json (tracked in git). Uses persistent Brave profile for login state.",
       "type": "stdio",
       "command": "npx",
       "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
