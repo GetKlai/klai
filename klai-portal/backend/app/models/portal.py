@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import ARRAY, CheckConstraint, DateTime, ForeignKey, JSON, LargeBinary, String, Text, func
+from sqlalchemy import ARRAY, JSON, CheckConstraint, DateTime, ForeignKey, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
