@@ -4,6 +4,25 @@ cache: true
 
 interface:
   webSearch: true
+  # Stripped-down UI for new tenants — disable all non-essential features
+  agents:
+    use: false
+    create: false
+    share: false
+  prompts:
+    use: false
+    create: false
+    share: false
+  memories: false
+  bookmarks: false
+  multiConvo: false
+  presets: false
+  mcpServers:
+    use: false
+    create: false
+    share: false
+  fileSearch: false
+  runCode: false
 
 balance:
   enabled: false
