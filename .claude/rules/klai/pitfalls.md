@@ -13,7 +13,7 @@
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 15 entries |
 | [Platform](pitfalls/platform.md) | LiteLLM, vLLM, LibreChat, Zitadel, Caddy, Grafana, Vexa | 33 entries |
 | [Backend](pitfalls/backend.md) | Python async, FastAPI, prometheus_client | 8 entries |
-| [Security](pitfalls/security.md) | IDOR, multi-tenancy, authorization | 2 entries |
+| [Security](pitfalls/security.md) | IDOR, multi-tenancy, authorization, per-resource ownership | 4 entries |
 | [Code Quality](pitfalls/code-quality.md) | ESLint, ruff, pyright, CI quality gates | 2 entries |
 | [Docs-app](pitfalls/docs-app.md) | klai-docs (Next.js) integration from portal-api | 6 entries |
 | [Vexa](pitfalls/vexa-leave-detection.md) | Meeting bot leave/end detection (Playwright DOM) | conditional (`paths:`) |

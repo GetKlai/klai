@@ -15,6 +15,8 @@ paths:
 |---|---|---|
 | [security-idor-missing-org-scope](#security-idor-missing-org-scope) | CRIT | Every resource lookup must include org_id scope |
 | [security-idor-url-org-slug-trusted](#security-idor-url-org-slug-trusted) | CRIT | Never trust org_slug from URL — verify caller belongs to that org via token |
+| [security-personal-resource-no-ownership-check](#security-personal-resource-no-ownership-check) | HIGH | Resources with per-user ownership need a `created_by` check on every access, not just org scope |
+| [security-private-resource-404-not-403](#security-private-resource-404-not-403) | HIGH | Public endpoints must return 404 (not 403) for private/personal resources — never leak existence |
 
 ---
 
@@ -120,6 +122,105 @@ const org = await requireOrgAccess(req, params.org);
 3. The helper must compare a trusted source (auth token / header from reverse proxy) against the DB record — never compare URL params against each other
 
 **See also:** `security-idor-missing-org-scope` (same class of bug in Python/FastAPI)
+
+---
+
+## security-personal-resource-no-ownership-check
+
+**Severity:** HIGH
+
+**Trigger:** Adding a `kb_type` / `resource_type` column (e.g. 'org' vs 'personal') to a multi-tenant resource without enforcing per-user ownership
+
+Org-scoping alone (`org_id` in every query) is necessary but not sufficient when a resource can be personal. A personal KB scoped to org X is visible to every member of org X unless there is an additional `created_by` check. Without it, any org member can read, edit, or delete another member's personal resources.
+
+**Why it happens:**
+The org-scoping pattern (`_get_{model}_or_404(id, org_id, db)`) is well-established and feels complete. Developers add `kb_type` and `created_by` columns for the creation flow but forget to enforce ownership on read/update/delete — the existing org-scoped helper still returns the resource because the org_id matches.
+
+**The pattern — centralized `checkKBAccess()` helper:**
+```typescript
+// lib/auth.ts — called AFTER org access is verified
+export function checkKBAccess(
+  kb: { kb_type: string; created_by: string | null },
+  userId: string
+): NextResponse | null {
+  if (kb.kb_type === "personal" && kb.created_by !== userId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return null; // access allowed
+}
+
+// In every authenticated route handler:
+const denied = checkKBAccess(kb, payload.sub);
+if (denied) return denied;
+```
+
+**The DB query pattern — filter personal resources from listings:**
+```sql
+-- Only return org KBs + the caller's personal KBs
+SELECT * FROM docs.knowledge_bases
+WHERE org_id = $1
+  AND (kb_type = 'org' OR created_by = $2)
+ORDER BY created_at
+```
+
+**Prevention:**
+1. When adding a `type` column that distinguishes shared vs personal resources, always add a `created_by` column at the same time
+2. Create a centralized access-check helper (like `checkKBAccess`) and apply it to ALL route handlers — not just "sensitive" ones
+3. Listing queries must filter: return org-wide resources + only the caller's personal resources
+4. The ownership check is a second layer on top of org-scoping, not a replacement for it
+
+**Seen in:** klai-docs — `kb_type` ('org'|'personal') and `created_by` columns added to `docs.knowledge_bases`. Without `checkKBAccess()`, any org member could access another member's personal KBs.
+
+**See also:** `security-idor-missing-org-scope` (the first layer: org scoping)
+
+---
+
+## security-private-resource-404-not-403
+
+**Severity:** HIGH
+
+**Trigger:** A public/unauthenticated endpoint encounters a resource that should not be visible (personal KB, draft, private resource)
+
+Returning 403 ("Forbidden") on a public endpoint confirms that the resource exists — an information leak. An attacker can enumerate resource slugs and learn which personal KBs exist, even without accessing their content. The correct response is 404 ("Not found"), making personal resources indistinguishable from non-existent ones.
+
+**Why it happens:**
+Developers apply the same access-denied response (403) everywhere. On authenticated endpoints, 403 is correct — the caller already proved their identity, and knowing the resource exists is expected. On public endpoints (SSR pages, unauthenticated API calls), there is no caller identity, so "you don't have access" leaks the existence of the resource.
+
+**Wrong — leaks existence on public endpoints:**
+```typescript
+// BAD — public SSR page returns 403 for personal KBs
+if (kb.kb_type === "personal") {
+  return new Response("Forbidden", { status: 403 });
+}
+```
+
+**Correct — return 404 on public endpoints, 403 on authenticated endpoints:**
+```typescript
+// Public endpoint (SSR reader, unauthenticated API)
+if (kb.kb_type === "personal") notFound(); // → 404
+
+// Authenticated endpoint (editor API with Bearer token)
+if (kb.kb_type === "personal" && kb.created_by !== userId) {
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+}
+```
+
+**Decision tree:**
+| Endpoint type | Resource is private | Response |
+|---|---|---|
+| Public / unauthenticated | Yes | 404 |
+| Authenticated, caller is not owner | Yes | 403 |
+| Authenticated, caller is owner | Yes | 200 (normal) |
+
+**Prevention:**
+1. On all public endpoints (no auth required), private/personal resources must return 404
+2. On authenticated endpoints, private resources owned by someone else return 403
+3. Apply the check early — before any content is fetched or rendered
+4. Add the check to `generateMetadata()` / head functions too, not just the page body — metadata can leak titles and descriptions
+
+**Seen in:** klai-docs — public reader page (`app/(reader)/[...path]/page.tsx`) and unauthenticated GET endpoints (`tree`, `pages`) return `notFound()` / 404 for personal KBs. Authenticated endpoints use `checkKBAccess()` which returns 403.
+
+**See also:** `security-personal-resource-no-ownership-check` (the ownership model itself)
 
 ---
 

@@ -13,7 +13,7 @@ Always consult this before working on a relevant domain.
 | Infrastructure (Hetzner, SOPS, env, DNS) | `.claude/rules/klai/patterns/infrastructure.md` | `.claude/rules/klai/pitfalls/infrastructure.md` |
 | Backend (Python async, FastAPI, httpx) | `.claude/rules/klai/patterns/backend.md` (auto-loaded via `paths:`) | `.claude/rules/klai/pitfalls/backend.md` |
 | Platform (LiteLLM, LibreChat, vLLM, Zitadel, Caddy) | `.claude/rules/klai/patterns/platform.md` | `.claude/rules/klai/pitfalls/platform.md` |
-| Security (IDOR, multi-tenancy, authorization) | — | `.claude/rules/klai/pitfalls/security.md` |
+| Security (IDOR, multi-tenancy, authorization, per-resource ownership) | — | `.claude/rules/klai/pitfalls/security.md` |
 | Frontend (i18n, component patterns) | `.claude/rules/klai/patterns/frontend.md` | — |
 | Logging (structlog, VictoriaLogs, LogsQL) | `.claude/rules/klai/patterns/logging.md` / auto-loaded via `.claude/rules/klai/python-logging.md` (Python) and `.claude/rules/klai/logging.md` (frontend) | — |
 | Code quality (ruff, pyright, ESLint) | `.claude/rules/klai/patterns/code-quality.md` | `.claude/rules/klai/pitfalls/code-quality.md` |
