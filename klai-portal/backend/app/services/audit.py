@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _INSERT_SQL = text(
     "INSERT INTO portal_audit_log "
     "(org_id, actor_user_id, action, resource_type, resource_id, details) "
-    "VALUES (:org_id, :actor, :action, :resource_type, :resource_id, :details::jsonb)"
+    "VALUES (:org_id, :actor, :action, :resource_type, :resource_id, CAST(:details AS jsonb))"
 )
 
 
