@@ -284,7 +284,7 @@ class TestGenerateLibrechatEnvKnowledgeIngestSecret:
 
 @pytest.fixture()
 def base_yaml_file(tmp_path):
-    """Write a minimal base librechat.yaml for testing."""
+    """Write a minimal base librechat.yaml and mcp_catalog.yaml for testing."""
     content = textwrap.dedent("""\
         version: 1.3.5
         mcpServers:
@@ -302,6 +302,24 @@ def base_yaml_file(tmp_path):
     """)
     p = tmp_path / "librechat.yaml"
     p.write_text(content)
+
+    # Catalog file required by _generate_librechat_yaml for server validation
+    catalog_content = textwrap.dedent("""\
+        servers:
+          twenty-crm:
+            config_template:
+              type: stdio
+              command: npx
+              args: ["-y", "twenty-mcp-server", "start"]
+              env:
+                TWENTY_API_KEY: "${TWENTY_API_KEY}"
+          test:
+            config_template:
+              type: stdio
+    """)
+    catalog_path = tmp_path / "mcp_catalog.yaml"
+    catalog_path.write_text(catalog_content)
+
     return p
 
 
@@ -309,10 +327,10 @@ class TestGenerateLibrechatYaml:
     """Tests for SPEC-INFRA-001: _generate_librechat_yaml() yaml merge logic."""
 
     def test_no_extra_servers_returns_base_config(self, base_yaml_file):
-        """When extra_mcp_servers is None, output equals the base config."""
+        """When mcp_servers is None, output equals the base config."""
         from app.services.provisioning import _generate_librechat_yaml
 
-        result = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=None)
+        result = _generate_librechat_yaml(base_yaml_file, mcp_servers=None)
         parsed = yaml.safe_load(result)
 
         assert "klai-knowledge" in parsed["mcpServers"]
@@ -325,13 +343,10 @@ class TestGenerateLibrechatYaml:
 
         extra = {
             "twenty-crm": {
-                "type": "stdio",
-                "command": "npx",
-                "args": ["-y", "twenty-mcp-server", "start"],
-                "env": {"TWENTY_API_KEY": "${TWENTY_API_KEY}"},
+                "enabled": True,
             }
         }
-        result = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=extra)
+        result = _generate_librechat_yaml(base_yaml_file, mcp_servers=extra)
         parsed = yaml.safe_load(result)
 
         assert "klai-knowledge" in parsed["mcpServers"]
@@ -342,8 +357,8 @@ class TestGenerateLibrechatYaml:
         """Extra server names are appended to modelSpecs.list[].mcpServers."""
         from app.services.provisioning import _generate_librechat_yaml
 
-        extra = {"twenty-crm": {"type": "stdio", "command": "npx"}}
-        result = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=extra)
+        extra = {"twenty-crm": {"enabled": True}}
+        result = _generate_librechat_yaml(base_yaml_file, mcp_servers=extra)
         parsed = yaml.safe_load(result)
 
         spec_servers = parsed["modelSpecs"]["list"][0]["mcpServers"]
@@ -354,14 +369,14 @@ class TestGenerateLibrechatYaml:
         from app.services.provisioning import _generate_librechat_yaml
 
         original = base_yaml_file.read_text()
-        _generate_librechat_yaml(base_yaml_file, extra_mcp_servers={"test": {"type": "stdio"}})
+        _generate_librechat_yaml(base_yaml_file, mcp_servers={"test": {"enabled": True}})
         assert base_yaml_file.read_text() == original
 
     def test_empty_extra_servers_dict_is_noop(self, base_yaml_file):
-        """An empty dict for extra_mcp_servers does not change the output."""
+        """An empty dict for mcp_servers does not change the output."""
         from app.services.provisioning import _generate_librechat_yaml
 
-        result_none = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=None)
-        result_empty = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers={})
+        result_none = _generate_librechat_yaml(base_yaml_file, mcp_servers=None)
+        result_empty = _generate_librechat_yaml(base_yaml_file, mcp_servers={})
         # Empty dict is falsy, so same as None
         assert yaml.safe_load(result_none) == yaml.safe_load(result_empty)

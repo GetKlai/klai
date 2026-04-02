@@ -10,12 +10,24 @@ import pytest
 
 
 class TestLogEvent:
+    @staticmethod
+    def _make_db_mock() -> AsyncMock:
+        """Create an AsyncMock for db with begin_nested as async context manager."""
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.begin_nested = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=None),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        return db
+
     @pytest.mark.asyncio
     async def test_creates_audit_entry(self) -> None:
         from app.services.audit import log_event
 
-        db = AsyncMock()
-        db.add = MagicMock()
+        db = self._make_db_mock()
 
         await log_event(
             db,
@@ -29,14 +41,13 @@ class TestLogEvent:
 
         # Verify an entry was added to the session
         db.add.assert_called_once()
-        db.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_audit_entry_fields(self) -> None:
         from app.models.audit import PortalAuditLog
         from app.services.audit import log_event
 
-        db = AsyncMock()
+        db = self._make_db_mock()
         added_entry = None
 
         def capture_add(entry: object) -> None:
@@ -88,7 +99,7 @@ class TestLogEvent:
     async def test_log_event_without_details(self) -> None:
         from app.services.audit import log_event
 
-        db = AsyncMock()
+        db = self._make_db_mock()
         added_entry = None
 
         def capture_add(entry: object) -> None:
@@ -114,7 +125,7 @@ class TestLogEvent:
         """resource_id must be stored as string even if passed as int/UUID."""
         from app.services.audit import log_event
 
-        db = AsyncMock()
+        db = self._make_db_mock()
         added_entry = None
 
         def capture_add(entry: object) -> None:
