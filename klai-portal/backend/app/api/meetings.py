@@ -563,7 +563,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                 if seg.get("language"):
                     meeting.language = seg["language"]
                     break
-            meeting.status = "completed"
+            meeting.status = "done"
             meeting.error_message = None
             return
 
@@ -588,7 +588,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                         "No recording for vexa meeting %s and no transcript segments — completing with empty transcript",
                         meeting.vexa_meeting_id,
                     )
-                    meeting.status = "completed"
+                    meeting.status = "done"
                     meeting.error_message = None
                     return
         assert audio_bytes is not None
@@ -608,7 +608,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
         meeting.language = whisper_result.get("language", "")
         duration = whisper_result.get("duration", 0)
         meeting.duration_seconds = int(duration) if duration else None
-        meeting.status = "completed"
+        meeting.status = "done"
         meeting.error_message = None
 
     except Exception as exc:
