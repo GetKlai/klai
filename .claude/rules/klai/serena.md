@@ -15,7 +15,9 @@ Read relevant memories based on the task domain (not all every time):
 - Infrastructure: `deployment-context`
 - Claude assets: `claude-assets`
 
-## Code Exploration (prefer Serena over Read)
+## Code Exploration
+
+**[HARD] Before using Read on any `.py`, `.ts`, `.tsx`, or `.js` file to explore code structure, call `get_symbols_overview` first.** Only use Read on code files when you already know the exact lines you need.
 
 1. `get_symbols_overview` to see what a file contains
 2. `find_symbol` with `include_body=False` to locate symbols

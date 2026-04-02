@@ -1,28 +1,3 @@
----
-severity_map:
-  validate-before-code-change: { severity: 0.8, confirmed: 5, false_positives: 0 }
-  verify-completion-claims: { severity: 1.0, confirmed: 8, false_positives: 0 }
-  server-restart-protocol: { severity: 1.0, confirmed: 3, false_positives: 0 }
-  test-user-facing-not-imports: { severity: 0.8, confirmed: 3, false_positives: 0 }
-  debug-logging-first: { severity: 0.8, confirmed: 4, false_positives: 0 }
-  trust-user-feedback: { severity: 1.0, confirmed: 3, false_positives: 0 }
-  read-spec-first: { severity: 1.0, confirmed: 5, false_positives: 0 }
-  minimal-changes: { severity: 0.8, confirmed: 6, false_positives: 0 }
-  wait-after-question: { severity: 0.8, confirmed: 4, false_positives: 0 }
-  listen-before-acting: { severity: 1.0, confirmed: 3, false_positives: 0 }
-  ask-before-retry: { severity: 0.8, confirmed: 3, false_positives: 0 }
-  debug-data-before-theory: { severity: 0.8, confirmed: 3, false_positives: 0 }
-  verify-full-flow: { severity: 0.8, confirmed: 2, false_positives: 0 }
-  check-process-not-curl: { severity: 0.8, confirmed: 2, false_positives: 0 }
-  evidence-only-confidence: { severity: 1.0, confirmed: 1, false_positives: 0 }
-  report-confidence: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  adversarial-at-high-confidence: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  diagnose-before-fixing: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  verify-system-not-just-feature: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  search-all-case-variants: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  convention-change-blast-radius: { severity: 0.8, confirmed: 1, false_positives: 0 }
----
-
 # Process Rules
 
 ## validate-before-code-change
@@ -134,6 +109,13 @@ When renaming across the codebase, search all case variants: kebab-case,
 snake_case, camelCase, PascalCase, SCREAMING_SNAKE. A rename of
 "bot-manager" requires checking bot_manager, botManager, BotManager,
 BOT_MANAGER — missing one breaks silently.
+
+## serena-before-read
+Before using Read to explore a `.py`, `.ts`, `.tsx`, or `.js` file, call
+`get_symbols_overview` first to understand its structure. Only Read when you
+know exactly which lines you need. Use `find_symbol` to locate specific
+functions/classes, and `find_referencing_symbols` before editing to understand
+impact. Fall back to Read/Grep only for non-code files.
 
 ## convention-change-blast-radius
 When changing a default value or naming convention, search the entire
