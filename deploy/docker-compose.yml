@@ -811,7 +811,7 @@ services:
   vexa-redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}"]
     deploy:
       resources:
         limits:
@@ -819,7 +819,7 @@ services:
     networks:
       - vexa-bots   # isolated from klai-net-redis; bot containers resolve vexa-redis via this network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $VEXA_REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -934,7 +934,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
-      POSTGRES_PASSWORD: firecrawl_pass
+      POSTGRES_PASSWORD: ${FIRECRAWL_DB_PASSWORD}
       POSTGRES_DB: firecrawl
     networks:
       - klai-net
@@ -974,7 +974,7 @@ services:
       FIRECRAWL_API_KEY: "${FIRECRAWL_INTERNAL_KEY}"
       NUM_WORKERS_PER_QUEUE: "2"
       LOGGING_LEVEL: "INFO"
-      NUQ_DATABASE_URL: "postgresql://firecrawl:firecrawl_pass@firecrawl-postgres:5432/firecrawl"
+      NUQ_DATABASE_URL: "postgresql://firecrawl:${FIRECRAWL_DB_PASSWORD}@firecrawl-postgres:5432/firecrawl"
       NUQ_RABBITMQ_URL: "amqp://firecrawl-rabbitmq:5672"
     networks:
       - klai-net

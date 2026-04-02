@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str  # asyncpg DSN: postgresql+asyncpg://...
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_recycle: int = 3600
+    db_pool_pre_ping: bool = True
 
     # Moneybird
     moneybird_api_token: str = ""
@@ -133,6 +137,9 @@ class Settings(BaseSettings):
     imap_poll_interval_seconds: int = 60
 
     # CORS — static origins + wildcard regex for tenant subdomains
+    # SECURITY-CRITICAL: This regex controls which origins can make credentialed
+    # cross-origin requests. A permissive pattern (e.g. .*) would allow any site
+    # to call the API with the user's cookies. Review carefully before modifying.
     cors_origins: str = "http://localhost:5174"
     cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
 

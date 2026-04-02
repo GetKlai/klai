@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import _require_admin
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalUser
@@ -36,8 +37,8 @@ async def get_moneybird() -> AsyncIterator[MoneybirdService]:
 async def _get_org(
     credentials: HTTPAuthorizationCredentials,
     db: AsyncSession,
-) -> tuple[PortalOrg, str]:
-    """Return (org, zitadel_user_id) for the authenticated user."""
+) -> tuple[PortalOrg, str, PortalUser]:
+    """Return (org, zitadel_user_id, caller_user) for the authenticated user."""
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
@@ -54,17 +55,17 @@ async def _get_org(
         )
 
     result = await db.execute(
-        select(PortalOrg)
+        select(PortalOrg, PortalUser)
         .join(PortalUser, PortalUser.org_id == PortalOrg.id)
         .where(PortalUser.zitadel_user_id == user_id)
     )
-    org = result.scalar_one_or_none()
-    if org is None:
+    row = result.one_or_none()
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Organisation not found",
         )
-    return org, user_id
+    return row[0], user_id, row[1]
 
 
 class MandateRequest(BaseModel):
@@ -91,7 +92,8 @@ async def create_mandate(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org, user_id = await _get_org(credentials, db)
+    org, user_id, caller_user = await _get_org(credentials, db)
+    _require_admin(caller_user)
 
     if settings.mock_billing:
         if not org.moneybird_contact_id:
@@ -140,7 +142,7 @@ async def create_mandate(
             logger.exception("Moneybird contact creation failed for org %d: %s", org.id, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to create Moneybird contact: {exc}",
+                detail="Failed to create billing contact. Please try again later.",
             ) from exc
         org.moneybird_contact_id = str(contact["id"])
 
@@ -179,7 +181,7 @@ async def mock_complete(
     if not settings.mock_billing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     # Require authentication — prevent unauthenticated org activation
-    org, _user_id = await _get_org(credentials, db)
+    org, _user_id, _caller = await _get_org(credentials, db)
     if org.id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     org.billing_status = "active"
@@ -193,7 +195,7 @@ async def billing_status(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    org, _ = await _get_org(credentials, db)
+    org, _, _caller = await _get_org(credentials, db)
     return {
         "billing_status": org.billing_status,
         "plan": org.plan,
@@ -209,7 +211,7 @@ async def invoice_portal(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org, _ = await _get_org(credentials, db)
+    org, _, _caller = await _get_org(credentials, db)
 
     if not org.moneybird_contact_id:
         raise HTTPException(
@@ -235,7 +237,8 @@ async def cancel_subscription(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org, user_id = await _get_org(credentials, db)
+    org, user_id, caller_user = await _get_org(credentials, db)
+    _require_admin(caller_user)
 
     if not org.moneybird_subscription_id:
         raise HTTPException(

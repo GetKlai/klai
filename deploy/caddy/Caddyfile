@@ -34,6 +34,11 @@
     }
     header @not-auth X-Frame-Options "SAMEORIGIN"
 
+    # Block /metrics from external access — scraped internally by Alloy
+    handle /metrics {
+        respond 404
+    }
+
     # Logs ingest (VictoriaLogs push endpoint for remote Alloy agents)
     @logs-ingest host logs-ingest.{$DOMAIN}
     handle @logs-ingest {
