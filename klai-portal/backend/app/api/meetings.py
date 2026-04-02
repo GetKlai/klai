@@ -12,55 +12,34 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_product
+from app.api.dependencies import _get_caller_org, bearer, require_product
 from app.core.config import settings
-from app.core.database import get_db, set_tenant
+from app.core.database import get_db
 from app.models.groups import PortalGroup
 from app.models.meetings import VexaMeeting
-from app.models.portal import PortalOrg, PortalUser
-from app.services.access import can_write_meeting, get_accessible_meetings, is_member_of_group
+from app.services.access import (
+    can_write_meeting,
+    count_accessible_meetings,
+    get_accessible_meetings,
+    is_member_of_group,
+)
 from app.services.audit import log_event
 from app.services.events import emit_event
 from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
-from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bots", tags=["meetings"])
-bearer = HTTPBearer()
 
 ACTIVE_STATUSES = ("pending", "joining", "recording")
 _BILLABLE_STATUSES = (*ACTIVE_STATUSES, "stopping")
 MAX_CONCURRENT_BOTS = 2
-
-
-async def _get_user_and_org(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> tuple[str, int | None]:
-    """Validate the OIDC access token and return (user_id, org_id)."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        ) from exc
-    user_id = info.get("sub", "")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found")
-
-    portal_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == user_id))
-    org_id = portal_user.org_id if portal_user else None
-    if org_id is not None:
-        await set_tenant(db, org_id)
-    return user_id, org_id
 
 
 def _require_webhook_secret(request: Request) -> None:
@@ -156,15 +135,10 @@ async def list_meetings(
     offset: int = 0,
 ) -> MeetingListResponse:
     # @MX:ANCHOR -- scoped via get_accessible_meetings; do not add direct queries here
-    user_id, org_id = await _get_user_and_org(credentials, db)
-    if org_id is None:
-        return MeetingListResponse(items=[], total=0)
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
-    meetings = await get_accessible_meetings(user_id, org_id, db)
-    # Apply pagination in Python (list is already fetched; acceptable for typical sizes)
-    total = len(meetings)
-    meetings.sort(key=lambda m: m.created_at, reverse=True)
-    page = meetings[offset : offset + limit]
+    total = await count_accessible_meetings(user_id, org.id, db)
+    page = await get_accessible_meetings(user_id, org.id, db, limit=limit, offset=offset)
 
     items = [await _build_meeting_response(m, db) for m in page]
     return MeetingListResponse(items=items, total=total)
@@ -181,7 +155,7 @@ async def start_meeting(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
-    user_id, org_id = await _get_user_and_org(credentials, db)
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
     if not body.consent_given:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Consent required")
@@ -203,7 +177,7 @@ async def start_meeting(
 
     active_count = await db.scalar(
         select(func.count(VexaMeeting.id)).where(
-            VexaMeeting.status.in_(_BILLABLE_STATUSES), VexaMeeting.org_id == org_id
+            VexaMeeting.status.in_(_BILLABLE_STATUSES), VexaMeeting.org_id == org.id
         )
     )
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
@@ -214,7 +188,7 @@ async def start_meeting(
 
     meeting = VexaMeeting(
         zitadel_user_id=user_id,
-        org_id=org_id,
+        org_id=org.id,
         group_id=body.group_id,
         platform=ref.platform,
         native_meeting_id=ref.native_meeting_id,
@@ -226,16 +200,15 @@ async def start_meeting(
     db.add(meeting)
     await db.flush()
 
-    if org_id is not None:
-        await log_event(
-            db,
-            org_id=org_id,
-            actor=user_id,
-            action="meeting.created",
-            resource_type="meeting",
-            resource_id=str(meeting.id),
-            details={"group_id": body.group_id} if body.group_id else None,
-        )
+    await log_event(
+        db,
+        org_id=org.id,
+        actor=user_id,
+        action="meeting.created",
+        resource_type="meeting",
+        resource_id=str(meeting.id),
+        details={"group_id": body.group_id} if body.group_id else None,
+    )
 
     try:
         bot_resp = await vexa.start_bot(ref.platform, ref.native_meeting_id)
@@ -250,7 +223,7 @@ async def start_meeting(
 
     await db.commit()
     await db.refresh(meeting)
-    emit_event("meeting.started", org_id=org_id, user_id=user_id, properties={"platform": ref.platform})
+    emit_event("meeting.started", org_id=org.id, user_id=user_id, properties={"platform": ref.platform})
     return await _build_meeting_response(meeting, db)
 
 
@@ -260,14 +233,14 @@ async def get_meeting(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
-    user_id, org_id = await _get_user_and_org(credentials, db)
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
     meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id))
-    if meeting is None or meeting.org_id != org_id:
+    if meeting is None or meeting.org_id != org.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
 
     # Check read access: owner, group member, or same org
-    accessible = await get_accessible_meetings(user_id, org_id, db)
+    accessible = await get_accessible_meetings(user_id, org.id, db)
     if not any(m.id == meeting_id for m in accessible):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this meeting")
 
@@ -284,9 +257,9 @@ async def stop_meeting(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
-    user_id, org_id = await _get_user_and_org(credentials, db)
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
-    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org_id))
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org.id))
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     if not await can_write_meeting(user_id, meeting, db):
@@ -318,9 +291,9 @@ async def delete_meeting(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    user_id, org_id = await _get_user_and_org(credentials, db)
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
-    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org_id))
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org.id))
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     if not await can_write_meeting(user_id, meeting, db):
@@ -346,14 +319,14 @@ async def summarize_meeting_endpoint(
 ) -> dict:
     from app.services.summarizer import summarize_meeting
 
-    user_id, org_id = await _get_user_and_org(credentials, db)
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
-    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org_id))
+    meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.id == meeting_id, VexaMeeting.org_id == org.id))
     if meeting is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
 
     # Read access sufficient for summarize
-    accessible = await get_accessible_meetings(user_id, org_id, db)
+    accessible = await get_accessible_meetings(user_id, org.id, db)
     if not any(m.id == meeting_id for m in accessible):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this meeting")
 
@@ -416,14 +389,7 @@ async def ingest_meeting_to_kb(
     """Add a meeting transcript to a knowledge base."""
     from app.services.knowledge_adapter import ingest_vexa_meeting
 
-    user_id, _org_id = await _get_user_and_org(credentials, db)
-    if _org_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found")
-
-    # Resolve zitadel_org_id for knowledge-ingest (uses string org identifier)
-    org = await db.scalar(select(PortalOrg).where(PortalOrg.id == _org_id))
-    if org is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization not found")
+    user_id, org, _caller = await _get_caller_org(credentials, db)
 
     meeting = await db.scalar(
         select(VexaMeeting).where(

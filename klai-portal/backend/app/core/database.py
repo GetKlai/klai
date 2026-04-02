@@ -10,7 +10,14 @@ from app.core.config import settings
 # Tracks the current request's org_id so RLS context can be set once per request.
 current_org_id: ContextVar[int | None] = ContextVar("current_org_id", default=None)
 
-engine = create_async_engine(settings.database_url, echo=False)
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle,
+    pool_pre_ping=settings.db_pool_pre_ping,
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

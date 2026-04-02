@@ -4,6 +4,7 @@ All calls use the portal-api service account PAT — never exposed to the browse
 """
 
 import logging
+import time
 
 import httpx
 
@@ -26,6 +27,8 @@ class ZitadelClient:
                 response.text[:200],
             )
 
+    _USERINFO_TTL = 60  # seconds
+
     def __init__(self) -> None:
         self._http = httpx.AsyncClient(
             base_url=settings.zitadel_base_url,
@@ -36,6 +39,7 @@ class ZitadelClient:
             timeout=15.0,
             event_hooks={"response": [self._log_response_errors]},
         )
+        self._userinfo_cache: dict[str, tuple[float, dict]] = {}
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -171,13 +175,29 @@ class ZitadelClient:
     # ── Token introspection ───────────────────────────────────────────────────
 
     async def get_userinfo(self, access_token: str) -> dict:
-        """Get user info from an OIDC access token (for /api/me)."""
+        """Get user info from an OIDC access token (for /api/me).
+
+        Results are cached for _USERINFO_TTL seconds per token to reduce
+        Zitadel API load on multi-endpoint requests within a session.
+        """
+        now = time.monotonic()
+        cached = self._userinfo_cache.get(access_token)
+        if cached and (now - cached[0]) < self._USERINFO_TTL:
+            return cached[1]
+
         resp = await self._http.get(
             "/oidc/v1/userinfo",
             headers={"Authorization": f"Bearer {access_token}"},
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+        # Evict expired entries to prevent unbounded growth
+        if len(self._userinfo_cache) > 500:
+            cutoff = now - self._USERINFO_TTL
+            self._userinfo_cache = {k: v for k, v in self._userinfo_cache.items() if v[0] > cutoff}
+        self._userinfo_cache[access_token] = (now, data)
+        return data
 
     # ── Custom Login UI (Session API) ─────────────────────────────────────────
 
