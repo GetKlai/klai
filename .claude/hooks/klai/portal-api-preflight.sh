@@ -35,7 +35,7 @@ d = json.load(sys.stdin)
 print(d.get('tool_input', {}).get('command', ''))
 " 2>/dev/null || echo "")
 
-if ! echo "$COMMAND" | grep -qE 'docker[\s-]?compose up.*portal-api'; then
+if ! echo "$COMMAND" | grep -qE 'docker[[:space:]-]?compose up.*portal-api'; then
     exit 0
 fi
 
@@ -55,7 +55,7 @@ print(json.dumps({'decision': 'block', 'reason': 'Pre-flight FAILED: cannot reac
 
 for VAR in $REQUIRED_VARS; do
     # Match "  VAR: value" — empty value appears as `""` or blank after colon
-    LINE=$(echo "$CONFIG" | grep -E "^\s+${VAR}:" || echo "")
+    LINE=$(echo "$CONFIG" | grep -E "^[[:space:]]+${VAR}:" || echo "")
     if [ -z "$LINE" ]; then
         EMPTY_VARS="$EMPTY_VARS $VAR (missing)"
         continue
