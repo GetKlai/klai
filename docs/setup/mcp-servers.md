@@ -54,7 +54,7 @@ The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--isolated", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+      "args": ["@playwright/mcp@latest", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
       "env": {}
     }
   }
