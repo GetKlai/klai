@@ -19,7 +19,7 @@
       "$comment": "Browser automation for E2E spot-checks. Uses Brave with persistent profile for login state. No config file — MCP server cwd is not project root so relative paths don't work.",
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+      "args": ["@playwright/mcp@latest", "--isolated", "--browser", "chromium", "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
       "env": {}
     }
   }
