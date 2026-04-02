@@ -108,6 +108,7 @@ function toUnified(item: TranscriptionItem): UnifiedItem {
 }
 
 function meetingToUnified(item: MeetingListItem): UnifiedItem {
+  const statusMap: Record<string, string> = { completed: 'done', stopping: 'processing' }
   return {
     id: item.id,
     source: 'meeting',
@@ -116,7 +117,7 @@ function meetingToUnified(item: MeetingListItem): UnifiedItem {
     language: item.language,
     duration_seconds: item.duration_seconds,
     created_at: item.created_at,
-    status: item.status,
+    status: statusMap[item.status] ?? item.status,
     meeting_url: item.meeting_url,
     platform: item.platform,
   }
