@@ -323,7 +323,6 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         logger.exception("create_session failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401, 404, 412):
             await audit.log_event(
-                db,
                 org_id=0,
                 actor=zitadel_user_id or "unknown",
                 action="auth.login.failed",
@@ -374,7 +373,6 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     # Audit log: successful login (non-fatal -- must not block login)
     try:
         await audit.log_event(
-            db,
             org_id=portal_user_for_mfa.org_id if portal_user_for_mfa else 0,
             actor=zitadel_user_id or "unknown",
             action="auth.login",
@@ -435,7 +433,6 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
         if exc.response.status_code in (400, 401):
             pending["failures"] += 1
             await audit.log_event(
-                db,
                 org_id=0,
                 actor="unknown",
                 action="auth.totp.failed",
@@ -460,7 +457,6 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
 
     # Audit: successful TOTP login
     await audit.log_event(
-        db,
         org_id=0,
         actor="unknown",
         action="auth.login.totp",
@@ -529,7 +525,6 @@ async def logout(
     session_data = _decrypt_sso(klai_sso) if klai_sso else None
     session_id = session_data["sid"] if session_data else "unknown"
     await audit.log_event(
-        db,
         org_id=0,
         actor="unknown",
         action="auth.logout",

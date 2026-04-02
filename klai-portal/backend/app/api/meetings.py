@@ -201,7 +201,6 @@ async def start_meeting(
     await db.flush()
 
     await log_event(
-        db,
         org_id=org.id,
         actor=user_id,
         action="meeting.created",

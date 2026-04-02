@@ -361,7 +361,6 @@ async def suspend_user(
 
     user.status = "suspended"
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_id,
         action="user.suspended",
@@ -435,7 +434,6 @@ async def offboard_user(
 
     user.status = "offboarded"
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_id,
         action="user.offboarded",
