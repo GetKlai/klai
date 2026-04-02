@@ -17,9 +17,9 @@ import yaml
 @pytest.fixture(autouse=True)
 def _mock_settings():
     """Provide deterministic settings for all tests."""
-    import app.services.provisioning  # ensure module is imported before patching  # noqa: F401
+    import app.services.provisioning.generators  # ensure module is imported before patching  # noqa: F401
 
-    with patch("app.services.provisioning.settings") as mock:
+    with patch("app.services.provisioning.generators.settings") as mock:
         mock.domain = "getklai.com"
         mock.mongo_root_password = "test-mongo-pw"
         mock.meili_master_key = "test-meili-key"
@@ -33,7 +33,7 @@ def _mock_settings():
 @pytest.fixture()
 def _mock_secrets():
     """Provide deterministic secrets for snapshot tests."""
-    with patch("app.services.provisioning.secrets") as mock:
+    with patch("app.services.provisioning.generators.secrets") as mock:
         mock.token_hex = lambda n: f"{'ab' * n}"
         yield mock
 
