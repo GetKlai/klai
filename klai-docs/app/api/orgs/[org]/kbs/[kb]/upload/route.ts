@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
-import { parsePage, parseSidebar, serializeSidebar } from "@/lib/markdown";
+import { parsePage, parseSidebar, serializeSidebar, serializePage, slugify } from "@/lib/markdown";
 
 type Params = { org: string; kb: string };
 
@@ -32,17 +32,29 @@ export async function POST(
     }
 
     const raw = await file.text();
-    const { frontmatter } = parsePage(raw);
+    const parsed = parsePage(raw);
 
-    const slug = file.name.replace(/\.md$/, "");
-    const filePath = targetFolder ? `${targetFolder}/${file.name}` : file.name;
+    // Derive title from frontmatter if set, otherwise from the filename.
+    // Inject the title into frontmatter if it was missing so the editor
+    // shows the correct page title without triggering an auto-rename on
+    // first open (doSave compares slugify(title) against the file slug).
+    const title = parsed.frontmatter.title ?? file.name.replace(/\.md$/, "");
+    let fileContent = raw;
+    if (!parsed.frontmatter.title) {
+      fileContent = serializePage({ ...parsed.frontmatter, title }, parsed.content);
+    }
+
+    // Normalize filename to a URL-safe slug so it matches slugify(title).
+    const slug = slugify(title);
+    const normalizedFileName = `${slug}.md`;
+    const filePath = targetFolder ? `${targetFolder}/${normalizedFileName}` : normalizedFileName;
 
     // Write file to Gitea (upsert: GET sha first so we can overwrite existing files)
     const existingFile = await gitea.getFile(kb.gitea_repo, filePath);
     await gitea.putFile(
       kb.gitea_repo,
       filePath,
-      raw,
+      fileContent,
       `Upload ${filePath}`,
       existingFile?.sha
     );
@@ -68,7 +80,7 @@ export async function POST(
 
     return NextResponse.json({
       path: filePath,
-      title: frontmatter.title ?? slug,
+      title,
     });
   } catch (err) {
     console.error("[upload] error:", err instanceof Error ? err.stack : err);
