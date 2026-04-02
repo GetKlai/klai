@@ -47,7 +47,7 @@ class VexaClient:
     def __init__(self) -> None:
         self._http = httpx.AsyncClient(
             base_url=settings.vexa_meeting_api_url,
-            headers={"Authorization": f"Bearer {settings.vexa_admin_token}"},
+            headers={"Authorization": f"Bearer {settings.vexa_admin_api_token}"},
             timeout=60.0,
         )
 
