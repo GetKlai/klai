@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
     librechat_image: str = "ghcr.io/danny-avila/librechat:latest"
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy reload
+    redis_container_name: str = "klai-core-redis-1"  # Docker container name for Redis FLUSHALL
 
     # Internal service-to-service secret (used by klai-mailer → portal)
     # Generate with: openssl rand -hex 32

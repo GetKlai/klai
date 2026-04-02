@@ -8,6 +8,7 @@ import copy
 import logging
 import secrets
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg
-from app.services.secrets import portal_secrets
+from app.services.secrets import decrypt_mcp_secret, is_secret_var, portal_secrets
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -183,28 +184,60 @@ def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
 
 def _generate_librechat_yaml(
     base_path: Path,
-    extra_mcp_servers: dict | None,
+    mcp_servers: dict | None,
 ) -> str:
-    """Generate a per-tenant librechat.yaml by merging base config with extra MCP servers.
+    """Generate a per-tenant librechat.yaml from base config + catalog-validated MCP servers.
 
-    Returns the YAML string. The base config is loaded from disk and deep-copied
-    so the original is never mutated.
+    Loads the MCP catalog from <base_path.parent>/mcp_catalog.yaml and validates each enabled
+    entry against it. Unknown server IDs are skipped with a warning (REQ-S-002).
+    config_template from the catalog is used verbatim — ${VAR} placeholders are expanded by
+    LibreChat at runtime from the container .env file.
+
+    Returns the YAML string.
     """
     with open(base_path) as f:
         config = yaml.safe_load(f)
 
-    if extra_mcp_servers:
-        config = copy.deepcopy(config)
-        mcp = config.setdefault("mcpServers", {})
-        mcp.update(extra_mcp_servers)
+    if not mcp_servers:
+        return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
-        # Add extra server names to modelSpecs.list[].mcpServers
-        extra_names = list(extra_mcp_servers.keys())
+    # Load MCP catalog (whitelist of supported servers)
+    catalog_path = base_path.parent / "mcp_catalog.yaml"
+    try:
+        with open(catalog_path) as f:
+            catalog = yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.warning(
+            "mcp_catalog.yaml niet gevonden op %s — MCP server merge overgeslagen",
+            catalog_path,
+        )
+        return yaml.dump(config, default_flow_style=False, sort_keys=False)
+
+    catalog_servers = catalog.get("servers", {})
+    config = copy.deepcopy(config)
+    mcp_section = config.setdefault("mcpServers", {})
+    enabled_names: list[str] = []
+
+    for server_id, server_cfg in mcp_servers.items():
+        if not server_cfg.get("enabled", False):
+            continue
+        if server_id not in catalog_servers:
+            # REQ-S-002: unknown entries are skipped, not raised as an error
+            logger.warning(
+                "MCP server '%s' niet in catalog — wordt overgeslagen",
+                server_id,
+            )
+            continue
+        mcp_section[server_id] = catalog_servers[server_id]["config_template"]
+        enabled_names.append(server_id)
+
+    if enabled_names:
         for spec in config.get("modelSpecs", {}).get("list", []):
             existing = spec.get("mcpServers", [])
-            spec["mcpServers"] = existing + extra_names
+            spec["mcpServers"] = existing + enabled_names
 
     return yaml.dump(config, default_flow_style=False, sort_keys=False)
+
 
 
 def _generate_librechat_env(
@@ -214,6 +247,7 @@ def _generate_librechat_env(
     litellm_api_key: str,
     mongo_password: str,
     zitadel_org_id: str = "",
+    mcp_servers: dict | None = None,
 ) -> str:
     """Generate the per-tenant LibreChat .env file content."""
     domain = settings.domain
@@ -222,6 +256,32 @@ def _generate_librechat_env(
     session_secret = secrets.token_hex(32)
     creds_key = secrets.token_hex(32)
     creds_iv = secrets.token_hex(8)
+
+    # Build MCP server env vars (decrypted from DB; REQ-N-001: no secrets in logs)
+    mcp_env_lines: list[str] = []
+    if mcp_servers:
+        for server_id, server_cfg in mcp_servers.items():
+            if not server_cfg.get("enabled", False):
+                continue
+            env_vars = server_cfg.get("env", {})
+            if env_vars:
+                mcp_env_lines.append(f"\n# MCP server: {server_id}")
+                for var_name, encrypted_or_plain in env_vars.items():
+                    if is_secret_var(var_name):
+                        try:
+                            value = decrypt_mcp_secret(encrypted_or_plain)
+                        except ValueError:
+                            logger.warning(
+                                "MCP secret decryptie mislukt voor %s/%s — var overgeslagen",
+                                server_id,
+                                var_name,
+                            )
+                            continue
+                    else:
+                        value = encrypted_or_plain
+                    mcp_env_lines.append(f"{var_name}={value}")
+
+    mcp_env_block = "\n".join(mcp_env_lines)
 
     return f"""# Auto-generated by portal-api at provisioning. Do not edit manually.
 # Tenant: {slug}
@@ -292,7 +352,60 @@ JINA_API_URL=http://infinity-reranker:7997/v1/rerank
 KLAI_ZITADEL_ORG_ID={zitadel_org_id}
 KLAI_ORG_SLUG={slug}
 KNOWLEDGE_INGEST_SECRET={settings.knowledge_ingest_secret}
+{mcp_env_block}
 """
+
+
+def _flush_redis_and_restart_librechat(slug: str) -> None:
+    """Flush Redis config cache and restart the LibreChat container for a tenant.
+
+    LibreChat caches librechat.yaml in Redis with no TTL (platform-librechat-redis-config-cache).
+    FLUSHALL must run before the restart so the container reads the updated config from disk.
+
+    R-001: FLUSHALL clears all Redis keys including active sessions. Acceptable for config
+    updates; document in UI that changes cause a brief interruption.
+    """
+    client = docker.from_env()
+
+    # Flush Redis so LibreChat re-reads librechat.yaml on next startup
+    try:
+        redis_container = client.containers.get(settings.redis_container_name)
+        redis_cmd = ["redis-cli"]
+        if settings.redis_password:
+            redis_cmd += ["-a", settings.redis_password]
+        redis_cmd.append("FLUSHALL")
+        exit_code, output = redis_container.exec_run(redis_cmd)
+        if exit_code != 0:
+            logger.warning(
+                "Redis FLUSHALL mislukt voor tenant %s (exit %d): %s",
+                slug,
+                exit_code,
+                output.decode(),
+            )
+        else:
+            logger.info("Redis FLUSHALL voltooid voor tenant %s", slug)
+    except docker.errors.NotFound:  # type: ignore[attr-defined]
+        logger.warning("Redis container '%s' niet gevonden, FLUSHALL overgeslagen", settings.redis_container_name)
+
+    # Restart the tenant's LibreChat container
+    container_name = f"librechat-{slug}"
+    container = client.containers.get(container_name)
+    container.restart(timeout=10)
+    logger.info("Container %s herstart na config update", container_name)
+
+    # Health check: wait up to 30s for container to reach running state
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            container.reload()
+            if container.status == "running":
+                logger.info("Container %s is actief na herstart", container_name)
+                return
+        except Exception as exc:
+            logger.debug("Container reload mislukt tijdens health check: %s", exc)
+        time.sleep(3)
+
+    logger.warning("Container %s niet 'running' na 30s health check", container_name)
 
 
 def _write_tenant_caddyfile(slug: str) -> None:
@@ -478,6 +591,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             litellm_api_key=litellm_team_key,
             mongo_password=mongo_tenant_password,
             zitadel_org_id=org.zitadel_org_id,
+            mcp_servers=org.mcp_servers,
         )
         container_data_base = Path(settings.librechat_container_data_path)
         tenant_dir = container_data_base / slug
