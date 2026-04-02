@@ -14,7 +14,7 @@ export const Route = createFileRoute('/admin')({
 function AdminLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
-  const { user } = useCurrentUser()
+  const { user, isPending: userLoading } = useCurrentUser()
   const isAdmin = user?.isAdmin === true
   const isGroupAdmin = user?.isGroupAdmin === true
 
@@ -28,7 +28,7 @@ function AdminLayout() {
   ]
 
   useEffect(() => {
-    if (auth.isLoading) return
+    if (auth.isLoading || userLoading) return
     if (!auth.isAuthenticated) {
       void navigate({ to: '/' })
       return
@@ -40,9 +40,9 @@ function AdminLayout() {
     if (user?.requires_2fa_setup) {
       window.location.replace('/setup/2fa')
     }
-  }, [auth.isLoading, auth.isAuthenticated, isAdmin, isGroupAdmin, user, navigate])
+  }, [auth.isLoading, auth.isAuthenticated, isAdmin, isGroupAdmin, user, userLoading, navigate])
 
-  if (auth.isLoading || !auth.isAuthenticated || (!isAdmin && !isGroupAdmin)) {
+  if (auth.isLoading || userLoading || !auth.isAuthenticated || (!isAdmin && !isGroupAdmin)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />

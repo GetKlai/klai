@@ -22,7 +22,7 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
-  const { user } = useCurrentUser()
+  const { user, isPending: userLoading } = useCurrentUser()
 
   const allNavItems = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
@@ -42,7 +42,7 @@ function AppLayout() {
       })
 
   useEffect(() => {
-    if (auth.isLoading) return
+    if (auth.isLoading || userLoading) return
     if (!auth.isAuthenticated) {
       void navigate({ to: '/' })
       return
@@ -50,7 +50,7 @@ function AppLayout() {
     if (user?.requires_2fa_setup) {
       window.location.replace('/setup/2fa')
     }
-  }, [auth.isLoading, auth.isAuthenticated, user, navigate])
+  }, [auth.isLoading, auth.isAuthenticated, user, userLoading, navigate])
 
   if (auth.isLoading || !auth.isAuthenticated) {
     return (
