@@ -17,6 +17,9 @@ paths:
 | [i18n-paraglide](#i18n-paraglide) | Setting up or adding translations in React/Vite | `npm run build` with no missing key TS errors |
 | [portal-ui-components](#portal-ui-components) | Using `<Button>`, `<Input>`, `<Select>`, `<Card>` components | UI renders correct variant via browser snapshot |
 | [separation-of-concerns](#separation-of-concerns) | Deciding where styling, logic, data, and components belong | No `style={{}}` for fixed values in `git diff` |
+| [apifetch-helper](#apifetch-helper) | Making authenticated API calls from the frontend | All fetch calls use `apiFetch`, no manual Bearer injection |
+| [use-current-user](#use-current-user) | Accessing current user data (role, products, org) | No `sessionStorage.getItem` for user data in `git diff` |
+| [route-guard-loading-gate](#route-guard-loading-gate) | Writing route guards that depend on async data | Guard returns spinner while `isPending` is true |
 | [logging](#logging) | Setting up structured logging with consola + Sentry | `npm run lint` flags zero `console.log` usages |
 | [playwright-mcp](#playwright-mcp) | Browser automation for E2E spot-checks via MCP | `browser_snapshot()` returns accessibility tree |
 
@@ -622,6 +625,124 @@ Example prompt: _"Open https://portal.klai.nl/signup and screenshot the form"_
 - CI pipelines → no display available by default
 
 **Config location:** [.mcp.json](/.mcp.json) — `playwright` server entry
+
+---
+
+## apifetch-helper
+
+**Scope:** klai-portal frontend
+
+**Decision:** All authenticated API calls go through `apiFetch<T>()` from `@/lib/apiFetch`. No manual Bearer injection, no raw `fetch()` with `API_BASE` in route components.
+
+**Why:** Centralizes auth header injection, error parsing (JSON `detail` extraction), Content-Type defaulting, and 204 handling. One place to change if the auth mechanism changes.
+
+**The helper:** `frontend/src/lib/apiFetch.ts`
+
+```tsx
+import { apiFetch, ApiError } from '@/lib/apiFetch'
+
+// In useQuery:
+const { data } = useQuery({
+  queryKey: ['admin-users'],
+  queryFn: () => apiFetch<{ users: User[] }>('/api/admin/users', token),
+  enabled: !!token,
+})
+
+// In useMutation:
+const mutation = useMutation({
+  mutationFn: (body: InvitePayload) =>
+    apiFetch<void>('/api/admin/users/invite', token, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+})
+
+// Error handling:
+try {
+  await apiFetch(...)
+} catch (err) {
+  if (err instanceof ApiError) {
+    // err.status (number), err.detail (string from API JSON body)
+  }
+}
+```
+
+**Rules:**
+- Never construct `Authorization: Bearer ${token}` manually — `apiFetch` does it
+- Never call `fetch(API_BASE + path)` directly — use `apiFetch(path, token)`
+- `token` comes from `useAuth().user?.access_token`
+- For queries using `useCurrentUser` data: no token needed, the hook handles it
+
+---
+
+## use-current-user
+
+**Scope:** klai-portal frontend
+
+**Decision:** All user state (role, products, org, MFA status) comes from the `useCurrentUser()` hook. No reading user data from `sessionStorage`.
+
+**Why:** Before SPEC-UI-001, user data was written to sessionStorage in `callback.tsx` and read back in route guards and nav. This caused stale data (old tab, cleared storage), duplication, and race conditions. `useCurrentUser` wraps a single `useQuery` call to `/api/me` with `staleTime: 5min`, giving all components a consistent, fresh, typed view of the current user.
+
+**Usage:**
+```tsx
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+
+function MyComponent() {
+  const { user, isPending } = useCurrentUser()
+
+  // user?.isAdmin, user?.isGroupAdmin, user?.products, user?.mfa_policy, etc.
+  // isPending = true while the /api/me query is loading
+}
+```
+
+**What's available on `user`:**
+- `user_id`, `email`, `name`, `org_id`, `roles`, `workspace_url`
+- `provisioning_status`, `mfa_enrolled`, `mfa_policy`, `preferred_language`
+- `portal_role`, `products`, `requires_2fa_setup`
+- `isAdmin` (computed: has `org:owner` or `org:admin` role)
+- `isGroupAdmin` (computed: `portal_role === 'group-admin'`)
+
+**Rules:**
+- Never read user data from `sessionStorage` — it's not written there anymore
+- Always check `isPending` before using `user` in route guards (see `route-guard-loading-gate`)
+- The query uses `queryKey: ['current-user']` — invalidate with `queryClient.invalidateQueries({ queryKey: ['current-user'] })` after role changes
+
+---
+
+## route-guard-loading-gate
+
+**Scope:** klai-portal frontend (any TanStack Query + TanStack Router project)
+
+**Decision:** Every route guard that reads async user data must return a loading spinner while the data is pending. No redirect decisions before the query resolves.
+
+**Why:** `useCurrentUser` is backed by `useQuery`, which returns `{ data: undefined, isPending: true }` on first render. A guard that checks `if (!user?.isAdmin)` during that first render reads `undefined` as `false` and redirects the user — even when they're an admin. Same applies to product-gated nav items: without a loading gate, nav renders with zero products then "flickers" once data arrives.
+
+**Pattern:**
+```tsx
+function ProtectedRoute() {
+  const auth = useAuth()
+  const { user, isPending: userLoading } = useCurrentUser()
+
+  // Gate 1: auth loading
+  if (auth.isLoading || userLoading || !auth.isAuthenticated) {
+    return <LoadingSpinner />
+  }
+
+  // Gate 2: now safe to check permissions
+  if (!user?.isAdmin) {
+    return <Navigate to="/app" />
+  }
+
+  return <Outlet />
+}
+```
+
+**Checklist for new route guards:**
+1. Does the guard read any property from `useCurrentUser`? Add `isPending` check
+2. Does the guard filter navigation items by `user.products`? Include `userLoading` in the spinner condition
+3. After adding the gate, test with network throttling — the spinner should show, not a flash-redirect
+
+**See also:** `pitfalls/frontend.md#frontend-route-guard-async-race` for the full incident description.
 
 ---
 
