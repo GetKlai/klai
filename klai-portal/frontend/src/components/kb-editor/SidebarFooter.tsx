@@ -1,4 +1,5 @@
 import { Plus, Upload, Check, X } from 'lucide-react'
+import { useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
@@ -26,6 +27,7 @@ export function SidebarFooter({
   onNewPageCancel,
   onUpload,
 }: SidebarFooterProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const showRootInput = showNewPage && newPageParent === null
 
   return (
@@ -74,22 +76,21 @@ export function SidebarFooter({
           {m.docs_pages_new()}
         </Button>
       )}
-      <label className="w-full block">
-        <input
-          type="file"
-          accept=".md"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) onUpload(file)
-            e.target.value = ''
-          }}
-        />
-        <Button variant="outline" size="sm" className="w-full cursor-pointer">
-          <Upload size={12} className="mr-1.5" />
-          {m.docs_pages_upload()}
-        </Button>
-      </label>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".md"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) onUpload(file)
+          e.target.value = ''
+        }}
+      />
+      <Button variant="outline" size="sm" className="w-full" onClick={() => fileInputRef.current?.click()}>
+        <Upload size={12} className="mr-1.5" />
+        {m.docs_pages_upload()}
+      </Button>
     </div>
   )
 }
