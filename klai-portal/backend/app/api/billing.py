@@ -173,14 +173,15 @@ async def create_mandate(
 @router.get("/mock-complete")
 async def mock_complete(
     org_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     if not settings.mock_billing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
-    org = result.scalar_one_or_none()
-    if not org:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    # Require authentication — prevent unauthenticated org activation
+    org, _user_id = await _get_org(credentials, db)
+    if org.id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     org.billing_status = "active"
     org.moneybird_subscription_id = "mock"
     await db.commit()
