@@ -36,34 +36,39 @@ export async function POST(
   const slug = file.name.replace(/\.md$/, "");
   const filePath = targetFolder ? `${targetFolder}/${file.name}` : file.name;
 
-  // Write file to Gitea (upsert: GET sha first so we can overwrite existing files)
-  const existingFile = await gitea.getFile(kb.gitea_repo, filePath);
-  await gitea.putFile(
-    kb.gitea_repo,
-    filePath,
-    raw,
-    `Upload ${filePath}`,
-    existingFile?.sha
-  );
+  try {
+    // Write file to Gitea (upsert: GET sha first so we can overwrite existing files)
+    const existingFile = await gitea.getFile(kb.gitea_repo, filePath);
+    await gitea.putFile(
+      kb.gitea_repo,
+      filePath,
+      raw,
+      `Upload ${filePath}`,
+      existingFile?.sha
+    );
 
-  // Append slug to _meta.yaml of the target folder
-  const metaFilePath = targetFolder ? `${targetFolder}/_meta.yaml` : "_meta.yaml";
-  const existing = await gitea.getFile(kb.gitea_repo, metaFilePath);
+    // Append slug to _meta.yaml of the target folder
+    const metaFilePath = targetFolder ? `${targetFolder}/_meta.yaml` : "_meta.yaml";
+    const existing = await gitea.getFile(kb.gitea_repo, metaFilePath);
 
-  const meta = existing
-    ? parseMeta(Buffer.from(existing.content ?? "", "base64").toString("utf-8"))
-    : {};
+    const meta = existing
+      ? parseMeta(Buffer.from(existing.content ?? "", "base64").toString("utf-8"))
+      : {};
 
-  if (!meta.order) meta.order = [];
-  if (!meta.order.includes(slug)) meta.order.push(slug);
+    if (!meta.order) meta.order = [];
+    if (!meta.order.includes(slug)) meta.order.push(slug);
 
-  await gitea.putFile(
-    kb.gitea_repo,
-    metaFilePath,
-    serializeMeta(meta),
-    `Add ${slug} to nav`,
-    existing?.sha
-  );
+    await gitea.putFile(
+      kb.gitea_repo,
+      metaFilePath,
+      serializeMeta(meta),
+      `Add ${slug} to nav`,
+      existing?.sha
+    );
+  } catch (err) {
+    console.error("[upload] failed:", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
 
   return NextResponse.json({
     path: filePath,
