@@ -78,6 +78,8 @@ class CrawlPreviewResponse(BaseModel):
     fit_markdown: str
     word_count: int
     warnings: list[str] = []
+    content_selector: str | None = None
+    selector_source: str | None = None  # "user" | "ai" | None
 
 
 # JS injected BEFORE wait_for: strip nav chrome so the word-count condition fires
@@ -247,6 +249,8 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             fit_markdown=fit_md,
             word_count=word_count,
             warnings=warnings,
+            content_selector=effective_selector,
+            selector_source=selector_source,
         )
     except Exception as exc:
         logger.warning("crawl_preview_failed", url=body.url, error=str(exc))
