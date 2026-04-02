@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.models.groups import PortalGroupMembership
-
 
 def _mock_org(org_id: int = 1) -> MagicMock:
     org = MagicMock()
