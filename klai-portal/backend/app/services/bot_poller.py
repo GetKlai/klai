@@ -67,6 +67,19 @@ async def poll_loop() -> None:
                     continue
 
                 if (ref.platform, ref.native_meeting_id) in running_keys:
+                    # Bot is running — upgrade joining → recording so the UI shows correct status
+                    if meeting.status == "joining":
+                        async with AsyncSessionLocal() as db:
+                            m = await db.scalar(
+                                select(VexaMeeting).where(
+                                    VexaMeeting.id == meeting.id,
+                                    VexaMeeting.status == "joining",
+                                )
+                            )
+                            if m is not None:
+                                m.status = "recording"
+                                await db.commit()
+                                logger.info("Bot poll: bot active, updated status joining→recording", meeting_id=str(meeting.id))
                     continue  # bot is still running
 
                 logger.info("Bot poll: meeting ended, triggering transcription", meeting_id=str(meeting.id))
