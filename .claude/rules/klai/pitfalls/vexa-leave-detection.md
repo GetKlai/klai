@@ -1,15 +1,6 @@
 ---
 paths:
   - "klai-portal/backend/**/*.py"
-severity_map:
-  vexa-meet-end-browser-crash: { severity: 1.0, confirmed: 1, false_positives: 0 }
-  vexa-dom-freeze-on-participant-leave: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  vexa-everyoneLeftTimeout-wrong-field: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  vexa-six-leave-mechanisms-status: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  vexa-upstream-issue-190-fake-participants: { severity: 0.5, confirmed: 1, false_positives: 0 }
-  vexa-issue-189-video-blocking-regression: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  vexa-playwright-dom-scraping-fragility: { severity: 0.5, confirmed: 1, false_positives: 0 }
-  vexa-what-still-needs-fixing: { severity: 0.8, confirmed: 1, false_positives: 0 }
 ---
 # Vexa Leave Detection Pitfalls
 

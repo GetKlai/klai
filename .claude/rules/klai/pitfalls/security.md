@@ -3,11 +3,6 @@ paths:
   - "**/backend/**/*.py"
   - "**/api/**/*.py"
   - "klai-docs/**"
-severity_map:
-  security-idor-missing-org-scope: { severity: 1.0, confirmed: 1, false_positives: 0 }
-  security-idor-url-org-slug-trusted: { severity: 1.0, confirmed: 1, false_positives: 0 }
-  security-personal-resource-no-ownership-check: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  security-private-resource-404-not-403: { severity: 0.8, confirmed: 1, false_positives: 0 }
 ---
 # Security Pitfalls
 

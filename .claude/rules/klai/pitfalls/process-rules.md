@@ -18,10 +18,10 @@ Start and restart services using restart scripts or
 Background-launching a server with `run_in_background=true` hides
 startup failures and crashes silently.
 
-## test-user-facing-not-imports
-After a migration, refactor, or bugfix, test the actual user-facing
-functionality — not just that the module imports cleanly. A successful
-import proves nothing about runtime behavior.
+## ui-bugfix-browser-verify
+After fixing any frontend or UI bug, click through the actual browser
+flow before reporting done. Code reading and "looks correct" score zero.
+The Playwright MCP is available in every session — use it.
 
 ## debug-logging-first
 When investigating API or integration errors, add debug logging first
@@ -67,11 +67,6 @@ logs, DB state, API responses. Form your theory from the evidence,
 not the other way around. Theories without data lead to speculative
 fixes.
 
-## verify-full-flow
-After fixing a bug in a multi-step pipeline, verify all downstream
-steps still work — not just the step you touched. A fix that breaks
-the next stage is not a fix.
-
 ## check-process-not-curl
 To check if a server is running, use `lsof -nP -iTCP:PORT -sTCP:LISTEN`.
 Curl without timeouts hangs indefinitely — if you must use curl, always
@@ -98,11 +93,6 @@ When something breaks: stop, read logs first, form one hypothesis, try
 one fix. If that fails, form a new hypothesis from the new evidence —
 don't try random fixes hoping something sticks. After two failed fixes,
 escalate to the user.
-
-## verify-system-not-just-feature
-After code changes, verify the system works end-to-end — not just the
-feature you touched. Tests passing doesn't mean the entry point (API,
-dashboard, service) is reachable. Check what the user actually uses.
 
 ## search-all-case-variants
 When renaming across the codebase, search all case variants: kebab-case,
