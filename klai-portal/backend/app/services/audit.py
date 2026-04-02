@@ -10,6 +10,7 @@ against portal_audit_log from this module or anywhere in the application.
 
 import logging
 
+from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import PortalAuditLog
@@ -34,15 +35,16 @@ async def log_event(
     """
     try:
         async with db.begin_nested():
-            entry = PortalAuditLog(
-                org_id=org_id,
-                actor_user_id=actor,
-                action=action,
-                resource_type=resource_type,
-                resource_id=str(resource_id),
-                details=details,
+            await db.execute(
+                insert(PortalAuditLog).values(
+                    org_id=org_id,
+                    actor_user_id=actor,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=str(resource_id),
+                    details=details,
+                )
             )
-            db.add(entry)
     except Exception:
         logger.exception(
             "Audit log write failed (non-fatal): action=%s resource_type=%s resource_id=%s",
