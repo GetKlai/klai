@@ -270,8 +270,8 @@ def _generate_librechat_env(
                         try:
                             value = decrypt_mcp_secret(encrypted_or_plain)
                         except ValueError:
-                            logger.warning(
-                                "MCP secret decryptie mislukt voor %s/%s — var overgeslagen",
+                            logger.warning(  # nosemgrep: python-logger-credential-disclosure
+                                "MCP decryption failed for %s/%s — skipping var",
                                 server_id,
                                 var_name,
                             )
