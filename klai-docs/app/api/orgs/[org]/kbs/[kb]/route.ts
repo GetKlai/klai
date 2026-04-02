@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth";
+import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import * as ki from "@/lib/knowledge_ingest";
@@ -11,10 +11,12 @@ export async function DELETE(
   const { org: orgSlug, kb: kbSlug } = await params;
   const access = await requireOrgAccess(request, orgSlug);
   if (access.error) return access.error;
-  const { org } = access;
+  const { payload, org } = access;
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   // De-register Gitea webhook before deleting the repo
   try {
@@ -49,10 +51,12 @@ export async function PATCH(
   const { org: orgSlug, kb: kbSlug } = await params;
   const access = await requireOrgAccess(request, orgSlug);
   if (access.error) return access.error;
-  const { org } = access;
+  const { payload, org } = access;
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const body = await request.json().catch(() => ({}));
   const { name, visibility } = body as { name?: string; visibility?: "public" | "private" };

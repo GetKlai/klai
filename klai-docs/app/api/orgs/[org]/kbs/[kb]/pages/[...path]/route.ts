@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOrgAccess } from "@/lib/auth";
+import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import {
@@ -66,6 +66,8 @@ export async function PUT(
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const pagePath = path.join("/");
 
@@ -151,10 +153,12 @@ export async function DELETE(
   const { org: orgSlug, kb: kbSlug, path } = await params;
   const access = await requireOrgAccess(request, orgSlug);
   if (access.error) return access.error;
-  const { org } = access;
+  const { payload, org } = access;
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const filePath = `${path.join("/")}.md`;
   const file = await gitea.getFile(kb.gitea_repo, filePath);

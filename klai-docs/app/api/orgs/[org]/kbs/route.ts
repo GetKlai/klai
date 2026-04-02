@@ -13,9 +13,9 @@ export async function GET(
   const { org: orgSlug } = await params;
   const access = await requireOrgAccess(request, orgSlug);
   if (access.error) return access.error;
-  const { org } = access;
+  const { payload, org } = access;
 
-  const kbs = await db.getKBsByOrg(org.id);
+  const kbs = await db.getKBsByOrg(org.id, payload.sub);
   return NextResponse.json(kbs);
 }
 
@@ -28,7 +28,11 @@ export async function POST(
   const payload = await requireAuthOrService(request);
   if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { name, slug: reqSlug, visibility = "private" } = await request.json();
+  const { name, slug: reqSlug, visibility = "private", kb_type = "org" } = await request.json();
+  const validKbTypes = ["org", "personal"];
+  if (!validKbTypes.includes(kb_type)) {
+    return NextResponse.json({ error: "Invalid kb_type" }, { status: 400 });
+  }
   if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
   const slug = reqSlug ?? slugify(name);
@@ -70,7 +74,8 @@ export async function POST(
     "Initialize navigation"
   );
 
-  const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo);
+  const createdBy = kb_type === "personal" ? payload.sub : undefined;
+  const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo, kb_type, createdBy);
 
   // Register Gitea webhook via knowledge-ingest (owns the HMAC secret and webhook lifecycle)
   // Use zitadel_org_id — knowledge-ingest uses Zitadel org ID as the org namespace in Qdrant.
