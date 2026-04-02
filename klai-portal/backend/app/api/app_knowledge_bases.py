@@ -860,6 +860,7 @@ async def list_kbs_with_access(
 class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
+    try_ai: bool = False
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -885,7 +886,8 @@ async def crawl_preview(
     result = await knowledge_ingest_client.preview_crawl(
         url=body.url,
         content_selector=body.content_selector,
-        org_id=org.id,
+        org_id=str(org.id),
+        try_ai=body.try_ai,
     )
     return CrawlPreviewResponse(
         url=result.get("url", body.url),
