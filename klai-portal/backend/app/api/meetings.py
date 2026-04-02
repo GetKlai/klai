@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.groups import PortalGroup
 from app.models.meetings import VexaMeeting
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.services.access import can_write_meeting, get_accessible_meetings, is_member_of_group
 from app.services.audit import log_event
 from app.services.events import emit_event
@@ -201,7 +201,7 @@ async def start_meeting(
                 detail="Not a member of the specified group",
             )
 
-    active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(_BILLABLE_STATUSES)))
+    active_count = await db.scalar(select(func.count(VexaMeeting.id)).where(VexaMeeting.status.in_(_BILLABLE_STATUSES), VexaMeeting.org_id == org_id))
     if (active_count or 0) >= MAX_CONCURRENT_BOTS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -413,6 +413,13 @@ async def ingest_meeting_to_kb(
     from app.services.knowledge_adapter import ingest_vexa_meeting
 
     user_id, _org_id = await _get_user_and_org(credentials, db)
+    if _org_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No organization found")
+
+    # Resolve zitadel_org_id for knowledge-ingest (uses string org identifier)
+    org = await db.scalar(select(PortalOrg).where(PortalOrg.id == _org_id))
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization not found")
 
     meeting = await db.scalar(
         select(VexaMeeting).where(
@@ -430,7 +437,7 @@ async def ingest_meeting_to_kb(
         )
 
     artifact_id = await ingest_vexa_meeting(
-        org_id=body.org_id,
+        org_id=org.zitadel_org_id,
         kb_slug=body.kb_slug,
         meeting=meeting,
     )
