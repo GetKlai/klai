@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # Vexa meeting API (agentic-runtime)
     vexa_meeting_api_url: str = "http://vexa-meeting-api:8056"
     vexa_admin_api_token: str = ""
+    vexa_api_key: str = ""
     vexa_webhook_secret: str = ""
 
     # LiteLLM (for summarization)
