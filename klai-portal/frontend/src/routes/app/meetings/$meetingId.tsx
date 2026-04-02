@@ -126,7 +126,10 @@ function MeetingDetailPage() {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json()
+      const data = await res.json() as MeetingDetail
+      // Normalize: backend may return 'completed' (new) or 'done' (legacy) for finished meetings
+      if (data.status === 'completed') data.status = 'done'
+      return data
     },
     enabled: !!token,
     refetchInterval: (query) =>
