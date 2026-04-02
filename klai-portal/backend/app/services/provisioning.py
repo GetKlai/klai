@@ -239,7 +239,6 @@ def _generate_librechat_yaml(
     return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
 
-
 def _generate_librechat_env(
     slug: str,
     client_id: str,

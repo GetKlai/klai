@@ -40,11 +40,7 @@ def upgrade() -> None:
             "mcp_servers voor getklai wordt op None gezet. "
             "Configureer via Portal UI na de migratie."
         )
-        op.execute(
-            sa.text(
-                "UPDATE portal_orgs SET mcp_servers = NULL WHERE slug = 'getklai'"
-            )
-        )
+        op.execute(sa.text("UPDATE portal_orgs SET mcp_servers = NULL WHERE slug = 'getklai'"))
         return
 
     # Encrypt de API key met de portal secrets service
@@ -65,11 +61,9 @@ def upgrade() -> None:
     }
 
     op.execute(
-        sa.text(
-            "UPDATE portal_orgs "
-            "SET mcp_servers = :mcp_servers ::jsonb "
-            "WHERE slug = 'getklai'"
-        ).bindparams(mcp_servers=json.dumps(new_mcp_servers))
+        sa.text("UPDATE portal_orgs SET mcp_servers = :mcp_servers ::jsonb WHERE slug = 'getklai'").bindparams(
+            mcp_servers=json.dumps(new_mcp_servers)
+        )
     )
 
     logger.info(
@@ -84,8 +78,4 @@ def downgrade() -> None:
     # De originele stdio seed data uit d2e3f4a5b6c7 is vervangen door deze migratie;
     # het terugzetten naar None is de veiligste downgrade zonder het oorspronkelijke
     # plaintext token te reconstrueren.
-    op.execute(
-        sa.text(
-            "UPDATE portal_orgs SET mcp_servers = NULL WHERE slug = 'getklai'"
-        )
-    )
+    op.execute(sa.text("UPDATE portal_orgs SET mcp_servers = NULL WHERE slug = 'getklai'"))
