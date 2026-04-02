@@ -31,6 +31,7 @@ export interface NavTreeProps {
   activePath?: string | null
   onSidebarUpdate: (newTree: NavNode[]) => void
   onAddSubpage: (parentPath: string) => void
+  onDeletePage: (path: string) => void
   addingSubpageUnder: string | null
   newPageTitle: string
   onNewPageTitleChange: (val: string) => void
@@ -46,6 +47,7 @@ export function NavTree({
   activePath,
   onSidebarUpdate,
   onAddSubpage,
+  onDeletePage,
   addingSubpageUnder,
   newPageTitle,
   onNewPageTitleChange,
@@ -273,6 +275,7 @@ export function NavTree({
               activePath={activePath}
               onSidebarUpdate={onSidebarUpdate}
               onAddSubpage={onAddSubpage}
+              onDeletePage={onDeletePage}
               addingSubpageUnder={addingSubpageUnder}
               newPageTitle={newPageTitle}
               onNewPageTitleChange={onNewPageTitleChange}

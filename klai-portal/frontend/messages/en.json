@@ -515,6 +515,13 @@
   "docs_tree_collapse": "Collapse",
   "docs_tree_cancel": "Cancel",
 
+  "docs_page_delete": "Delete page",
+  "docs_page_delete_title": "Delete page",
+  "docs_page_delete_description": "This will permanently delete this page and all indexed content.",
+  "docs_page_delete_warning": "This action cannot be undone.",
+  "docs_page_delete_confirm": "Delete",
+  "docs_page_delete_error": "Delete failed",
+
   "help_toggle_label": "Toggle help",
   "help_btn_label": "Help",
   "help_btn_enable": "Enable help",

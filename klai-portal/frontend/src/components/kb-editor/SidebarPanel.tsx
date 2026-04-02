@@ -16,6 +16,7 @@ export interface SidebarPanelProps {
   onSelect: (node: NavNode) => void | Promise<void>
   onSidebarUpdate: (newTree: NavNode[]) => void
   onAddSubpage: (parentPath: string) => void
+  onDeletePage: (path: string) => void
   onShowNewPage: () => void
   onNewPageTitleChange: (val: string) => void
   onNewPageConfirm: (parentPath: string | null) => void
@@ -34,6 +35,7 @@ export function SidebarPanel({
   onSelect,
   onSidebarUpdate,
   onAddSubpage,
+  onDeletePage,
   onShowNewPage,
   onNewPageTitleChange,
   onNewPageConfirm,
@@ -65,6 +67,7 @@ export function SidebarPanel({
             activePath={selectedPath}
             onSidebarUpdate={onSidebarUpdate}
             onAddSubpage={onAddSubpage}
+            onDeletePage={onDeletePage}
             addingSubpageUnder={showNewPage ? newPageParent : null}
             newPageTitle={newPageTitle}
             onNewPageTitleChange={onNewPageTitleChange}
