@@ -100,7 +100,7 @@ modelSpecs:
       preset:
         endpoint: "Klai AI"
         model: "klai-primary"
-        systemPrompt: >
+        promptPrefix: >
           You are a helpful AI assistant.
           When answering questions that required a web search, be concise:
           summarize the key findings in clear, direct language and cite only
