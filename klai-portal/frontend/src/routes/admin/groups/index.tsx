@@ -30,6 +30,7 @@ function avatarColor(uid: string): string {
 }
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
 
 type GroupsSearch = { create?: true }
@@ -112,7 +113,7 @@ function AdminGroups() {
   const showCreate = create === true
   const [newGroupName, setNewGroupName] = useState('')
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-groups'],
     queryFn: async () => apiFetch<{ groups: Group[] }>('/api/admin/groups', token),
     enabled: !!token,
@@ -270,7 +271,7 @@ function AdminGroups() {
                   id="new-group-name"
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder="Team naam..."
+                  placeholder={m.admin_groups_name_placeholder()}
                 />
               </div>
               <Button
@@ -297,13 +298,9 @@ function AdminGroups() {
         </Card>
       )}
 
-      {error && (
-        <p className="text-sm text-[var(--color-destructive)]">
-          {error instanceof Error ? error.message : String(error)}
-        </p>
-      )}
-
-      <Card>
+      {error ? (
+        <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
+      ) : <Card>
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {isLoading ? (
             <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
@@ -365,7 +362,7 @@ function AdminGroups() {
             </table>
           )}
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   )
 }

@@ -132,7 +132,7 @@ const SetupMfaRoute = SetupMfaRouteImport.update({
   id: '/setup/mfa',
   path: '/setup/mfa',
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any).lazy(() => import('./routes/setup/mfa.lazy').then((d) => d.Route))
 const Setup2faRoute = Setup2faRouteImport.update({
   id: '/setup/2fa',
   path: '/setup/2fa',
@@ -172,7 +172,7 @@ const AdminBillingRoute = AdminBillingRouteImport.update({
   id: '/billing',
   path: '/billing',
   getParentRoute: () => AdminRouteRoute,
-} as any)
+} as any).lazy(() => import('./routes/admin/billing.lazy').then((d) => d.Route))
 const LocaleSignupRoute = LocaleSignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -253,7 +253,9 @@ const AppFocusNotebookIdRoute = AppFocusNotebookIdRouteImport.update({
   id: '/focus/$notebookId',
   path: '/focus/$notebookId',
   getParentRoute: () => AppRouteRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/app/focus/$notebookId.lazy').then((d) => d.Route),
+)
 const AppDocsNewRoute = AppDocsNewRouteImport.update({
   id: '/docs/new',
   path: '/docs/new',
@@ -263,7 +265,9 @@ const AppDocsKbSlugRoute = AppDocsKbSlugRouteImport.update({
   id: '/docs/$kbSlug',
   path: '/docs/$kbSlug',
   getParentRoute: () => AppRouteRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/app/docs/$kbSlug.lazy').then((d) => d.Route),
+)
 const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   id: '/users/invite',
   path: '/users/invite',

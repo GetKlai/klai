@@ -1201,5 +1201,15 @@
   "admin_integrations_not_configured": "Not configured",
   "admin_integrations_required_vars": "Required configuration",
   "admin_integrations_secret_placeholder": "Enter value",
-  "admin_integrations_restart_notice": "Changes take effect after container restart (±10 seconds)."
+  "admin_integrations_restart_notice": "Changes take effect after container restart (±10 seconds).",
+  "error_generic": "Something went wrong. Please try again.",
+  "error_retry": "Try again",
+
+  "docs_wikilink_connect": "Connect to page",
+  "docs_wikilink_search_placeholder": "Search a page...",
+  "docs_wikilink_no_results": "No other pages found.",
+  "admin_billing_placeholder_street": "123 Example Street",
+  "admin_billing_placeholder_zipcode": "1234 AB",
+  "admin_billing_placeholder_city": "Amsterdam",
+  "admin_billing_placeholder_tax_number": "NL123456789B01"
 }

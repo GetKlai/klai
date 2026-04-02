@@ -7,7 +7,7 @@ import {
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
-import { STORAGE_KEYS } from '@/lib/storage'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DashboardSection } from './-kb-helpers'
 import type { KnowledgeBase, KBStats } from './-kb-types'
 
@@ -19,6 +19,7 @@ function OverviewTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
   const token = auth.user?.access_token
+  const { user } = useCurrentUser()
 
   // These queries reuse the same queryKeys as the parent layout -- TanStack Query
   // serves cached data without re-fetching.
@@ -81,7 +82,7 @@ function OverviewTab() {
                 : m.knowledge_detail_usage_unknown()}
             </p>
           </div>
-          {sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true' && stats?.org_gap_count_7d != null && (
+          {user?.isAdmin === true && stats?.org_gap_count_7d != null && (
             <Link to="/app/gaps" className="group">
               <div>
                 <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1 flex items-center gap-1">

@@ -5,6 +5,7 @@ import { Loader2, BookMarked, Globe, Lock, Pencil } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
@@ -31,7 +32,7 @@ function DocsPage() {
   const token = auth.user?.access_token
   const navigate = useNavigate()
 
-  const { data: kbs = [], isLoading, error } = useQuery<KBWithAccess[]>({
+  const { data: kbs = [], isLoading, error, refetch } = useQuery<KBWithAccess[]>({
     queryKey: ['docs-kbs-with-access'],
     queryFn: async () => apiFetch<KBWithAccess[]>(`/api/app/knowledge-bases-with-access`, token),
     enabled: !!token,
@@ -58,13 +59,9 @@ function DocsPage() {
         </div>
       </div>
 
-      {error && (
-        <p className="text-sm text-[var(--color-destructive)]">
-          {error instanceof Error ? error.message : 'Laden mislukt'}
-        </p>
-      )}
-
-      <Card data-help-id="docs-list">
+      {error ? (
+        <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
+      ) : <Card data-help-id="docs-list">
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {isLoading ? (
             <div className="flex justify-center py-8">
@@ -178,7 +175,7 @@ function DocsPage() {
             </table>
           )}
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   )
 }

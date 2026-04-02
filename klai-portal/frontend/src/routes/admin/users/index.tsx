@@ -35,6 +35,7 @@ import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
 import { adminLogger } from '@/lib/logger'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 
 export const Route = createFileRoute('/admin/users/')({
@@ -100,7 +101,7 @@ function UsersPage() {
   const reactivateMutation = useReactivateUser()
   const offboardMutation = useOffboardUser()
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-users'],
     queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`, token),
     enabled: !!token,
@@ -138,8 +139,7 @@ function UsersPage() {
 
 
 
-  const pageError =
-    (error instanceof Error ? error.message : error ? m.admin_users_error_generic() : null) ??
+  const mutationError =
     (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
     (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null)
 
@@ -335,8 +335,11 @@ function UsersPage() {
         </Button>
       </div>
 
-      {pageError && (
-        <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
+      {error ? (
+        <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
+      ) : <>
+      {mutationError && (
+        <p className="text-sm text-[var(--color-destructive)]">{mutationError}</p>
       )}
 
       <Card data-help-id="admin-users-table">
@@ -418,6 +421,7 @@ function UsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </>}
     </div>
   )
 }
