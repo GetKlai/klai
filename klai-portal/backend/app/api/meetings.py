@@ -66,8 +66,11 @@ async def _get_user_and_org(
 def _require_webhook_secret(request: Request) -> None:
     if not settings.vexa_webhook_secret:
         return  # No secret configured — trust the internal Docker network
-    token = request.headers.get("Authorization", "")
-    if token != f"Bearer {settings.vexa_webhook_secret}":
+    secret = settings.vexa_webhook_secret
+    # Accept Authorization header (external callers) or ?token= query param (internal Vexa via POST_MEETING_HOOKS URL)
+    auth_header = request.headers.get("Authorization", "")
+    query_token = request.query_params.get("token", "")
+    if auth_header != f"Bearer {secret}" and query_token != secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
