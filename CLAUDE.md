@@ -29,12 +29,6 @@ when you work on matching files (via `paths:` frontmatter). Universal rules
 
 Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md`
 
-## Shared rules
-
-@.claude/rules/klai/knowledge.md
-@.claude/rules/klai/server-secrets.md
-@.claude/rules/klai/serena.md
-
 ## Model policy
 
 **[HARD] Never use OpenAI, Anthropic, or other US cloud provider model names anywhere in Klai code.**
