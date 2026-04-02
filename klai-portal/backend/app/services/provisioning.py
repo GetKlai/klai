@@ -4,6 +4,7 @@ Called after signup DB commit to set up a new customer's LibreChat instance.
 """
 
 import asyncio
+import copy
 import logging
 import secrets
 import shutil
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import docker
 import httpx
+import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -179,6 +181,32 @@ def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
         raise RuntimeError(f"MongoDB tenant user creation failed for {slug} (exit {exit_code}): {output.decode()}")
 
 
+def _generate_librechat_yaml(
+    base_path: Path,
+    extra_mcp_servers: dict | None,
+) -> str:
+    """Generate a per-tenant librechat.yaml by merging base config with extra MCP servers.
+
+    Returns the YAML string. The base config is loaded from disk and deep-copied
+    so the original is never mutated.
+    """
+    with open(base_path) as f:
+        config = yaml.safe_load(f)
+
+    if extra_mcp_servers:
+        config = copy.deepcopy(config)
+        mcp = config.setdefault("mcpServers", {})
+        mcp.update(extra_mcp_servers)
+
+        # Add extra server names to modelSpecs.list[].mcpServers
+        extra_names = list(extra_mcp_servers.keys())
+        for spec in config.get("modelSpecs", {}).get("list", []):
+            existing = spec.get("mcpServers", [])
+            spec["mcpServers"] = existing + extra_names
+
+    return yaml.dump(config, default_flow_style=False, sort_keys=False)
+
+
 def _generate_librechat_env(
     slug: str,
     client_id: str,
@@ -263,6 +291,7 @@ JINA_API_URL=http://infinity-reranker:7997/v1/rerank
 # Klai Knowledge MCP identity (used by librechat.yaml ${{...}} expansion)
 KLAI_ZITADEL_ORG_ID={zitadel_org_id}
 KLAI_ORG_SLUG={slug}
+KNOWLEDGE_INGEST_SECRET={settings.knowledge_ingest_secret}
 """
 
 
@@ -318,7 +347,11 @@ def _reload_caddy() -> None:
         raise RuntimeError(f"Caddy reload failed (exit {exit_code}): {output.decode()}")
 
 
-def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
+def _start_librechat_container(
+    slug: str,
+    env_file_host_path: str,
+    mcp_servers: dict | None = None,
+) -> None:
     """Start the LibreChat Docker container for a tenant (synchronous, run in executor)."""
     client = docker.from_env()
     container_name = f"librechat-{slug}"
@@ -331,6 +364,14 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
         pass
 
     librechat_host_base = settings.librechat_host_data_path
+
+    # Generate per-tenant librechat.yaml by merging base config with tenant MCP servers
+    base_yaml_path = Path(settings.librechat_container_data_path) / "librechat.yaml"
+    tenant_yaml_content = _generate_librechat_yaml(base_yaml_path, mcp_servers)
+    tenant_yaml_dir = Path(settings.librechat_container_data_path) / slug
+    tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
+    (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
+
     client.containers.run(  # type: ignore[call-overload]  # nosemgrep: docker-arbitrary-container-run
         image=settings.librechat_image,
         name=container_name,
@@ -338,7 +379,7 @@ def _start_librechat_container(slug: str, env_file_host_path: str) -> None:
         restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
         volumes={
             env_file_host_path: {"bind": "/app/.env", "mode": "ro"},
-            f"{librechat_host_base}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
+            f"{librechat_host_base}/{slug}/librechat.yaml": {"bind": "/app/librechat.yaml", "mode": "ro"},
             f"{librechat_host_base}/{slug}/images": {"bind": "/app/client/public/images", "mode": "rw"},
         },
         network="klai-net",
@@ -471,7 +512,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
 
         # Step 7: Start Docker container
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path)
+        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path, org.mcp_servers)
         state.container_started = True
         logger.info("Started container librechat-%s", slug)
 

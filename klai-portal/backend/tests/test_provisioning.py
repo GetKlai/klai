@@ -1,26 +1,32 @@
 """
-Characterization tests for _generate_librechat_env().
+Characterization tests for _generate_librechat_env() and _generate_librechat_yaml().
 
-These tests capture the current behavior of the env generator so that
+These tests capture the current behavior of the env/yaml generators so that
 structural changes (adding parameters, new env vars) can be verified
 against the existing output format.
 """
 
 import re
+import textwrap
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 
 @pytest.fixture(autouse=True)
 def _mock_settings():
     """Provide deterministic settings for all tests."""
+    import app.services.provisioning  # ensure module is imported before patching  # noqa: F401
+
     with patch("app.services.provisioning.settings") as mock:
         mock.domain = "getklai.com"
         mock.mongo_root_password = "test-mongo-pw"
         mock.meili_master_key = "test-meili-key"
         mock.redis_password = "test-redis-pw"
         mock.litellm_master_key = "test-litellm-master"
+        mock.firecrawl_internal_key = "test-firecrawl-key"
+        mock.knowledge_ingest_secret = "test-knowledge-secret"
         yield mock
 
 
@@ -253,3 +259,109 @@ class TestGenerateLibrechatEnvKnowledgeVars:
         assert "LITELLM_API_KEY=" in result
         assert "KLAI_ZITADEL_ORG_ID=org-id-789" in result
         assert "KLAI_ORG_SLUG=acme" in result
+
+
+class TestGenerateLibrechatEnvKnowledgeIngestSecret:
+    """Tests for SPEC-INFRA-001: KNOWLEDGE_INGEST_SECRET in env template."""
+
+    def test_knowledge_ingest_secret_present_in_env(self):
+        """KNOWLEDGE_INGEST_SECRET appears in the output."""
+        from app.services.provisioning import _generate_librechat_env
+
+        result = _generate_librechat_env(
+            slug="acme",
+            client_id="cid",
+            client_secret="csec",  # noqa: S106
+            litellm_api_key="key",
+            mongo_password="pw",  # noqa: S106
+        )
+
+        assert "KNOWLEDGE_INGEST_SECRET=test-knowledge-secret" in result
+
+
+# ── _generate_librechat_yaml tests ─────────────────────────────────────────
+
+
+@pytest.fixture()
+def base_yaml_file(tmp_path):
+    """Write a minimal base librechat.yaml for testing."""
+    content = textwrap.dedent("""\
+        version: 1.3.5
+        mcpServers:
+          klai-knowledge:
+            type: streamable-http
+            url: http://klai-knowledge-mcp:8080/mcp
+        modelSpecs:
+          prioritize: true
+          list:
+            - name: klai-primary
+              mcpServers:
+                - klai-knowledge
+              label: Klai AI
+              default: true
+    """)
+    p = tmp_path / "librechat.yaml"
+    p.write_text(content)
+    return p
+
+
+class TestGenerateLibrechatYaml:
+    """Tests for SPEC-INFRA-001: _generate_librechat_yaml() yaml merge logic."""
+
+    def test_no_extra_servers_returns_base_config(self, base_yaml_file):
+        """When extra_mcp_servers is None, output equals the base config."""
+        from app.services.provisioning import _generate_librechat_yaml
+
+        result = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=None)
+        parsed = yaml.safe_load(result)
+
+        assert "klai-knowledge" in parsed["mcpServers"]
+        assert len(parsed["mcpServers"]) == 1
+        assert parsed["modelSpecs"]["list"][0]["mcpServers"] == ["klai-knowledge"]
+
+    def test_extra_servers_merged_into_mcp_section(self, base_yaml_file):
+        """Extra MCP servers are added to the mcpServers section."""
+        from app.services.provisioning import _generate_librechat_yaml
+
+        extra = {
+            "twenty-crm": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "twenty-mcp-server", "start"],
+                "env": {"TWENTY_API_KEY": "${TWENTY_API_KEY}"},
+            }
+        }
+        result = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=extra)
+        parsed = yaml.safe_load(result)
+
+        assert "klai-knowledge" in parsed["mcpServers"]
+        assert "twenty-crm" in parsed["mcpServers"]
+        assert parsed["mcpServers"]["twenty-crm"]["type"] == "stdio"
+
+    def test_extra_server_names_added_to_model_specs(self, base_yaml_file):
+        """Extra server names are appended to modelSpecs.list[].mcpServers."""
+        from app.services.provisioning import _generate_librechat_yaml
+
+        extra = {"twenty-crm": {"type": "stdio", "command": "npx"}}
+        result = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=extra)
+        parsed = yaml.safe_load(result)
+
+        spec_servers = parsed["modelSpecs"]["list"][0]["mcpServers"]
+        assert spec_servers == ["klai-knowledge", "twenty-crm"]
+
+    def test_base_config_not_mutated(self, base_yaml_file):
+        """Calling with extra servers does not modify the base file on disk."""
+        from app.services.provisioning import _generate_librechat_yaml
+
+        original = base_yaml_file.read_text()
+        _generate_librechat_yaml(base_yaml_file, extra_mcp_servers={"test": {"type": "stdio"}})
+        assert base_yaml_file.read_text() == original
+
+    def test_empty_extra_servers_dict_is_noop(self, base_yaml_file):
+        """An empty dict for extra_mcp_servers does not change the output."""
+        from app.services.provisioning import _generate_librechat_yaml
+
+        result_none = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers=None)
+        result_empty = _generate_librechat_yaml(base_yaml_file, extra_mcp_servers={})
+        # Empty dict is falsy, so same as None
+        assert yaml.safe_load(result_none) == yaml.safe_load(result_empty)
