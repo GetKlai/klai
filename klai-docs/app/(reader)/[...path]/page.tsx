@@ -103,6 +103,9 @@ export default async function ReaderPage({
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) notFound();
 
+  // Personal KBs are never served via the public reader
+  if (kb.kb_type === "personal") notFound();
+
   // TODO: For private KBs, validate the reader's Zitadel session cookie.
   // Currently all KBs are served to anyone who knows the URL.
   // This is acceptable for MVP while the auth architecture for the reader is designed.
@@ -186,6 +189,8 @@ export async function generateMetadata({
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return {};
+
+  if (kb.kb_type === "personal") return {};
 
   if (articleSegments.length > 0) {
     const raw = await gitea.getFileContent(
