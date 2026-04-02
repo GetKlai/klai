@@ -27,7 +27,9 @@ def _mock_caller(role: str = "admin") -> MagicMock:
     return caller
 
 
-def _mock_group(group_id: int = 10, org_id: int = 1, name: str = "Engineering", *, is_system: bool = False) -> MagicMock:
+def _mock_group(
+    group_id: int = 10, org_id: int = 1, name: str = "Engineering", *, is_system: bool = False
+) -> MagicMock:
     group = MagicMock(spec=PortalGroup)
     group.id = group_id
     group.org_id = org_id
