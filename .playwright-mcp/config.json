@@ -1,4 +1,5 @@
 {
+  "browser": "chromium",
   "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
   "userDataDir": "/Users/mark/.claude/mcp-brave-profile"
 }

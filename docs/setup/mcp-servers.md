@@ -75,6 +75,7 @@ For Windows, overwrite it locally — git will show a diff but the file won't be
 **macOS** (committed, default):
 ```json
 {
+  "browser": "chromium",
   "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
   "userDataDir": "/Users/mark/.claude/mcp-brave-profile"
 }
@@ -83,6 +84,7 @@ For Windows, overwrite it locally — git will show a diff but the file won't be
 **Windows** (local override):
 ```json
 {
+  "browser": "chromium",
   "executablePath": "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
   "userDataDir": "C:/Users/markv/.claude/mcp-brave-profile"
 }
