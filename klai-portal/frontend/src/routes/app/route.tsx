@@ -52,7 +52,7 @@ function AppLayout() {
     }
   }, [auth.isLoading, auth.isAuthenticated, user, userLoading, navigate])
 
-  if (auth.isLoading || !auth.isAuthenticated) {
+  if (auth.isLoading || userLoading || !auth.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
