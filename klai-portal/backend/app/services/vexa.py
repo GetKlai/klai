@@ -61,7 +61,7 @@ class VexaClient:
             json={
                 "platform": platform,
                 "native_meeting_id": native_meeting_id,
-                "recording_enabled": True,
+                "recording_enabled": False,
                 "bot_name": "Klai",
             },
         )

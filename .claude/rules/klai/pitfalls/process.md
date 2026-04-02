@@ -38,6 +38,9 @@ paths:
 | [process-verify-system-not-just-feature](#process-verify-system-not-just-feature) | HIGH | Verify entry point, not just tests |
 | [process-search-all-case-variants](#process-search-all-case-variants) | HIGH | Search all case variants when renaming |
 | [process-convention-change-blast-radius](#process-convention-change-blast-radius) | HIGH | Search entire codebase for consumers of changed defaults |
+| [process-spec-constraints-before-implement](#process-spec-constraints-before-implement) | CRIT | Read SPEC constraints section and verify image tags, resource limits, excluded services before implementing |
+| [process-spec-architecture-mismatch-stop](#process-spec-architecture-mismatch-stop) | CRIT | Stop and ask if implementation architecture diverges from SPEC |
+| [process-spec-violation-in-logs](#process-spec-violation-in-logs) | CRIT | Stop when logs show a SPEC constraint violation — don't debug downstream symptoms |
 
 ---
 
@@ -583,6 +586,58 @@ When changing a default value or naming convention, search the entire codebase f
 
 **Root cause:** Default values have unbounded blast radius — they're used across boundaries agents don't consider (test fixtures, config files, documentation, other services).
 **Source:** Vexa G5 gotcha — convention change caused 14 stale references in 9 unplanned files.
+
+---
+
+## process-spec-constraints-before-implement
+
+**Severity:** CRIT
+
+**Trigger:** Starting implementation of any SPEC task
+
+Before writing a single line of implementation code, read the SPEC's constraints section and write down how you will verify each point:
+- Image tags: never `:latest` — use the exact tag or commit hash the SPEC specifies. If unclear, ask before implementing.
+- Resource limits: verify docker-compose limits match the SPEC's RAM budget per service and per ephemeral container.
+- Excluded services: explicitly list which services must NOT run (e.g. WhisperLive on core-01) and verify they are absent.
+
+**Root cause:** Constraints sections are read and forgotten. Writing down each constraint and its verification method forces active compliance rather than passive reading.
+**Source:** SPEC-VEXA-001 — used `vexaai/vexa-lite:latest` (old monolithic image) despite SPEC specifying "pin op specifieke commit hash, niet `:latest`" in two places.
+
+---
+
+## process-spec-architecture-mismatch-stop
+
+**Severity:** CRIT
+
+**Trigger:** About to implement something that diverges architecturally from the SPEC
+
+If your implementation diverges architecturally from the SPEC — monolith where microservices are described, subprocess where containers are specified, image-swap where a full architecture change is required — STOP immediately.
+
+**What to do:**
+1. State the mismatch explicitly: "The SPEC describes X, but I'm about to implement Y."
+2. Ask the user for confirmation before continuing.
+3. Never assume "close enough" or "this is simpler and equivalent."
+
+**Root cause:** Agents take the path of least resistance (known image, existing pattern) without recognizing that the SPEC describes a fundamentally different architecture.
+**Source:** SPEC-VEXA-001 — implemented old `vexa-lite` monolith instead of three-service agentic-runtime architecture.
+
+---
+
+## process-spec-violation-in-logs
+
+**Severity:** CRIT
+
+**Trigger:** Logs during debugging show a service, process, or behavior that contradicts a SPEC constraint
+
+If during debugging a log signal directly violates a SPEC constraint (wrong service running, wrong memory usage, wrong routing, forbidden process) — STOP. Do not continue debugging a downstream symptom while an upstream SPEC violation is visible.
+
+**What to do:**
+1. Identify which SPEC constraint is violated.
+2. Report it to the user before doing anything else.
+3. Agree on a fix for the SPEC violation first.
+
+**Why:** Downstream symptoms (OOM crash, bot join failure) are caused by the upstream violation. Fixing the symptom without fixing the violation wastes time.
+**Source:** SPEC-VEXA-001 — WhisperLive visible in Supervisor logs (SPEC forbids it on core-01), continued debugging bot OOM crash instead of stopping.
 
 ---
 

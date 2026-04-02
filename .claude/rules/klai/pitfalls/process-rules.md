@@ -140,3 +140,24 @@ When changing a default value or naming convention, search the entire
 codebase for consumers — not just the files in your plan. Defaults have
 unbounded blast radius: every file that hardcodes the old value is a
 consumer you must update.
+
+## spec-constraints-before-implement
+Before writing a single line of implementation code, read the SPEC's
+constraints section and write down how you will verify each point:
+image tags (never :latest — use the exact tag or commit hash the SPEC
+specifies), resource limits (check they match the SPEC's RAM budget),
+and which services must NOT run. If any constraint is unclear, ask
+before implementing.
+
+## spec-architecture-mismatch-stop
+If your implementation diverges architecturally from the SPEC —
+monolith where microservices are described, subprocess where containers
+are specified, or vice versa — STOP immediately. State the mismatch
+explicitly and ask for confirmation before continuing. Never assume
+"close enough."
+
+## spec-violation-in-logs
+If during debugging a log signal directly violates a SPEC constraint
+(wrong service running, wrong memory usage, wrong routing) — STOP.
+Report the violation. Do not continue debugging a downstream symptom
+while an upstream SPEC violation is visible.

@@ -17,6 +17,7 @@ priority: high
 | 1.0 | 2026-04-02 | MoAI | Initieel SPEC document |
 | 1.1 | 2026-04-02 | MoAI | Scope uitgebreid: Vexa transcription-service vervangt whisper-server als unified transcription backend |
 | 1.2 | 2026-04-02 | MoAI | Scope teruggebracht: transcription-service migratie verplaatst naar SPEC-VEXA-002, whisper-server blijft als transcriptie backend |
+| 1.3 | 2026-04-02 | MoAI | **MISLUKTE IMPLEMENTATIEPOGING GEDOCUMENTEERD** — zie sectie 7. Rollback uitgevoerd naar commit vóór 8e04a81. |
 
 ---
 
@@ -181,6 +182,81 @@ Meeting flow:
 - **Transcriptie**: Bestaande whisper-server op gpu-01 als TRANSCRIBER_URL (`http://172.18.0.1:8000/v1/audio/transcriptions`), ongewijzigd
 - **Netwerk**: Bot containers moeten internet access hebben (vexa-bots netwerk)
 - **Socket proxy**: Runtime-api moet containers kunnen create/start/stop/remove
+
+---
+
+## 7. Wat er misging — Mislukte Implementatiepoging (2026-04-02)
+
+> **Verplicht lezen vóór implementatie start.** Dit is geen optionele context.
+
+### Wat er fout ging
+
+De eerste implementatiepoging heeft **drie SPEC-constraints tegelijkertijd genegeerd**:
+
+#### Fout 1 — Verkeerde image gebruikt (CRIT)
+
+De implementatie gebruikte `vexaai/vexa-lite:latest` — de **oude monolithische image**.
+
+De SPEC zegt op **twee plaatsen** expliciet het tegenovergestelde:
+- Sectie 5: "Image source: Build van `feature/agentic-runtime` branch, **pin op specifieke commit hash**"
+- Plan.md risicotabel: "Pin op specifieke commit hash, **niet `:latest`**"
+
+`vexaai/vexa-lite:latest` is de pre-agentic-runtime image. Die heeft een ingebouwde Supervisor die altijd WhisperLive start — ongeacht `TRANSCRIBER_URL`. Dit is niet configureerbaar zonder de image zelf te patchen.
+
+#### Fout 2 — Architectuurwissel niet uitgevoerd (CRIT)
+
+De SPEC zegt letterlijk: "Dit is **geen image-swap maar een volledige architectuurwissel**."
+
+De implementatie deed het wél als een image-swap: één container (`vexa-meeting-api`) in docker-compose in plaats van drie aparte services (`vexa-meeting-api` + `vexa-runtime-api` + ephemere `vexa-bot` containers via Docker socket).
+
+Gevolg: de bot draaide als **subprocess (PID)** inside de container, niet als aparte ephemere Docker container.
+
+#### Fout 3 — Memory limits volstrekt onvoldoende (CRIT)
+
+De SPEC zegt:
+- Bot container: ~1.5GB RAM per actieve meeting
+- meeting-api: ~256MB, runtime-api: ~256MB
+
+De implementatie zette `deploy.resources.limits.memory: 512M` voor de enkele monolithische container, inclusief WhisperLive én Chromium.
+
+Gevolg: Chromium crashte met `page.evaluate: Target crashed` (OOM kill) elke keer dat de bot probeerde Google Meet te joinen.
+
+#### Fout 4 — WhisperLive draaide op core-01 (CRIT)
+
+`TRANSCRIBER_URL=http://172.18.0.1:8000/...` stuurt transcriptieresultaten naar de externe service, maar **voorkomt niet** dat WhisperLive start. Die start altijd via Supervisor in `vexa-lite`.
+
+De SPEC verbiedt dit impliciet via de architectuurbeschrijving en de Technische Constraints (sectie 5): whisper-server draait op gpu-01, niet op core-01.
+
+#### Fout 5 — Signalen genegeerd (PROC)
+
+Tijdens debugging waren de volgende SPEC-schendingen zichtbaar in de logs en **niet aangekaart**:
+- WhisperLive pid 53 zichtbaar in Supervisor → doorgelopen
+- Container OOM crash → doorgelopen (oorzaak was SPEC-schending, niet downstream bug)
+
+### Wat wél gedaan is en bewaard blijft
+
+| Werk | Status | Reden |
+|------|--------|-------|
+| `fix(vexa): use X-API-Key header` (commit `1dd7ea4`) | **Houden** | Nieuwe architectuur gebruikt ook X-API-Key auth |
+| `fix(quality): remove unused JSONB import` (commit `300e506`) | **Houden** | Niets met Vexa te maken |
+| `vexa` database aangemaakt op core-01 | **Houden** | Nieuwe architectuur gebruikt dezelfde PostgreSQL database |
+| `fix(vexa): merge runtime-api into meeting-api` (commit `8e04a81`) | **ROLLEN TERUG** | Bevat de foute monolithische docker-compose setup |
+| Handmatige `VEXA_API_KEY` in `/opt/klai/.env` | **Controleren** | Mogelijk anders benoemd in nieuwe architectuur |
+
+### Hoe dit te voorkomen bij de volgende implementatie
+
+**Vóór één regel code schrijven:**
+
+1. Lees sectie 5 (Technische Constraints) en schrijf hier op:
+   - Welke exacte image tag/commit hash wordt gebruikt
+   - Wat de resource limits zijn per service
+   - Welke services NIET mogen draaien op core-01
+
+2. Vraag de gebruiker om bevestiging van deze lijst.
+
+3. Controleer de `feature/agentic-runtime` branch op GitHub en pin de implementatie op een specifieke commit hash — nooit `:latest` of een branch name.
+
+4. Bouw drie aparte services: `vexa-meeting-api`, `vexa-runtime-api`, `vexa-redis`. De bot is een ephemere container, geen subprocess.
 
 ---
 

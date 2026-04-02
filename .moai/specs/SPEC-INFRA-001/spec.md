@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-001
-version: "2.0.0"
-status: completed
+version: "3.0.0"
+status: draft
 created: 2026-04-02
 updated: 2026-04-02
 author: MoAI
@@ -14,6 +14,7 @@ priority: high
 
 | Versie | Datum | Auteur | Wijziging |
 |--------|-------|--------|-----------|
+| 3.0.0 | 2026-04-02 | MoAI | MCP Catalog + encrypted secrets in DB; interne service URL voor klai-knowledge |
 | 2.0.0 | 2026-04-02 | MoAI | DB-driven MCP configuratie (was: statische yaml bestanden) |
 | 1.0.0 | 2026-04-02 | MoAI | Initieel SPEC document |
 
@@ -28,14 +29,46 @@ Klai is een privacy-first, EU-only AI platform. Elke tenant krijgt een geisoleer
 1. **KLAI_ORG_ID mismatch**: `librechat.yaml:40` gebruikte `${KLAI_ORG_ID}` maar `provisioning.py:264` stelt `KLAI_ZITADEL_ORG_ID` in. De MCP-header `X-Org-ID` was leeg. (Bugfix al toegepast in base yaml.)
 2. **KNOWLEDGE_INGEST_SECRET ontbreekt**: Wordt niet meegegeven aan LibreChat containers. De MCP-header `X-Internal-Secret` is leeg.
 
-### Architectuurbeslissing
+### Architectuurbeslissing v2: MCP Catalog + encrypted secrets
 
-Per-tenant MCP configuratie wordt opgeslagen als JSON in de database (`PortalOrg.mcp_servers`), niet als statische yaml-bestanden. Voordelen:
-- Schaalbaar: geen handmatig yaml-beheer per tenant
-- Base config blijft in git, tenant-specifieke MCP servers in de DB
-- Provisioning genereert per-tenant yaml automatisch door base + DB te mergen
+Per-tenant MCP configuratie bestaat uit twee lagen:
 
-Beperking: LibreChat leest yaml alleen bij container startup. MCP config wijzigingen vereisen een container restart.
+**Laag 1 — MCP Catalog (codebase)**
+Een lijst van door Klai ondersteunde MCP servers, opgeslagen in `deploy/librechat/mcp_catalog.yaml`. Elke entry bevat:
+- `id`: unieke identifier (bijv. `twenty-crm`)
+- `config_template`: LibreChat yaml config met `${VAR}` placeholders
+- `required_env_vars`: welke secrets de tenant moet aanleveren
+- `description`: wat de server doet
+
+Alleen catalog-entries kunnen door tenants worden ingeschakeld. Dit voorkomt willekeurige externe MCP servers.
+
+**Laag 2 — Per-tenant activatie (DB)**
+`PortalOrg.mcp_servers` slaat op welke catalog-entries actief zijn én de tenant-specifieke configuratie:
+
+```json
+{
+  "twenty-crm": {
+    "enabled": true,
+    "env": {
+      "TWENTY_API_KEY": "<fernet-encrypted>",
+      "TWENTY_BASE_URL": "https://crm.getklai.com"
+    }
+  }
+}
+```
+
+Secrets worden **Fernet-encrypted opgeslagen** (met de portal-api `SECRET_KEY`). Bij yaml-generatie decrypt provisioning.py de waarden en schrijft ze naar de tenant `.env` — nooit plaintext in DB of git.
+
+**Laag 3 — Interne service URL voor klai-knowledge**
+`klai-knowledge` MCP gebruikt een intern Docker-network URL per tenant: `http://{slug}-knowledge-mcp:8080/mcp`. Geen publiek domein variabele nodig. Dit elimineert internet-roundtrips en vermindert afhankelijkheid van public DNS.
+
+**Voordelen ten opzichte van v1:**
+- Tenants kunnen via portal UI self-service MCP servers aanzetten
+- Secrets encrypted at rest, nooit plaintext in DB of git
+- Catalog beperkt attack surface (geen willekeurige externe MCP)
+- Interne URLs voor klai-knowledge: lager latency, meer resilient
+
+**Beperking:** LibreChat leest yaml alleen bij container startup. MCP config wijzigingen vereisen een container restart.
 
 ### Betreffende bestanden
 
@@ -52,7 +85,7 @@ Beperking: LibreChat leest yaml alleen bij container startup. MCP config wijzigi
 
 **[A-001]** LibreChat ondersteunt environment variable expansion (`${VAR}`) in `librechat.yaml` voor alle `mcpServers`-configuratie. **Confidence: High** — bevestigd in research.
 
-**[A-002]** De LibreChat Docker image (`ghcr.io/danny-avila/librechat:latest`) bevat `npx` voor het uitvoeren van stdio MCP-servers. **Confidence: Medium** — image is Node.js-based, moet geverifieerd worden.
+**[A-002]** De LibreChat Docker image (`ghcr.io/danny-avila/librechat:latest`) bevat `npx` voor het uitvoeren van stdio MCP-servers. **Confidence: High** — bevestigd in productie. Kanttekening: `npx -y <package> start` faalt in de LibreChat container omdat turbo de LibreChat monorepo-workspace oppikt. Workaround: `npm install --prefix /tmp/<pkg> <package> && node /tmp/<pkg>/node_modules/<package>/dist/index.js`.
 
 **[A-003]** De Twenty CRM MCP-server (`twenty-mcp-server` npm package) is stabiel genoeg voor productie-gebruik. **Confidence: Medium** — 29 tools, actief onderhouden (maart 2026).
 
@@ -90,63 +123,152 @@ Beperking: LibreChat leest yaml alleen bij container startup. MCP config wijzigi
 
 ## 4. Specifications
 
-### 4.1 Database schema
+### 4.1 MCP Catalog
 
-Nieuw veld op `PortalOrg`:
+Nieuw bestand `deploy/librechat/mcp_catalog.yaml` met ondersteunde MCP servers:
+
+```yaml
+servers:
+  twenty-crm:
+    description: "Twenty CRM — contacten, bedrijven, deals, taken"
+    required_env_vars:
+      - TWENTY_API_KEY
+      - TWENTY_BASE_URL
+    config_template:
+      type: stdio
+      command: /bin/sh
+      args:
+        - "-c"
+        - "npm install --prefix /tmp/twenty twenty-mcp-server --prefer-offline --silent 2>/dev/null; node /tmp/twenty/node_modules/twenty-mcp-server/dist/index.js"
+      timeout: 60000
+      initTimeout: 120000
+      env:
+        TWENTY_API_KEY: "${TWENTY_API_KEY}"
+        TWENTY_BASE_URL: "${TWENTY_BASE_URL}"
+```
+
+### 4.2 Database schema
+
+`PortalOrg.mcp_servers` (reeds aanwezig):
 
 ```python
 mcp_servers: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 ```
 
-JSON structuur (per MCP server):
+JSON structuur (per tenant, per actieve MCP server):
 
 ```json
 {
   "twenty-crm": {
-    "type": "stdio",
-    "command": "npx",
-    "args": ["-y", "twenty-mcp-server", "start"],
-    "timeout": 60000,
-    "initTimeout": 30000,
+    "enabled": true,
     "env": {
-      "TWENTY_API_KEY": "${TWENTY_API_KEY}",
-      "TWENTY_BASE_URL": "${TWENTY_BASE_URL}"
+      "TWENTY_API_KEY": "<fernet-encrypted-value>",
+      "TWENTY_BASE_URL": "https://crm.example.com"
     }
   }
 }
 ```
 
-Merk op: `env` waarden gebruiken `${VAR}` syntax — de daadwerkelijke secrets staan in de `.env` op de server, niet in de DB.
+Regels:
+- Alleen catalog-IDs zijn toegestaan als keys
+- `TWENTY_BASE_URL` en andere niet-geheime waarden worden plaintext opgeslagen
+- API keys en secrets worden altijd Fernet-encrypted opgeslagen
+- `provisioning.py` decrypt bij yaml-generatie en schrijft naar `.env`
 
-### 4.2 Yaml generatie
+### 4.3 Yaml generatie
 
-Nieuwe functie `_generate_librechat_yaml(extra_mcp_servers: dict | None)` in `provisioning.py`:
+`_generate_librechat_yaml(slug, mcp_servers_db)` in `provisioning.py`:
 
 1. Laad de base yaml uit `deploy/librechat/librechat.yaml`
-2. Als `extra_mcp_servers` niet None is:
-   - Merge in `mcpServers` sectie
-   - Voeg server namen toe aan `modelSpecs.list[].mcpServers` array
-3. Schrijf resultaat naar `librechat/{slug}/librechat.yaml`
-4. Mount per-tenant yaml in container volume
+2. Laad de MCP catalog uit `deploy/librechat/mcp_catalog.yaml`
+3. Voor elke `enabled: true` entry in `mcp_servers_db`:
+   - Valideer dat het catalog-ID bestaat (anders skip + log warning)
+   - Merge `config_template` in `mcpServers` sectie
+   - Voeg server naam toe aan `modelSpecs.list[].mcpServers`
+4. Schrijf resultaat naar `librechat/{slug}/librechat.yaml`
 
-### 4.3 Bugfix KNOWLEDGE_INGEST_SECRET
+Env vars voor secrets: `provisioning.py` decrypt de Fernet-waarden en voegt de echte secrets toe aan de tenant `.env`.
+
+### 4.4 klai-knowledge interne URL
+
+`klai-knowledge` MCP gebruikt geen publiek domein. URL-patroon per tenant:
+
+```
+http://{slug}-knowledge-mcp:8080/mcp
+```
+
+Dit vereist dat de LibreChat container op hetzelfde Docker-netwerk zit als de knowledge-mcp container van die tenant.
+
+### 4.5 Bugfix KNOWLEDGE_INGEST_SECRET
 
 De variabele `KNOWLEDGE_INGEST_SECRET` wordt toegevoegd aan:
 
-1. `deploy/docker-compose.yml` — environment-sectie van `librechat-klai` en `librechat-getklai`.
-2. `provisioning.py` — `.env` template voor dynamische tenants.
+1. `deploy/docker-compose.yml` — environment-sectie van `librechat-klai` en `librechat-getklai`. ✅ Gedaan
+2. `provisioning.py` — `.env` template voor dynamische tenants. ✅ Gedaan
 
-### 4.4 Docker-compose volume mount
+### 4.6 Docker-compose volume mount
 
-Voor `librechat-getklai`: volume mount wijzigt naar per-tenant yaml:
+Voor `librechat-getklai`: volume mount per-tenant yaml:
 
 ```yaml
 - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
 ```
+✅ Gedaan
 
 ---
 
-## 5. Traceability
+## 5. Toekomstige Architectuur (niet geïmplementeerd)
+
+### 5.1 Per-tenant MCP containers (target)
+
+De huidige stdio-in-LibreChat aanpak is een werkbare tussenstap. De target-architectuur:
+
+- Elke actieve MCP server per tenant draait als **eigen Docker container** (SSE transport)
+- Provisioning beheert de lifecycle: container aanmaken bij activatie, stoppen bij deactivatie
+- LibreChat verbindt via intern netwerk URL: `http://{slug}-{server-id}-mcp:{port}/sse`
+- **Geen fork van bestaande MCP packages** — officiële npm packages, eigen container
+
+Voordeel: volledige lifecycle-isolatie, geen resource-conflict met LibreChat, restartbaar zonder LibreChat te raken.
+
+### 5.2 MCP Catalog (target)
+
+`deploy/librechat/mcp_catalog.yaml` beschrijft ondersteunde servers:
+
+```yaml
+servers:
+  twenty-crm:
+    description: "Twenty CRM — contacten, bedrijven, deals, taken"
+    docker_image: "node:20-alpine"
+    start_command: "npx -y twenty-mcp-server"
+    transport: sse
+    port: 3000
+    required_env_vars:
+      - TWENTY_API_KEY      # encrypted in DB
+      - TWENTY_BASE_URL     # plaintext in DB
+```
+
+### 5.3 Secret management (target)
+
+- Tenant voert API key in via portal UI
+- Portal-api slaat op als Fernet-encrypted JSON in `PortalOrg.mcp_servers`
+- Provisioning decrypt bij container-aanmaak en schrijft naar tenant `.env`
+- Nooit plaintext in DB, git of logs
+
+### 5.4 Huidige staat (geïmplementeerd)
+
+| Component | Status | Aanpak |
+|-----------|--------|--------|
+| `PortalOrg.mcp_servers` DB kolom | ✅ | JSON, migration `d2e3f4a5b6c7` |
+| `_generate_librechat_yaml()` in provisioning.py | ✅ | Mergt base yaml + DB config |
+| twenty-crm voor getklai | ✅ | stdio in LibreChat container (tijdelijk) |
+| Secrets encrypted in DB | ❌ | Env vars in `.env`, plaintext |
+| Per-tenant MCP containers | ❌ | Toekomstige architectuur |
+| MCP Catalog yaml | ❌ | Toekomstige architectuur |
+| klai-knowledge interne URL | ⚠️ | getklai gebruikt nog SSE via public URL |
+
+---
+
+## 6. Traceability
 
 | Requirement | Plan taak | Acceptance criterium |
 |-------------|-----------|---------------------|
