@@ -471,7 +471,9 @@ class VexaWebhookPayload(BaseModel):
                 "native_meeting_id": meeting.get("native_meeting_id"),
                 "status": meeting.get("status"),
                 "ended_at": meeting.get("end_time"),
-                "recording_id": data.get("recording", {}).get("id") if isinstance(data.get("recording"), dict) else None,
+                "recording_id": data.get("recording", {}).get("id")
+                if isinstance(data.get("recording"), dict)
+                else None,
             }
         # Flat completion format
         return {**data, "vexa_meeting_id": data.get("id")}
