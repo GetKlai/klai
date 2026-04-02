@@ -15,6 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import PortalAuditLog
 
+# Use the Core table to avoid ORM's implicit INSERT...RETURNING.
+# PostgreSQL evaluates SELECT RLS policies on RETURNING clauses;
+# the tenant_isolation_read policy fails when app.current_org_id is
+# unset (login/logout events with org_id=0).
+_table = PortalAuditLog.__table__
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +42,7 @@ async def log_event(
     try:
         async with db.begin_nested():
             await db.execute(
-                insert(PortalAuditLog).values(
+                insert(_table).values(
                     org_id=org_id,
                     actor_user_id=actor,
                     action=action,
