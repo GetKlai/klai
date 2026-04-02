@@ -194,11 +194,18 @@ async def create_group(
     await db.commit()
     await db.refresh(group)
 
+    prods_result = await db.execute(
+        select(PortalGroupProduct.product)
+        .where(PortalGroupProduct.group_id == group.id)
+        .order_by(PortalGroupProduct.product)
+    )
+    products = [row[0] for row in prods_result]
+
     return GroupOut(
         id=group.id,
         name=group.name,
         description=group.description,
-        products=[],
+        products=products,
         is_system=False,
         created_at=group.created_at,
         created_by=group.created_by,
@@ -246,11 +253,18 @@ async def update_group(
     await db.commit()
     await db.refresh(group)
 
+    prods_result = await db.execute(
+        select(PortalGroupProduct.product)
+        .where(PortalGroupProduct.group_id == group.id)
+        .order_by(PortalGroupProduct.product)
+    )
+    products = [row[0] for row in prods_result]
+
     return GroupOut(
         id=group.id,
         name=group.name,
         description=group.description,
-        products=[],
+        products=products,
         is_system=group.is_system,
         created_at=group.created_at,
         created_by=group.created_by,

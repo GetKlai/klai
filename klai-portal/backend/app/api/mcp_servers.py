@@ -15,66 +15,34 @@ from typing import Any
 import httpx
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
-from app.core.database import get_db, set_tenant
-from app.models.portal import PortalOrg, PortalUser
+from app.core.database import get_db
 from app.services.secrets import decrypt_mcp_secret, encrypt_mcp_secret, is_secret_var
-from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["mcp-servers"])
-bearer = HTTPBearer()
 
 
-def _load_catalog() -> dict[str, Any]:
+async def _load_catalog() -> dict[str, Any]:
     """Load and return the MCP catalog. Returns empty dict on missing file."""
     catalog_path = Path(settings.librechat_container_data_path) / "mcp_catalog.yaml"
     try:
-        with open(catalog_path) as f:
-            catalog = yaml.safe_load(f)
+        catalog = await asyncio.to_thread(_read_yaml, catalog_path)
         return catalog.get("servers", {})
     except FileNotFoundError:
         logger.warning("mcp_catalog.yaml niet gevonden op %s", catalog_path)
         return {}
 
 
-async def _get_caller_org(
-    credentials: HTTPAuthorizationCredentials,
-    db: AsyncSession,
-) -> tuple[str, PortalOrg, PortalUser]:
-    """Validate token, return (zitadel_user_id, PortalOrg, caller PortalUser)."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
-
-    zitadel_user_id = info.get("sub")
-    if not zitadel_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user found in token")
-
-    result = await db.execute(
-        select(PortalOrg, PortalUser)
-        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
-        .where(PortalUser.zitadel_user_id == zitadel_user_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
-
-    org, caller_user = row
-    await set_tenant(db, org.id)
-    return zitadel_user_id, org, caller_user
-
-
-def _require_admin(caller_user: PortalUser) -> None:
-    if caller_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+def _read_yaml(path: Path) -> dict[str, Any]:
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +100,7 @@ async def list_mcp_servers(
     _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    catalog_servers = _load_catalog()
+    catalog_servers = await _load_catalog()
     tenant_config: dict[str, Any] = org.mcp_servers or {}
 
     servers_out: list[McpServerOut] = []
@@ -172,7 +140,7 @@ async def update_mcp_server(
     _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    catalog_servers = _load_catalog()
+    catalog_servers = await _load_catalog()
     if server_id not in catalog_servers:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -257,7 +225,7 @@ async def test_mcp_server(
     _zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    catalog_servers = _load_catalog()
+    catalog_servers = await _load_catalog()
     if server_id not in catalog_servers:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

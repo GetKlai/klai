@@ -4,15 +4,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _require_admin
+from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.portal import PortalOrg, PortalUser
 from app.services.events import emit_event
 from app.services.moneybird import MoneybirdService
 from app.services.zitadel import zitadel
@@ -23,7 +21,6 @@ Plan = Literal["core", "professional", "complete", "free"]
 BillingCycle = Literal["monthly", "yearly"]
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
-bearer = HTTPBearer()
 
 
 async def get_moneybird() -> AsyncIterator[MoneybirdService]:
@@ -32,40 +29,6 @@ async def get_moneybird() -> AsyncIterator[MoneybirdService]:
         yield svc
     finally:
         await svc.close()
-
-
-async def _get_org(
-    credentials: HTTPAuthorizationCredentials,
-    db: AsyncSession,
-) -> tuple[PortalOrg, str, PortalUser]:
-    """Return (org, zitadel_user_id, caller_user) for the authenticated user."""
-    try:
-        info = await zitadel.get_userinfo(credentials.credentials)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        ) from exc
-
-    user_id: str | None = info.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No user found in token",
-        )
-
-    result = await db.execute(
-        select(PortalOrg, PortalUser)
-        .join(PortalUser, PortalUser.org_id == PortalOrg.id)
-        .where(PortalUser.zitadel_user_id == user_id)
-    )
-    row = result.one_or_none()
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Organisation not found",
-        )
-    return row[0], user_id, row[1]
 
 
 class MandateRequest(BaseModel):
@@ -92,7 +55,7 @@ async def create_mandate(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org, user_id, caller_user = await _get_org(credentials, db)
+    user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
     if settings.mock_billing:
@@ -181,7 +144,7 @@ async def mock_complete(
     if not settings.mock_billing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     # Require authentication — prevent unauthenticated org activation
-    org, _user_id, _caller = await _get_org(credentials, db)
+    _user_id, org, _caller = await _get_caller_org(credentials, db)
     if org.id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     org.billing_status = "active"
@@ -195,7 +158,7 @@ async def billing_status(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    org, _, _caller = await _get_org(credentials, db)
+    _, org, _caller = await _get_caller_org(credentials, db)
     return {
         "billing_status": org.billing_status,
         "plan": org.plan,
@@ -211,7 +174,7 @@ async def invoice_portal(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org, _, _caller = await _get_org(credentials, db)
+    _, org, _caller = await _get_caller_org(credentials, db)
 
     if not org.moneybird_contact_id:
         raise HTTPException(
@@ -237,7 +200,7 @@ async def cancel_subscription(
     db: AsyncSession = Depends(get_db),
     moneybird: MoneybirdService = Depends(get_moneybird),
 ) -> dict:
-    org, user_id, caller_user = await _get_org(credentials, db)
+    user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
     if not org.moneybird_subscription_id:

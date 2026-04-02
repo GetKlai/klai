@@ -42,8 +42,8 @@ class SignupRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Wachtwoord moet minimaal 8 tekens bevatten")
+        if len(v) < 12:
+            raise ValueError("Wachtwoord moet minimaal 12 tekens bevatten")
         return v
 
     @field_validator("company_name", "first_name", "last_name")

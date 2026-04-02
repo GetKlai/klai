@@ -1,5 +1,6 @@
 """Shared FastAPI dependencies."""
 
+import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -64,6 +65,7 @@ async def _get_caller_org(
 
     org, caller_user = row
     await set_tenant(db, org.id)
+    structlog.contextvars.bind_contextvars(org_id=str(org.id), user_id=zitadel_user_id)
     return zitadel_user_id, org, caller_user
 
 

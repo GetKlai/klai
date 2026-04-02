@@ -9,7 +9,7 @@ All query functions enforce org-level scoping. Group-scoped access is layered on
                          KB access checks. Do not bypass.
 """
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.groups import PortalGroupMembership
@@ -17,27 +17,53 @@ from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase,
 from app.models.meetings import VexaMeeting
 
 
+def _accessible_meetings_filter(user_id: str, org_id: int):
+    """Return the WHERE clause for meetings accessible by this user."""
+    group_ids_subquery = (
+        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
+    )
+    return [
+        VexaMeeting.org_id == org_id,
+        or_(
+            VexaMeeting.zitadel_user_id == user_id,
+            VexaMeeting.group_id.in_(group_ids_subquery),
+        ),
+    ]
+
+
 async def get_accessible_meetings(
     user_id: str,
     org_id: int | None,
     db: AsyncSession,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[VexaMeeting]:
     """Return meetings the user can access: owned + group-scoped (within the same org)."""
     if org_id is None:
         return []
-    group_ids_subquery = (
-        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
+    stmt = (
+        select(VexaMeeting)
+        .where(*_accessible_meetings_filter(user_id, org_id))
+        .order_by(VexaMeeting.created_at.desc())
+        .offset(offset)
     )
-    result = await db.execute(
-        select(VexaMeeting).where(
-            VexaMeeting.org_id == org_id,
-            or_(
-                VexaMeeting.zitadel_user_id == user_id,
-                VexaMeeting.group_id.in_(group_ids_subquery),
-            ),
-        )
-    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def count_accessible_meetings(
+    user_id: str,
+    org_id: int,
+    db: AsyncSession,
+) -> int:
+    """Return count of meetings accessible by this user."""
+    result = await db.execute(
+        select(func.count(VexaMeeting.id)).where(*_accessible_meetings_filter(user_id, org_id))
+    )
+    return result.scalar_one()
 
 
 async def can_write_meeting(user_id: str, meeting: VexaMeeting, db: AsyncSession) -> bool:
