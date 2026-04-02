@@ -2,6 +2,15 @@
 paths:
   - "**/*.py"
   - "**/pyproject.toml"
+severity_map:
+  backend-async-sequential-loop: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  backend-async-no-per-call-timeout: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  backend-config-default-vs-env: { severity: 0.3, confirmed: 1, false_positives: 0 }
+  backend-prometheus-global-registry-tests: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  backend-sendbeacon-no-auth-header: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  backend-crawl4ai-class-substring-selectors: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  backend-fastapi-required-field-breaks-callers: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  backend-silent-error-swallowing: { severity: 0.8, confirmed: 1, false_positives: 0 }
 ---
 # Backend Pitfalls
 

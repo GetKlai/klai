@@ -13,23 +13,23 @@ paths:
 ## Index
 > Keep this index in sync — add a row when adding a pattern below.
 
-| Pattern | When to use |
-|---|---|
-| [platform-litellm-tier-model](#platform-litellm-tier-model) | Three-tier alias model: when to use klai-fast / klai-primary / klai-large |
-| [platform-litellm-provider-swap](#platform-litellm-provider-swap) | Switching all services between Mistral and Claude |
-| [platform-litellm-vllm-config](#platform-litellm-vllm-config) | Configuring LiteLLM to route to vLLM instances |
-| [platform-vllm-startup-sequence](#platform-vllm-startup-sequence) | Starting vLLM services on ai-01 |
-| [platform-mongodb-per-tenant](#platform-mongodb-per-tenant) | Provisioning a new customer tenant |
-| [platform-caddy-tenant-routing](#platform-caddy-tenant-routing) | Per-tenant subdomain routing in Caddy |
-| [platform-docker-socket-proxy](#platform-docker-socket-proxy) | Safe Docker socket access from application containers |
-| [platform-zitadel-org-per-tenant](#platform-zitadel-org-per-tenant) | Creating a Zitadel organization for a new tenant |
-| [platform-librechat-env-template](#platform-librechat-env-template) | Generating a LibreChat container `.env` file |
-| [platform-portal-users-mapping-only](#platform-portal-users-mapping-only) | Storing user membership in the portal database |
-| [platform-zitadel-user-role-assignment](#platform-zitadel-user-role-assignment) | Assigning a Zitadel project role to a user |
-| [platform-vexa-bot-lifecycle](#platform-vexa-bot-lifecycle) | Debugging a meeting stuck in status |
-| [platform-hetzner-dns-wildcard-tls](#platform-hetzner-dns-wildcard-tls) | Building Caddy with wildcard TLS for `*.getklai.com` |
-| [platform-docker-network-testing](#platform-docker-network-testing) | Testing internal services from within the Docker network |
-| [platform-db-debug-multi-tenant](#platform-db-debug-multi-tenant) | Debugging multi-tenant auth failures by inspecting org data |
+| Pattern | When to use | Evidence |
+|---|---|---|
+| [platform-litellm-tier-model](#platform-litellm-tier-model) | Three-tier alias model: when to use klai-fast / klai-primary / klai-large | `config.py` uses `klai-*` alias, never raw model |
+| [platform-litellm-provider-swap](#platform-litellm-provider-swap) | Switching all services between Mistral and Claude | `curl litellm:4000/model/info` shows new provider |
+| [platform-litellm-vllm-config](#platform-litellm-vllm-config) | Configuring LiteLLM to route to vLLM instances | `curl localhost:8001/health` returns 200 via LiteLLM |
+| [platform-vllm-startup-sequence](#platform-vllm-startup-sequence) | Starting vLLM services on ai-01 | `docker ps` shows all vLLM containers healthy |
+| [platform-mongodb-per-tenant](#platform-mongodb-per-tenant) | Provisioning a new customer tenant | `mongosh` shows new DB named after tenant ID |
+| [platform-caddy-tenant-routing](#platform-caddy-tenant-routing) | Per-tenant subdomain routing in Caddy | `curl -sI https://<slug>.getklai.com` returns 200 |
+| [platform-docker-socket-proxy](#platform-docker-socket-proxy) | Safe Docker socket access from application containers | `docker.from_env().ping()` works via proxy port |
+| [platform-zitadel-org-per-tenant](#platform-zitadel-org-per-tenant) | Creating a Zitadel organization for a new tenant | Zitadel API returns new org with matching name |
+| [platform-librechat-env-template](#platform-librechat-env-template) | Generating a LibreChat container `.env` file | OIDC login redirects to Zitadel and back |
+| [platform-portal-users-mapping-only](#platform-portal-users-mapping-only) | Storing user membership in the portal database | `portal_users` table has no email/name columns |
+| [platform-zitadel-user-role-assignment](#platform-zitadel-user-role-assignment) | Assigning a Zitadel project role to a user | Token `roles` claim contains assigned role key |
+| [platform-vexa-bot-lifecycle](#platform-vexa-bot-lifecycle) | Debugging a meeting stuck in status | Meeting row transitions to `done` after webhook |
+| [platform-hetzner-dns-wildcard-tls](#platform-hetzner-dns-wildcard-tls) | Building Caddy with wildcard TLS for `*.getklai.com` | `curl -sI https://*.getklai.com` shows valid cert |
+| [platform-docker-network-testing](#platform-docker-network-testing) | Testing internal services from within the Docker network | `docker exec <ctr> wget -qO- <url>` returns data |
+| [platform-db-debug-multi-tenant](#platform-db-debug-multi-tenant) | Debugging multi-tenant auth failures by inspecting org data | SQL query shows matching `zitadel_org_id` values |
 
 ---
 

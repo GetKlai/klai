@@ -4,6 +4,43 @@ paths:
   - "**/docker-compose*.yml"
   - "klai-portal/backend/**"
   - "deploy/**"
+severity_map:
+  platform-litellm-vllm-provider-prefix: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-litellm-drop-params: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-vllm-gpu-memory-utilization: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-vllm-sequential-startup: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-vllm-mps-enforce-eager: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-librechat-oidc-reuse-tokens: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-librechat-username-claim: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-grafana-victorialogs-loki-incompatible: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-caddy-not-auto-routing: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-caddy-admin-off-reload: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-rag-api-non-lite-image: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-whisper-cuda-version: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-fastapi-background-tasks-db-session: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  caddy-basicauth-monitoring-conflict: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  caddy-log-not-in-handle: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-zitadel-project-grant-vs-user-grant: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-zitadel-resourceowner-claim-unreliable: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-sso-cache-single-instance: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  caddy-permissions-policy-blocks-mediadevices: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-alembic-shared-postgres-schema-conflict: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-zitadel-login-v2-recovery: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-zitadel-pat-invalid-after-upgrade: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-vexa-timeout-looks-like-bug: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-vexa-guard-breaks-stop-flow: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-falkordb-sspLv1-license: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-hipporag2-vs-graphiti-different-layers: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-tei-embedding-timeout: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-librechat-redis-config-cache: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-librechat-addparams-no-envvars: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-librechat-dual-system-message: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-portal-api-deploy-env-preflight: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  platform-litellm-health-vs-liveliness: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-grafana-dashboard-datasource-uid: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-litellm-custom-router-fires-on-internal-calls: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-mistral-monthly-quota: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-litellm-compose-env-silent-typo: { severity: 0.8, confirmed: 1, false_positives: 0 }
 ---
 # Platform Pitfalls
 

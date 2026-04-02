@@ -1,6 +1,13 @@
 ---
 paths:
   - "klai-docs/**"
+severity_map:
+  platform-docs-app-port: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-docs-app-basepath: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-docs-app-visibility-values: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-docs-app-error-logging: { severity: 0.5, confirmed: 1, false_positives: 0 }
+  platform-docs-app-zod-strict-422: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  platform-docs-app-auto-provision-org-id: { severity: 0.8, confirmed: 1, false_positives: 0 }
 ---
 # Docs-App Pitfalls
 

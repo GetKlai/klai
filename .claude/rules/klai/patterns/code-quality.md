@@ -14,13 +14,13 @@ paths:
 ## Index
 > Keep this index in sync — add a row when adding a section below.
 
-| Section | When to use |
-|---|---|
-| [Overview: what we use](#overview-what-we-use) | Tool inventory for Python and TypeScript |
-| [Per-project status](#per-project-status) | Which projects have which quality tools configured |
-| [Adding pre-commit to a new Python project](#adding-pre-commit-to-a-new-python-project) | Setting up pre-commit hooks for a new service |
-| [Pyright config](#pyright-config) | Configuring Pyright type checking |
-| [The no-console rule](#the-no-console-rule) | ESLint rule for no raw `console.log` |
+| Section | When to use | Evidence |
+|---|---|---|
+| [Overview: what we use](#overview-what-we-use) | Tool inventory for Python and TypeScript | N/A (reference table) |
+| [Per-project status](#per-project-status) | Which projects have which quality tools configured | `ruff check .` and `npm run lint` exit 0 |
+| [Adding pre-commit to a new Python project](#adding-pre-commit-to-a-new-python-project) | Setting up pre-commit hooks for a new service | `pre-commit run --all-files` exits 0 |
+| [Pyright config](#pyright-config) | Configuring Pyright type checking | `uv run --with pyright pyright` reports 0 errors |
+| [The no-console rule](#the-no-console-rule) | ESLint rule for no raw `console.log` | `npm run lint` flags raw `console.log` usage |
 
 ---
 

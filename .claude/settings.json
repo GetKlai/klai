@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/confidence-check.py",
+            "timeout": 10000
+          }
+        ]
+      }
     ]
   }
 }

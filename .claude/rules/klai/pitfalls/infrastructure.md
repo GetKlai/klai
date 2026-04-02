@@ -8,6 +8,22 @@ paths:
   - "**/docker-compose*.yml"
   - "deploy/caddy/**"
   - "deploy/*.sh"
+severity_map:
+  infra-env-not-synced: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  infra-sops-missing-main-env: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  infra-sops-dotenv-dollar-sign: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  infra-env-bash-special-chars: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-docker-user-container-ip-stale: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-zitadel-console-http-api: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-caddy-no-global-csp: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  infra-never-modify-env-secrets: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-sops-files-in-subdirs: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-sops-incomplete-wipes-server: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-sync-env-no-safety-checks: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-placeholder-values-in-sops: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-kuma-tokens-not-in-containers: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  infra-push-health-set-u-total-blackout: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  infra-deploy-sh-full-overwrite: { severity: 1.0, confirmed: 1, false_positives: 0 }
 ---
 # Infrastructure Pitfalls
 

@@ -12,13 +12,13 @@ paths:
 ## Index
 > Keep this index in sync — add a row when adding a pattern below.
 
-| Pattern | When to use |
-|---|---|
-| [i18n-paraglide](#i18n-paraglide) | Setting up or adding translations in React/Vite |
-| [portal-ui-components](#portal-ui-components) | Using `<Button>`, `<Input>`, `<Select>`, `<Card>` components |
-| [separation-of-concerns](#separation-of-concerns) | Deciding where styling, logic, data, and components belong |
-| [logging](#logging) | Setting up structured logging with consola + Sentry |
-| [playwright-mcp](#playwright-mcp) | Browser automation for E2E spot-checks via MCP |
+| Pattern | When to use | Evidence |
+|---|---|---|
+| [i18n-paraglide](#i18n-paraglide) | Setting up or adding translations in React/Vite | `npm run build` with no missing key TS errors |
+| [portal-ui-components](#portal-ui-components) | Using `<Button>`, `<Input>`, `<Select>`, `<Card>` components | UI renders correct variant via browser snapshot |
+| [separation-of-concerns](#separation-of-concerns) | Deciding where styling, logic, data, and components belong | No `style={{}}` for fixed values in `git diff` |
+| [logging](#logging) | Setting up structured logging with consola + Sentry | `npm run lint` flags zero `console.log` usages |
+| [playwright-mcp](#playwright-mcp) | Browser automation for E2E spot-checks via MCP | `browser_snapshot()` returns accessibility tree |
 
 ---
 

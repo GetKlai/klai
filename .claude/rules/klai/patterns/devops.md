@@ -12,21 +12,21 @@ paths:
 ## Index
 > Keep this index in sync — add a row when adding a pattern below.
 
-| Pattern | When to use |
-|---|---|
-| [sops-env-sync](#sops-env-sync) | Updating secrets in `klai-infra/core-01/.env.sops` |
-| [docker-compose-sync](#docker-compose-sync) | Adding or removing a service in `docker-compose.yml` |
-| [coolify-env-update](#coolify-env-update) | Adding or changing an env var for a Coolify service |
-| [public-01-ssh](#public-01-ssh) | SSH access to public-01 (Coolify, Uptime Kuma) |
-| [core-01-ssh](#core-01-ssh) | SSH access to core-01 (AI stack, portal) |
-| [coolify-redeploy](#coolify-redeploy) | Triggering a redeploy after a config change |
-| [docker-rebuild-no-cache](#docker-rebuild-no-cache) | Force full rebuild after dependency or base image change |
-| [ghcr-ci-deploy-build-on-server](#ghcr-ci-deploy-build-on-server) | Deploy when GHCR registry auth is stale |
-| [uptime-kuma-add-monitor](#uptime-kuma-add-monitor) | Adding a new service to status monitoring |
-| [umami-access](#umami-access) | Accessing Umami analytics dashboard |
-| [trivy-scan-new-workflow](#trivy-scan-new-workflow) | Adding Trivy container scanning to a new Docker build workflow |
-| [renovate](#renovate) | How Renovate works, automerge rules, and how to run it manually |
-| [atomic-env-deploy](#atomic-env-deploy) | Writing `.env` files to a server without data loss risk |
+| Pattern | When to use | Evidence |
+|---|---|---|
+| [sops-env-sync](#sops-env-sync) | Updating secrets in `klai-infra/core-01/.env.sops` | `gh run view` shows sync-env passed all guards |
+| [docker-compose-sync](#docker-compose-sync) | Adding or removing a service in `docker-compose.yml` | `diff` server vs repo compose file shows match |
+| [coolify-env-update](#coolify-env-update) | Adding or changing an env var for a Coolify service | `docker exec <ctr> printenv VAR` returns value |
+| [public-01-ssh](#public-01-ssh) | SSH access to public-01 (Coolify, Uptime Kuma) | `ssh -i ~/.ssh/klai_ed25519 root@IP` connects |
+| [core-01-ssh](#core-01-ssh) | SSH access to core-01 (AI stack, portal) | `ssh core-01` connects without timeout |
+| [coolify-redeploy](#coolify-redeploy) | Triggering a redeploy after a config change | Coolify build log shows "Deployed successfully" |
+| [docker-rebuild-no-cache](#docker-rebuild-no-cache) | Force full rebuild after dependency or base image change | `docker images` shows new image timestamp |
+| [ghcr-ci-deploy-build-on-server](#ghcr-ci-deploy-build-on-server) | Deploy when GHCR registry auth is stale | `docker ps` shows container with recent CreatedAt |
+| [uptime-kuma-add-monitor](#uptime-kuma-add-monitor) | Adding a new service to status monitoring | New monitor appears green on status.getklai.com |
+| [umami-access](#umami-access) | Accessing Umami analytics dashboard | `curl -s .../api/heartbeat` returns `{"ok":true}` |
+| [trivy-scan-new-workflow](#trivy-scan-new-workflow) | Adding Trivy container scanning to a new Docker build workflow | GitHub Security tab shows SARIF scan results |
+| [renovate](#renovate) | How Renovate works, automerge rules, and how to run it manually | `gh run watch --exit-status` exits 0 for Renovate |
+| [atomic-env-deploy](#atomic-env-deploy) | Writing `.env` files to a server without data loss risk | `wc -l /opt/klai/.env` matches expected count |
 
 ---
 

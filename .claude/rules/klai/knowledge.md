@@ -7,6 +7,7 @@ Always consult this before working on a relevant domain.
 
 | Domain | Patterns | Pitfalls |
 |--------|----------|---------|
+| Confidence protocol | `.claude/rules/klai/confidence.md` | — |
 | Process (AI dev workflow) | — | `.claude/rules/klai/pitfalls/process.md` |
 | Git | — | `.claude/rules/klai/pitfalls/git.md` |
 | DevOps (Coolify, Docker) | `.claude/rules/klai/patterns/devops.md` | `.claude/rules/klai/pitfalls/devops.md` |
@@ -37,6 +38,7 @@ Check the project's CLAUDE.md for the full list.
 - **Writing Python logging** → `python-logging.md` auto-loads for all Klai Python files; full guide in `.claude/rules/klai/patterns/logging.md`
 - **Writing portal backend endpoints that access resources by ID** → read `.claude/rules/klai/pitfalls/security.md` — rule auto-loads via `.claude/rules/klai/multi-tenant-pattern.md`
 - **Working on a project-specific domain** → read that project's relevant domain files
+- **Before reporting task completion** → confidence protocol loads automatically; provides evidence scoring and adversarial check guidance
 
 ## When to add new entries
 

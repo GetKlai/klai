@@ -5,6 +5,9 @@ paths:
   - "**/*.tsx"
   - "**/pyproject.toml"
   - "**/eslint.config*"
+severity_map:
+  cq-pyright-noqa-mismatch: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  cq-eslint-react-refresh-tanstack-routes: { severity: 0.5, confirmed: 1, false_positives: 0 }
 ---
 # Code Quality Pitfalls
 
