@@ -803,6 +803,7 @@
   "app_meetings_summary_copy_text": "Copy text",
   "app_meetings_summary_copy_markdown": "Copy markdown",
   "app_meetings_summary_copy_done": "Copied!",
+  "app_meetings_action_items_title": "Action items",
   "app_meetings_start_onboarding_title": "Two ways to start a recording",
   "app_meetings_start_onboarding_url_heading": "Paste a link",
   "app_meetings_start_onboarding_url_body": "Enter a Google Meet, Zoom, or Teams URL below and click Start bot.",
@@ -1023,6 +1024,7 @@
   "admin_connectors_webcrawler_warning_nav_detected": "Navigation content detected in preview. Add a CSS selector to target only the article area (e.g. article, main, .article-body).",
   "admin_connectors_webcrawler_ai_selector_detected": "AI detected a content selector: {selector} — {count} words extracted.",
   "admin_connectors_webcrawler_ai_selector_use": "Use this selector",
+  "admin_connectors_webcrawler_try_ai": "Let AI find the content selector",
   "admin_connectors_webcrawler_preview_loading_ai": "Analyzing page structure with AI...",
 
   "admin_connectors_coming_soon": "Coming soon",

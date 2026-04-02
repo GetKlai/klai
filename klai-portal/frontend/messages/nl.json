@@ -803,6 +803,7 @@
   "app_meetings_summary_copy_text": "Kopieer tekst",
   "app_meetings_summary_copy_markdown": "Kopieer markdown",
   "app_meetings_summary_copy_done": "Gekopieerd!",
+  "app_meetings_action_items_title": "Actiepunten",
   "app_meetings_start_onboarding_title": "Twee manieren om een opname te starten",
   "app_meetings_start_onboarding_url_heading": "Link plakken",
   "app_meetings_start_onboarding_url_body": "Voer een Google Meet-, Zoom- of Teams-link in en klik op Bot starten.",
@@ -1023,6 +1024,7 @@
   "admin_connectors_webcrawler_warning_nav_detected": "Navigatiemenu gedetecteerd in de preview. Voeg een CSS selector toe om alleen het artikelgebied te laden (bijv. article, main, .article-body).",
   "admin_connectors_webcrawler_ai_selector_detected": "AI heeft een content selector gevonden: {selector} — {count} woorden geëxtraheerd.",
   "admin_connectors_webcrawler_ai_selector_use": "Gebruik deze selector",
+  "admin_connectors_webcrawler_try_ai": "Laat AI de content selector zoeken",
   "admin_connectors_webcrawler_preview_loading_ai": "Paginastructuur analyseren met AI...",
 
   "admin_connectors_coming_soon": "Binnenkort",
