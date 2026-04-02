@@ -8,10 +8,12 @@ against portal_audit_log from this module or anywhere in the application.
                           All access control events must go through this function.
 """
 
+import json
 import logging
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ _INSERT_SQL = text(
 
 
 async def log_event(
-    db: AsyncSession,
+    db: object,  # kept for caller compat, ignored
     org_id: int,
     actor: str,
     action: str,
@@ -36,15 +38,13 @@ async def log_event(
 ) -> None:
     """Write an immutable audit log entry.
 
-    Uses a SAVEPOINT (begin_nested) so a failure rolls back only the audit
-    insert, not the caller's transaction. Audit failures must not block
-    business operations.
+    Opens its own database session so the insert commits independently
+    of the caller's transaction. Callers often raise HTTPException after
+    logging, which rolls back the request session and any SAVEPOINTs.
     """
-    import json
-
     try:
-        async with db.begin_nested():
-            await db.execute(
+        async with AsyncSessionLocal() as session:
+            await session.execute(
                 _INSERT_SQL,
                 {
                     "org_id": org_id,
@@ -55,6 +55,7 @@ async def log_event(
                     "details": json.dumps(details) if details else None,
                 },
             )
+            await session.commit()
     except Exception:
         logger.exception(
             "Audit log write failed (non-fatal): action=%s resource_type=%s resource_id=%s",
