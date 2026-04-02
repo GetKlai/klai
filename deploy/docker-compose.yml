@@ -734,6 +734,9 @@ services:
       TRANSCRIBER_API_KEY: internal
       STORAGE_BACKEND: local
       LOCAL_STORAGE_DIR: /var/lib/vexa/recordings
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      BOT_IMAGE: vexaai/vexa-bot:latest
+      BOT_NETWORK: vexa-bots
     depends_on:
       postgres:
         condition: service_healthy
@@ -743,46 +746,19 @@ services:
       resources:
         limits:
           cpus: '1'
-          memory: 256M
+          memory: 512M
     networks:
       - klai-net
       - net-postgres
       - net-redis
+      - socket-proxy
+      - vexa-bots
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8056/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # ─── Vexa runtime API (container orchestration via Docker socket) ───────
-  vexa-runtime-api:
-    image: vexaai/vexa-lite:latest
-    restart: unless-stopped
-    command: ["python", "-m", "app.runtime"]
-    environment:
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
-      BOT_IMAGE: vexaai/vexa-bot:latest
-      BOT_NETWORK: vexa-bots
-      REDIS_URL: redis://vexa-redis:6379/0
-    depends_on:
-      vexa-redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-    networks:
-      - socket-proxy
-      - vexa-bots
-      - net-redis
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8057/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # ─── Vexa Redis (bot state, pub/sub, transcription streams) ─────────────
   vexa-redis:
