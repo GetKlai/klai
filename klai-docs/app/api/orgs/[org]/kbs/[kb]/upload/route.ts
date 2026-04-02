@@ -36,12 +36,14 @@ export async function POST(
   const slug = file.name.replace(/\.md$/, "");
   const filePath = targetFolder ? `${targetFolder}/${file.name}` : file.name;
 
-  // Write file to Gitea
+  // Write file to Gitea (upsert: GET sha first so we can overwrite existing files)
+  const existingFile = await gitea.getFile(kb.gitea_repo, filePath);
   await gitea.putFile(
     kb.gitea_repo,
     filePath,
     raw,
-    `Upload ${filePath}`
+    `Upload ${filePath}`,
+    existingFile?.sha
   );
 
   // Append slug to _meta.yaml of the target folder
