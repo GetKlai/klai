@@ -4,18 +4,6 @@ paths:
   - "**/docker-compose*.yml"
   - ".github/**/*.yml"
   - "**/*.sh"
-severity_map:
-  devops-image-versions-from-training-data: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-compose-restart-does-not-reload-env: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-compose-up-inherits-global-env: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-redis-password-special-chars: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-ghcr-auth-silent-stale-deploy: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-deploy-path-mismatch: { severity: 1.0, confirmed: 1, false_positives: 0 }
-  devops-ci-green-not-enough: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-alembic-multiple-heads: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-alembic-duplicate-object-on-rerun: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-recover-secrets-from-running-containers: { severity: 0.8, confirmed: 1, false_positives: 0 }
-  devops-no-manual-server-edits: { severity: 1.0, confirmed: 1, false_positives: 0 }
 ---
 # DevOps Pitfalls
 
