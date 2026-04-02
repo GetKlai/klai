@@ -8,7 +8,6 @@ Create Date: 2026-04-02
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "d2e3f4a5b6c7"
 down_revision = "c1d2e3f4a5b6"
