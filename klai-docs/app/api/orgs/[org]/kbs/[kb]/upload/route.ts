@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
-import { parsePage, parseMeta, serializeMeta } from "@/lib/markdown";
+import { parsePage, parseSidebar, serializeSidebar } from "@/lib/markdown";
 
 type Params = { org: string; kb: string };
 
@@ -47,23 +47,23 @@ export async function POST(
       existingFile?.sha
     );
 
-    // Append slug to _meta.yaml of the target folder
-    const metaFilePath = targetFolder ? `${targetFolder}/_meta.yaml` : "_meta.yaml";
-    const existing = await gitea.getFile(kb.gitea_repo, metaFilePath);
+    // Add slug to _sidebar.yaml (primary nav source)
+    const sidebarFile = await gitea.getFile(kb.gitea_repo, "_sidebar.yaml");
+    const manifest = sidebarFile
+      ? parseSidebar(Buffer.from(sidebarFile.content ?? "", "base64").toString("utf-8"))
+      : { pages: [] };
 
-    const meta = existing
-      ? parseMeta(Buffer.from(existing.content ?? "", "base64").toString("utf-8"))
-      : {};
-
-    if (!meta.order) meta.order = [];
-    if (!meta.order.includes(slug)) meta.order.push(slug);
+    const entrySlug = targetFolder ? `${targetFolder}/${slug}` : slug;
+    if (!manifest.pages.some((p) => p.slug === entrySlug)) {
+      manifest.pages.push({ slug: entrySlug });
+    }
 
     await gitea.putFile(
       kb.gitea_repo,
-      metaFilePath,
-      serializeMeta(meta),
-      `Add ${slug} to nav`,
-      existing?.sha
+      "_sidebar.yaml",
+      serializeSidebar(manifest),
+      `Add ${entrySlug} to sidebar`,
+      sidebarFile?.sha
     );
 
     return NextResponse.json({
