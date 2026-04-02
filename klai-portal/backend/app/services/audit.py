@@ -10,18 +10,19 @@ against portal_audit_log from this module or anywhere in the application.
 
 import logging
 
-from sqlalchemy import Table, insert
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.audit import PortalAuditLog
-
-# Use the Core table to avoid ORM's implicit INSERT...RETURNING.
-# PostgreSQL evaluates SELECT RLS policies on RETURNING clauses;
-# the tenant_isolation_read policy fails when app.current_org_id is
-# unset (login/logout events with org_id=0).
-_table: Table = PortalAuditLog.__table__  # type: ignore[assignment]
-
 logger = logging.getLogger(__name__)
+
+# Raw SQL avoids ORM's implicit INSERT...RETURNING which triggers the
+# SELECT RLS policy. That policy fails when app.current_org_id is unset
+# (login/logout events with org_id=0).
+_INSERT_SQL = text(
+    "INSERT INTO portal_audit_log "
+    "(org_id, actor_user_id, action, resource_type, resource_id, details) "
+    "VALUES (:org_id, :actor, :action, :resource_type, :resource_id, :details::jsonb)"
+)
 
 
 async def log_event(
@@ -39,17 +40,20 @@ async def log_event(
     insert, not the caller's transaction. Audit failures must not block
     business operations.
     """
+    import json
+
     try:
         async with db.begin_nested():
             await db.execute(
-                insert(_table).values(
-                    org_id=org_id,
-                    actor_user_id=actor,
-                    action=action,
-                    resource_type=resource_type,
-                    resource_id=str(resource_id),
-                    details=details,
-                )
+                _INSERT_SQL,
+                {
+                    "org_id": org_id,
+                    "actor": actor,
+                    "action": action,
+                    "resource_type": resource_type,
+                    "resource_id": str(resource_id),
+                    "details": json.dumps(details) if details else None,
+                },
             )
     except Exception:
         logger.exception(
