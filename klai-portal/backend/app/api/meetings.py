@@ -527,12 +527,25 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
             raise ValueError("vexa_meeting_id is not set -- cannot look up recording")
 
         segments_fetched: list[dict] = []
-        try:
-            raw_segments = await vexa.get_transcript_segments(meeting.platform, meeting.native_meeting_id)
-            if raw_segments:
-                segments_fetched = filter_segments(raw_segments)
-        except Exception as exc:
-            logger.warning("API-gateway segment fetch failed, falling back to Whisper: %s", exc)
+        # Retry fetching segments: Vexa processes audio after the bot leaves,
+        # so segments may not be ready immediately when transcription is triggered.
+        for seg_attempt in range(6):
+            try:
+                raw_segments = await vexa.get_transcript_segments(meeting.platform, meeting.native_meeting_id)
+                if raw_segments:
+                    segments_fetched = filter_segments(raw_segments)
+                    break
+                if seg_attempt < 5:
+                    logger.info(
+                        "No transcript segments yet for meeting %s (attempt %d/6), retrying in 15s...",
+                        meeting.id,
+                        seg_attempt + 1,
+                    )
+                    await asyncio.sleep(15)
+            except Exception as exc:
+                logger.warning("Segment fetch failed for meeting %s (attempt %d/6): %s", meeting.id, seg_attempt + 1, exc)
+                if seg_attempt < 5:
+                    await asyncio.sleep(15)
 
         if segments_fetched:
             meeting.transcript_segments = segments_fetched
@@ -562,7 +575,15 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                     )
                     await asyncio.sleep(5)
                 else:
-                    raise
+                    # No recording available (recording_enabled=False or meeting too short).
+                    # Complete with empty transcript rather than failing.
+                    logger.info(
+                        "No recording for vexa meeting %s and no transcript segments — completing with empty transcript",
+                        meeting.vexa_meeting_id,
+                    )
+                    meeting.status = "completed"
+                    meeting.error_message = None
+                    return
         assert audio_bytes is not None
         filename = f"recording.{audio_fmt}"
         mime = "audio/wav" if audio_fmt == "wav" else f"audio/{audio_fmt}"

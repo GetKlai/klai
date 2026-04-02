@@ -763,8 +763,7 @@ services:
     networks:
       - klai-net
       - net-postgres
-      - net-redis
-      - vexa-bots   # bots call back to meeting-api via this network
+      - vexa-bots   # bots call back to meeting-api via this network; vexa-redis also on this network
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
@@ -800,7 +799,6 @@ services:
           cpus: '0.5'
           memory: 256M
     networks:
-      - net-redis
       - vexa-bots
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
@@ -819,7 +817,7 @@ services:
         limits:
           memory: 128M
     networks:
-      - net-redis
+      - vexa-bots   # isolated from klai-net-redis; bot containers resolve vexa-redis via this network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
