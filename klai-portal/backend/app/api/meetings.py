@@ -441,11 +441,10 @@ class SpeakerEvent(BaseModel):
 
 
 class VexaWebhookPayload(BaseModel):
-    """Accepts multiple webhook formats from Vexa:
+    """Vexa agentic-runtime webhook envelope.
 
-    - send_webhook.py (completion): flat {id, platform, native_meeting_id, status, ...}
-    - send_status_webhook.py: {event_type, meeting: {id, platform, native_meeting_id, status}}
-    - send_event_webhook (recording.completed): {event_type, recording: {...}} -- no meeting ref
+    Standard format: {event_type, meeting: {id, platform, native_meeting_id, status, ...}}
+    Completion format: {id, platform, native_meeting_id, status, ended_at, speaker_events}
     """
 
     platform: str | None = None
@@ -454,6 +453,7 @@ class VexaWebhookPayload(BaseModel):
     status: str | None = None
     ended_at: str | None = None
     speaker_events: list[SpeakerEvent] = []
+    recording_id: int | None = None  # for recording cleanup via API
 
     model_config = {"extra": "ignore"}
 
@@ -462,6 +462,7 @@ class VexaWebhookPayload(BaseModel):
     def _normalize(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
+        # Envelope format: {event_type, meeting: {...}}
         if "meeting" in data and "platform" not in data:
             meeting = data["meeting"] or {}
             return {
@@ -470,7 +471,9 @@ class VexaWebhookPayload(BaseModel):
                 "native_meeting_id": meeting.get("native_meeting_id"),
                 "status": meeting.get("status"),
                 "ended_at": meeting.get("end_time"),
+                "recording_id": data.get("recording", {}).get("id") if isinstance(data.get("recording"), dict) else None,
             }
+        # Flat completion format
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
@@ -514,7 +517,7 @@ def _correlate_speakers(
 
 
 async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
-    """Fetch transcript segments from Vexa API-gateway; fall back to Whisper audio."""
+    """Fetch transcript segments from Vexa meeting-api; fall back to Whisper audio."""
     from app.services.transcript_filter import filter_segments
 
     try:
@@ -635,7 +638,7 @@ async def vexa_webhook(
     await db.commit()
 
     if meeting.status == "done":
-        await cleanup_recording(meeting, db)
+        await cleanup_recording(meeting, db, recording_id=payload.recording_id)
         emit_event(
             "meeting.completed",
             org_id=meeting.org_id,

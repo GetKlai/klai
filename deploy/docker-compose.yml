@@ -316,7 +316,6 @@ services:
     environment:
       CONTAINERS: 1
       NETWORKS: 1
-      EXEC: 1          # recording cleanup: docker exec inside vexa-bot-manager
       POST: 1
       DELETE: 1
     volumes:
@@ -721,47 +720,32 @@ services:
     depends_on:
       - postgres
 
-  # ─── Vexa meeting bot manager ───────────────────────────────────────────
-  vexa-bot-manager:
-    image: ghcr.io/getklai/vexa-lite:latest
+  # ─── Vexa meeting API (bot lifecycle, transcription collector) ──────────
+  vexa-meeting-api:
+    image: vexaai/vexa-lite:latest
     restart: unless-stopped
     environment:
-      API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
+      DATABASE_URL: postgresql://vexa:${VEXA_DB_PASSWORD}@postgres:5432/vexa
+      REDIS_URL: redis://vexa-redis:6379/0
+      ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
       WEBHOOK_URL: https://${DOMAIN}/api/bots/internal/webhook
       WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
-      STORAGE_BACKEND: local
-      LOCAL_STORAGE_DIR: /var/lib/vexa/recordings
-      # Use external PostgreSQL so recordings survive container restarts
-      DATABASE_URL: postgresql://vexa:${VEXA_DB_PASSWORD}@postgres:5432/vexa
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: vexa
-      DB_USER: vexa
-      DB_PASSWORD: ${VEXA_DB_PASSWORD}
-      # We transcribe in portal-api, not in vexa-bot-manager
-      SKIP_TRANSCRIPTION_CHECK: "true"
       TRANSCRIBER_URL: http://172.18.0.1:8000/v1/audio/transcriptions
       TRANSCRIBER_API_KEY: internal
-      ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
-    volumes:
-      # Persistent patches - survive image updates until fixed upstream
-      # Fix #189: removes track.stop() + transceiver renegotiation that caused bot to leave mid-meeting
-      # Fix #190: replaces poll-based participant counting with MutationObserver registry
-      - ./vexa-patches/screen-content.js:/app/vexa-bot/dist/services/screen-content.js:ro
-      - ./vexa-patches/recording.js:/app/vexa-bot/dist/platforms/googlemeet/recording.js:ro
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_DIR: /var/lib/vexa/recordings
     depends_on:
       postgres:
+        condition: service_healthy
+      vexa-redis:
         condition: service_healthy
     deploy:
       resources:
         limits:
           cpus: '1'
-          memory: 1G
+          memory: 256M
     networks:
       - klai-net
-      - socket-proxy
-      - vexa-bots
       - net-postgres
       - net-redis
     healthcheck:
@@ -770,6 +754,51 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # ─── Vexa runtime API (container orchestration via Docker socket) ───────
+  vexa-runtime-api:
+    image: vexaai/vexa-lite:latest
+    restart: unless-stopped
+    command: ["python", "-m", "app.runtime"]
+    environment:
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      BOT_IMAGE: vexaai/vexa-bot:latest
+      BOT_NETWORK: vexa-bots
+      REDIS_URL: redis://vexa-redis:6379/0
+    depends_on:
+      vexa-redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    networks:
+      - socket-proxy
+      - vexa-bots
+      - net-redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8057/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ─── Vexa Redis (bot state, pub/sub, transcription streams) ─────────────
+  vexa-redis:
+    image: redis:alpine
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - net-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:

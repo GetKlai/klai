@@ -66,7 +66,6 @@ class Settings(BaseSettings):
     librechat_host_data_path: str = "/opt/klai/librechat"  # HOST path for Docker volume mounts
     librechat_image: str = "ghcr.io/danny-avila/librechat:latest"
     caddy_container_name: str = "klai-core-caddy-1"  # Docker container name for Caddy reload
-    vexa_bot_container_name: str = "klai-core-vexa-bot-manager-1"  # Docker container name for recording cleanup
 
     # Internal service-to-service secret (used by klai-mailer → portal)
     # Generate with: openssl rand -hex 32
@@ -96,9 +95,9 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
 
-    # Vexa meeting bot manager
-    vexa_bot_manager_url: str = "http://vexa-bot-manager:8056"
-    vexa_api_key: str = ""
+    # Vexa meeting API (agentic-runtime)
+    vexa_meeting_api_url: str = "http://vexa-meeting-api:8056"
+    vexa_admin_token: str = ""
     vexa_webhook_secret: str = ""
 
     # LiteLLM (for summarization)
