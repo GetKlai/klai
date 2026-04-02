@@ -15,6 +15,8 @@
 | [patterns/code-quality.md](patterns/code-quality.md) | ruff, pyright, ESLint, pre-commit, CI quality gates |
 | [patterns/testing.md](patterns/testing.md) | Playwright browser testing, permissions, GlitchTip debugging |
 
+All pattern files include an "Evidence" column in their index tables showing how to verify correct application.
+
 ## When to read
 
 - **When building**: Check if a pattern exists before writing new code

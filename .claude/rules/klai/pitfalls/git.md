@@ -1,3 +1,10 @@
+---
+severity_map:
+  git-no-destructive-commands: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  git-no-secrets-in-commits: { severity: 1.0, confirmed: 1, false_positives: 0 }
+  git-commit-specific-files: { severity: 0.8, confirmed: 1, false_positives: 0 }
+  git-verify-before-commit: { severity: 0.8, confirmed: 1, false_positives: 0 }
+---
 # Git Pitfalls
 
 > Version control safety rules.

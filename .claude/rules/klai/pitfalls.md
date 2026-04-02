@@ -7,7 +7,7 @@
 
 | Category | File | Scope |
 |----------|------|-------|
-| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 14 entries |
+| [Process](pitfalls/process.md) | AI dev workflow, testing discipline, minimal changes | 21 entries |
 | [Git](pitfalls/git.md) | Destructive commands, secrets in commits | 4 entries |
 | [DevOps](pitfalls/devops.md) | Coolify, Docker, deployments, services | 3 entries |
 | [Infrastructure](pitfalls/infrastructure.md) | Hetzner, SOPS, env vars, DNS, SSH | 15 entries |
@@ -33,8 +33,9 @@
 
 ## Process rules (always loaded)
 
-Compact table: `pitfalls/process-rules.md` (loads every session).
+Self-contained entries: `pitfalls/process-rules.md` (loads every session). Each entry is 2-3 sentences with the trigger and action embedded.
 Full descriptions with examples: `pitfalls/process.md` (on-demand).
+All pitfall files include machine-readable `severity_map` in YAML frontmatter for automated severity tracking.
 
 ## Adding new pitfalls
 

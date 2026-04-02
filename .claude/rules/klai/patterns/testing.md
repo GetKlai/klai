@@ -13,13 +13,13 @@ paths:
 ## Index
 > Keep this index in sync — add a row when adding a section below.
 
-| Section | When to use |
-|---|---|
-| [Setup](#setup) | Initial Playwright MCP configuration and profile |
-| [Standard workflow](#standard-workflow) | Step-by-step browser testing process |
-| [Session management rules](#session-management-rules) | When to open/close browser, profile locking |
-| [Checking HTTP headers](#checking-http-headers) | Verifying response headers in tests |
-| [Debugging with GlitchTip](#debugging-with-glitchtip) | Using GlitchTip for error monitoring |
+| Section | When to use | Evidence |
+|---|---|---|
+| [Setup](#setup) | Initial Playwright MCP configuration and profile | `browser_navigate` opens Brave with profile |
+| [Standard workflow](#standard-workflow) | Step-by-step browser testing process | `browser_snapshot()` returns page elements |
+| [Session management rules](#session-management-rules) | When to open/close browser, profile locking | `browser_close()` releases SingletonLock file |
+| [Checking HTTP headers](#checking-http-headers) | Verifying response headers in tests | `curl -sI <url>` shows expected header values |
+| [Debugging with GlitchTip](#debugging-with-glitchtip) | Using GlitchTip for error monitoring | GlitchTip issue list shows captured error |
 
 ---
 

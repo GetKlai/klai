@@ -10,10 +10,10 @@ paths:
 ## Index
 > Keep this index in sync — add a row when adding a pattern below.
 
-| Pattern | When to use |
-|---|---|
-| [backend-prometheus-fastapi-metrics](#backend-prometheus-fastapi-metrics) | Adding Prometheus metrics + `/metrics` endpoint to a FastAPI service |
-| [backend-two-phase-crawl-ai-fallback](#backend-two-phase-crawl-ai-fallback) | Crawling a page when content selectors are unknown and word count may be too low |
+| Pattern | When to use | Evidence |
+|---|---|---|
+| [backend-prometheus-fastapi-metrics](#backend-prometheus-fastapi-metrics) | Adding Prometheus metrics + `/metrics` endpoint to a FastAPI service | `curl /metrics` returns valid Prometheus text |
+| [backend-two-phase-crawl-ai-fallback](#backend-two-phase-crawl-ai-fallback) | Crawling a page when content selectors are unknown and word count may be too low | Response `word_count >= _MIN_WORDS` for test URL |
 
 ---
 
