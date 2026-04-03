@@ -61,7 +61,7 @@ function NewKnowledgeBasePage() {
     description: '',
     ownerType: 'org',
     visibilityMode: 'org',
-    allowContribute: false,
+    allowContribute: true,
     initialGroups: [],
     initialUsers: [],
   })
