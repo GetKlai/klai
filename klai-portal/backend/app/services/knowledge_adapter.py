@@ -6,13 +6,12 @@ by calling knowledge-ingest POST /ingest/v1/document.
 
 from __future__ import annotations
 
-import logging
-
 import httpx
+import structlog
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _CHARS_PER_TOKEN = 4
 _TURNS_PER_CHUNK = 4  # target 3-5 speaker turns per chunk
@@ -52,6 +51,7 @@ async def ingest_vexa_meeting(
             "platform": meeting.platform,
             "meeting_title": meeting.meeting_title,
             "meeting_id": str(meeting.id),
+            **_extract_summary_fields(meeting.summary_json),
         },
     }
 
@@ -66,7 +66,15 @@ async def ingest_vexa_meeting(
         )
         resp.raise_for_status()
         data = resp.json()
-        return data.get("artifact_id", "")
+        artifact_id = data.get("artifact_id", "")
+        logger.info(
+            "meeting_ingested",
+            meeting_id=str(meeting.id),
+            kb_slug=kb_slug,
+            artifact_id=artifact_id,
+            chunk_count=len(chunks),
+        )
+        return artifact_id
 
 
 def _chunk_by_speaker_turns(segments: list[dict]) -> list[str]:
@@ -103,6 +111,17 @@ def _chunk_by_speaker_turns(segments: list[dict]) -> list[str]:
         chunks.append("\n".join(current))
 
     return chunks
+
+
+_SUMMARY_PASSTHROUGH_KEYS = ("decisions", "action_items", "key_quotes", "topics", "next_steps")
+
+
+def _extract_summary_fields(summary_json: dict | None) -> dict:
+    """Extract structured summary fields to pass as extra metadata to knowledge-ingest."""
+    if not summary_json:
+        return {}
+    structured = summary_json.get("structured", {})
+    return {k: structured[k] for k in _SUMMARY_PASSTHROUGH_KEYS if structured.get(k)}
 
 
 def _extract_participants(segments: list[dict]) -> list[dict]:
