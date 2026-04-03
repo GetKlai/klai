@@ -88,6 +88,23 @@
       ]
     },
     {
+      "id": 10,
+      "title": "Feature Adoption (% of active orgs, 30d)",
+      "type": "barchart",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "orientation": "horizontal" },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "WITH active AS (SELECT COUNT(*) AS total FROM portal_orgs WHERE billing_status = 'active'), scribe AS (SELECT COUNT(DISTINCT org_id) AS n FROM product_events WHERE event_type = 'meeting.started' AND created_at >= NOW() - INTERVAL '30 days'), knowledge AS (SELECT COUNT(DISTINCT org_id) AS n FROM product_events WHERE event_type = 'knowledge.uploaded' AND created_at >= NOW() - INTERVAL '30 days') SELECT 'Scribe' AS metric, ROUND(100.0 * scribe.n / NULLIF(active.total, 0), 1) AS value FROM active, scribe UNION ALL SELECT 'Knowledge', ROUND(100.0 * knowledge.n / NULLIF(active.total, 0), 1) FROM active, knowledge",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 6,
       "title": "Knowledge: Queries Per Week",
       "type": "timeseries",

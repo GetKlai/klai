@@ -224,4 +224,35 @@ if (kb.kb_type === "personal" && kb.created_by !== userId) {
 
 ---
 
+## RLS Coverage Table
+
+All tables with `org_id` (direct or indirect) have PostgreSQL Row-Level Security enforced via `set_tenant()` → `app.current_org_id`.
+
+| Table | RLS policy | SPEC | Notes |
+|---|---|---|---|
+| `portal_groups` | `tenant_isolation` (strict) | SEC-001 | Direct org_id |
+| `portal_knowledge_bases` | `tenant_isolation` (strict) | SEC-001 | Direct org_id |
+| `portal_group_products` | `tenant_isolation` (strict) | SEC-001 | Direct org_id |
+| `portal_group_memberships` | `tenant_isolation` (strict) | SEC-001 | Direct org_id |
+| `portal_group_kb_access` | `tenant_isolation` (strict) | SEC-001 | Direct org_id |
+| `portal_audit_log` | split SELECT/INSERT | SEC-001 | SELECT scoped, INSERT permissive |
+| `portal_kb_tombstones` | `tenant_isolation` (strict) | SEC-003 | Direct org_id |
+| `portal_user_kb_access` | `tenant_isolation` (strict) | SEC-003 | Direct org_id |
+| `portal_retrieval_gaps` | `tenant_isolation` (strict) | SEC-003 | Direct org_id |
+| `portal_taxonomy_nodes` | `tenant_isolation` (subquery) | SEC-003 | Via kb_id → portal_knowledge_bases.org_id |
+| `portal_taxonomy_proposals` | `tenant_isolation` (subquery) | SEC-003 | Via kb_id → portal_knowledge_bases.org_id |
+| `product_events` | split SELECT/INSERT | SEC-003 | SELECT scoped, INSERT permissive (background emit) |
+| `vexa_meetings` | split SELECT/INSERT/UPDATE | SEC-003 | SELECT scoped, INSERT permissive, UPDATE permissive when no tenant |
+| `portal_users` | permissive | SEC-003 | `org_id = _T OR _T_IS_NULL` — internal endpoint lookup |
+| `portal_user_products` | `tenant_isolation` (strict) | SEC-003 | set_tenant always called before query |
+| `portal_connectors` | permissive | SEC-003 | `org_id = _T OR _T_IS_NULL` — internal endpoint lookup |
+
+**Policy types:**
+- **strict**: `USING (org_id = _T)` — blocks all access without tenant context
+- **permissive**: `USING (org_id = _T OR _T_IS_NULL)` — allows access when no tenant is set (internal services)
+- **split**: separate SELECT (scoped) and INSERT (permissive) policies for background task tables
+- **subquery**: `USING (kb_id IN (SELECT id FROM parent WHERE org_id = _T))` — indirect org_id via FK
+
+---
+
 *(Add more entries here with `/retro "description"` after security incidents.)*

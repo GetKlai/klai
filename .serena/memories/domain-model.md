@@ -234,6 +234,36 @@
 - `resolved_at`: datetime(tz), nullable
 - Indexes: (org_id, occurred_at), (org_id, query_text), partial index on open gaps
 
+## Row-Level Security (RLS) Coverage
+
+All tables with org_id have PostgreSQL RLS enforced via `set_tenant()` → `app.current_org_id`.
+
+### SPEC-SEC-001 (original 6 tables)
+| Table | Policy type |
+|---|---|
+| portal_groups | strict |
+| portal_knowledge_bases | strict |
+| portal_group_products | strict |
+| portal_group_memberships | strict |
+| portal_group_kb_access | strict |
+| portal_audit_log | split SELECT/INSERT |
+
+### SPEC-SEC-003 (10 additional tables)
+| Table | Policy type | Notes |
+|---|---|---|
+| portal_kb_tombstones | strict | Direct org_id |
+| portal_user_kb_access | strict | Direct org_id |
+| portal_retrieval_gaps | strict | Direct org_id |
+| portal_taxonomy_nodes | subquery | Via kb_id → portal_knowledge_bases |
+| portal_taxonomy_proposals | subquery | Via kb_id → portal_knowledge_bases |
+| product_events | split SELECT/INSERT | Background emit without tenant |
+| vexa_meetings | split SELECT/INSERT/UPDATE | UPDATE permissive when no tenant |
+| portal_users | permissive | Internal endpoint lookup needs no-tenant access |
+| portal_user_products | strict | set_tenant always called before query |
+| portal_connectors | permissive | Internal endpoint lookup needs no-tenant access |
+
+Policy types: strict = `org_id = _T`, permissive = `org_id = _T OR _T_IS_NULL`, split = separate per-operation policies, subquery = FK join to parent table.
+
 ## Key Business Rules
 - Each org gets its own LibreChat container + Zitadel OIDC app on provisioning
 - LiteLLM team key scopes AI usage per org
