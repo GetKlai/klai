@@ -218,7 +218,7 @@ class WebCrawlerAdapter(BaseAdapter):
         )
 
     def _process_results(
-        self, data: dict[str, Any], cache: dict[str, str], base_url: str = "",
+        self, data: dict[str, Any], cache: dict[str, str], base_url: str,
     ) -> list[DocumentRef]:
         """Convert crawl results into DocumentRef objects and populate the cache.
 
@@ -235,9 +235,8 @@ class WebCrawlerAdapter(BaseAdapter):
             results = [results]
 
         # Always restrict to origin domain — Crawl4AI may follow external links.
-        if base_url:
-            base_netloc = urlparse(base_url).netloc.lower()
-            results = [p for p in results if urlparse(p.get("url", "")).netloc.lower() == base_netloc]
+        base_netloc = urlparse(base_url).netloc.lower()
+        results = [p for p in results if urlparse(p.get("url", "")).netloc.lower() == base_netloc]
 
         warnings: list[str] = []
 
