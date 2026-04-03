@@ -26,6 +26,7 @@ async def run_crawl_job(
     kb_slug: str,
     start_url: str,
     max_depth: int = 2,
+    max_pages: int = 200,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
     rate_limit: float = 2.0,
@@ -52,6 +53,7 @@ async def run_crawl_job(
             start_url=start_url,
             selector=content_selector,
             max_depth=max_depth,
+            max_pages=max_pages,
             include_patterns=include_patterns,
         )
 

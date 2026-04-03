@@ -90,6 +90,7 @@ class BulkCrawlRequest(BaseModel):
     kb_slug: str
     start_url: str
     max_depth: int = 2
+    max_pages: int = 200
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     rate_limit: float = 2.0

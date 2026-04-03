@@ -3,10 +3,10 @@ Knowledge management routes:
   POST /knowledge/v1/crawl - enqueue a bulk web crawl job
 """
 import json
-import structlog
 import time
 import uuid
 
+import structlog
 from fastapi import APIRouter
 
 from knowledge_ingest.db import get_pool
@@ -31,7 +31,7 @@ async def start_crawl(req: BulkCrawlRequest) -> BulkCrawlResponse:
         json.dumps(req.model_dump()), now,
     )
 
-    from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+    from knowledge_ingest import enrichment_tasks
     proc_app = enrichment_tasks.get_app()
     await proc_app.run_crawl.defer_async(  # type: ignore[attr-defined]
         job_id=job_id,
@@ -39,6 +39,7 @@ async def start_crawl(req: BulkCrawlRequest) -> BulkCrawlResponse:
         kb_slug=req.kb_slug,
         start_url=req.start_url,
         max_depth=req.max_depth,
+        max_pages=req.max_pages,
         include_patterns=req.include_patterns,
         exclude_patterns=req.exclude_patterns,
         rate_limit=req.rate_limit,
