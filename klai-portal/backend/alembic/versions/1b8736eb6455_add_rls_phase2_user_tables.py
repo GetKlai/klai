@@ -10,15 +10,15 @@ called before any query on this table.
 IMPORTANT: The code fixes in internal.py (adding set_tenant to internal
 endpoints) MUST be deployed BEFORE this migration is applied.
 
-Revision ID: c3d4e5f6a7b8
-Revises: b2c3d4e5f6a7
+Revision ID: 1b8736eb6455
+Revises: 6dd868123a4e
 Create Date: 2026-04-03
 """
 
 from alembic import op
 
-revision = "c3d4e5f6a7b8"
-down_revision = "b2c3d4e5f6a7"
+revision = "1b8736eb6455"
+down_revision = "6dd868123a4e"
 branch_labels = None
 depends_on = None
 

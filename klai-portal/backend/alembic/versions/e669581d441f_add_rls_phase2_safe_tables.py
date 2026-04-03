@@ -3,7 +3,7 @@
 Five tables with direct or indirect org_id that have no background-task
 write paths. Standard tenant_isolation policies.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: e669581d441f
 Revises: 7a23f23c419d
 Create Date: 2026-04-03
 """
@@ -12,7 +12,7 @@ Create Date: 2026-04-03
 
 from alembic import op
 
-revision = "a1b2c3d4e5f6"
+revision = "e669581d441f"
 down_revision = "7a23f23c419d"
 branch_labels = None
 depends_on = None
