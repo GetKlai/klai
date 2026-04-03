@@ -7,7 +7,7 @@
 | SPEC ID     | SPEC-GRAFANA-METRICS                           |
 | Title       | Grafana Product & Business Metrics Dashboards  |
 | Created     | 2026-03-24                                     |
-| Status      | Planned                                        |
+| Status      | In Progress                                    |
 | Priority    | High                                           |
 | Lifecycle   | spec-anchored                                  |
 

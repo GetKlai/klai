@@ -24,6 +24,8 @@ paths:
 | [backend-sqlalchemy-returning-rls](#backend-sqlalchemy-returning-rls) | CRIT | SQLAlchemy ORM adds implicit RETURNING to all inserts — breaks RLS tables with separate SELECT/INSERT policies |
 | [backend-request-session-rollback-loses-writes](#backend-request-session-rollback-loses-writes) | HIGH | Fire-and-forget writes (audit, analytics) on the request session are lost when caller raises an exception |
 | [backend-api-status-rename-blast-radius](#backend-api-status-rename-blast-radius) | HIGH | Status string values are cross-layer contracts — grep entire codebase before renaming |
+| [backend-event-name-must-match-action](#backend-event-name-must-match-action) | HIGH | Event name must match the actual user action, not the configuration step |
+| [backend-event-field-availability](#backend-event-field-availability) | HIGH | Verify emit context has the fields your dashboard query needs |
 
 ---
 
@@ -392,5 +394,53 @@ Status string values (e.g., `"recording"`, `"processing"`, `"completed"`) are cr
 4. If the status is exposed via API, consider supporting both old and new values during a transition period
 
 **See also:** `process-search-all-case-variants`, `process-convention-change-blast-radius`
+
+---
+
+## backend-event-name-must-match-action
+
+**Severity:** HIGH
+
+**Trigger:** Placing an `emit_event()` call on an endpoint and choosing the event name
+
+The event name must describe the actual user action that the endpoint performs, not a configuration step that precedes it. Placing an event on the wrong endpoint means your analytics measure configuration activity instead of actual usage.
+
+**Why it happens:**
+When a feature has multiple steps (configure → trigger → complete), the emit call is placed on whichever endpoint the developer looks at first. The configuration endpoint is often the most obvious entry point, but it does not represent the action the event name describes.
+
+**What happened:**
+`knowledge.uploaded` was initially placed on `create_connector` (which only saves a connector configuration). The actual document fetching happens in `trigger_sync`. The event name says "uploaded" but measured "configured" — completely different metrics.
+
+**Prevention:**
+1. Before placing `emit_event()`, write down in one sentence what the event name means in plain language
+2. Verify the endpoint actually performs that action — not a preceding step
+3. If the feature has a multi-step flow (configure → trigger → complete), trace which endpoint does the action the event name describes
+4. Review: "If a user configures but never triggers, should this event fire?" — if no, you are on the wrong endpoint
+
+**Seen in:** SPEC-GRAFANA-METRICS — `knowledge.uploaded` moved from `create_connector` to `trigger_sync` during self-review.
+
+---
+
+## backend-event-field-availability
+
+**Severity:** HIGH
+
+**Trigger:** Writing a Grafana/analytics query that uses `COUNT(DISTINCT field)` or filters on a field from `emit_event()` metadata
+
+Before writing a dashboard query that depends on a specific field (e.g., `org_id`, `user_id`), verify that the field is actually populated in the emit context. Events emitted before authentication (login, signup) or from background tasks may not have access to session-scoped fields like `org_id`.
+
+**Why it happens:**
+Dashboard authors assume all events have the same metadata fields. But event emission happens at different points in the request lifecycle — pre-auth endpoints (login) have no org context, while authenticated endpoints (meetings, connectors) do.
+
+**What happened:**
+A Feature Adoption panel used `COUNT(DISTINCT org_id) WHERE event_type = 'login'` to represent chat adoption. Login events are emitted in `auth.py` before org resolution — `org_id` is always NULL. The panel permanently showed 0.
+
+**Prevention:**
+1. Before writing a `COUNT(DISTINCT field)` query, check the `emit_event()` call site and verify the field is passed
+2. Pre-auth events (`login`, `signup.started`) will not have `org_id` — do not use org-based aggregation on them
+3. If a dashboard panel needs a field that the event does not carry, either enrich the event or choose a different event
+4. Document which fields each event type guarantees in a central event catalog
+
+**Seen in:** SPEC-GRAFANA-METRICS — Feature Adoption panel removed "Chat" metric because login events lack org_id.
 
 ---
