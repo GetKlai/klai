@@ -4,7 +4,7 @@
 Blocks agent from stopping without evidence-based confidence reporting.
 Registered in .claude/settings.json as a Stop hook.
 
-SPEC: SPEC-CONFIDENCE-001 (REQ-1, REQ-2)
+SPEC: SPEC-CONFIDENCE-001 (REQ-1, REQ-2, REQ-3)
 Cross-platform: works on macOS, Linux, and Windows.
 """
 
@@ -88,7 +88,8 @@ def main() -> None:
         log("BLOCK: no confidence number found")
         block(
             "Report your confidence level before stopping. "
-            "Format: Confidence: [0-100] \u2014 [evidence summary]"
+            "Format: Confidence: [0-100] \u2014 [evidence summary]. "
+            "See .claude/rules/klai/confidence.md for evidence scoring."
         )
         return
 
@@ -110,6 +111,30 @@ def main() -> None:
             )
             return
         log(f"PASS: adversarial check found at confidence {confidence_num}")
+
+    # --- REQ-3: Self-review at >= 80 (post-implementation quality reflection) ---
+    if confidence_num >= 80:
+        self_review_pattern = re.compile(
+            r"self-review:|self review:|"
+            r"had (beter|mooier|eleganter) kunnen|"
+            r"would have (done|solved|implemented|structured) (it |this )?(better|differently|more elegantly)|"
+            r"could have (done|solved|implemented|structured) (it |this )?(better|differently|more elegantly)|"
+            r"improvement[s]? (identified|found|noted)|"
+            r"no improvements|geen verbeterpunten|"
+            r"could be (cleaner|simpler|improved|refactored)|"
+            r"in hindsight|achteraf gezien",
+            re.IGNORECASE,
+        )
+        if not self_review_pattern.search(search_text):
+            log(f"BLOCK: confidence >= 80 ({confidence_num}) without self-review")
+            block(
+                "Confidence >= 80 requires a self-review before stopping. "
+                "Add: Self-review: [what would you have done more elegantly, "
+                "or 'no improvements identified']. "
+                "If improvements exist, make them first."
+            )
+            return
+        log(f"PASS: self-review found at confidence {confidence_num}")
 
     # --- All checks passed ---
     log(f"ALLOW: confidence={confidence_num}, all checks passed")

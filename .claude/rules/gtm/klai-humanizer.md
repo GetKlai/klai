@@ -72,17 +72,25 @@ Apply this protocol to all content before publishing. Remove signs of AI-generat
 ### 15. Excessive Emojis in Copy
 **Fix:** Remove all emojis from headings and bullet points. Allow max 1-2 per article in body text only.
 
+### 16. Fake Contrast Emphasis
+**Pattern:** "That is not X. That is Y." or "This is not a preference. This is a fact." — where X and Y are not actually in conflict. Used to make a statement sound more dramatic or authoritative than it is.
+**Examples to remove:**
+- "That is not a preference. That is the measured behavior of the architecture."
+- "This is not optional. This is how it works."
+- "Not just X. Y."
+**Fix:** Make a single direct statement. "The model pays more attention to the beginning and end of a document" — full stop. No fake drama required.
+
 ## Communication Patterns to Remove
 
-### 16. Collaborative Artifacts
+### 17. Collaborative Artifacts
 **Pattern:** "I hope this helps", "Of course!", "Certainly!", "Would you like...", "let me know"
 **Fix:** Remove entirely,these are chatbot phrases, not content.
 
-### 17. Knowledge-Cutoff Disclaimers
+### 18. Knowledge-Cutoff Disclaimers
 **Pattern:** "as of my last training update", "While specific details are limited..."
 **Fix:** Remove or replace with verifiable facts.
 
-### 18. Sycophantic Tone
+### 19. Sycophantic Tone
 **Pattern:** "Great question!", "You're absolutely right!", "That's an excellent point"
 **Fix:** Remove entirely.
 

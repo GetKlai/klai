@@ -29,13 +29,17 @@ Extract patterns and pitfalls from recent work and write them to the Klai knowle
 
 ## Knowledge Base Location
 
-**Shared (.claude/rules/klai/):**
-- Patterns index: `.claude/rules/klai/patterns.md`
-- Pitfalls index: `.claude/rules/klai/pitfalls.md`
-- DevOps patterns: `.claude/rules/klai/patterns/devops.md`
-- DevOps pitfalls: `.claude/rules/klai/pitfalls/devops.md`
-- Infrastructure patterns: `.claude/rules/klai/patterns/infrastructure.md`
-- Infrastructure pitfalls: `.claude/rules/klai/pitfalls/infrastructure.md`
+The full structure is documented in `.claude/rules/klai/knowledge-structure.md` — read it first when unsure where to place a finding.
+
+**Decision flow (6 steps):**
+1. Platform-specific (Caddy, LiteLLM, LibreChat, vLLM, Zitadel)? → `platform/{component}.md`
+2. Infrastructure (servers, CI/CD, SOPS, env vars)? → `infra/deploy.md`, `infra/sops-env.md`, or `infra/servers.md`
+3. Language/tool-specific (Docker, Python, TypeScript, testing)? → `lang/{docker|python|typescript|testing}.md`
+4. Project-specific (portal backend, portal frontend, website, docs, knowledge)? → `projects/{portal-backend|portal-frontend|portal-security|portal-logging-py|portal-logging-ts|website|docs|knowledge|python-services}.md`
+5. Universal AI dev process rule? → `pitfalls/process-rules.md` (compact, always loaded) or `workflow/process-full.md` (extended)
+6. Design/branding? → `design/styleguide.md`
+
+**There are no more index files** — `patterns.md` and `pitfalls.md` have been deleted. Each domain file is self-contained.
 
 ## Workflow
 
@@ -59,58 +63,37 @@ Always read the existing file before writing to understand:
 
 **Pattern format:**
 ```markdown
-## [category]-[short-name]
+## Korte naam
 
-**When to use:** [one sentence describing the scenario]
+**Wanneer:** [één zin: wanneer gebruik je dit]
 
-[Brief explanation of why this pattern exists]
+[Uitleg waarom dit patroon bestaat]
 
-```[language]
-[copy-paste ready code or commands]
+```bash
+# copy-paste ready commando's
 ```
 
-**Rule:** [one-line summary of the key principle]
-
-**See also:** [optional link to related pitfall or pattern]
-
----
+**Regel:** [één-regel samenvatting]
 ```
 
 **Pitfall format:**
 ```markdown
-## [category]-[short-name]
+## Korte naam (CRIT|HIGH|MED)
 
-**Severity:** [CRIT | HIGH | MED]
+[Wat er fout ging]
 
-**Trigger:** [one-line description of when this pitfall occurs]
+**Waarom:** [root cause]
 
-[What went wrong — plain description]
-
-**Why it happens:**
-[Brief explanation of the root cause]
-
-**Prevention:**
-1. [Concrete step]
-2. [Concrete step]
-
-**See also:** [optional link to related pattern]
-
----
+**Preventie:** Specifieke actie die dit voorkomt.
 ```
 
 ### Step 4: Write to the domain file
 
-Add the new entry at the end of the appropriate domain file (before any "See Also" section).
-Remove the `*(No entries yet...)*` placeholder if present.
+Use the 6-step decision flow (see Knowledge Base Location above) to pick the right file.
 
-### Step 5: Update the index file
+Add the new entry at a logical position in the file — CRITs and HARDs go at the **top** of the file, other entries at the end of the relevant section.
 
-Add the entry to the Quick Reference table in `patterns.md` or `pitfalls.md`:
-
-For pitfalls: `| \`[id]\` | **[SEV]** | [trigger] | [one-line rule] |`
-For patterns: `- **[[anchor](file#anchor)]** - [one-line description]`
-
-Also update the entry count in the categories table if present.
+There are no index files to update — the domain file is the single source of truth.
 
 ## Scope Boundaries
 

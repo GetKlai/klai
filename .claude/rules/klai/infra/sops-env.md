@@ -7,6 +7,11 @@ paths:
 ---
 # SOPS & Environment Variables
 
+## KUMA_TOKEN vars (CRIT)
+- 29 tokens only used by `push-health.sh` cron — invisible to `docker exec printenv`.
+- One missing token crashes entire monitoring script (`set -u`).
+- Recovery: extract from Uptime Kuma SQLite DB on public-01.
+
 ## SOPS overview
 Mozilla SOPS + age encryption. Encrypted files in git, plaintext never.
 - Global: `klai-infra/core-01/.env.sops` → `/opt/klai/.env`
@@ -43,8 +48,3 @@ sops --encrypt --in-place --input-type dotenv --output-type dotenv core-01/.new.
 mv core-01/.new.env core-01/.env.sops
 ```
 Temp file path MUST match `.sops.yaml` `path_regex`. Use literal paths, not `$HOME`.
-
-## KUMA_TOKEN vars (CRIT)
-- 29 tokens only used by `push-health.sh` cron — invisible to `docker exec printenv`.
-- One missing token crashes entire monitoring script (`set -u`).
-- Recovery: extract from Uptime Kuma SQLite DB on public-01.

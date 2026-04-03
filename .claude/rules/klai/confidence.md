@@ -33,6 +33,16 @@ End completion messages with:
 Ask yourself: "What bugs can I find in what I just did?"
 Frame as bug-hunting, not confirmation. This reduces overconfidence ~15pp.
 
+## Self-Review (at >= 80)
+
+Ask yourself: "What would I have done more elegantly?"
+Be honest. If improvements are worth making, make them before stopping.
+Then add to your completion message:
+
+`Self-review: [what could have been better, or 'no improvements identified']`
+
+The stop hook enforces this. If you identify improvements, make them first — then report done.
+
 ## Escalation
 
 Stagnation: if confidence hasn't moved > 2 points in 5 steps, escalate to user.

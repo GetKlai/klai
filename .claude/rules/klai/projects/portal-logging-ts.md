@@ -14,7 +14,7 @@ paths:
 import { editorLogger } from '@/lib/logger'
 ```
 
-Available loggers: `authLogger`, `editorLogger`, `queryLogger`, `treeLogger`.
+Available loggers: `authLogger`, `editorLogger`, `queryLogger`, `treeLogger`, `adminLogger`, `focusLogger`, `helpLogger`, `taxonomyLogger`, `chatKbLogger`, `perfLogger`.
 Need a new domain? Add `export const fooLogger = logger.withTag('foo')` to `lib/logger.ts`.
 
 ## Levels
