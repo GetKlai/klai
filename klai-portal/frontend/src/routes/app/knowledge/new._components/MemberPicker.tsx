@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { X, Search, Lock } from 'lucide-react'
+import { X, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
@@ -144,20 +144,6 @@ export function MemberPicker({
           </div>
         ))}
 
-        {/* System groups (non-selectable) */}
-        {availableGroups
-          .filter((g) => g.is_system)
-          .map((g) => (
-            <div
-              key={g.id}
-              className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] px-3 py-2 opacity-50"
-            >
-              <div className="flex items-center gap-2">
-                <Lock className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
-                <span className="text-sm text-[var(--color-muted-foreground)]">{g.name}</span>
-              </div>
-            </div>
-          ))}
       </div>
 
       {/* Persons */}
