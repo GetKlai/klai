@@ -2,7 +2,7 @@
 id: SPEC-FE-001
 document: plan
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-03-24"
 updated: "2026-03-24"
 ---

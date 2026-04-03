@@ -41,6 +41,9 @@ paths:
 | [process-spec-constraints-before-implement](#process-spec-constraints-before-implement) | CRIT | Read SPEC constraints section and verify image tags, resource limits, excluded services before implementing |
 | [process-spec-architecture-mismatch-stop](#process-spec-architecture-mismatch-stop) | CRIT | Stop and ask if implementation architecture diverges from SPEC |
 | [process-spec-violation-in-logs](#process-spec-violation-in-logs) | CRIT | Stop when logs show a SPEC constraint violation — don't debug downstream symptoms |
+| [process-dead-data-in-frontmatter](#process-dead-data-in-frontmatter) | MED | Don't specify machine-readable metadata without a consumer |
+| [process-stop-hook-completion-signal-filter](#process-stop-hook-completion-signal-filter) | MED | Stop hooks need pre-filter for completion vs conversation |
+| [process-consolidate-overlapping-rules](#process-consolidate-overlapping-rules) | MED | Merge overlapping process rules into one concrete action |
 
 ---
 
@@ -638,6 +641,46 @@ If during debugging a log signal directly violates a SPEC constraint (wrong serv
 
 **Why:** Downstream symptoms (OOM crash, bot join failure) are caused by the upstream violation. Fixing the symptom without fixing the violation wastes time.
 **Source:** SPEC-VEXA-001 — WhisperLive visible in Supervisor logs (SPEC forbids it on core-01), continued debugging bot OOM crash instead of stopping.
+
+---
+
+## process-dead-data-in-frontmatter
+
+**Severity:** MED
+
+**Trigger:** Writing a SPEC that includes machine-readable YAML frontmatter or metadata in files
+
+Before specifying machine-readable metadata (severity maps, structured tags, etc.) in a SPEC, verify there is a consumer that will read it. Metadata without a reader is dead tokens.
+
+**What happened:** SPEC-CONFIDENCE-001 specified `severity_map` YAML frontmatter in all pitfall files. It was implemented, then removed the same day because no tool, hook, or agent ever consumed it.
+
+**Rule:** If the consumer doesn't exist yet, say so explicitly in the SPEC and defer the metadata until the consumer is built.
+
+---
+
+## process-stop-hook-completion-signal-filter
+
+**Severity:** MED
+
+**Trigger:** Designing a stop hook that enforces reporting patterns
+
+Stop hooks that enforce patterns (like confidence reporting) need a pre-filter to distinguish completion claims from conversational pauses. Without this, the hook blocks every agent pause — including when it stops to wait for user input.
+
+**What happened:** The naive confidence stop hook blocked on every stop, making interactive sessions unusable. A completion signal regex was added to only trigger on messages that look like "I'm done" (not "What do you think?").
+
+---
+
+## process-consolidate-overlapping-rules
+
+**Severity:** MED
+
+**Trigger:** Multiple process rules covering the same failure mode
+
+When process rules cover the same failure mode from different angles, they dilute each other. One concrete rule with a specific action activates better than three abstract ones.
+
+**What happened:** Three rules (`verify-full-flow`, `verify-system-not-just-feature`, `test-user-facing-not-imports`) were consolidated into one (`ui-bugfix-browser-verify`) that explicitly requires Playwright MCP click-through. The single concrete rule had better compliance than three vague ones.
+
+**Rule:** When adding a new process rule, check if it overlaps with an existing one. If so, merge them into the more specific, actionable version.
 
 ---
 

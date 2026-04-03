@@ -1,7 +1,7 @@
 ---
 id: SPEC-VEXA-001
-version: "1.2"
-status: draft
+version: "1.4"
+status: completed
 created: 2026-04-02
 updated: 2026-04-02
 author: MoAI
@@ -18,6 +18,7 @@ priority: high
 | 1.1 | 2026-04-02 | MoAI | Scope uitgebreid: Vexa transcription-service vervangt whisper-server als unified transcription backend |
 | 1.2 | 2026-04-02 | MoAI | Scope teruggebracht: transcription-service migratie verplaatst naar SPEC-VEXA-002, whisper-server blijft als transcriptie backend |
 | 1.3 | 2026-04-02 | MoAI | **MISLUKTE IMPLEMENTATIEPOGING GEDOCUMENTEERD** — zie sectie 7. Rollback uitgevoerd naar commit vóór 8e04a81. |
+| 1.4 | 2026-04-02 | MoAI | **SYNC** — Implementatie voltooid. 2 feat + 15 fix commits. Status → completed. |
 
 ---
 
@@ -270,3 +271,64 @@ Tijdens debugging waren de volgende SPEC-schendingen zichtbaar in de logs en **n
 | PostgreSQL cluster | Intern | Draait al, nieuwe DB aanmaken |
 | Redis (dedicated) | Nieuw | Te deployen als `vexa-redis` |
 | Caddy | Intern | Route update nodig |
+
+---
+
+## 8. Implementation Notes (SYNC)
+
+**Phase:** SYNC — 2026-04-02
+**Status:** Completed
+
+### Key Commits
+
+| Commit | Type | Description |
+|--------|------|-------------|
+| `37716d0` | feat | Migrate to agentic-runtime microservice architecture (main implementation) |
+| `3ab942c` | feat | Update portal status mapping for agentic-runtime API |
+| `1dd7ea4` | fix | Use X-API-Key header with provisioned client token |
+| `bf42801` | revert | Revert failed monolithic image attempt (`8e04a81`) |
+| `9f81a1d` | fix | Fix Docker network name and meeting-api network membership |
+| `f446266` | fix | Use Unix socket for runtime-api Docker backend |
+| `23a632d` | fix | Add docker group_add for socket permission on core-01 |
+| `064d8cd` | fix | Add vexa DB to postgres init.sql for fresh deployments |
+| `5ce12f7` | fix | Retry transcript segments + complete gracefully without recording |
+| `dfe420c` | fix | Use GET /bots/status instead of non-existent per-bot status endpoint |
+| `db20fd5` | fix | Fix webhook auth, reduce bot timeout, route internally |
+| `90e0099` | fix | Token-free webhook auth, joining→recording status, completed meetings clickable |
+| `2208466` | fix | Reduce poll_loop complexity below ruff C901 limit |
+| `dcc0357` | fix | Add stopping status to badge config and active polling sets |
+| `21fddb1` | fix | Normalize completed→done in meeting detail queryFn |
+| `45a7c32` | fix | Add vexa-redis password to REDIS_URL connection strings |
+
+**Total:** 2 feat + 1 revert + 1 style + 13 fix commits = 17 vexa-related commits
+
+### What was delivered
+
+- **Three-service architecture:** `vexa-meeting-api`, `vexa-runtime-api`, `vexa-redis` deployed in docker-compose
+- **Locally built images:** `vexa-meeting-api:klai` and `vexa-runtime-api:klai` from Vexa `feature/agentic-runtime` branch (commit `600cba04`)
+- **VexaClient rewritten:** Bearer auth → X-API-Key, 60s timeout, new /bots endpoints
+- **Recording cleanup:** Docker exec → API-based DELETE /recordings/{id}
+- **Webhook handler:** Envelope format support, token-free auth on internal Docker network
+- **Bot poller:** Updated status mapping (done→completed, processing→stopping)
+- **vexa-patches/ removed:** ~4800 lines of fork patches deleted (6 files)
+- **EXEC:1 removed** from docker-socket-proxy (no longer needed)
+- **profiles.yaml** added for runtime-api bot container templates (shm_size: 1GB for Chromium)
+- **Frontend updates:** stopping status badge, completed meetings clickable, queryFn normalization
+
+### What was NOT delivered (deferred)
+
+- **SPEC-VEXA-002:** Transcription-service migration (whisper-server replacement) — deferred
+- **WebSocket real-time streaming** to frontend — future feature
+- **Zoom support** — not implemented in Vexa
+
+### Failed first attempt (Section 7)
+
+The first implementation attempt (`8e04a81`) used the wrong image (`vexaai/vexa-lite:latest`), wrong architecture (monolith instead of 3 services), and insufficient memory (512MB for Chromium). Reverted via `bf42801`. Full post-mortem in Section 7.
+
+### Decisions
+
+- **Auth:** Single admin token for portal-api → vexa-meeting-api (simplest approach)
+- **Webhook auth:** Trust internal Docker network (no HMAC signing) — vexa-meeting-api is the only service that can reach the webhook endpoint
+- **Recording:** Disabled (`RECORDING_ENABLED=false`) per GDPR — no persistent audio storage
+- **Storage:** `STORAGE_BACKEND=local` — MinIO not deployed
+- **TTS:** Out of scope — `TTS_SERVICE_URL` left empty

@@ -746,6 +746,58 @@ function ProtectedRoute() {
 
 ---
 
+## lazy-route-splitting
+
+**Scope:** klai-portal (TanStack Router)
+
+**When to use:** Splitting large route components for code-splitting.
+
+TanStack Router supports `.lazy.tsx` files for automatic code-splitting:
+- **Route file** (`.tsx`): path definition, loader, search params — stays in the route tree
+- **Lazy file** (`.lazy.tsx`): component implementation — loaded on demand
+
+```tsx
+// routes/admin/knowledge-bases/$kbId.tsx — route definition only
+export const Route = createFileRoute('/admin/knowledge-bases/$kbId')({
+  loader: ({ params }) => prefetchKb(params.kbId),
+})
+
+// routes/admin/knowledge-bases/$kbId.lazy.tsx — component (lazy-loaded)
+export const Route = createLazyFileRoute('/admin/knowledge-bases/$kbId')({
+  component: KnowledgeBaseDetail,
+})
+```
+
+**Evidence:** `npm run build` shows separate chunks for lazy routes in the bundle output.
+
+---
+
+## god-component-extraction
+
+**Scope:** klai-portal
+
+**When to use:** Breaking up large route components (>300 lines) into sub-components.
+
+Convention for extracted files alongside the route:
+- `_types.ts` — shared types for the route and its sub-components
+- `_components/` — extracted sub-components (e.g. `_components/KbSettingsPanel.tsx`)
+
+```
+routes/admin/knowledge-bases/
+├── $kbId.tsx              # route definition
+├── $kbId.lazy.tsx         # main component
+├── $kbId._types.ts        # shared types
+└── $kbId._components/     # sub-components
+    ├── SettingsPanel.tsx
+    └── DocumentList.tsx
+```
+
+The `_` prefix signals these are route-private files, not standalone routes. TanStack Router ignores `_` prefixed files in route generation.
+
+**Evidence:** No single route file exceeds 300 lines; `wc -l` confirms sub-components are focused.
+
+---
+
 ## See Also
 
 - [patterns/testing.md](testing.md) - Playwright browser testing workflow
