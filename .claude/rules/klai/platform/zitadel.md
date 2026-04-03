@@ -6,6 +6,17 @@ paths:
 ---
 # Zitadel
 
+## PAT rotation (CRIT)
+- PAT can become invalid after Zitadel upgrades. Symptom: `Errors.Token.Invalid (AUTH-7fs1e)`.
+- Rotate: Zitadel console → Service Accounts → Portal API → + New PAT.
+- Update in SOPS + restart portal-api.
+- Full procedure: `runbooks/platform-recovery.md#zitadel-pat-rotation`.
+
+## Login V2 deadlock (CRIT)
+- Login V2 routes ALL OIDC flows (including admin console) through portal login.
+- If portal login is broken: delete Login V2 row from PostgreSQL.
+- Full procedure: `runbooks/platform-recovery.md#zitadel-login-v2-recovery`.
+
 ## Org per tenant
 One Zitadel Organization per customer. Org ID is the primary tenant identifier — stored in PostgreSQL alongside LibreChat container name and MongoDB database name.
 
@@ -20,17 +31,6 @@ One Zitadel Organization per customer. Org ID is the primary tenant identifier �
 
 ## portal_users = mapping only
 No email/name columns. Identity always fetched live from Zitadel. No drift, no sync job needed.
-
-## PAT rotation (CRIT)
-- PAT can become invalid after Zitadel upgrades. Symptom: `Errors.Token.Invalid (AUTH-7fs1e)`.
-- Rotate: Zitadel console → Service Accounts → Portal API → + New PAT.
-- Update in SOPS + restart portal-api.
-- Full procedure: `runbooks/platform-recovery.md#zitadel-pat-rotation`.
-
-## Login V2 deadlock (CRIT)
-- Login V2 routes ALL OIDC flows (including admin console) through portal login.
-- If portal login is broken: delete Login V2 row from PostgreSQL.
-- Full procedure: `runbooks/platform-recovery.md#zitadel-login-v2-recovery`.
 
 ## SSO cache
 - `_sso_cache` and `_pending_totp` are in-memory dicts — single instance only.

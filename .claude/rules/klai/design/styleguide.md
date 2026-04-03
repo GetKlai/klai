@@ -149,5 +149,4 @@ Height: `28px` in nav, proportional in sidebar. Never distort or tint.
 
 - Portal patterns (tokens, sidebar, forms, cards, tables): `projects/portal-frontend.md`
 - Website patterns (buttons, spacing, animations, shadows): `projects/website.md`
-- [Brand colors](https://www.getklai.com/company/brand-colors) - canonical color reference
 - [rules/gtm/klai-brand-voice.md](../../gtm/klai-brand-voice.md) - tone and writing style

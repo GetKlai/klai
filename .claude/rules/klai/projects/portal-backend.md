@@ -4,6 +4,11 @@ paths:
 ---
 # Portal Backend Patterns
 
+## SQLAlchemy + RLS (CRIT)
+- SQLAlchemy ORM adds implicit `RETURNING` to all inserts — breaks RLS tables with separate SELECT/INSERT policies.
+- Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
+- `::jsonb` casts conflict with SQLAlchemy `:param` — use `CAST(:param AS jsonb)` instead.
+
 ## Prometheus metrics in tests
 - Never use the global `prometheus_client` registry in tests — causes `Duplicated timeseries`.
 - Use a `CollectorRegistry` per instance via dataclass + `autouse` fixture that patches module-level singleton.
@@ -11,11 +16,6 @@ paths:
 ## sendBeacon endpoints
 - `navigator.sendBeacon` cannot set `Authorization` headers.
 - Design analytics endpoints as intentionally unauthenticated. Rate-limit at Caddy. Validate/clamp with Pydantic.
-
-## SQLAlchemy + RLS
-- [CRIT] SQLAlchemy ORM adds implicit `RETURNING` to all inserts — breaks RLS tables with separate SELECT/INSERT policies.
-- Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
-- `::jsonb` casts conflict with SQLAlchemy `:param` — use `CAST(:param AS jsonb)` instead.
 
 ## Fire-and-forget writes (audit, analytics)
 - Request-scoped session rolls back on any exception — audit entries are lost.

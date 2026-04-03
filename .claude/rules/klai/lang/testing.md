@@ -8,12 +8,15 @@ paths:
 ---
 # Testing Rules
 
+## [HARD] Close browser when done
+After ANY Playwright testing, close all tabs then `browser_close()`. Brave locks `userDataDir` with `SingletonLock` — leaving it open blocks the next session.
+
 ## Playwright MCP workflow
 1. Kill Brave before starting: `pkill -x "Brave Browser"`
 2. Navigate: `browser_navigate({ url: '...' })`
 3. Inspect: `browser_snapshot()` (prefer over screenshots for assertions)
 4. Interact via `ref` from snapshot, never CSS selectors: `browser_click({ ref: 'e66' })`
-5. [HARD] Close browser when done: close all tabs, then `browser_close()`
+5. Close browser when done (see rule above)
 
 ## Playwright session management
 - Persistent profile at `~/.claude/mcp-brave-profile` — login sessions survive across runs.

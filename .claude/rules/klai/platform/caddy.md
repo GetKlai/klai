@@ -5,6 +5,11 @@ paths:
 ---
 # Caddy
 
+## Permissions-Policy (CRIT)
+- `microphone=()` blocks `getUserMedia` entirely — no dialog, silent fail.
+- Correct: `microphone=self` to allow same-origin mic access.
+- After fix: users with cached "denied" must manually reset in browser settings.
+
 ## Tenant routing
 - One wildcard `*.getklai.com` block for known services.
 - Per-tenant LibreChat blocks appended at provisioning time by portal-api.
@@ -19,11 +24,6 @@ paths:
 - Requires custom Caddy build with `github.com/caddy-dns/hetzner` plugin.
 - Env var: `HETZNER_AUTH_API_TOKEN` (Hetzner DNS, not Cloud86).
 - TLS block: `tls { dns hetzner {$HETZNER_AUTH_API_TOKEN} propagation_delay 120s }`.
-
-## Permissions-Policy (CRIT)
-- `microphone=()` blocks `getUserMedia` entirely — no dialog, silent fail.
-- Correct: `microphone=self` to allow same-origin mic access.
-- After fix: users with cached "denied" must manually reset in browser settings.
 
 ## basic_auth + monitoring
 - `basic_auth` blocks Uptime Kuma health checks.

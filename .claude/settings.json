@@ -1,9 +1,26 @@
 {
+  "permissions": {
+    "allow": [
+      "Edit(**)",
+      "Write(**)"
+    ],
+    "additionalDirectories": [
+      "/Users/mark/Server/projects/klai/.claude/rules/klai"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/domain-context-injection.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/git-safety-guard.sh\""
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/portal-api-preflight.sh\""
