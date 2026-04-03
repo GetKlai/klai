@@ -1067,7 +1067,10 @@ async def list_groups_for_picker(
     """Lightweight group list for the member picker. Any org member can access."""
     _, org, _ = await _get_caller_org(credentials, db)
     result = await db.execute(
-        select(PortalGroup.id, PortalGroup.name).where(PortalGroup.org_id == org.id).order_by(PortalGroup.name)
+        select(PortalGroup.id, PortalGroup.name)
+        .where(PortalGroup.org_id == org.id)
+        .where(PortalGroup.is_system == False)  # noqa: E712
+        .order_by(PortalGroup.name)
     )
     return AppGroupsResponse(groups=[AppGroupItem(id=row.id, name=row.name) for row in result.all()])
 
