@@ -210,6 +210,6 @@ dist-ssr/
 klai-website/
 klai-infra/
 
-# Playwright MCP — keep config, ignore screenshots and logs
+# Playwright MCP — keep example config, ignore local config/screenshots/logs
 .playwright-mcp/*
-!.playwright-mcp/config.json
+!.playwright-mcp/config.example.json

@@ -1,0 +1,10 @@
+{
+  "browser": "chromium",
+  "userDataDir": "~/.claude/mcp-brave-profile",
+
+  "_comment_macOS": "executablePath: /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "_comment_windows": "executablePath: C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+  "_comment_linux": "executablePath: /usr/bin/brave-browser",
+
+  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+}

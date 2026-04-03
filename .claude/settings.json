@@ -9,6 +9,15 @@
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/portal-api-preflight.sh\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__playwright__browser_navigate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/playwright-url-guard.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -25,6 +34,11 @@
     "Stop": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/playwright-browser-cleanup.sh\"",
+            "timeout": 5000
+          },
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/confidence-check.py\"",
