@@ -255,14 +255,18 @@ async def crawl_site(
     """
     config = build_crawl_config(selector)
 
+    # Always restrict crawl to the origin domain — never follow external links.
+    parsed = urlparse(start_url)
+    domain_prefix = f"{parsed.scheme}://{parsed.netloc}"
+    patterns = include_patterns if include_patterns else [domain_prefix]
+
     deep_crawl_params: dict[str, Any] = {
         "max_depth": max_depth,
         "max_pages": max_pages,
+        "filter_chain": [
+            {"type": "URLPatternFilter", "params": {"patterns": patterns}},
+        ],
     }
-    if include_patterns:
-        deep_crawl_params["filter_chain"] = [
-            {"type": "URLPatternFilter", "params": {"patterns": include_patterns}},
-        ]
 
     config["deep_crawl_strategy"] = {
         "type": "BFSDeepCrawlStrategy",

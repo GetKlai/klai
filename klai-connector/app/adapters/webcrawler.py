@@ -105,14 +105,18 @@ class WebCrawlerAdapter(BaseAdapter):
         allowed_path_prefix: str | None = config.get("path_prefix") or None
         content_selector: str | None = config.get("content_selector") or None
 
+        # Always restrict crawl to the origin domain — never follow external links.
+        parsed_base = urlparse(base_url)
+        domain_prefix = f"{parsed_base.scheme}://{parsed_base.netloc}"
+        patterns = [allowed_path_prefix] if allowed_path_prefix else [domain_prefix]
+
         deep_crawl_params: dict[str, Any] = {
             "max_depth": max_depth,
             "max_pages": max_pages,
+            "filter_chain": [
+                {"type": "URLPatternFilter", "params": {"patterns": patterns}},
+            ],
         }
-        if allowed_path_prefix:
-            deep_crawl_params["filter_chain"] = [
-                {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
-            ]
 
         # Pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
         # - With selector: trust the selector — PruningContentFilter but no JS chrome removal
