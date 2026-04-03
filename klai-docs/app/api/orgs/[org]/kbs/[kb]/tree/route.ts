@@ -17,8 +17,8 @@ export async function GET(
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Personal KBs are not served via the public tree endpoint
-  if (kb.kb_type === "personal") {
+  // Personal and private KBs are not served via the public tree endpoint
+  if (kb.kb_type === "personal" || kb.visibility === "private") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

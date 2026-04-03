@@ -46,8 +46,8 @@ export async function GET(
   const resolved = await resolveKB(orgSlug, kbSlug);
   if (!resolved) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Personal KBs are not served via the public reader
-  if (resolved.kb.kb_type === "personal") {
+  // Personal and private KBs are not served via the public reader
+  if (resolved.kb.kb_type === "personal" || resolved.kb.visibility === "private") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
