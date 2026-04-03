@@ -812,6 +812,7 @@
   "knowledge_wizard_confirm_title": "Does this look right?",
   "knowledge_wizard_personal_only": "Only you have access",
   "knowledge_wizard_create_button": "Create knowledge base",
+  "knowledge_wizard_edit_slug": "Change slug",
 
   "knowledge_page_personal_kbs_heading": "My knowledge bases",
   "docs_kb_locked_tooltip": "You don't have access to this knowledge base",
