@@ -17,6 +17,8 @@ paths:
 | [security-idor-url-org-slug-trusted](#security-idor-url-org-slug-trusted) | CRIT | Never trust org_slug from URL — verify caller belongs to that org via token |
 | [security-personal-resource-no-ownership-check](#security-personal-resource-no-ownership-check) | HIGH | Resources with per-user ownership need a `created_by` check on every access, not just org scope |
 | [security-private-resource-404-not-403](#security-private-resource-404-not-403) | HIGH | Public endpoints must return 404 (not 403) for private/personal resources — never leak existence |
+| [security-rls-alembic-ownership](#security-rls-alembic-ownership) | HIGH | Alembic can't enable RLS — portal_api user is not table owner; run DDL as klai superuser |
+| [security-rls-permissive-policy-risk](#security-rls-permissive-policy-risk) | HIGH | Permissive RLS policies allow full read when set_tenant() is missing — always call set_tenant() |
 
 ---
 
@@ -221,6 +223,58 @@ if (kb.kb_type === "personal" && kb.created_by !== userId) {
 **Seen in:** klai-docs — public reader page (`app/(reader)/[...path]/page.tsx`) and unauthenticated GET endpoints (`tree`, `pages`) return `notFound()` / 404 for personal KBs. Authenticated endpoints use `checkKBAccess()` which returns 403.
 
 **See also:** `security-personal-resource-no-ownership-check` (the ownership model itself)
+
+---
+
+## security-rls-alembic-ownership
+
+**Severity:** HIGH
+
+**Trigger:** Adding an Alembic migration that runs `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`
+
+The `portal_api` database user is not the table owner (`klai` is). PostgreSQL requires table ownership or superuser privileges to enable RLS. Alembic migrations run as `portal_api`, so any RLS DDL fails with `InsufficientPrivilegeError: must be owner of table`.
+
+**Wrong — will fail in production:**
+```python
+# alembic migration
+op.execute("ALTER TABLE my_table ENABLE ROW LEVEL SECURITY")
+```
+
+**Correct — run RLS DDL directly as klai superuser:**
+```bash
+ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai -c \"
+ALTER TABLE my_table ENABLE ROW LEVEL SECURITY;
+ALTER TABLE my_table FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON my_table USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::int);
+UPDATE alembic_version SET version_num = '<new_revision>';
+\""
+```
+
+**Keep Alembic migrations for code history** — the migration files document intent and provide downgrade paths. But execute the DDL manually via psql and update `alembic_version` by hand.
+
+**Seen in:** SPEC-SEC-003 — all three RLS migrations failed via `alembic upgrade head` inside the portal-api container. Applied manually as `klai` superuser.
+
+---
+
+## security-rls-permissive-policy-risk
+
+**Severity:** HIGH
+
+**Trigger:** Adding a new endpoint or background task that queries `portal_users` or `portal_connectors` without calling `set_tenant()` first
+
+These tables have permissive RLS policies: `USING (org_id = _T OR _T_IS_NULL)`. When `app.current_org_id` is not set, **all rows from all tenants are visible**. This is intentional — internal endpoints need to look up a resource by ID to discover the org_id before calling `set_tenant()`.
+
+**The risk:** Any new code path that queries these tables without `set_tenant()` silently gets cross-tenant read access. Unlike strict policies (which return zero rows), permissive policies fail open.
+
+**Prevention:**
+1. After any lookup on `portal_users` or `portal_connectors` without tenant context, call `set_tenant(db, row.org_id)` immediately
+2. All subsequent queries in the same request MUST happen after `set_tenant()`
+3. When reviewing new endpoints, check: is `set_tenant()` called before any query on strict-policy tables like `portal_user_products`?
+
+**Tables with permissive policies (fail-open):** `portal_users`, `portal_connectors`
+**Tables with strict policies (fail-closed):** all other 14 RLS-protected tables
+
+**Seen in:** SPEC-SEC-003 — `get_user_products` endpoint queried `portal_user_products` (strict) without `set_tenant()`, returning empty results. Fixed by adding user lookup + `set_tenant()` before calling `get_effective_products()`.
 
 ---
 
