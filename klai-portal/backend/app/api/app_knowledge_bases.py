@@ -518,10 +518,9 @@ async def update_knowledge_base(
 
     await db.commit()
 
-    # Re-fetch instead of refresh — refresh can fail if the instance
-    # was detached during commit (e.g. when no attributes were dirty).
-    kb = await _get_kb_or_404(kb_slug, org.id, db)
-
+    # expire_on_commit=False keeps all attributes valid after commit — no re-fetch needed.
+    # A re-fetch after commit acquires a new connection without app.current_org_id set,
+    # causing RLS to return no rows and a spurious 404.
     if visibility_changed:
         try:
             await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
