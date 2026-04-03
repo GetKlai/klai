@@ -59,7 +59,6 @@ export function MemberPicker({
 
   const filteredGroups = availableGroups.filter(
     (g) =>
-      !g.is_system &&
       g.name.toLowerCase().includes(groupSearch.toLowerCase()) &&
       !initialGroups.some((ig) => ig.id === g.id)
   )

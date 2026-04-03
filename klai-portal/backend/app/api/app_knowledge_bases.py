@@ -28,6 +28,26 @@ logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
 
 
+async def _get_non_system_group_or_404(
+    group_id: int, org_id: int, db: AsyncSession
+) -> PortalGroup:
+    """Fetch a non-system group within the org, or 404."""
+    result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org_id,
+            PortalGroup.is_system == False,  # noqa: E712
+        )
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found in your organisation",
+        )
+    return group
+
+
 async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
     """Count Qdrant vectors for a specific org + kb_slug. Returns None on failure."""
     try:
@@ -830,16 +850,8 @@ async def invite_group(
             detail="Personal KBs cannot be shared",
         )
 
-    # Verify group exists in org
-    group_result = await db.execute(
-        select(PortalGroup).where(
-            PortalGroup.id == body.group_id,
-            PortalGroup.org_id == org.id,
-        )
-    )
-    group = group_result.scalar_one_or_none()
-    if not group:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found in your organisation")
+    # Verify group exists in org and is not a system group
+    group = await _get_non_system_group_or_404(body.group_id, org.id, db)
 
     access = PortalGroupKBAccess(
         group_id=body.group_id,
