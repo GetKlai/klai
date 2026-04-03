@@ -499,7 +499,10 @@ async def update_knowledge_base(
             )
 
     await db.commit()
-    await db.refresh(kb)
+
+    # Re-fetch instead of refresh — refresh can fail if the instance
+    # was detached during commit (e.g. when no attributes were dirty).
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
 
     if visibility_changed:
         try:
