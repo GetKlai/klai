@@ -135,6 +135,7 @@ class Settings(BaseSettings):
     imap_username: str | None = None
     imap_password: str | None = None
     imap_poll_interval_seconds: int = 60
+    invite_bot_rate_limit_per_user_per_day: int = 10
 
     # CORS — static origins + wildcard regex for tenant subdomains
     # SECURITY-CRITICAL: This regex controls which origins can make credentialed
