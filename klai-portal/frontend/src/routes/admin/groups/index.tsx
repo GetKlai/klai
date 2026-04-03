@@ -31,16 +31,6 @@ function avatarColor(uid: string): string {
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { apiFetch } from '@/lib/apiFetch'
 
 type GroupsSearch = { create?: true }
@@ -239,13 +229,36 @@ function AdminGroups() {
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
           {!row.original.is_system && (
-            <button
-              onClick={() => setConfirmDeleteId(row.original.id)}
-              aria-label={`Delete ${row.original.name}`}
-              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            confirmDeleteId === row.original.id ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  className="bg-[var(--color-destructive)] text-white hover:opacity-90"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.mutate(row.original.id)
+                    setConfirmDeleteId(null)
+                  }}
+                >
+                  {deleteMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    m.admin_groups_delete()
+                  )}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                  {m.admin_users_cancel()}
+                </Button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDeleteId(row.original.id)}
+                aria-label={`Delete ${row.original.name}`}
+                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )
           )}
           {!row.original.is_system && (
             <button
@@ -333,36 +346,6 @@ function AdminGroups() {
           </CardContent>
         </Card>
       )}
-
-      <AlertDialog
-        open={confirmDeleteId !== null}
-        onOpenChange={(open) => { if (!open) setConfirmDeleteId(null) }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.admin_groups_confirm_delete_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.admin_groups_confirm_delete_description()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
-              disabled={deleteMutation.isPending}
-              onClick={() => {
-                if (confirmDeleteId) deleteMutation.mutate(confirmDeleteId)
-                setConfirmDeleteId(null)
-              }}
-            >
-              {deleteMutation.isPending && (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              )}
-              {m.admin_groups_delete()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
