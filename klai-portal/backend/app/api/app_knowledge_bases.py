@@ -646,6 +646,7 @@ async def list_members(
         select(PortalGroupKBAccess, PortalGroup.name)
         .join(PortalGroup, PortalGroup.id == PortalGroupKBAccess.group_id)
         .where(PortalGroupKBAccess.kb_id == kb.id)
+        .where(PortalGroup.is_system == False)  # noqa: E712
     )
     group_members = [
         GroupMemberOut(
