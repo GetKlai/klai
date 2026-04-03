@@ -36,16 +36,10 @@ def upgrade() -> None:
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON portal_audit_log")
 
     # SELECT: tenants can only read their own org's audit entries
-    op.execute(
-        f"CREATE POLICY tenant_isolation_read ON portal_audit_log"
-        f" FOR SELECT USING (org_id = {_TENANT_EXPR})"
-    )
+    op.execute(f"CREATE POLICY tenant_isolation_read ON portal_audit_log FOR SELECT USING (org_id = {_TENANT_EXPR})")
 
     # INSERT: always allow (audit log is append-only, protected by RULEs)
-    op.execute(
-        "CREATE POLICY tenant_isolation_write ON portal_audit_log"
-        " FOR INSERT WITH CHECK (true)"
-    )
+    op.execute("CREATE POLICY tenant_isolation_write ON portal_audit_log FOR INSERT WITH CHECK (true)")
 
 
 def downgrade() -> None:
@@ -53,7 +47,4 @@ def downgrade() -> None:
     op.execute("DROP POLICY IF EXISTS tenant_isolation_read ON portal_audit_log")
 
     # Restore original ALL policy
-    op.execute(
-        f"CREATE POLICY tenant_isolation ON portal_audit_log"
-        f" USING (org_id = {_TENANT_EXPR})"
-    )
+    op.execute(f"CREATE POLICY tenant_isolation ON portal_audit_log USING (org_id = {_TENANT_EXPR})")
