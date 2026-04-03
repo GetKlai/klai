@@ -85,6 +85,7 @@ class WebCrawlerAdapter(BaseAdapter):
         max_depth: int = config.get("max_depth", 3)
         max_pages: int = min(config.get("max_pages", 200), 2000)
         allowed_path_prefix: str | None = config.get("path_prefix") or None
+        content_selector: str | None = config.get("content_selector") or None
 
         deep_crawl_params: dict[str, Any] = {
             "max_depth": max_depth,
@@ -95,21 +96,42 @@ class WebCrawlerAdapter(BaseAdapter):
                 {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
             ]
 
-        payload = {
+        # Smart pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
+        # - With selector: trust the selector, skip content filtering
+        # - Without selector: apply PruningContentFilter + excluded_tags to strip nav chrome
+        md_gen_params: dict[str, Any] = {
+            "options": {"ignore_links": False, "body_width": 0},
+        }
+        crawl_params: dict[str, Any] = {
+            "deep_crawl_strategy": {
+                "type": "BFSDeepCrawlStrategy",
+                "params": deep_crawl_params,
+            },
+            "scraping_strategy": {"type": "LXMLWebScrapingStrategy", "params": {}},
+        }
+
+        if content_selector:
+            crawl_params["css_selector"] = content_selector
+            logger.info("Using content selector: %s", content_selector)
+        else:
+            md_gen_params["content_filter"] = {
+                "type": "PruningContentFilter",
+                "params": {"threshold": 0.45},
+            }
+            crawl_params["excluded_tags"] = [
+                "nav", "footer", "header", "aside", "script", "style",
+            ]
+
+        crawl_params["markdown_generator"] = {
+            "type": "DefaultMarkdownGenerator",
+            "params": md_gen_params,
+        }
+
+        payload: dict[str, Any] = {
             "urls": [base_url],
             "crawler_config": {
                 "type": "CrawlerRunConfig",
-                "params": {
-                    "deep_crawl_strategy": {
-                        "type": "BFSDeepCrawlStrategy",
-                        "params": deep_crawl_params,
-                    },
-                    "scraping_strategy": {"type": "LXMLWebScrapingStrategy", "params": {}},
-                    "markdown_generator": {
-                        "type": "DefaultMarkdownGenerator",
-                        "params": {"options": {"ignore_links": False, "body_width": 0}},
-                    },
-                },
+                "params": crawl_params,
             },
         }
 
@@ -188,11 +210,17 @@ class WebCrawlerAdapter(BaseAdapter):
 
         for page in results:
             url: str = page.get("url", "")
-            # crawl4ai >= 0.8 returns `markdown` as a dict (like markdown_v2); handle both.
+            # crawl4ai >= 0.8 returns `markdown` as a dict; prefer fit_markdown
+            # (output of PruningContentFilter) over raw_markdown.
             _md = page.get("markdown", "")
             if isinstance(_md, dict):
-                _md = _md.get("raw_markdown", "")
-            markdown: str = _md or page.get("markdown_v2", {}).get("raw_markdown", "")
+                _md = _md.get("fit_markdown") or _md.get("raw_markdown", "")
+            _md_v2 = page.get("markdown_v2", {})
+            markdown: str = (
+                _md
+                or _md_v2.get("fit_markdown", "")
+                or _md_v2.get("raw_markdown", "")
+            )
 
             if not url or not markdown or not markdown.strip():
                 if url:
