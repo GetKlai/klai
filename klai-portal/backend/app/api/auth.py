@@ -95,7 +95,9 @@ class TTLCache:
 # with a server-side key.  No server-side state is needed -- Zitadel is the
 # authority on whether the session is still valid.
 # ---------------------------------------------------------------------------
-_fernet = Fernet(settings.sso_cookie_key.encode())
+_fernet = Fernet(
+    settings.sso_cookie_key.encode() if settings.sso_cookie_key else Fernet.generate_key()
+)
 
 
 def _encrypt_sso(session_id: str, session_token: str) -> str:
@@ -147,6 +149,8 @@ async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
 ) -> str:
     """FastAPI dependency: validate Bearer token and return the Zitadel user_id (sub)."""
+    if settings.is_auth_dev_mode:
+        return settings.auth_dev_user_id
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:

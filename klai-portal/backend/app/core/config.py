@@ -10,14 +10,14 @@ class Settings(BaseSettings):
 
     # Zitadel
     zitadel_base_url: str = "https://auth.getklai.com"
-    zitadel_pat: str  # PORTAL_API_ZITADEL_PAT — never exposed to frontend
+    zitadel_pat: str = ""  # PORTAL_API_ZITADEL_PAT — never exposed to frontend
     zitadel_project_id: str = "362771533686374406"
     zitadel_org_id: str = ""
     zitadel_portal_app_id: str = "362901948573155339"  # "Klai Portal" OIDC app
     zitadel_portal_org_id: str = "362757920133283846"  # Org where all portal users live
 
     # Database
-    database_url: str  # asyncpg DSN: postgresql+asyncpg://...
+    database_url: str = ""  # asyncpg DSN: postgresql+asyncpg://...
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_recycle: int = 3600
@@ -47,14 +47,14 @@ class Settings(BaseSettings):
 
     # Application-level encryption for tenant secrets (zitadel_librechat_client_secret, litellm_team_key)
     # 64-char hex string = 32 bytes; generate with: openssl rand -hex 32
-    portal_secrets_key: str  # PORTAL_API_PORTAL_SECRETS_KEY
+    portal_secrets_key: str = ""  # PORTAL_API_PORTAL_SECRETS_KEY
 
     # Domain
     domain: str = "getklai.com"
 
     # SSO cookie encryption (Fernet key)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    sso_cookie_key: str  # PORTAL_API_SSO_COOKIE_KEY
+    sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
     # Secrets passed to new LibreChat containers (read from /opt/klai/.env)
@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     # Dev mode — enables Swagger UI and /openapi.json; NEVER enable in production
     debug: bool = False
 
+    # Auth dev mode — bypasses Zitadel authentication for local development.
+    # REQUIRES debug=True as additional safeguard. NEVER enable in production.
+    # When enabled, all Bearer tokens are accepted and mapped to auth_dev_user_id.
+    auth_dev_mode: bool = False
+    auth_dev_user_id: str = ""  # Zitadel user ID of a real user in the local portal_users table
+
     # IMAP calendar invite listener
     imap_host: str | None = None
     imap_port: int = 993
@@ -143,6 +149,11 @@ class Settings(BaseSettings):
     # to call the API with the user's cookies. Review carefully before modifying.
     cors_origins: str = "http://localhost:5174"
     cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
+
+    @property
+    def is_auth_dev_mode(self) -> bool:
+        """True only when BOTH debug and auth_dev_mode are enabled."""
+        return self.debug and self.auth_dev_mode
 
     @property
     def cors_origins_list(self) -> list[str]:
