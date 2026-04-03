@@ -9,33 +9,14 @@ Open-source AI platform: self-hostable, multi-tenant, production-ready.
 | `klai-portal/backend/` | FastAPI API — auth, tenant provisioning, knowledge base |
 | `klai-portal/frontend/` | React 19 + Vite + TanStack Router — portal UI |
 | `klai-docs/` | Next.js 15 documentation site |
-| `deploy/` | Self-hosting templates — Docker Compose, Caddy, LiteLLM, Zitadel |
-| `.claude/` | Shared Claude Code tooling — agents, rules (incl. patterns/pitfalls), commands, skills |
-| `docs/` | Project documentation — architecture, research, runbooks, specs, GTM |
-| `klai-private/` | Private business docs — research, GTM, pricing (team only, git submodule) |
-| `scripts/` | Repo management utilities |
-
-## Package instructions
-
-Each package has its own CLAUDE.md that loads automatically when you work in that directory:
-
-- [klai-portal/CLAUDE.md](klai-portal/CLAUDE.md) — FastAPI backend + React/Vite frontend
-
-## Knowledge base
-
-Domain patterns and pitfalls live in `.claude/rules/klai/` and load automatically
-when you work on matching files (via `paths:` frontmatter). Universal rules
-(`process-rules.md`, `git.md`) load every session.
-
-Full index: `.claude/rules/klai/patterns.md` and `.claude/rules/klai/pitfalls.md`
+| `deploy/` | Docker Compose, Caddy, LiteLLM, Zitadel |
+| `docs/` | Architecture, research, runbooks, specs |
 
 ## Model policy
 
 **[HARD] Never use OpenAI, Anthropic, or other US cloud provider model names anywhere in Klai code.**
 
-Klai is a privacy-first, EU-only platform. Using OpenAI/Anthropic model names in code would route data to US providers, violate GDPR, and break the product promise.
-
-**Forbidden:** `gpt-*`, `claude-*`, `text-davinci-*`, `text-embedding-*`, or any model from openai.com, anthropic.com, cohere.com.
+Klai is a privacy-first, EU-only platform. Forbidden: `gpt-*`, `claude-*`, `text-davinci-*`, `text-embedding-*`.
 
 **Use ONLY these LiteLLM tier aliases:**
 
@@ -45,11 +26,39 @@ Klai is a privacy-first, EU-only platform. Using OpenAI/Anthropic model names in
 | `klai-primary` | Standard quality, user-facing |
 | `klai-large` | Agentic, tool use, MCP flows |
 
-For tier details and model mappings, see `patterns/platform.md`.
-
 ## Tech stack
 
-**Portal backend:** Python 3.12, FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, uv
-**Portal frontend:** React 19, Vite, TypeScript 5.9, TanStack Router, TanStack Query, Mantine 8, Paraglide i18n, Tailwind 4
-**Docs:** Next.js 15, React 19, PostgreSQL, TypeScript
-**Deploy stack:** Docker Compose, Caddy (wildcard TLS), Zitadel (OIDC/auth), LiteLLM, LibreChat, PostgreSQL, MongoDB, Redis, Meilisearch, VictoriaMetrics
+**Backend:** Python 3.12, FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, uv
+**Frontend:** React 19, Vite, TypeScript 5.9, TanStack Router, TanStack Query, Mantine 8, Paraglide i18n, Tailwind 4
+**Docs:** Next.js 15, React 19, TypeScript
+**Deploy:** Docker Compose, Caddy, Zitadel (OIDC), LiteLLM, LibreChat, PostgreSQL, MongoDB, Redis, Meilisearch
+
+## Serena
+
+Serena auto-activates via `--project-from-cwd` — no `activate_project` needed.
+
+**[HARD] Parameter names — wrong names fail silently:**
+
+| Tool | Correct parameter | NOT |
+|---|---|---|
+| `find_symbol` | `name_path_pattern` | ~~name_path~~, ~~name~~ |
+| `search_for_pattern` | `substring_pattern` | ~~pattern~~, ~~search~~ |
+| `find_referencing_symbols` | `name_path_pattern` | ~~name_path~~, ~~symbol~~ |
+| `replace_symbol_body` | `name_path_pattern` | ~~name_path~~ |
+
+**[HARD] Always scope `search_for_pattern`** with `relative_path`, `paths_include_glob`, or `restrict_search_to_code_files`. Unscoped searches return truncated garbage.
+
+**Before editing code:** use `find_referencing_symbols` to check callers. Prefer `replace_symbol_body` over Edit for whole functions.
+
+**Subagents** in `.claude/agents/` can access Serena tools by omitting the `tools` field (inherits all) or adding `mcpServers: [serena]` to frontmatter. Plugin subagents cannot — gather context first for those.
+
+**Memories** — read relevant ones at session start (not all):
+`architecture-overview`, `backend-patterns`, `domain-model`, `frontend-standards`, `services-overview`, `deployment-context`
+
+## Agent output policy
+
+Never write prompts or audit templates to .md files. Output in chat directly.
+
+## External libraries
+
+Use context7 MCP for current library/framework docs — not for internal code or business logic. During SPEC plan phase with external dependencies, run context7 during the research sub-phase.

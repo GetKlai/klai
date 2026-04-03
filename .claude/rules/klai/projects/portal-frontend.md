@@ -5,7 +5,7 @@ paths: ["klai-portal/frontend/src/**/*.tsx", "klai-portal/frontend/src/**/*.ts"]
 # Portal Patterns
 
 > Portal-specific design tokens and component patterns.
-> Shared brand DNA (colors, typography roles, rules): auto-loaded via `styleguide.md`.
+> Shared brand DNA (colors, typography roles, rules): auto-loaded via `design/styleguide.md`.
 
 ---
 
@@ -118,5 +118,4 @@ Field pattern:
 
 ## See Also
 
-- Shared brand DNA: `styleguide.md` (auto-loads for portal files)
-- [patterns/frontend.md](patterns/frontend.md) - i18n, component conventions
+- Shared brand DNA: `design/styleguide.md` (auto-loads for portal files)

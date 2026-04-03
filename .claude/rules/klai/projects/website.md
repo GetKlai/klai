@@ -5,7 +5,7 @@ paths: ["klai-website/**"]
 # Website Patterns
 
 > Website-specific design patterns (USE side: warm, editorial, sand).
-> Shared brand DNA (colors, typography roles, rules): auto-loaded via `styleguide.md`.
+> Shared brand DNA (colors, typography roles, rules): auto-loaded via `design/styleguide.md`.
 
 ---
 
@@ -140,6 +140,6 @@ Scrolled border: 1px solid rgba(255,255,255,0.06)
 
 ## See Also
 
-- Shared brand DNA: `styleguide.md` (auto-loads for website files)
+- Shared brand DNA: `design/styleguide.md` (auto-loads for website files)
 - [Brand colors](https://www.getklai.com/company/brand-colors) - canonical color reference
-- [rules/gtm/klai-brand-voice.md](../gtm/klai-brand-voice.md) - tone and writing style
+- [rules/gtm/klai-brand-voice.md](../../gtm/klai-brand-voice.md) - tone and writing style

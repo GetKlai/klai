@@ -37,12 +37,37 @@ Without org_id in the query, an attacker can supply any `id` and access or
 delete resources belonging to another tenant (IDOR). This happened in
 `revoke_kb_group_access` where the org was discarded before the delete.
 
+## Personal resource ownership
+
+- Org-scoping alone is insufficient for personal resources. Add `created_by` check.
+- Listings: return org-wide resources + only the caller's personal resources.
+- Public endpoints: return 404 (not 403) for private resources — never leak existence.
+- Authenticated endpoints: return 403 for resources owned by someone else.
+
 ## Defense in depth: PostgreSQL RLS
 
 As a second layer, RLS policies on all tenant-scoped tables enforce org isolation
 at the database level via `app.current_org_id` (set by `set_tenant()` in every
 authenticated request). RLS catches what the helper misses; the helper remains
 explicit and auditable.
+
+## RLS + Alembic
+
+- `portal_api` user is NOT table owner — cannot run `ALTER TABLE ENABLE ROW LEVEL SECURITY`.
+- Run RLS DDL directly as `klai` superuser via psql. Keep Alembic migration for code history.
+- Use `IF NOT EXISTS` in all policy/index creation to make migrations idempotent.
+
+## RLS + SQLAlchemy
+
+- ORM adds implicit `RETURNING` — triggers SELECT policy on inserts.
+- Split `ALL` policies into separate `SELECT` and `INSERT` when inserting role differs from reading role.
+- Use `text()` raw SQL for audit/analytics inserts on split-policy tables.
+
+## RLS coverage
+
+Strict: `portal_groups`, `portal_knowledge_bases`, `portal_group_products`, `portal_group_memberships`, `portal_group_kb_access`, `portal_kb_tombstones`, `portal_user_kb_access`, `portal_retrieval_gaps`, `portal_taxonomy_nodes`, `portal_taxonomy_proposals`, `portal_user_products`.
+Permissive: `portal_users`, `portal_connectors`.
+Split (SELECT scoped, INSERT permissive): `portal_audit_log`, `product_events`, `vexa_meetings`.
 
 ## Rules for agents
 
