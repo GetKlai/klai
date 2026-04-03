@@ -59,7 +59,6 @@ function ConnectorsTab() {
 
   // Edit state
   const [editName, setEditName] = useState('')
-  const [editSchedule, setEditSchedule] = useState('')
   const [editWebcrawlerConfig, setEditWebcrawlerConfig] = useState<WebCrawlerConfig>({ base_url: '', path_prefix: '', max_pages: '200', content_selector: '' })
   const [editGithubConfig, setEditGithubConfig] = useState<GitHubConfig>({ installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '' })
   const editInitializedRef = useRef<string | null>(null)
@@ -90,7 +89,6 @@ function ConnectorsTab() {
     editInitializedRef.current = editingId
     setEditPreviewResult(null)
     setEditName(c.name)
-    setEditSchedule(c.schedule ?? '')
     setEditAllowedAssertionModes(c.allowed_assertion_modes ?? [])
     if (c.connector_type === 'web_crawler') {
       const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string }
@@ -143,7 +141,6 @@ function ConnectorsTab() {
         body: JSON.stringify({
           name: editName,
           config,
-          schedule: editSchedule || null,
           allowed_assertion_modes: editAllowedAssertionModes.length > 0 ? editAllowedAssertionModes : null,
         }),
       })
@@ -175,7 +172,6 @@ function ConnectorsTab() {
     void navigate({ search: { edit: c.id } })
     setEditPreviewResult(null)
     setEditName(c.name)
-    setEditSchedule(c.schedule ?? '')
     setEditAllowedAssertionModes(c.allowed_assertion_modes ?? [])
     if (c.connector_type === 'web_crawler') {
       const cfg = c.config as { base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string }
@@ -347,10 +343,6 @@ function ConnectorsTab() {
                       <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={editWebcrawlerConfig.max_pages} onChange={(e) => setEditWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
-                      <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
-                    </div>
-                    <div className="space-y-1.5">
                       <Label>{m.admin_connectors_assertion_modes_label()}</Label>
                       <MultiSelect options={ASSERTION_MODE_OPTIONS} value={editAllowedAssertionModes} onChange={setEditAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
                     </div>
@@ -388,10 +380,6 @@ function ConnectorsTab() {
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-branch">{m.admin_connectors_github_branch()}</Label>
                       <Input id="edit-conn-branch" required value={editGithubConfig.branch} onChange={(e) => setEditGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-schedule">{m.admin_connectors_field_schedule()}</Label>
-                      <Input id="edit-conn-schedule" placeholder={m.admin_connectors_field_schedule_placeholder()} value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} />
                     </div>
                     <div className="space-y-1.5">
                       <Label>{m.admin_connectors_assertion_modes_label()}</Label>
