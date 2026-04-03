@@ -134,7 +134,6 @@ function KnowledgePage() {
     <div className="p-8 max-w-2xl">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
-          <BookOpen className="h-7 w-7 text-[var(--color-purple-deep)]" />
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
             {m.knowledge_page_intro_heading()}
           </h1>
