@@ -121,7 +121,6 @@ logs/
 .env
 .env.*
 !.env.example
-!.env.dev.example
 
 # SOPS encrypted files (never commit unencrypted)
 *.sops
@@ -206,15 +205,11 @@ dist-ssr/
 .netlify/
 .firebase/
 
-# Separate repos inside monorepo directory (not submodules)
-klai-website/
-klai-infra/
 
-# Playwright MCP — keep example config, ignore local config/screenshots/logs
+# Playwright MCP — keep config, ignore screenshots and logs
 .playwright-mcp/*
-!.playwright-mcp/config.example.json
+!.playwright-mcp/config.json
 
-# CodeIndex — local knowledge graph + source code (not shared)
-.codeindex/
-AGENTS.md
-codeindex-src/
+# private
+/stock 
+.playwright-mcp/
