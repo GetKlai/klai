@@ -32,8 +32,9 @@ interface TranscriptSegment {
 interface SummaryStructured {
   speakers: string[]
   topics: string[]
-  decisions: string[]
-  action_items: { owner: string | null; task: string }[]
+  decisions: (string | { decision: string; rationale: string | null; decided_by: string | null })[]
+  action_items: { owner: string | null; task: string; deadline?: string | null }[]
+  key_quotes?: string[]
   open_questions: string[]
   next_steps: string[]
 }
@@ -89,14 +90,23 @@ function StatusBadge({ status }: { status: string }) {
 
 /** Build a markdown action items section from structured data */
 function buildActionItemsMd(
-  items: { owner: string | null; task: string }[],
+  items: { owner: string | null; task: string; deadline?: string | null }[],
   title: string,
 ): string {
   if (!items.length) return ''
-  const lines = items.map((item) =>
-    item.owner ? `- **${item.owner}**: ${item.task}` : `- ${item.task}`,
-  )
+  const lines = items.map((item) => {
+    let line = item.owner ? `**${item.owner}**: ${item.task}` : item.task
+    if (item.deadline) line += ` _(${item.deadline})_`
+    return `- ${line}`
+  })
   return `\n\n## ${title}\n\n${lines.join('\n')}`
+}
+
+/** Build a markdown key quotes section */
+function buildKeyQuotesMd(quotes: string[], title: string): string {
+  if (!quotes.length) return ''
+  const lines = quotes.map((q) => `> ${q}`)
+  return `\n\n## ${title}\n\n${lines.join('\n\n')}`
 }
 
 /** Strip markdown syntax to produce plain text for clipboard copy */
@@ -173,6 +183,10 @@ function MeetingDetailPage() {
       buildActionItemsMd(
         meeting.summary_json.structured?.action_items ?? [],
         m.app_meetings_action_items_title(),
+      ) +
+      buildKeyQuotesMd(
+        meeting.summary_json.structured?.key_quotes ?? [],
+        m.app_meetings_key_quotes_title(),
       )
     : ''
 
