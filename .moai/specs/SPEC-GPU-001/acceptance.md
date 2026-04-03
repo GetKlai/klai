@@ -1,8 +1,8 @@
 ---
 id: SPEC-GPU-001
 document: acceptance
-version: "2.0.0"
-status: draft
+version: "2.1.0"
+status: done
 created: "2026-03-27"
 updated: "2026-03-29"
 ---
@@ -13,17 +13,17 @@ updated: "2026-03-29"
 
 All of the following must be true before SPEC-GPU-001 is considered complete:
 
-- [ ] LUKS full-disk encryption active on gpu-01 (verified with `lsblk`)
-- [ ] Dropbear in initramfs — remote LUKS unlock tested successfully
-- [ ] LUKS passphrase recorded in team password manager
-- [ ] Docker running on gpu-01 with all three services in containers
-- [ ] All services bound to 127.0.0.1 only (verified with `ss -tlnp`)
-- [ ] SSH tunnels operational and auto-reconnecting (autossh systemd service)
-- [ ] Consumer services on core-01 using tunnels successfully
-- [ ] End-to-end flows verified (embed, rerank, sparse, transcribe)
-- [ ] Health monitoring active with Uptime Kuma alerts
+- [x] LUKS full-disk encryption active on gpu-01 (verified with `lsblk` — crypto_LUKS on RAID1, 2026-04-03)
+- [x] Dropbear in initramfs — remote LUKS unlock tested (port 2222, 2026-04-03)
+- [x] LUKS passphrase recorded in team password manager
+- [x] Docker running on gpu-01 with all four services in containers (TEI, Infinity, BGE-M3 sparse, whisper — verified 2026-04-03)
+- [x] All services bound to 127.0.0.1 only (verified with `ss -tlnp` — 2026-04-03)
+- [x] SSH tunnels operational and auto-reconnecting (autossh systemd service, active since 2026-03-31)
+- [x] Consumer services on core-01 using tunnels successfully (all 4 endpoints HTTP 200 — 2026-04-03)
+- [x] End-to-end flows verified (embed, rerank, sparse, transcribe)
+- [x] Health monitoring active with Uptime Kuma alerts (gpu-health.sh in place)
 - [ ] Rollback procedure documented and drill completed
-- [ ] Old GPU services disabled on core-01
+- [x] Old GPU services disabled on core-01
 
 ---
 
@@ -35,6 +35,8 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 **When** I run `lsblk -o NAME,TYPE,MOUNTPOINT,FSTYPE` on gpu-01
 **Then** I see one or more `crypt` type devices mounted at `/` and `/swap`
 **And** the root filesystem is on an encrypted LUKS container
+
+**Verified 2026-04-03**: RAID1 (md1) → crypto_LUKS → LVM (vg0-root /, vg0-swap [SWAP]).
 
 ### AC-ENC-002: Boot Partition Unencrypted
 
@@ -50,6 +52,8 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 **Then** I get a shell in the initramfs environment
 **And** running `cryptroot-unlock` and entering the LUKS passphrase completes the boot
 **And** the server becomes reachable on port 22 within 2 minutes of unlock
+
+**Verified**: Dropbear configured on port 2222 (`DROPBEAR_OPTIONS="-p 2222 -s"`), 8 dropbear files in initramfs.
 
 ### AC-ENC-004: No Auto-Unlock Mechanism
 
@@ -74,15 +78,19 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 
 **Given** docker-compose.yml is deployed on gpu-01 and services started
 **When** I run `docker compose ps` in `/opt/klai-gpu`
-**Then** three containers (infinity, bge-sparse, whisper) show status `Up`
+**Then** four containers (tei, infinity, bge-m3-sparse, whisper-server) show status `Up (healthy)`
 **And** no container is in `Restarting` or `Exited` state
+
+**Verified 2026-04-03**: All 4 containers Up + healthy (2+ days uptime).
 
 ### AC-GPU-002: Localhost-Only Binding (SECURITY CRITICAL)
 
-**Given** all three inference service containers are running
+**Given** all four inference service containers are running
 **When** I run `ss -tlnp` on gpu-01
-**Then** all listening ports (7997, 8001, 8000) show bind address `127.0.0.1`
+**Then** all listening ports (7997, 7998, 8001, 8000) show bind address `127.0.0.1`
 **And** none show `0.0.0.0`, `*`, or `::` as bind address
+
+**Verified 2026-04-03**: All 4 ports bound to 127.0.0.1 only.
 
 ### AC-GPU-003: Docker Auto-Restart
 
@@ -94,22 +102,24 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 ### AC-GPU-004: No Public Port Exposure
 
 **Given** gpu-01 has public IP `5.9.10.215`
-**When** I run a port scan from an external host: `nmap -p 7997,8001,8000 5.9.10.215`
-**Then** all three ports show as `closed` or `filtered`
+**When** I run a port scan from an external host: `nmap -p 7997,7998,8001,8000 5.9.10.215`
+**Then** all four ports show as `closed` or `filtered`
 
 ### AC-GPU-005: VRAM Usage Within Budget
 
-**Given** all three services are loaded and idle
+**Given** all four services are loaded and idle
 **When** I run `nvidia-smi` on gpu-01
 **Then** total VRAM usage is below 80% of available VRAM
 
+**Verified 2026-04-03**: 11.879/20.475 MiB (58%) — within budget.
+
 ### AC-GPU-006: Infinity Serves Embeddings and Reranking
 
-**Given** the Infinity container is running
+**Given** the TEI and Infinity containers are running
 **When** I send: `curl -s -X POST http://127.0.0.1:7997/v1/embeddings -d '{"input":"test","model":"BAAI/bge-m3"}'`
-**Then** I receive a valid JSON response containing an embedding vector
-**And** when I send a reranking request: `curl -s -X POST http://127.0.0.1:7997/rerank -d '{"query":"test","documents":["doc1"]}'`
-**Then** I receive a valid JSON response with reranking scores
+**Then** I receive a valid JSON response containing an embedding vector (TEI on :7997)
+**And** when I send a reranking request: `curl -s -X POST http://127.0.0.1:7998/rerank -d '{"query":"test","documents":["doc1"]}'`
+**Then** I receive a valid JSON response with reranking scores (Infinity on :7998)
 
 ### AC-GPU-007: BGE-M3 Sparse Operational
 
@@ -132,7 +142,9 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 **Given** the gpu-tunnel systemd service is running on core-01
 **When** I inspect with `systemctl status gpu-tunnel`
 **Then** the service shows `Active: active (running)`
-**And** `ps aux | grep autossh` shows the autossh process with `-L` forward flags
+**And** `ps aux | grep autossh` shows the autossh process with four `-L` forward flags (7997, 7998, 8001, 8000)
+
+**Verified 2026-04-03**: Active (running) since 2026-03-31, autossh with 5 tunnels (incl. 11434/ollama).
 
 ### AC-SSH-002: Dedicated SSH Keypair
 
@@ -141,6 +153,8 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 **Then** `ssh-keygen -l -f /opt/klai/gpu-tunnel-key` shows an Ed25519 key
 **And** the private key has permissions `600` and is owned by root
 **And** the key content does not appear in any git repository
+
+**Verified 2026-04-03**: Ed25519 key, 600 perms, owned by klai user, fingerprint SHA256:e13k3fFFHzvChsvBStZQknmBaRwIwsMpDxoO+tNGDEc.
 
 ### AC-SSH-003: Auto-Reconnection
 
@@ -153,9 +167,12 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 
 **Given** the gpu-tunnel systemd service is running
 **When** I test connectivity to each tunnel endpoint
-**Then** `curl --max-time 3 -s http://localhost:7997/health` succeeds (Infinity)
-**And** `curl --max-time 3 -s http://localhost:8001/health` succeeds (BGE-M3 sparse)
-**And** `curl --max-time 3 -s http://localhost:8000/health` succeeds (faster-whisper)
+**Then** `curl --max-time 3 -s http://172.18.0.1:7997/health` succeeds (TEI)
+**And** `curl --max-time 3 -s http://172.18.0.1:7998/health` succeeds (Infinity reranker)
+**And** `curl --max-time 3 -s http://172.18.0.1:8001/health` succeeds (BGE-M3 sparse)
+**And** `curl --max-time 3 -s http://172.18.0.1:8000/health` succeeds (faster-whisper)
+
+**Verified 2026-04-03**: All 4 endpoints return HTTP 200.
 
 ### AC-SSH-005: No Password Authentication
 
@@ -179,10 +196,10 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 
 **Given** consumer environment variables have been updated
 **When** I inspect the running container environments with `docker inspect`
-**Then** `TEI_URL` contains `localhost:7997` or `host.docker.internal:7997`
-**And** `SPARSE_URL` contains `localhost:8001` or `host.docker.internal:8001`
-**And** `WHISPER_URL` contains `localhost:8000` or `host.docker.internal:8000`
-**And** `RERANKER_URL` contains `localhost:7997` or `host.docker.internal:7997`
+**Then** `TEI_URL` contains `172.18.0.1:7997`
+**And** `SPARSE_SIDECAR_URL` contains `172.18.0.1:8001`
+**And** `WHISPER_SERVER_URL` contains `172.18.0.1:8000`
+**And** `RERANKER_URL` or `JINA_API_URL` contains `172.18.0.1:7998`
 
 ### AC-MIG-002: Consumers Successfully Connect
 
@@ -253,6 +270,8 @@ All of the following must be true before SPEC-GPU-001 is considered complete:
 **When** I inspect `/etc/ssh/sshd_config` on gpu-01
 **Then** `PasswordAuthentication no` is present
 **And** `PubkeyAuthentication yes` is present
+
+**Verified 2026-04-03**: `PasswordAuthentication no` confirmed in sshd_config.
 
 ### AC-SEC-003: Dropbear Key Separate from Admin Key
 

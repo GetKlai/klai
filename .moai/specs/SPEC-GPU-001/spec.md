@@ -177,25 +177,28 @@ The system SHALL NOT auto-unlock the disk without operator authentication — no
 ### Service Architecture
 
 ```
-core-01 (Hetzner DE)            SSH Tunnels (encrypted)           gpu-01 (Hetzner DE, 5.9.10.215)
-┌────────────────────┐          ─────────────────────────>        ┌───────────────────────────────┐
-│ retrieval-api      │──localhost:7997──>                          │ Infinity :7997                │
-│ knowledge-ingest   │──localhost:7997──>                          │   (bge-m3 + bge-reranker)     │
-│                    │──localhost:8001──>                          │ BGE-M3 sparse :8001           │
-│ scribe-api         │──localhost:8000──>                          │ faster-whisper :8000          │
-├────────────────────┤                                             │                               │
-│ autossh            │                                             │ All bound to 127.0.0.1        │
-│ (systemd service)  │                                             │ Docker Compose managed        │
-└────────────────────┘                                             └───────────────────────────────┘
+core-01 (Hetzner DE)              SSH Tunnels (encrypted)           gpu-01 (Hetzner DE, 5.9.10.215)
+┌──────────────────────┐          ─────────────────────────>        ┌───────────────────────────────┐
+│ retrieval-api        │──172.18.0.1:7997──>                        │ TEI :7997                     │
+│ knowledge-ingest     │──172.18.0.1:7997──>                        │   (bge-m3 dense embeddings)   │
+│ retrieval-api        │──172.18.0.1:7998──>                        │ Infinity :7998                │
+│                      │──172.18.0.1:8001──>                        │   (bge-reranker-v2-m3)        │
+│ scribe-api           │──172.18.0.1:8000──>                        │ BGE-M3 sparse :8001           │
+├──────────────────────┤                                             │ faster-whisper :8000          │
+│ autossh              │                                             │                               │
+│ (systemd service)    │                                             │ All bound to 127.0.0.1        │
+│ binds 172.18.0.1     │                                             │ Docker Compose managed        │
+└──────────────────────┘                                             └───────────────────────────────┘
 ```
 
 ### Port Mapping
 
 | Service | gpu-01 Port | core-01 Tunnel Port | Consumers |
 |---------|------------|---------------------|-----------|
-| Infinity (embeddings + reranker) | 127.0.0.1:7997 | localhost:7997 | retrieval-api, knowledge-ingest |
-| BGE-M3 sparse | 127.0.0.1:8001 | localhost:8001 | retrieval-api, knowledge-ingest |
-| faster-whisper | 127.0.0.1:8000 | localhost:8000 | scribe-api |
+| TEI (bge-m3 dense embeddings) | 127.0.0.1:7997 | 172.18.0.1:7997 | retrieval-api, knowledge-ingest |
+| Infinity (bge-reranker-v2-m3) | 127.0.0.1:7998 | 172.18.0.1:7998 | retrieval-api |
+| BGE-M3 sparse | 127.0.0.1:8001 | 172.18.0.1:8001 | retrieval-api, knowledge-ingest |
+| faster-whisper | 127.0.0.1:8000 | 172.18.0.1:8000 | scribe-api |
 
 ### Files Changed
 
