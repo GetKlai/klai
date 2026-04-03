@@ -112,9 +112,7 @@ def build_crawl_config(selector: str | None) -> dict[str, Any]:
 # REST API helpers
 # ---------------------------------------------------------------------------
 
-_POLL_INTERVAL = 1.5       # seconds between polls (single-page)
 _DEEP_POLL_INTERVAL = 5.0  # seconds between polls (bulk/deep crawl)
-_MAX_POLL = 60.0            # max seconds for single-page crawl
 _MAX_DEEP_POLL = 30 * 60   # max seconds for bulk/deep crawl (30 minutes)
 
 
@@ -124,14 +122,14 @@ def _auth_headers() -> dict[str, str]:
     return {}
 
 
-async def _submit_and_poll(
+async def _crawl_sync(
     client: httpx.AsyncClient,
     payload: dict[str, Any],
-    timeout: float = _MAX_POLL,
 ) -> dict[str, Any]:
-    """Submit a single-page crawl job and poll until completion.
+    """Submit a crawl to POST /crawl and return the synchronous response.
 
-    Uses POST /crawl → GET /task/{task_id} (single-page async endpoint).
+    POST /crawl is a synchronous endpoint — it blocks until crawling is
+    complete and returns results directly (no task_id, no polling needed).
     """
     resp = await client.post(
         f"{settings.crawl4ai_api_url}/crawl",
@@ -139,26 +137,7 @@ async def _submit_and_poll(
         headers=_auth_headers(),
     )
     resp.raise_for_status()
-    data = resp.json()
-    task_id: str = data["task_id"]
-
-    elapsed = 0.0
-    while elapsed < timeout:
-        await asyncio.sleep(_POLL_INTERVAL)
-        elapsed += _POLL_INTERVAL
-        resp = await client.get(
-            f"{settings.crawl4ai_api_url}/task/{task_id}",
-            headers=_auth_headers(),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        status = data.get("status", "").lower()
-        if status == "completed":
-            return data.get("result", data)
-        if status == "failed":
-            raise RuntimeError(f"Crawl job {task_id} failed: {data.get('error', 'unknown')}")
-
-    raise TimeoutError(f"Crawl job {task_id} did not complete within {timeout}s")
+    return resp.json()
 
 
 def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
@@ -227,7 +206,7 @@ async def crawl_page(url: str, selector: str | None = None) -> CrawlResult:
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
-            data = await _submit_and_poll(client, payload)
+            data = await _crawl_sync(client, payload)
         except Exception as exc:
             logger.warning("crawl4ai_request_failed", url=url, error=str(exc))
             return CrawlResult(
@@ -235,8 +214,7 @@ async def crawl_page(url: str, selector: str | None = None) -> CrawlResult:
                 word_count=0, success=False, error_message=str(exc),
             )
 
-    # REST API returns results as a list or single dict
-    results = data.get("results", data.get("result", []))
+    results = data.get("results", [])
     if isinstance(results, dict):
         results = [results]
 
@@ -399,9 +377,9 @@ async def crawl_dom_summary(url: str) -> list[dict] | None:
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            data = await _submit_and_poll(client, payload, timeout=45.0)
+            data = await _crawl_sync(client, payload)
 
-        results = data.get("results", data.get("result", []))
+        results = data.get("results", [])
         if isinstance(results, dict):
             results = [results]
         if not results:
