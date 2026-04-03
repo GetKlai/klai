@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # SSO cookie encryption (Fernet key)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     sso_cookie_key: str  # PORTAL_API_SSO_COOKIE_KEY
-    sso_cookie_max_age: int = 86400  # 24 hours; Zitadel session lifetime is the real authority
+    sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
     # Secrets passed to new LibreChat containers (read from /opt/klai/.env)
     mongo_root_password: str = ""
