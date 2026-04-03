@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, Eye, Lock, Pencil, Plus } from 'lucide-react'
+import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -31,6 +31,16 @@ function avatarColor(uid: string): string {
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { apiFetch } from '@/lib/apiFetch'
 
 type GroupsSearch = { create?: true }
@@ -112,6 +122,7 @@ function AdminGroups() {
   const { create } = Route.useSearch()
   const showCreate = create === true
   const [newGroupName, setNewGroupName] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-groups'],
@@ -165,6 +176,22 @@ function AdminGroups() {
     },
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: async (groupId: number) => {
+      return apiFetch(`/api/admin/groups/${groupId}`, token, {
+        method: 'DELETE',
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-memberships'] })
+      toast.success(m.admin_groups_success_deleted())
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
+  })
+
   const columns = [
     columnHelper.accessor('name', {
       header: () => m.admin_groups_name(),
@@ -211,6 +238,15 @@ function AdminGroups() {
       header: () => '',
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
+          {!row.original.is_system && (
+            <button
+              onClick={() => setConfirmDeleteId(row.original.id)}
+              aria-label={`Delete ${row.original.name}`}
+              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           {!row.original.is_system && (
             <button
               onClick={() =>
@@ -297,6 +333,36 @@ function AdminGroups() {
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog
+        open={confirmDeleteId !== null}
+        onOpenChange={(open) => { if (!open) setConfirmDeleteId(null) }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{m.admin_groups_confirm_delete_title()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.admin_groups_confirm_delete_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.admin_users_cancel()}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--color-destructive)] text-white hover:bg-[var(--color-destructive)]/90"
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                if (confirmDeleteId) deleteMutation.mutate(confirmDeleteId)
+                setConfirmDeleteId(null)
+              }}
+            >
+              {deleteMutation.isPending && (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              )}
+              {m.admin_groups_delete()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
