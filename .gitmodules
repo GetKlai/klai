@@ -1,3 +1,9 @@
 [submodule "klai-private"]
 	path = klai-private
 	url = git@github.com:GetKlai/klai-private.git
+[submodule "klai-website"]
+	path = klai-website
+	url = https://github.com/GetKlai/klai-website.git
+[submodule "klai-infra"]
+	path = klai-infra
+	url = https://github.com/GetKlai/klai-infra.git
