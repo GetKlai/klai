@@ -4,7 +4,7 @@
 
 - **SPEC ID:** SPEC-SEC-002
 - **Titel:** ISO 27001:2022 Compliance — Kleine en middelgrote gaps
-- **Status:** DRAFT
+- **Status:** COMPLETE
 - **Prioriteit:** High
 - **Aangemaakt:** 2026-03-27
 - **Voorganger:** SPEC-SEC-001 (initieel ISO 27001 beleidskader)

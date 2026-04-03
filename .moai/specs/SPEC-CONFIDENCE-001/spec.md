@@ -1,7 +1,8 @@
 # SPEC-CONFIDENCE-001: Evidence-Based Confidence Protocol & Framework Hardening
 
-**Status:** Completed
+**Status:** Completed (REQ-5 deferred)
 **Created:** 2026-04-02
+**Closed:** 2026-04-03
 **Author:** Mark + Claude
 **Inspired by:** [Vexa Conductor](https://github.com/Vexa-ai/vexa/tree/feature/agentic-runtime/conductor)
 
@@ -205,7 +206,9 @@ severity_map:
   - New fields: **Root cause** (why this is a problem), **Source** (where we learned this — Vexa, incident, observation)
   - Loads on-demand via `paths:` frontmatter — serves as reference, not as the primary instruction source
 
-### REQ-5: Machine-Readable Pitfall Severity
+### REQ-5: Machine-Readable Pitfall Severity ⛔ DEFERRED
+
+> **Deferred (2026-04-03):** No consumer exists. Investigation of Vexa's source code revealed that their severity/confirmation tracking (which inspired this REQ) was aspirational documentation — never implemented. Gotchas G1-G11 are plain prose, check-completion.py does binary checks only. Adding severity_map without a consumer would be dead data (see pitfall `process-dead-data-in-frontmatter`). Revisit when a tool/hook is built that reads pitfall severity.
 
 **EARS:** All pitfall files SHALL have machine-readable severity metadata in their YAML frontmatter.
 
