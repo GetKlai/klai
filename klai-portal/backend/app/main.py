@@ -53,8 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         if not settings.auth_dev_user_id:
             logger.critical(
-                "AUTH_DEV_USER_ID is not set. Set it to a zitadel_user_id "
-                "that exists in the portal_users table."
+                "AUTH_DEV_USER_ID is not set. Set it to a zitadel_user_id that exists in the portal_users table."
             )
             raise SystemExit(1)
     else:
