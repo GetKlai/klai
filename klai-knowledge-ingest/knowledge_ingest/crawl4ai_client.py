@@ -269,16 +269,25 @@ async def crawl_site(
         "params": deep_crawl_params,
     }
 
-    # Seed crawl with start_url + sitemap URLs (same strategy as klai-connector)
+    # Seed crawl with start_url + sitemap URLs (same strategy as klai-connector).
+    # Cap seed list at max_pages: sitemap seeds are each crawled individually —
+    # they are not subject to the BFSDeepCrawlStrategy max_pages limit.
     urls = [start_url]
     sitemap_urls = await _fetch_sitemap_urls(start_url)
     if sitemap_urls:
         existing = {start_url}
         for u in sitemap_urls:
+            if len(urls) >= max_pages:
+                break
             if u not in existing:
                 urls.append(u)
                 existing.add(u)
-        logger.info("crawl_site_sitemap_seeds", start_url=start_url, count=len(sitemap_urls))
+        logger.info(
+            "crawl_site_sitemap_seeds",
+            start_url=start_url,
+            found=len(sitemap_urls),
+            seeded=len(urls),
+        )
 
     payload = {
         "urls": urls,
