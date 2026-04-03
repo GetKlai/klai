@@ -27,6 +27,7 @@ class PortalKnowledgeBase(Base):
     gitea_repo_slug: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="org")
     owner_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_org_role: Mapped[str | None] = mapped_column(Text, nullable=True, server_default="viewer")
 
 
 class PortalUserKBAccess(Base):

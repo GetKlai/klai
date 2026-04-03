@@ -744,6 +744,44 @@
   "knowledge_members_invite_user_submit_loading": "Uitnodigen...",
   "knowledge_members_invite_group_submit_loading": "Toevoegen...",
   "knowledge_members_personal_kb_hint": "Persoonlijke kennisbanken kunnen niet worden gedeeld.",
+
+  "knowledge_sharing_who_can_access": "Wie mag erbij?",
+  "knowledge_sharing_visibility_public": "Publiek",
+  "knowledge_sharing_visibility_public_description": "Iedereen kan lezen, ook buiten je organisatie. Docs site is openbaar.",
+  "knowledge_sharing_visibility_org": "Organisatie",
+  "knowledge_sharing_visibility_org_description": "Alle teamleden kunnen lezen. Docs alleen voor ingelogde leden.",
+  "knowledge_sharing_visibility_restricted": "Beperkt",
+  "knowledge_sharing_visibility_restricted_description": "Alleen wie jij kiest heeft toegang.",
+
+  "knowledge_sharing_contributor_toggle": "Teamleden mogen ook content toevoegen",
+  "knowledge_sharing_contributor_toggle_description": "Alle org-leden worden contributor in plaats van alleen viewer.",
+
+  "knowledge_sharing_share_with": "Met wie wil je delen?",
+  "knowledge_sharing_groups": "Groepen",
+  "knowledge_sharing_search_group": "Zoek een groep...",
+  "knowledge_sharing_persons": "Personen",
+  "knowledge_sharing_search_person": "Zoek op naam of e-mail...",
+  "knowledge_sharing_min_one_member": "Minimaal 1 groep of persoon vereist",
+  "knowledge_sharing_role_label": "Rol",
+
+  "knowledge_sharing_summary_docs_auto": "Docs worden automatisch aangemaakt",
+  "knowledge_sharing_summary_org_default": "Alle leden: {role}",
+  "knowledge_sharing_summary_contributors_yes": "Teamleden bijdragen: Ja",
+  "knowledge_sharing_summary_contributors_no": "Teamleden bijdragen: Nee",
+  "knowledge_sharing_summary_shared_with": "Gedeeld met:",
+  "knowledge_sharing_summary_only_shared": "Alleen gedeeld met:",
+
+  "knowledge_sharing_default_role_heading": "Standaard voor de organisatie",
+  "knowledge_sharing_default_role_label": "Alle org-leden:",
+  "knowledge_sharing_default_role_hint": "Onderstaande groepen en personen hebben extra rechten bovenop de standaard.",
+  "knowledge_sharing_groups_extra": "Groepen met extra rechten",
+  "knowledge_sharing_persons_extra": "Personen met extra rechten",
+  "knowledge_sharing_via_col": "Via",
+  "knowledge_sharing_via_individual": "Individueel",
+  "knowledge_sharing_via_group": "Groep: {name}",
+  "knowledge_sharing_restricted_label": "Alleen expliciet gedeeld",
+  "knowledge_sharing_creator_note": "De creator ({name}) is altijd owner en kan niet verwijderd worden.",
+
   "knowledge_new_scope_label": "Bereik",
   "knowledge_new_scope_org": "Organisatie",
   "knowledge_new_scope_personal": "Persoonlijk",
@@ -805,6 +843,7 @@
   "app_meetings_summary_copy_markdown": "Kopieer markdown",
   "app_meetings_summary_copy_done": "Gekopieerd!",
   "app_meetings_action_items_title": "Actiepunten",
+  "app_meetings_key_quotes_title": "Belangrijke citaten",
   "app_meetings_start_onboarding_title": "Twee manieren om een opname te starten",
   "app_meetings_start_onboarding_url_heading": "Link plakken",
   "app_meetings_start_onboarding_url_body": "Voer een Google Meet-, Zoom- of Teams-link in en klik op Bot starten.",
@@ -1211,5 +1250,6 @@
   "admin_billing_placeholder_street": "Voorbeeldstraat 1",
   "admin_billing_placeholder_zipcode": "1234 AB",
   "admin_billing_placeholder_city": "Amsterdam",
-  "admin_billing_placeholder_tax_number": "NL123456789B01"
+  "admin_billing_placeholder_tax_number": "NL123456789B01",
+  "session_token_expiring": "Sessie wordt verlengd..."
 }

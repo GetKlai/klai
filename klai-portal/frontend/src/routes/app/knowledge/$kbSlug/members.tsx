@@ -107,6 +107,18 @@ function MembersTab() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
   })
 
+  const updateDefaultRoleMutation = useMutation({
+    mutationFn: async (newRole: string | null) => {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/default-org-role`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ default_org_role: newRole || null }),
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-base', kbSlug] })
+    },
+  })
+
   if (isPersonal) {
     return (
       <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_personal_kb_hint()}</p>
@@ -121,10 +133,49 @@ function MembersTab() {
 
   return (
     <div className="space-y-4">
+      {/* Default org role section — only for org-scoped KBs */}
+      {kb && kb.owner_type === 'org' && (
+        <Card>
+          <CardContent className="pt-4 space-y-2">
+            <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+              {m.knowledge_sharing_default_role_heading()}
+            </p>
+            <div className="flex items-center gap-3">
+              <Label htmlFor="default-org-role" className="text-sm text-[var(--color-muted-foreground)]">
+                {m.knowledge_sharing_default_role_label()}
+              </Label>
+              {isOwner ? (
+                <Select
+                  id="default-org-role"
+                  value={kb.default_org_role ?? ''}
+                  onChange={(e) => updateDefaultRoleMutation.mutate(e.target.value || null)}
+                  className="w-auto px-2 py-1 text-xs"
+                >
+                  <option value="">{m.knowledge_sharing_restricted_label()}</option>
+                  <option value="viewer">{m.knowledge_members_role_viewer()}</option>
+                  <option value="contributor">{m.knowledge_members_role_contributor()}</option>
+                </Select>
+              ) : (
+                <span className="text-sm">
+                  {kb.default_org_role
+                    ? roleBadge(kb.default_org_role)
+                    : m.knowledge_sharing_restricted_label()}
+                </span>
+              )}
+            </div>
+            {kb.default_org_role && (
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.knowledge_sharing_default_role_hint()}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Individual users */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{m.knowledge_members_users_heading()}</p>
+          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{kb?.default_org_role ? m.knowledge_sharing_persons_extra() : m.knowledge_members_users_heading()}</p>
           {isOwner && !showInviteUser && (
             <Button size="sm" variant="outline" onClick={() => setShowInviteUser(true)}>
               <Plus className="h-3.5 w-3.5 mr-1" />
@@ -210,7 +261,7 @@ function MembersTab() {
       {/* Groups */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{m.knowledge_members_groups_heading()}</p>
+          <p className="text-sm font-medium text-[var(--color-purple-deep)]">{kb?.default_org_role ? m.knowledge_sharing_groups_extra() : m.knowledge_members_groups_heading()}</p>
           {isOwner && !showInviteGroup && (
             <Button size="sm" variant="outline" onClick={() => setShowInviteGroup(true)}>
               <Plus className="h-3.5 w-3.5 mr-1" />
@@ -287,6 +338,10 @@ function MembersTab() {
           </Card>
         )}
       </div>
+
+      <p className="text-xs text-[var(--color-muted-foreground)] italic">
+        {m.knowledge_sharing_creator_note({ name: '' })}
+      </p>
 
       {/* Remove confirmations */}
       <AlertDialog open={confirmingRemoveUser !== null} onOpenChange={(open) => { if (!open) setConfirmingRemoveUser(null) }}>

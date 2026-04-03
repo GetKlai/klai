@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -64,6 +65,7 @@ function AppLayout() {
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar navItems={appNav} />
       <main className="flex-1 overflow-y-auto">
+        <SessionBanner />
         <Outlet />
       </main>
       <HelpButton />
