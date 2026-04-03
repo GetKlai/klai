@@ -12,99 +12,111 @@ const oidcConfig = {
   client_id: import.meta.env.VITE_OIDC_CLIENT_ID as string,
   redirect_uri: `${window.location.origin}/callback`,
   post_logout_redirect_uri: `${window.location.origin}/logged-out`,
-  // offline_access requests a refresh token so react-oidc-context can renew
-  // the access token via the token endpoint instead of a fragile hidden iframe.
-  // This means session renewal survives Zitadel restarts (refresh tokens are
-  // DB-backed; they don't depend on a live Zitadel browser session).
+  // offline_access gives us a refresh token so renewal uses the token endpoint
+  // instead of a hidden iframe — survives Zitadel restarts.
   scope: 'openid profile email offline_access',
-  // Always call Zitadel end_session on logout (clears Zitadel session too)
   revokeTokensOnSignout: true,
-  // Automatically renew the access token before it expires. With offline_access
-  // this uses the refresh token (token endpoint call) rather than a hidden iframe,
-  // eliminating the dependency on the Zitadel session being alive.
   automaticSilentRenew: true,
-  // PKCE (S256 code challenge) is enabled by default in oidc-client-ts v3 for
-  // authorization code flow (response_type: 'code'). Zitadel requires PKCE for
-  // public clients (SPAs). No explicit config needed.
-  // Persist tokens in localStorage so sessions survive browser restarts and new
-  // tabs. The default (sessionStorage) loses tokens on every browser close.
+  // PKCE (S256) enabled by default in oidc-client-ts v3. Zitadel requires it.
+  // localStorage so sessions survive browser restarts and new tabs.
   userStore: new WebStorageStateStore({ store: window.localStorage }),
-  // Fire accessTokenExpiring event 5 minutes before token expires, giving the
-  // UI time to show a warning if automaticSilentRenew hasn't kicked in yet.
+  // Fire accessTokenExpiring 5 min before expiry for the SessionBanner.
   accessTokenExpiringNotificationTimeInSeconds: 300,
 }
 
-function SentryUserSync() {
-  const auth = useAuth()
+// ---------------------------------------------------------------------------
+// Session lifecycle hooks
+// ---------------------------------------------------------------------------
+
+/** Sync authenticated user identity to Sentry for error attribution. */
+function useSentryUserSync(): void {
+  const { isAuthenticated, user } = useAuth()
+
   useEffect(() => {
-    if (auth.isAuthenticated && auth.user?.profile) {
-      Sentry.setUser({ id: auth.user.profile.sub })
+    if (isAuthenticated && user?.profile) {
+      Sentry.setUser({ id: user.profile.sub })
     } else {
       Sentry.setUser(null)
     }
-  }, [auth.isAuthenticated, auth.user])
-  return null
+  }, [isAuthenticated, user])
 }
 
-// Handles OIDC token renewal errors.
-// Re-authentication errors (invalid_grant, login_required) → sign out so route
-// guards redirect to login. Any other error is unexpected: report loudly, don't
-// silently sign the user out.
-const REAUTHENTICATION_ERRORS = new Set(['invalid_grant', 'login_required'])
-
-function AuthSessionMonitor() {
+/** Remove expired OIDC artifacts (abandoned code_verifier, stale tokens) on mount. */
+function useStaleStateCleanup(): void {
   const auth = useAuth()
-  const { error: authError } = auth
-  const isSigningOut = useRef(false)
 
-  // R2: Clean up stale OIDC state (abandoned code_verifier, expired tokens)
-  // on app startup. Only removes entries older than staleStateAgeInSeconds (15 min).
   useEffect(() => {
     auth.clearStaleState().catch((err: unknown) => {
       authLogger.warn('Failed to clear stale OIDC state', { error: err })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, [])
+}
 
-  // R1: Cross-tab logout synchronization. When a user signs out in one tab,
-  // oidc-client-ts detects the localStorage user key was cleared (via the
-  // browser storage event) and fires addUserSignedOut in all other tabs.
+const REAUTHENTICATION_ERRORS = new Set(['invalid_grant', 'login_required'])
+
+/**
+ * Guard against invalid sessions from two sources:
+ *
+ * 1. Cross-tab logout — another tab cleared the localStorage user key
+ * 2. Token renewal failure — refresh token expired or revoked by Zitadel
+ *
+ * Both paths call removeUser() exactly once, protected by a shared ref
+ * to prevent re-entrant signout loops across tabs.
+ */
+function useSessionGuard(): void {
+  const auth = useAuth()
+  const { error: authError } = auth
+  const isSigningOut = useRef(false)
+
   useEffect(() => {
-    const handleSignedOut = (): void => {
+    return auth.events.addUserSignedOut(() => {
       if (auth.isAuthenticated && !isSigningOut.current) {
         isSigningOut.current = true
         authLogger.info('Signed out in another tab')
         void auth.removeUser()
       }
-    }
-    return auth.events.addUserSignedOut(handleSignedOut)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.events is stable
   }, [auth.isAuthenticated])
 
-  // Handle OIDC token renewal errors.
-  // Re-authentication errors (invalid_grant, login_required) → sign out so route
-  // guards redirect to login. Any other error is unexpected: report loudly.
   useEffect(() => {
     if (!authError) return
-    if (authError instanceof ErrorResponse && authError.error !== null && REAUTHENTICATION_ERRORS.has(authError.error)) {
+
+    const isReauthError =
+      authError instanceof ErrorResponse &&
+      authError.error !== null &&
+      REAUTHENTICATION_ERRORS.has(authError.error)
+
+    if (isReauthError) {
       authLogger.info('Session ended, signing out', { error: authError.error })
       isSigningOut.current = true
       void auth.removeUser()
       return
     }
+
     authLogger.error('Unexpected OIDC error during token renewal', authError)
     Sentry.captureException(authError)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.removeUser is stable; adding auth would re-run on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.removeUser is stable
   }, [authError])
+}
 
+// ---------------------------------------------------------------------------
+// Provider
+// ---------------------------------------------------------------------------
+
+/** Activates all session lifecycle hooks inside the AuthProvider context. */
+function AuthSession(): null {
+  useSentryUserSync()
+  useStaleStateCleanup()
+  useSessionGuard()
   return null
 }
 
 export function KlaiAuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthProvider {...oidcConfig}>
-      <SentryUserSync />
-      <AuthSessionMonitor />
+      <AuthSession />
       {children}
     </AuthProvider>
   )
