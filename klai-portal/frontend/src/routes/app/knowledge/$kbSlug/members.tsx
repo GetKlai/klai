@@ -22,7 +22,6 @@ import type { KnowledgeBase, MembersResponse } from './-kb-types'
 interface OrgGroup {
   id: number
   name: string
-  is_system: boolean
 }
 
 interface OrgUser {
@@ -188,7 +187,6 @@ function MembersTab() {
   const existingGroupIds = new Set(members?.groups.map((g) => g.group_id) ?? [])
   const filteredGroups = (groupsData?.groups ?? []).filter(
     (g) =>
-      !g.is_system &&
       !existingGroupIds.has(g.id) &&
       g.name.toLowerCase().includes(groupSearch.toLowerCase())
   )
