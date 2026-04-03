@@ -1468,6 +1468,22 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 
 **Open question:** Does the transcription service write transcripts to a store that the Knowledge ingestion pipeline can poll, or does it POST directly to the Unified Ingest API? The answer depends on whether the transcript pipeline is batch (end-of-call) or streaming. Design this interface before building the helpdesk adapter.
 
+### Recording Lifecycle & Cleanup
+
+Vexa meeting recordings are treated as ephemeral data:
+
+1. Recording captured in vexa-bot-manager container at `/var/lib/vexa/recordings/`
+2. Transcription completed by Whisper
+3. Recording automatically deleted after successful transcription (GDPR Art. 5(1)(c) data minimization)
+
+Implementation:
+- Cleanup via Docker SDK `container.exec_run()` (same pattern as `provisioning.py`)
+- Background cleanup task: recordings >30 min old with `status="done"` and `recording_deleted=False`
+- Tracked via `VexaMeeting.recording_deleted` and `recording_deleted_at` columns
+- Graceful failure: if cleanup fails, transcription pipeline continues
+
+No persistent volume mount for recordings — storage is ephemeral by design.
+
 ---
 
 ## 14. Technology Stack

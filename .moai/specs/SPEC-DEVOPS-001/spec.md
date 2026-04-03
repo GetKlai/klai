@@ -3,7 +3,7 @@ id: SPEC-DEVOPS-001
 version: 1.0.0
 status: completed
 created: 2026-03-26
-updated: 2026-03-26
+updated: 2026-04-03
 author: MoAI
 priority: high
 issue_number: 0

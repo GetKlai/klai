@@ -70,6 +70,51 @@ The portal does not call these endpoints directly.
 
 ---
 
+## Audio Transcription Summary
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/klai-scribe/v1/transcriptions/{id}/summarize` | Generate AI summary for a transcription |
+
+**Query parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `force` | bool | Regenerate even if a summary already exists |
+
+**Request body**
+
+| Field | Description |
+|-------|-------------|
+| `recording_type` | `meeting` or `recording` — determines which prompt set is used |
+| `language` | Target language for the generated summary |
+
+**Response**
+
+The response includes a `summary_json` field with the following structure:
+
+| Field | Description |
+|-------|-------------|
+| `type` | Recording type used for summarization |
+| `markdown` | Human-readable summary in Markdown |
+| `structured` | Type-specific structured data |
+
+Structured data shape by type:
+
+- `meeting` — topics, decisions, action items
+- `recording` — key points, quotes, conclusions
+
+**Summarization process**
+
+Two-phase summarization via LiteLLM:
+
+1. Extract facts (temperature 0.1)
+2. Synthesize summary (temperature 0.3)
+
+Storage: result is written to `scribe.transcriptions.summary_json` (JSONB column).
+
+---
+
 ## Environment variables
 
 portal-api requires the following variables to provision knowledge infrastructure:

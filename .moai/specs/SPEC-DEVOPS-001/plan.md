@@ -4,7 +4,7 @@ type: plan
 version: 1.0.0
 status: completed
 created: 2026-03-26
-updated: 2026-03-26
+updated: 2026-04-03
 ---
 
 # SPEC-DEVOPS-001: Implementatieplan
