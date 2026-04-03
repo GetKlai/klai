@@ -503,9 +503,7 @@ async def update_knowledge_base(
 
     if visibility_changed:
         try:
-            await knowledge_ingest_client.update_kb_visibility(
-                org.zitadel_org_id, kb.slug, kb.visibility
-            )
+            await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
         except Exception:
             logger.warning("Failed to propagate visibility change to knowledge-ingest", kb_slug=kb.slug)
 
