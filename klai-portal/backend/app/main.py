@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not settings.database_url:
             missing.append("DATABASE_URL")
         if missing:
-            logger.critical("Missing required secrets: %s", ", ".join(missing))
+            logger.critical("Missing required environment variables: %s", ", ".join(missing))
             raise SystemExit(1)
 
         # Validate the Zitadel PAT before accepting traffic.
