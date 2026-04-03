@@ -223,6 +223,103 @@ Self-service only: users can export only their own data. No admin-initiated SAR 
 
 ---
 
+## Product Management (`/api/admin/*`)
+
+Manage product entitlements for users and groups. All endpoints require admin role.
+
+### GET /api/admin/products
+
+List available products for the org's current plan.
+
+**Response:**
+```json
+["chat", "scribe"]
+```
+
+Returns the products allowed by the org's plan (`free` = none, `core` = chat, `professional` = chat + scribe, `complete` = chat + scribe + knowledge).
+
+---
+
+### GET /api/admin/users/{zitadel_user_id}/products
+
+List products directly assigned to a user.
+
+**Response:**
+```json
+[
+  {"product": "chat", "enabled_at": "2026-03-24T10:00:00Z", "enabled_by": "admin-user-id"},
+  {"product": "scribe", "enabled_at": "2026-03-24T10:00:00Z", "enabled_by": "admin-user-id"}
+]
+```
+
+---
+
+### GET /api/admin/users/{zitadel_user_id}/effective-products
+
+List all effective products (direct + group-inherited) with source attribution.
+
+**Response:**
+```json
+[
+  {"product": "chat", "source": "direct"},
+  {"product": "scribe", "source": "group", "group_name": "Engineering"}
+]
+```
+
+---
+
+### POST /api/admin/users/{zitadel_user_id}/products
+
+Assign a product to a user.
+
+**Request:**
+```json
+{"product": "scribe"}
+```
+
+| Status | Meaning |
+|--------|---------|
+| 201 | Product assigned |
+| 403 | Product exceeds org's plan ceiling |
+| 409 | Product already assigned to this user |
+
+---
+
+### DELETE /api/admin/users/{zitadel_user_id}/products/{product}
+
+Revoke a product from a user.
+
+| Status | Meaning |
+|--------|---------|
+| 204 | Product revoked |
+| 404 | Product not assigned to this user |
+
+---
+
+### GET /api/admin/products/summary
+
+Per-product user counts for the org.
+
+**Response:**
+```json
+{"chat": 10, "scribe": 7, "knowledge": 3}
+```
+
+---
+
+### Internal: GET /api/internal/users/{zitadel_user_id}/products
+
+Called by the Zitadel Pre-access-token-creation Action to enrich JWTs with `klai:products` claim. Authenticated via `PORTAL_INTERNAL_SECRET`.
+
+**Response:**
+```json
+{"products": ["chat", "scribe"]}
+```
+
+Returns empty list if user not found (fail-closed).
+
+---
+
 ## Cookie: klai_sso
 
 The `klai_sso` cookie is set after successful login and removed on logout.
