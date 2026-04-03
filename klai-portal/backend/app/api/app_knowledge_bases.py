@@ -451,6 +451,67 @@ async def update_default_org_role(
     return _kb_out(kb)
 
 
+# -- Owner update (name, description, visibility) ---------------------------
+
+
+class AppKBUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    visibility: str | None = None
+    default_org_role: str | None = None
+
+
+@router.patch("/knowledge-bases/{kb_slug}", response_model=AppKBOut)
+async def update_knowledge_base(
+    kb_slug: str,
+    body: AppKBUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppKBOut:
+    """Update KB properties. Requires owner access."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+
+    if body.name is not None:
+        kb.name = body.name
+    if body.description is not None:
+        kb.description = body.description
+
+    visibility_changed = body.visibility is not None and body.visibility != kb.visibility
+    if body.visibility is not None:
+        if body.visibility not in ("public", "internal"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="visibility must be 'public' or 'internal'",
+            )
+        kb.visibility = body.visibility
+
+    if body.default_org_role is not None:
+        if body.default_org_role == "":
+            kb.default_org_role = None
+        elif body.default_org_role in ("viewer", "contributor"):
+            kb.default_org_role = body.default_org_role
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="default_org_role must be 'viewer', 'contributor', or empty",
+            )
+
+    await db.commit()
+    await db.refresh(kb)
+
+    if visibility_changed:
+        try:
+            await knowledge_ingest_client.update_kb_visibility(
+                org.zitadel_org_id, kb.slug, kb.visibility
+            )
+        except Exception:
+            logger.warning("Failed to propagate visibility change to knowledge-ingest", kb_slug=kb.slug)
+
+    return _kb_out(kb)
+
+
 # -- Stats --------------------------------------------------------------------
 
 
