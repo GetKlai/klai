@@ -171,7 +171,15 @@ async def _finalize_and_set_cookie(
             session_token=session_token,
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        resp_text = exc.response.text
+        # Auth request already handled (stale browser tab / back button / double-submit)
+        if exc.response.status_code == 400 and "already been handled" in resp_text:
+            logger.warning("finalize_auth_request: stale auth request %s", auth_request_id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="auth_request_stale",
+            ) from exc
+        logger.exception("finalize_auth_request failed %s: %s", exc.response.status_code, resp_text)
         if exc.response.status_code == 404:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
