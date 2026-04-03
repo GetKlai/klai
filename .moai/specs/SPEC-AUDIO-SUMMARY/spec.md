@@ -4,7 +4,7 @@
 **Status:** Completed
 **Priority:** Medium
 **Created:** 2026-03-24
-**Updated:** 2026-03-24 (v2 — holistische herziening na codebase-analyse)
+**Updated:** 2026-04-03
 
 ---
 

@@ -185,6 +185,44 @@ Verify email address using the link from the activation or verification email.
 
 ---
 
+## Subject Access Request (GDPR Art. 15)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/me/sar-export` | Download all personal data as JSON |
+
+Returns structured JSON with the following top-level sections:
+
+**`klai_portal`**
+
+| Section | Contents |
+|---------|---------|
+| `identity` | Name, email, MFA status — sourced from Zitadel; `null` on failure |
+| `account` | Role, status, language, GitHub username, KB settings |
+| `group_memberships` | Groups with join dates and admin status |
+| `knowledge_base_access` | Role, assignment dates |
+| `audit_events` | Actor's own actions only |
+| `usage_events` | Product events |
+| `meetings` | Title, platform, URL, status, language, duration, transcript, summary |
+
+**`external_systems`**
+
+Documents (description only, no data export) which external systems hold data about the user: Moneybird, LibreChat, Twenty CRM.
+
+Self-service only: users can export only their own data. No admin-initiated SAR export exists.
+
+---
+
+## User Lifecycle Endpoints
+
+| Method | Endpoint | Description | Role |
+|--------|----------|-------------|------|
+| POST | `/api/admin/users/{id}/suspend` | Suspend user (revoke access) | Admin |
+| POST | `/api/admin/users/{id}/reactivate` | Reactivate suspended user | Admin |
+| POST | `/api/admin/users/{id}/offboard` | Permanently offboard user | Admin |
+
+---
+
 ## Cookie: klai_sso
 
 The `klai_sso` cookie is set after successful login and removed on logout.

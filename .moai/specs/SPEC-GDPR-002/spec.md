@@ -3,7 +3,7 @@ id: SPEC-GDPR-002
 version: 1.0.0
 status: completed
 created: 2026-03-28
-updated: 2026-03-28
+updated: 2026-04-03
 author: klai-team
 priority: high
 ---
