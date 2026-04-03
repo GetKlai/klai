@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Brain, Globe, Lock, Users, BarChart2, Zap, List, FolderTree, Settings, ArrowLeft,
+  Brain, Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, ArrowLeft
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -119,9 +119,9 @@ function KbLayout() {
     { id: 'overview', to: '/app/knowledge/$kbSlug/overview', icon: BarChart2, label: m.knowledge_detail_tab_overview() },
     ...(isPersonal ? [{ id: 'items' as KBTab, to: '/app/knowledge/$kbSlug/items', icon: List, label: m.knowledge_detail_tab_items() }] : []),
     { id: 'connectors', to: '/app/knowledge/$kbSlug/connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
-    { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Users, label: m.knowledge_detail_tab_members() },
+    { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: m.knowledge_detail_tab_members() },
     { id: 'taxonomy', to: '/app/knowledge/$kbSlug/taxonomy', icon: FolderTree, label: m.knowledge_detail_tab_taxonomy(), badge: pendingCount > 0 ? pendingCount : undefined },
-    ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: 'Instellingen' }] : []),
+    ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: m.knowledge_detail_tab_settings() }] : []),
   ]
 
   void stats // keep query alive for child routes
