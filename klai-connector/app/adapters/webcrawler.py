@@ -20,6 +20,24 @@ _MAX_POLL_SECONDS = 30 * 60  # 30 minutes
 # Interval between poll requests (seconds).
 _POLL_INTERVAL = 3
 
+# JS injected BEFORE wait_for: strip nav chrome so the word-count condition fires
+# only when article content is present.  Uses only semantic tag/role selectors —
+# never class/id substring selectors (see pitfalls/backend.md).
+_JS_REMOVE_CHROME = """
+[
+  'nav', 'header', 'footer', 'aside',
+  '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+  '[role="search"]',
+].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+"""
+
+# JS injected AFTER wait_for fires: open collapsed toggles (Notion/details).
+_JS_EXPAND_TOGGLES = """
+document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
+document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
+await new Promise(r => setTimeout(r, 300));
+"""
+
 
 class CrawlJobPending(Exception):
     """Raised when a crawl job is still running and needs to be checked later.
@@ -96,27 +114,35 @@ class WebCrawlerAdapter(BaseAdapter):
                 {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
             ]
 
-        # Smart pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
-        # - With selector: trust the selector, skip content filtering
-        # - Without selector: apply PruningContentFilter + excluded_tags to strip nav chrome
+        # Pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
+        # - With selector: trust the selector — PruningContentFilter but no JS chrome removal
+        # - Without selector: full pipeline — JS chrome removal + excluded_tags + PruningContentFilter
         md_gen_params: dict[str, Any] = {
-            "options": {"ignore_links": False, "body_width": 0},
+            "content_filter": {
+                "type": "PruningContentFilter",
+                "params": {"threshold": 0.45, "threshold_type": "dynamic"},
+            },
+            "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
         }
         crawl_params: dict[str, Any] = {
             "deep_crawl_strategy": {
                 "type": "BFSDeepCrawlStrategy",
                 "params": deep_crawl_params,
             },
+            "cache_mode": "bypass",
+            "word_count_threshold": 10,
+            "wait_for": "js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
+            "js_code": _JS_EXPAND_TOGGLES,
+            "remove_consent_popups": True,
+            "remove_overlay_elements": True,
+            "page_timeout": 30000,
         }
 
         if content_selector:
             crawl_params["css_selector"] = content_selector
             logger.info("Using content selector: %s", content_selector)
         else:
-            md_gen_params["content_filter"] = {
-                "type": "PruningContentFilter",
-                "params": {"threshold": 0.45},
-            }
+            crawl_params["js_code_before_wait"] = _JS_REMOVE_CHROME
             crawl_params["excluded_tags"] = [
                 "nav", "footer", "header", "aside", "script", "style",
             ]

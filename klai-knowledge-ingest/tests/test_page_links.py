@@ -116,23 +116,24 @@ async def test_page_links_link_text_truncated() -> None:
 
 @pytest.mark.asyncio
 async def test_page_links_saved_in_bulk_crawl() -> None:
-    """_crawl_and_ingest_page calls upsert_page_links with internal links."""
+    """_ingest_crawl_result calls upsert_page_links with internal links."""
+    from knowledge_ingest.crawl4ai_client import CrawlResult
+
     internal_links = [
         {"href": "/docs/api", "text": "API docs"},
         {"href": "/docs/guide", "text": "Guide"},
     ]
-    mock_result = MagicMock()
-    mock_result.success = True
-    mock_result.error_message = ""
-    mock_result.html = "<html><body>Page</body></html>"
-    mock_result.markdown.fit_markdown = "# Page"
-    mock_result.markdown.raw_markdown = "# Page"
-    mock_result.response_headers = {}
-    mock_result.metadata = {}
-    mock_result.links = {"internal": internal_links}
-
-    mock_crawler = MagicMock()
-    mock_crawler.arun = AsyncMock(return_value=mock_result)
+    result = CrawlResult(
+        url="https://help.example.com/page",
+        fit_markdown="# Page",
+        raw_markdown="# Page",
+        html="<html><body>Page</body></html>",
+        word_count=2,
+        success=True,
+        links={"internal": internal_links},
+        response_headers={},
+        metadata={},
+    )
 
     mock_upsert_links = AsyncMock()
 
@@ -141,10 +142,10 @@ async def test_page_links_saved_in_bulk_crawl() -> None:
          patch("knowledge_ingest.pg_store.upsert_page_links", mock_upsert_links), \
          patch("knowledge_ingest.routes.ingest.ingest_document",
                new_callable=AsyncMock, return_value={"status": "ok", "chunks": 1}):
-        from knowledge_ingest.adapters.crawler import _crawl_and_ingest_page
-        await _crawl_and_ingest_page(
-            mock_crawler, MagicMock(),
-            "https://help.example.com/page", "org1", "kb1", 0.0,
+        from knowledge_ingest.adapters.crawler import _ingest_crawl_result
+        await _ingest_crawl_result(
+            result,
+            "https://help.example.com/page", "org1", "kb1",
             stored=None,
         )
 

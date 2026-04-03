@@ -18,7 +18,6 @@ dependencies = [
     "procrastinate>=3.0,<4",
     "structlog>=25.0",
     "graphiti-core[falkordb]>=0.28,<1",
-    "crawl4ai>=0.4,<1",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +38,9 @@ ignore = [
     "S101",  # assert is fine in tests
     "S105",  # hardcoded passwords — false positives on config defaults
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"knowledge_ingest/crawl4ai_client.py" = ["E501"]  # JS strings in multiline literals
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
