@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { X, Search } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { X, Search, Lock } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
@@ -50,11 +50,16 @@ export function MemberPicker({
 }) {
   const [groupSearch, setGroupSearch] = useState('')
   const [userSearch, setUserSearch] = useState('')
+  const [groupFocused, setGroupFocused] = useState(false)
+  const [userFocused, setUserFocused] = useState(false)
+  const groupRef = useRef<HTMLDivElement>(null)
+  const userRef = useRef<HTMLDivElement>(null)
 
   const defaultRole = minRole === 'contributor' ? 'contributor' : 'viewer'
 
   const filteredGroups = availableGroups.filter(
     (g) =>
+      !g.is_system &&
       g.name.toLowerCase().includes(groupSearch.toLowerCase()) &&
       !initialGroups.some((ig) => ig.id === g.id)
   )
@@ -73,7 +78,16 @@ export function MemberPicker({
         <span className="text-sm font-medium text-[var(--color-purple-deep)]">
           {m.knowledge_sharing_groups()}
         </span>
-        <div className="relative">
+        <div
+          className="relative"
+          ref={groupRef}
+          onFocusCapture={() => setGroupFocused(true)}
+          onBlurCapture={(e) => {
+            if (!groupRef.current?.contains(e.relatedTarget as Node)) {
+              setGroupFocused(false)
+            }
+          }}
+        >
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
           <Input
             value={groupSearch}
@@ -81,12 +95,13 @@ export function MemberPicker({
             placeholder={m.knowledge_sharing_search_group()}
             className="pl-9"
           />
-          {groupSearch && filteredGroups.length > 0 && (
+          {groupFocused && filteredGroups.length > 0 && (
             <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
               {filteredGroups.map((g) => (
                 <button
                   key={g.id}
                   type="button"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
                     setInitialGroups((prev) => [
                       ...prev,
@@ -128,6 +143,21 @@ export function MemberPicker({
             </div>
           </div>
         ))}
+
+        {/* System groups (non-selectable) */}
+        {availableGroups
+          .filter((g) => g.is_system)
+          .map((g) => (
+            <div
+              key={g.id}
+              className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] px-3 py-2 opacity-50"
+            >
+              <div className="flex items-center gap-2">
+                <Lock className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
+                <span className="text-sm text-[var(--color-muted-foreground)]">{g.name}</span>
+              </div>
+            </div>
+          ))}
       </div>
 
       {/* Persons */}
@@ -135,7 +165,16 @@ export function MemberPicker({
         <span className="text-sm font-medium text-[var(--color-purple-deep)]">
           {m.knowledge_sharing_persons()}
         </span>
-        <div className="relative">
+        <div
+          className="relative"
+          ref={userRef}
+          onFocusCapture={() => setUserFocused(true)}
+          onBlurCapture={(e) => {
+            if (!userRef.current?.contains(e.relatedTarget as Node)) {
+              setUserFocused(false)
+            }
+          }}
+        >
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
           <Input
             value={userSearch}
@@ -143,12 +182,13 @@ export function MemberPicker({
             placeholder={m.knowledge_sharing_search_person()}
             className="pl-9"
           />
-          {userSearch && filteredUsers.length > 0 && (
+          {userFocused && filteredUsers.length > 0 && (
             <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
               {filteredUsers.map((u) => (
                 <button
                   key={u.zitadel_user_id}
                   type="button"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
                     setInitialUsers((prev) => [
                       ...prev,
