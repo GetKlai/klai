@@ -1,5 +1,5 @@
 import { AuthProvider, useAuth } from 'react-oidc-context'
-import { ErrorResponse } from 'oidc-client-ts'
+import { ErrorResponse, WebStorageStateStore } from 'oidc-client-ts'
 import { useEffect, type ReactNode } from 'react'
 import * as Sentry from '@sentry/react'
 import { authLogger } from '@/lib/logger'
@@ -23,6 +23,9 @@ const oidcConfig = {
   // this uses the refresh token (token endpoint call) rather than a hidden iframe,
   // eliminating the dependency on the Zitadel session being alive.
   automaticSilentRenew: true,
+  // Persist tokens in localStorage so sessions survive browser restarts and new
+  // tabs. The default (sessionStorage) loses tokens on every browser close.
+  userStore: new WebStorageStateStore({ store: window.localStorage }),
 }
 
 function SentryUserSync() {
