@@ -6,8 +6,7 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir uv && \
-    uv pip install --system --no-cache -r pyproject.toml && \
-    playwright install chromium --with-deps
+    uv pip install --system --no-cache -r pyproject.toml
 
 COPY knowledge_ingest/ knowledge_ingest/
 
