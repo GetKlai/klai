@@ -1,10 +1,11 @@
 """App-facing API for Knowledge Bases (any org member, not admin-only)."""
 
 import datetime as dt
-import logging
 from datetime import datetime, timedelta
+from typing import Literal
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -23,7 +24,7 @@ from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.zitadel import zitadel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
 
 
@@ -63,7 +64,7 @@ router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
 
 
 class InitialMember(BaseModel):
-    type: str  # "user" or "group"
+    type: Literal["user", "group"]
     id: str  # user_id (str) or group_id (str, will be converted to int)
     role: str
 
@@ -969,3 +970,76 @@ async def crawl_preview(
         content_selector=result.get("content_selector"),
         selector_source=result.get("selector_source"),
     )
+
+
+# ---------------------------------------------------------------------------
+# App-level member picker endpoints (any org member, no admin required)
+# ---------------------------------------------------------------------------
+
+
+class AppGroupItem(BaseModel):
+    id: int
+    name: str
+
+
+class AppGroupsResponse(BaseModel):
+    groups: list[AppGroupItem]
+
+
+class AppUserItem(BaseModel):
+    zitadel_user_id: str
+    email: str
+    display_name: str
+
+
+class AppUsersResponse(BaseModel):
+    users: list[AppUserItem]
+
+
+@router.get("/groups", response_model=AppGroupsResponse)
+async def list_groups_for_picker(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppGroupsResponse:
+    """Lightweight group list for the member picker. Any org member can access."""
+    _, org, _ = await _get_caller_org(credentials, db)
+    result = await db.execute(
+        select(PortalGroup.id, PortalGroup.name).where(PortalGroup.org_id == org.id).order_by(PortalGroup.name)
+    )
+    return AppGroupsResponse(groups=[AppGroupItem(id=row.id, name=row.name) for row in result.all()])
+
+
+@router.get("/users", response_model=AppUsersResponse)
+async def list_users_for_picker(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppUsersResponse:
+    """Lightweight user list for the member picker. Any org member can access."""
+    _, org, _ = await _get_caller_org(credentials, db)
+
+    result = await db.execute(select(PortalUser).where(PortalUser.org_id == org.id).order_by(PortalUser.created_at))
+    portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
+
+    if not portal_users:
+        return AppUsersResponse(users=[])
+
+    zitadel_users = await zitadel.list_org_users(settings.zitadel_portal_org_id)
+
+    users_out: list[AppUserItem] = []
+    for z in zitadel_users:
+        uid = z.get("id", "")
+        if uid not in portal_users:
+            continue
+        profile = z.get("human", {}).get("profile", {})
+        email_obj = z.get("human", {}).get("email", {})
+        first = profile.get("firstName", "")
+        last = profile.get("lastName", "")
+        users_out.append(
+            AppUserItem(
+                zitadel_user_id=uid,
+                email=email_obj.get("email", ""),
+                display_name=f"{first} {last}".strip() or email_obj.get("email", uid),
+            )
+        )
+
+    return AppUsersResponse(users=users_out)

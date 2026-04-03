@@ -764,6 +764,7 @@
   "knowledge_sharing_min_one_member": "At least 1 group or person is required",
   "knowledge_sharing_role_label": "Role",
 
+  "knowledge_sharing_summary_docs_url": "docs.getklai.com/{slug}",
   "knowledge_sharing_summary_docs_auto": "Docs will be created automatically",
   "knowledge_sharing_summary_org_default": "All members: {role}",
   "knowledge_sharing_summary_contributors_yes": "Team members contribute: Yes",

@@ -1,10 +1,15 @@
-"""Add default_org_role to portal_knowledge_bases."""
+"""Add default_org_role to portal_knowledge_bases.
+
+Revision ID: 27c92d265c51
+Revises: 7a23f23c419d
+Create Date: 2026-04-03
+"""
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z2a3b4c5d6e7"
+revision = "27c92d265c51"
+down_revision = "7a23f23c419d"
 branch_labels = None
 depends_on = None
 
