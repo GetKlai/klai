@@ -46,53 +46,20 @@
 **When** token renewal fails with `invalid_grant`
 **Then** `AuthSessionMonitor` handles the signout (no duplicate handling by the banner)
 
-## AC-5: Idle Timeout
+## ~~AC-5: Idle Timeout~~ (DEFERRED)
 
-**Given** a user is logged in and has been inactive for 25 minutes
-**When** the 25-minute threshold is reached
-**Then** a warning banner appears showing "Je sessie verloopt over 5 minuten wegens inactiviteit"
-**And** a countdown timer shows remaining seconds
-**And** a "Blijf ingelogd" button is visible
+Deferred by product decision: Klai targets long-lived sessions (like Claude, ChatGPT, Notion). Idle timeout is not appropriate for the current user base. May be revisited as an opt-in per-tenant feature for enterprise compliance (ISO 27001).
 
-**Given** the idle warning banner is visible
-**When** the user clicks "Blijf ingelogd"
-**Then** the idle timer resets to 30 minutes
-**And** the warning banner disappears
+## ~~AC-6: Cross-Tab Idle Synchronization~~ (DEFERRED)
 
-**Given** the idle warning banner is visible
-**When** the user performs any activity (mouse, keyboard, touch)
-**Then** the idle timer resets to 30 minutes
-**And** the warning banner disappears
-
-**Given** a user has been inactive for 30 minutes with no interaction
-**When** the 30-minute timeout fires
-**Then** the user is signed out via `removeUser()`
-**And** the user is redirected to `/logged-out`
-
-**Given** a user is on the `/login` or `/logged-out` page
-**Then** the idle timeout timer does NOT run
-
-## AC-6: Cross-Tab Idle Synchronization
-
-**Given** a user has two tabs open and is active in tab 1
-**When** tab 1 detects user activity
-**Then** tab 2's idle timer also resets (via localStorage `klai_last_activity` key)
-**And** tab 2 does NOT show the idle warning
-
-**Given** a user has two tabs open and is idle in both for 25 minutes
-**When** the warning threshold is reached
-**Then** both tabs show the idle warning simultaneously (within 1 second of each other)
-
-**Given** a user has two tabs open and the idle timeout fires
-**When** tab 1 signs out due to inactivity
-**Then** tab 2 also signs out within 2 seconds (via cross-tab logout sync from R1)
+Deferred: depends on AC-5. Same rationale.
 
 ## Quality Gates
 
-- [ ] `npm run lint` passes with no new errors
-- [ ] `npm run build` compiles without TypeScript errors
-- [ ] No raw `console.log` usage -- all logging via `authLogger`
-- [ ] All user-facing strings in both `messages/en.json` and `messages/nl.json`
+- [x] `npm run lint` passes with no new errors
+- [x] `npm run build` compiles without TypeScript errors
+- [x] No raw `console.log` usage -- all logging via `authLogger`
+- [x] All user-facing strings in both `messages/en.json` and `messages/nl.json`
+- [x] CI green: portal-frontend, SAST/Semgrep
 - [ ] Browser-verified: cross-tab logout in Chrome/Brave
-- [ ] Browser-verified: idle warning appears and "Blijf ingelogd" resets timer
 - [ ] Browser-verified: token expiry banner shows and auto-dismisses on renewal
