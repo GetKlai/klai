@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Brain } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Brain, Globe, Users, Lock, X, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
+import { Card, CardContent } from '@/components/ui/card'
 import * as m from '@/paraglide/messages'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -26,6 +26,30 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
+interface OrgGroup {
+  id: number
+  name: string
+}
+
+interface OrgUser {
+  id: string
+  name: string
+  email: string
+}
+
+interface InitialGroup {
+  id: number
+  name: string
+  role: string
+}
+
+interface InitialUser {
+  id: string
+  name: string
+  email: string
+  role: string
+}
+
 function KnowledgeNewPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
@@ -35,9 +59,40 @@ function KnowledgeNewPage() {
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false)
-  const [visibility, setVisibility] = useState<'internal' | 'public'>('internal')
   const [ownerType, setOwnerType] = useState<'org' | 'user'>('org')
   const [errorKey, setErrorKey] = useState<'conflict' | 'generic' | null>(null)
+
+  const [visibilityMode, setVisibilityMode] = useState<'public' | 'org' | 'restricted'>('org')
+  const [allowContribute, setAllowContribute] = useState(false)
+  const [initialGroups, setInitialGroups] = useState<InitialGroup[]>([])
+  const [initialUsers, setInitialUsers] = useState<InitialUser[]>([])
+  const [groupSearch, setGroupSearch] = useState('')
+  const [userSearch, setUserSearch] = useState('')
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['admin-groups'],
+    queryFn: () => apiFetch<{ groups: OrgGroup[] }>('/api/admin/groups', token),
+    enabled: !!token && ownerType === 'org' && visibilityMode === 'restricted',
+  })
+
+  const { data: usersData } = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: () => apiFetch<{ users: OrgUser[] }>('/api/admin/users', token),
+    enabled: !!token && ownerType === 'org' && visibilityMode === 'restricted',
+  })
+
+  const filteredGroups = (groupsData?.groups ?? []).filter(
+    (g) =>
+      g.name.toLowerCase().includes(groupSearch.toLowerCase()) &&
+      !initialGroups.some((ig) => ig.id === g.id)
+  )
+
+  const filteredUsers = (usersData?.users ?? []).filter(
+    (u) =>
+      (u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
+        u.email.toLowerCase().includes(userSearch.toLowerCase())) &&
+      !initialUsers.some((iu) => iu.id === u.id)
+  )
 
   function handleNameChange(value: string) {
     setName(value)
@@ -51,11 +106,50 @@ function KnowledgeNewPage() {
     setSlug(slugify(value))
   }
 
+  const isRestrictedEmpty =
+    visibilityMode === 'restricted' &&
+    initialGroups.length === 0 &&
+    initialUsers.length === 0
+
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
+      const visibility =
+        visibilityMode === 'public'
+          ? 'public'
+          : visibilityMode === 'org'
+            ? 'internal'
+            : 'private'
+      const defaultOrgRole =
+        visibilityMode === 'restricted'
+          ? null
+          : allowContribute
+            ? 'contributor'
+            : 'viewer'
+
       return apiFetch<{ slug: string }>(`/api/app/knowledge-bases`, token, {
         method: 'POST',
-        body: JSON.stringify({ name, slug, visibility, owner_type: ownerType }),
+        body: JSON.stringify({
+          name,
+          slug,
+          visibility,
+          owner_type: ownerType,
+          default_org_role: defaultOrgRole,
+          initial_members:
+            visibilityMode === 'restricted'
+              ? [
+                  ...initialGroups.map((g) => ({
+                    type: 'group',
+                    id: String(g.id),
+                    role: g.role,
+                  })),
+                  ...initialUsers.map((u) => ({
+                    type: 'user',
+                    id: u.id,
+                    role: u.role,
+                  })),
+                ]
+              : undefined,
+        }),
       })
     },
     onSuccess: (data) => {
@@ -83,6 +177,7 @@ function KnowledgeNewPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+        {/* Scope picker */}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="kb-scope">{m.knowledge_new_scope_label()}</Label>
           <div className="grid grid-cols-2 gap-3">
@@ -102,13 +197,16 @@ function KnowledgeNewPage() {
                   {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
                 </span>
                 <span className="text-xs text-[var(--color-muted-foreground)]">
-                  {type === 'org' ? m.knowledge_new_scope_org_description() : m.knowledge_new_scope_personal_description()}
+                  {type === 'org'
+                    ? m.knowledge_new_scope_org_description()
+                    : m.knowledge_new_scope_personal_description()}
                 </span>
               </button>
             ))}
           </div>
         </div>
 
+        {/* Name */}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="kb-name">{m.knowledge_new_name_label()}</Label>
           <Input
@@ -120,6 +218,7 @@ function KnowledgeNewPage() {
           />
         </div>
 
+        {/* Slug */}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="kb-slug">{m.knowledge_new_slug_label()}</Label>
           <Input
@@ -139,26 +238,314 @@ function KnowledgeNewPage() {
           )}
         </div>
 
+        {/* Visibility cards */}
         {ownerType === 'org' && (
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="kb-visibility">{m.knowledge_new_visibility_label()}</Label>
-            <Select
-              id="kb-visibility"
-              value={visibility}
-              onChange={(e) => setVisibility(e.target.value as 'internal' | 'public')}
-            >
-              <option value="internal">{m.knowledge_new_visibility_internal()}</option>
-              <option value="public">{m.knowledge_new_visibility_public()}</option>
-            </Select>
+            <Label>{m.knowledge_sharing_who_can_access()}</Label>
+            <div className="flex flex-col gap-2">
+              {(
+                [
+                  {
+                    key: 'public' as const,
+                    icon: Globe,
+                    title: m.knowledge_sharing_visibility_public(),
+                    desc: m.knowledge_sharing_visibility_public_description(),
+                  },
+                  {
+                    key: 'org' as const,
+                    icon: Users,
+                    title: m.knowledge_sharing_visibility_org(),
+                    desc: m.knowledge_sharing_visibility_org_description(),
+                  },
+                  {
+                    key: 'restricted' as const,
+                    icon: Lock,
+                    title: m.knowledge_sharing_visibility_restricted(),
+                    desc: m.knowledge_sharing_visibility_restricted_description(),
+                  },
+                ] as const
+              ).map(({ key, icon: Icon, title, desc }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setVisibilityMode(key)
+                    if (key === 'restricted') setAllowContribute(false)
+                  }}
+                  className={[
+                    'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
+                    visibilityMode === key
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5 ring-1 ring-[var(--color-accent)]'
+                      : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
+                  ].join(' ')}
+                >
+                  <Icon className="h-5 w-5 mt-0.5 text-[var(--color-accent)]" />
+                  <div>
+                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                      {title}
+                    </span>
+                    <span className="block text-xs text-[var(--color-muted-foreground)]">
+                      {desc}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
+        {/* Contributor checkbox */}
+        {ownerType === 'org' && visibilityMode !== 'restricted' && (
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allowContribute}
+              onChange={(e) => setAllowContribute(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
+            />
+            <div>
+              <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                {m.knowledge_sharing_contributor_toggle()}
+              </span>
+              <span className="block text-xs text-[var(--color-muted-foreground)]">
+                {m.knowledge_sharing_contributor_toggle_description()}
+              </span>
+            </div>
+          </label>
+        )}
+
+        {/* Member picker (restricted mode) */}
+        {ownerType === 'org' && visibilityMode === 'restricted' && (
+          <div className="flex flex-col gap-4">
+            <Label>{m.knowledge_sharing_share_with()}</Label>
+
+            {/* Groups */}
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                {m.knowledge_sharing_groups()}
+              </span>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+                <Input
+                  value={groupSearch}
+                  onChange={(e) => setGroupSearch(e.target.value)}
+                  placeholder={m.knowledge_sharing_search_group()}
+                  className="pl-9"
+                />
+                {groupSearch && filteredGroups.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+                    {filteredGroups.map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => {
+                          setInitialGroups((prev) => [
+                            ...prev,
+                            { id: g.id, name: g.name, role: 'viewer' },
+                          ])
+                          setGroupSearch('')
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-[var(--color-purple-deep)] hover:bg-[var(--color-secondary)] transition-colors"
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {initialGroups.map((g) => (
+                <div
+                  key={g.id}
+                  className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+                >
+                  <span className="text-sm text-[var(--color-purple-deep)]">{g.name}</span>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-[var(--color-muted-foreground)]">
+                      {m.knowledge_sharing_role_label()}
+                    </label>
+                    <select
+                      value={g.role}
+                      onChange={(e) =>
+                        setInitialGroups((prev) =>
+                          prev.map((ig) =>
+                            ig.id === g.id ? { ...ig, role: e.target.value } : ig
+                          )
+                        )
+                      }
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1 text-xs text-[var(--color-purple-deep)]"
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="contributor">Contributor</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInitialGroups((prev) => prev.filter((ig) => ig.id !== g.id))
+                      }
+                      className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Persons */}
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                {m.knowledge_sharing_persons()}
+              </span>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+                <Input
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder={m.knowledge_sharing_search_person()}
+                  className="pl-9"
+                />
+                {userSearch && filteredUsers.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+                    {filteredUsers.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          setInitialUsers((prev) => [
+                            ...prev,
+                            { id: u.id, name: u.name, email: u.email, role: 'viewer' },
+                          ])
+                          setUserSearch('')
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
+                      >
+                        <span className="text-[var(--color-purple-deep)]">{u.name}</span>
+                        <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">
+                          {u.email}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {initialUsers.map((u) => (
+                <div
+                  key={u.id}
+                  className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+                >
+                  <div>
+                    <span className="text-sm text-[var(--color-purple-deep)]">{u.name}</span>
+                    <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">
+                      {u.email}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-[var(--color-muted-foreground)]">
+                      {m.knowledge_sharing_role_label()}
+                    </label>
+                    <select
+                      value={u.role}
+                      onChange={(e) =>
+                        setInitialUsers((prev) =>
+                          prev.map((iu) =>
+                            iu.id === u.id ? { ...iu, role: e.target.value } : iu
+                          )
+                        )
+                      }
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1 text-xs text-[var(--color-purple-deep)]"
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="contributor">Contributor</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInitialUsers((prev) => prev.filter((iu) => iu.id !== u.id))
+                      }
+                      className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {isRestrictedEmpty && (
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {m.knowledge_sharing_min_one_member()}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Summary card */}
+        {name && (
+          <Card>
+            <CardContent className="pt-4">
+              <div className="space-y-1 text-sm">
+                <p className="font-medium text-[var(--color-purple-deep)]">{name}</p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  docs.getklai.com/{slug}
+                </p>
+                {ownerType === 'org' && (
+                  <>
+                    {visibilityMode !== 'restricted' && (
+                      <>
+                        <p className="text-[var(--color-muted-foreground)]">
+                          {m.knowledge_sharing_summary_org_default({
+                            role: allowContribute ? 'contributor' : 'viewer',
+                          })}
+                        </p>
+                        <p className="text-[var(--color-muted-foreground)]">
+                          {allowContribute
+                            ? m.knowledge_sharing_summary_contributors_yes()
+                            : m.knowledge_sharing_summary_contributors_no()}
+                        </p>
+                      </>
+                    )}
+                    {visibilityMode === 'restricted' &&
+                      (initialGroups.length > 0 || initialUsers.length > 0) && (
+                        <>
+                          <p className="text-[var(--color-muted-foreground)]">
+                            {m.knowledge_sharing_summary_only_shared()}
+                          </p>
+                          {initialGroups.map((g) => (
+                            <p
+                              key={g.id}
+                              className="text-xs text-[var(--color-muted-foreground)] pl-3"
+                            >
+                              &bull; {g.name} ({g.role})
+                            </p>
+                          ))}
+                          {initialUsers.map((u) => (
+                            <p
+                              key={u.id}
+                              className="text-xs text-[var(--color-muted-foreground)] pl-3"
+                            >
+                              &bull; {u.email} ({u.role})
+                            </p>
+                          ))}
+                        </>
+                      )}
+                  </>
+                )}
+                <p className="text-[var(--color-muted-foreground)]">
+                  {m.knowledge_sharing_summary_docs_auto()}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Error */}
         {errorKey === 'generic' && (
           <p className="text-sm text-[var(--color-destructive)]">{m.knowledge_new_error()}</p>
         )}
 
+        {/* Actions */}
         <div className="flex gap-3 pt-2">
-          <Button type="submit" disabled={isPending || !name || !slug}>
+          <Button type="submit" disabled={isPending || !name || !slug || isRestrictedEmpty}>
             {m.knowledge_new_submit()}
           </Button>
           <Button

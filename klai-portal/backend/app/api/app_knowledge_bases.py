@@ -62,6 +62,12 @@ router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
 # -- Pydantic schemas ---------------------------------------------------------
 
 
+class InitialMember(BaseModel):
+    type: str  # "user" or "group"
+    id: str  # user_id (str) or group_id (str, will be converted to int)
+    role: str
+
+
 class AppKBCreateRequest(BaseModel):
     name: str
     slug: str
@@ -69,6 +75,8 @@ class AppKBCreateRequest(BaseModel):
     visibility: str = "internal"
     docs_enabled: bool = True
     owner_type: str = "org"
+    default_org_role: str | None = "viewer"
+    initial_members: list[InitialMember] | None = None
 
 
 class AppKBOut(BaseModel):
@@ -83,6 +91,7 @@ class AppKBOut(BaseModel):
     gitea_repo_slug: str | None
     owner_type: str
     owner_user_id: str | None
+    default_org_role: str | None = None
 
 
 class AppKBsResponse(BaseModel):
@@ -171,6 +180,7 @@ def _kb_out(kb: PortalKnowledgeBase) -> AppKBOut:
         gitea_repo_slug=kb.gitea_repo_slug,
         owner_type=kb.owner_type,
         owner_user_id=kb.owner_user_id,
+        default_org_role=kb.default_org_role,
     )
 
 
@@ -229,7 +239,7 @@ async def _get_or_create_personal_kb(caller_id: str, org_id: int, db: AsyncSessi
 
 
 async def _require_owner(kb: PortalKnowledgeBase, caller_id: str, db: AsyncSession) -> None:
-    role = await get_user_role_for_kb(kb.id, caller_id, db)
+    role = await get_user_role_for_kb(kb.id, caller_id, db, default_org_role=kb.default_org_role, kb_org_id=kb.org_id)
     if role != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -300,6 +310,12 @@ async def create_app_knowledge_base(
             detail="owner_type must be 'org' or 'user'",
         )
 
+    if body.default_org_role is not None and body.default_org_role not in ("viewer", "contributor"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="default_org_role must be 'viewer', 'contributor', or null",
+        )
+
     owner_user_id = caller_id if body.owner_type == "user" else None
 
     kb = PortalKnowledgeBase(
@@ -312,6 +328,7 @@ async def create_app_knowledge_base(
         docs_enabled=body.docs_enabled,
         owner_type=body.owner_type,
         owner_user_id=owner_user_id,
+        default_org_role=body.default_org_role,
     )
     db.add(kb)
     try:
@@ -333,6 +350,30 @@ async def create_app_knowledge_base(
             granted_by=caller_id,
         )
     )
+
+    # Add initial members (from sharing wizard)
+    if body.initial_members:
+        for member in body.initial_members:
+            _validate_role(member.role)
+            if member.type == "user":
+                db.add(
+                    PortalUserKBAccess(
+                        kb_id=kb.id,
+                        user_id=member.id,
+                        org_id=org.id,
+                        role=member.role,
+                        granted_by=caller_id,
+                    )
+                )
+            elif member.type == "group":
+                db.add(
+                    PortalGroupKBAccess(
+                        group_id=int(member.id),
+                        kb_id=kb.id,
+                        role=member.role,
+                        granted_by=caller_id,
+                    )
+                )
 
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
 
@@ -376,6 +417,37 @@ async def delete_app_knowledge_base(
     # No tombstone: slug is free to reuse after a full delete (all data wiped).
     await db.delete(kb)
     await db.commit()
+
+
+# -- Default org role ---------------------------------------------------------
+
+
+class UpdateDefaultOrgRoleRequest(BaseModel):
+    default_org_role: str | None  # "viewer", "contributor", or null
+
+
+@router.put("/knowledge-bases/{kb_slug}/default-org-role", response_model=AppKBOut)
+async def update_default_org_role(
+    kb_slug: str,
+    body: UpdateDefaultOrgRoleRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppKBOut:
+    """Update the default org role for a KB. Requires owner access."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+
+    if body.default_org_role is not None and body.default_org_role not in ("viewer", "contributor"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="default_org_role must be 'viewer', 'contributor', or null",
+        )
+
+    kb.default_org_role = body.default_org_role
+    await db.commit()
+    await db.refresh(kb)
+    return _kb_out(kb)
 
 
 # -- Stats --------------------------------------------------------------------

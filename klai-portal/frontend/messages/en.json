@@ -744,6 +744,44 @@
   "knowledge_members_invite_user_submit_loading": "Inviting...",
   "knowledge_members_invite_group_submit_loading": "Adding...",
   "knowledge_members_personal_kb_hint": "Personal knowledge bases cannot be shared.",
+
+  "knowledge_sharing_who_can_access": "Who can access?",
+  "knowledge_sharing_visibility_public": "Public",
+  "knowledge_sharing_visibility_public_description": "Everyone can read, including people outside your organization. Docs site is public.",
+  "knowledge_sharing_visibility_org": "Organization",
+  "knowledge_sharing_visibility_org_description": "All team members can read. Docs only for logged-in members.",
+  "knowledge_sharing_visibility_restricted": "Restricted",
+  "knowledge_sharing_visibility_restricted_description": "Only people you choose have access.",
+
+  "knowledge_sharing_contributor_toggle": "Team members may also add content",
+  "knowledge_sharing_contributor_toggle_description": "All org members become contributor instead of just viewer.",
+
+  "knowledge_sharing_share_with": "Who do you want to share with?",
+  "knowledge_sharing_groups": "Groups",
+  "knowledge_sharing_search_group": "Search for a group...",
+  "knowledge_sharing_persons": "Persons",
+  "knowledge_sharing_search_person": "Search by name or email...",
+  "knowledge_sharing_min_one_member": "At least 1 group or person is required",
+  "knowledge_sharing_role_label": "Role",
+
+  "knowledge_sharing_summary_docs_auto": "Docs will be created automatically",
+  "knowledge_sharing_summary_org_default": "All members: {role}",
+  "knowledge_sharing_summary_contributors_yes": "Team members contribute: Yes",
+  "knowledge_sharing_summary_contributors_no": "Team members contribute: No",
+  "knowledge_sharing_summary_shared_with": "Shared with:",
+  "knowledge_sharing_summary_only_shared": "Only shared with:",
+
+  "knowledge_sharing_default_role_heading": "Default for the organization",
+  "knowledge_sharing_default_role_label": "All org members:",
+  "knowledge_sharing_default_role_hint": "Groups and persons below have extra rights on top of the default.",
+  "knowledge_sharing_groups_extra": "Groups with extra rights",
+  "knowledge_sharing_persons_extra": "Persons with extra rights",
+  "knowledge_sharing_via_col": "Via",
+  "knowledge_sharing_via_individual": "Individual",
+  "knowledge_sharing_via_group": "Group: {name}",
+  "knowledge_sharing_restricted_label": "Only explicitly shared",
+  "knowledge_sharing_creator_note": "The creator ({name}) is always owner and cannot be removed.",
+
   "knowledge_new_scope_label": "Scope",
   "knowledge_new_scope_org": "Organisation",
   "knowledge_new_scope_personal": "Personal",
@@ -805,6 +843,7 @@
   "app_meetings_summary_copy_markdown": "Copy markdown",
   "app_meetings_summary_copy_done": "Copied!",
   "app_meetings_action_items_title": "Action items",
+  "app_meetings_key_quotes_title": "Key quotes",
   "app_meetings_start_onboarding_title": "Two ways to start a recording",
   "app_meetings_start_onboarding_url_heading": "Paste a link",
   "app_meetings_start_onboarding_url_body": "Enter a Google Meet, Zoom, or Teams URL below and click Start bot.",
@@ -1211,5 +1250,6 @@
   "admin_billing_placeholder_street": "123 Example Street",
   "admin_billing_placeholder_zipcode": "1234 AB",
   "admin_billing_placeholder_city": "Amsterdam",
-  "admin_billing_placeholder_tax_number": "NL123456789B01"
+  "admin_billing_placeholder_tax_number": "NL123456789B01",
+  "session_token_expiring": "Session is being renewed..."
 }

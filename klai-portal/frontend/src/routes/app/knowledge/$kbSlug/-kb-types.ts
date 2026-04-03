@@ -11,6 +11,7 @@ export interface KnowledgeBase {
   docs_enabled: boolean
   gitea_repo_slug: string | null
   owner_type: string
+  default_org_role: string | null
 }
 
 export interface ConnectorSummary {
