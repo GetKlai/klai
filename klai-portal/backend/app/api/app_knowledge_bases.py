@@ -28,9 +28,7 @@ logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
 
 
-async def _get_non_system_group_or_404(
-    group_id: int, org_id: int, db: AsyncSession
-) -> PortalGroup:
+async def _get_non_system_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> PortalGroup:
     """Fetch a non-system group within the org, or 404."""
     result = await db.execute(
         select(PortalGroup).where(
