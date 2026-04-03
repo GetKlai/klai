@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Brain, Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, ArrowLeft
+  BookOpen, Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, ArrowLeft
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -131,7 +131,7 @@ function KbLayout() {
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0 mt-0.5">
-          <Brain className="h-5 w-5 text-[var(--color-purple-deep)]" />
+          <BookOpen className="h-5 w-5 text-[var(--color-purple-deep)]" />
         </div>
         <div className="flex-1">
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{kb.name}</h1>

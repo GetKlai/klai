@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Brain, MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTriangle } from 'lucide-react'
+import { MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTriangle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { QueryErrorState } from '@/components/ui/query-error-state'
@@ -134,7 +134,7 @@ function KnowledgePage() {
     <div className="p-8 max-w-2xl">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
-          <Brain className="h-7 w-7 text-[var(--color-purple-deep)]" />
+          <BookOpen className="h-7 w-7 text-[var(--color-purple-deep)]" />
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
             {m.knowledge_page_intro_heading()}
           </h1>
