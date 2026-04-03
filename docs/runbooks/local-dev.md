@@ -153,18 +153,24 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
 2. Projects > **Klai Platform** > Applications > **Klai Portal**
 3. Kopieer de **Client ID**
 
-### Redirect URIs toevoegen (eenmalig)
+### Redirect URIs en Dev Mode (al geconfigureerd)
 
-De OIDC app moet weten dat `localhost:5174` een geldige redirect is:
+De OIDC app "Klai Portal" (app ID `362901948573155339`) is al geconfigureerd voor lokale development:
 
-1. Ga naar dezelfde app: Projects > Klai Platform > Applications > Klai Portal
-2. Onder **Redirect URIs**, voeg toe:
-   - `http://localhost:5174/callback`
-3. Onder **Post Logout URIs**, voeg toe:
-   - `http://localhost:5174/logged-out`
+- **Redirect URI:** `http://localhost:5174/callback`
+- **Post Logout URI:** `http://localhost:5174/logged-out`
+- **Allowed Origin:** `http://localhost:5174`
+- **Dev Mode:** ingeschakeld (vereist voor `http://` redirect URIs)
+
+> **Zitadel Dev Mode** staat `http://` (zonder TLS) toe als redirect URI. Zonder Dev Mode accepteert Zitadel alleen `https://` URIs. Dev Mode is al ingeschakeld op de Klai Portal app — je hoeft hier niets voor te doen.
+
+**Als Dev Mode per ongeluk is uitgeschakeld:**
+1. Ga naar [auth.getklai.com/ui/console](https://auth.getklai.com/ui/console)
+2. Projects > **Klai Platform** > Applications > **Klai Portal**
+3. Onder **OIDC Configuration**, zet de **Dev Mode** toggle aan
 4. Sla op
 
-> **Let op:** Deze redirect URIs zijn zichtbaar in productie maar vormen geen beveiligingsrisico — Zitadel valideert dat de callback URL overeenkomt met de geregistreerde URIs.
+> **Let op:** De redirect URIs zijn zichtbaar in productie maar vormen geen beveiligingsrisico — Zitadel valideert dat de callback URL overeenkomt met de geregistreerde URIs.
 
 ---
 
@@ -262,6 +268,22 @@ make frontend        # Terminal 2: Vite met HMR
 # Einde van de dag
 make dev-down        # Stop Docker services (data blijft)
 ```
+
+---
+
+## Testen
+
+Controleer na het opstarten of de volledige login flow werkt:
+
+1. Open [http://localhost:5174](http://localhost:5174) in je browser
+2. Je wordt automatisch doorgestuurd naar `auth.getklai.com` (Zitadel login)
+3. Log in met je Klai account
+4. Na het inloggen keer je terug naar `localhost:5174` — je ziet het portal dashboard
+
+Als de redirect mislukt, controleer:
+- Draait de frontend? (`make frontend`)
+- Is `VITE_OIDC_CLIENT_ID` correct ingevuld in `klai-portal/frontend/.env.local`?
+- Staat Dev Mode aan op de Zitadel app? (zie "Redirect URIs en Dev Mode" hierboven)
 
 ---
 
