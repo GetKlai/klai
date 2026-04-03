@@ -1,6 +1,6 @@
 # SPEC-KB-016: URL-driven state for $kbSlug detail page
 
-**Status:** Draft  
+**Status:** Completed  
 **Author:** Mark Vletter  
 **Date:** 2026-03-31
 
