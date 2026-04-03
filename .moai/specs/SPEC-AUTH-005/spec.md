@@ -1,7 +1,7 @@
 ---
 id: SPEC-AUTH-005
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-04-03"
 updated: "2026-04-03"
 author: MoAI
@@ -13,6 +13,7 @@ priority: P0
 | Date | Version | Change |
 |------|---------|--------|
 | 2026-04-03 | 1.0.0 | Initial SPEC creation |
+| 2026-04-03 | 1.1.0 | R5/R6 deferred by product decision; R1-R4 implemented and deployed |
 
 # SPEC-AUTH-005: Industry-Standard OIDC Session Hardening
 
