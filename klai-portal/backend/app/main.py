@@ -41,24 +41,55 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncio
 
-    # Validate the Zitadel PAT before accepting traffic.
-    # A wrong PAT makes ALL auth endpoints fail with 401, so crash early.
-    import httpx
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            f"{settings.zitadel_base_url}/auth/v1/users/me",
-            headers={"Authorization": f"Bearer {settings.zitadel_pat}"},
-        )
-    if resp.status_code != 200:
+    if settings.is_auth_dev_mode:
+        # ── Dev mode: skip Zitadel, loud warnings ────────────────────────
         logger.critical(
-            "ZITADEL_PAT validation failed (HTTP %s). "
-            "The PAT in the environment is invalid or corrupted. "
-            "Fix PORTAL_API_ZITADEL_PAT in .env and restart.",
-            resp.status_code,
+            "╔══════════════════════════════════════════════════════════╗\n"
+            "║  AUTH DEV MODE ACTIVE — authentication is BYPASSED      ║\n"
+            "║  All requests authenticate as user: %s  ║\n"
+            "║  NEVER enable this in production!                        ║\n"
+            "╚══════════════════════════════════════════════════════════╝",
+            settings.auth_dev_user_id or "(not configured)",
         )
-        raise SystemExit(1)
-    logger.info("Zitadel PAT validated successfully")
+        if not settings.auth_dev_user_id:
+            logger.critical(
+                "AUTH_DEV_USER_ID is not set. Set it to a zitadel_user_id "
+                "that exists in the portal_users table."
+            )
+            raise SystemExit(1)
+    else:
+        # ── Production mode: validate secrets exist ──────────────────────
+        missing = []
+        if not settings.zitadel_pat:
+            missing.append("ZITADEL_PAT")
+        if not settings.sso_cookie_key:
+            missing.append("SSO_COOKIE_KEY")
+        if not settings.portal_secrets_key:
+            missing.append("PORTAL_SECRETS_KEY")
+        if not settings.database_url:
+            missing.append("DATABASE_URL")
+        if missing:
+            logger.critical("Missing required secrets: %s", ", ".join(missing))
+            raise SystemExit(1)
+
+        # Validate the Zitadel PAT before accepting traffic.
+        # A wrong PAT makes ALL auth endpoints fail with 401, so crash early.
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{settings.zitadel_base_url}/auth/v1/users/me",
+                headers={"Authorization": f"Bearer {settings.zitadel_pat}"},
+            )
+        if resp.status_code != 200:
+            logger.critical(
+                "ZITADEL_PAT validation failed (HTTP %s). "
+                "The PAT in the environment is invalid or corrupted. "
+                "Fix PORTAL_API_ZITADEL_PAT in .env and restart.",
+                resp.status_code,
+            )
+            raise SystemExit(1)
+        logger.info("Zitadel PAT validated successfully")
 
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")

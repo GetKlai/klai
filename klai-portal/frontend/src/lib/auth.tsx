@@ -1,27 +1,91 @@
-import { AuthProvider, useAuth } from 'react-oidc-context'
-import { ErrorResponse, WebStorageStateStore } from 'oidc-client-ts'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { AuthContext, AuthProvider, useAuth } from 'react-oidc-context'
+import { ErrorResponse, User, WebStorageStateStore } from 'oidc-client-ts'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import * as Sentry from '@sentry/react'
 import { authLogger } from '@/lib/logger'
+
+const AUTH_DEV_MODE = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
 // Configure in .env.local:
 //   VITE_OIDC_AUTHORITY=https://auth.getklai.com
 //   VITE_OIDC_CLIENT_ID=<client id from Zitadel>
-const oidcConfig = {
-  authority: import.meta.env.VITE_OIDC_AUTHORITY as string,
-  client_id: import.meta.env.VITE_OIDC_CLIENT_ID as string,
-  redirect_uri: `${window.location.origin}/callback`,
-  post_logout_redirect_uri: `${window.location.origin}/logged-out`,
-  // offline_access gives us a refresh token so renewal uses the token endpoint
-  // instead of a hidden iframe — survives Zitadel restarts.
-  scope: 'openid profile email offline_access',
-  revokeTokensOnSignout: true,
-  automaticSilentRenew: true,
-  // PKCE (S256) enabled by default in oidc-client-ts v3. Zitadel requires it.
-  // localStorage so sessions survive browser restarts and new tabs.
-  userStore: new WebStorageStateStore({ store: window.localStorage }),
-  // Fire accessTokenExpiring 5 min before expiry for the SessionBanner.
-  accessTokenExpiringNotificationTimeInSeconds: 300,
+const oidcConfig = AUTH_DEV_MODE
+  ? null
+  : {
+      authority: import.meta.env.VITE_OIDC_AUTHORITY as string,
+      client_id: import.meta.env.VITE_OIDC_CLIENT_ID as string,
+      redirect_uri: `${window.location.origin}/callback`,
+      post_logout_redirect_uri: `${window.location.origin}/logged-out`,
+      // offline_access gives us a refresh token so renewal uses the token endpoint
+      // instead of a hidden iframe — survives Zitadel restarts.
+      scope: 'openid profile email offline_access',
+      revokeTokensOnSignout: true,
+      automaticSilentRenew: true,
+      // PKCE (S256) enabled by default in oidc-client-ts v3. Zitadel requires it.
+      // localStorage so sessions survive browser restarts and new tabs.
+      userStore: new WebStorageStateStore({ store: window.localStorage }),
+      // Fire accessTokenExpiring 5 min before expiry for the SessionBanner.
+      accessTokenExpiringNotificationTimeInSeconds: 300,
+    }
+
+// ---------------------------------------------------------------------------
+// Dev mode auth provider — bypasses OIDC entirely for local development.
+// Requires VITE_AUTH_DEV_MODE=true in .env.local.
+// The backend must also have AUTH_DEV_MODE=true and DEBUG=true.
+// ---------------------------------------------------------------------------
+
+function DevAuthProvider({ children }: { children: ReactNode }) {
+  const mockAuth = useMemo(
+    () => ({
+      // AuthState
+      user: {
+        access_token: 'dev-token',
+        token_type: 'Bearer',
+        profile: { sub: 'dev-user', iss: 'dev', aud: 'dev', exp: 0, iat: 0 },
+        expires_in: 99999,
+        expired: false,
+        scopes: ['openid', 'profile', 'email'],
+        toStorageString: () => '',
+      } as unknown as User,
+      isLoading: false,
+      isAuthenticated: true,
+      activeNavigator: undefined,
+      error: undefined,
+
+      // AuthContextProps methods (no-ops in dev mode)
+      settings: {} as never,
+      events: {
+        addUserSignedOut: () => () => {},
+        addUserLoaded: () => () => {},
+        addUserUnloaded: () => () => {},
+        addSilentRenewError: () => () => {},
+        addAccessTokenExpiring: () => () => {},
+        addAccessTokenExpired: () => () => {},
+      } as never,
+      clearStaleState: async () => {},
+      removeUser: async () => {},
+      signinPopup: () => Promise.resolve({} as User),
+      signinSilent: () => Promise.resolve(null),
+      signinRedirect: () => Promise.resolve(),
+      signinResourceOwnerCredentials: () => Promise.resolve({} as User),
+      signoutRedirect: () => Promise.resolve(),
+      signoutPopup: () => Promise.resolve(),
+      signoutSilent: () => Promise.resolve(),
+      querySessionStatus: () => Promise.resolve(null),
+      revokeTokens: () => Promise.resolve(),
+      startSilentRenew: () => {},
+      stopSilentRenew: () => {},
+    }),
+    [],
+  )
+
+  useEffect(() => {
+    authLogger.warn(
+      '🔓 Auth dev mode active — authentication is bypassed. Never use in production!',
+    )
+  }, [])
+
+  return <AuthContext.Provider value={mockAuth}>{children}</AuthContext.Provider>
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +178,12 @@ function AuthSession(): null {
 }
 
 export function KlaiAuthProvider({ children }: { children: ReactNode }) {
+  if (AUTH_DEV_MODE) {
+    return <DevAuthProvider>{children}</DevAuthProvider>
+  }
+
   return (
-    <AuthProvider {...oidcConfig}>
+    <AuthProvider {...oidcConfig!}>
       <AuthSession />
       {children}
     </AuthProvider>

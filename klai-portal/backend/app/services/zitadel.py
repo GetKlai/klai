@@ -179,7 +179,12 @@ class ZitadelClient:
 
         Results are cached for _USERINFO_TTL seconds per token to reduce
         Zitadel API load on multi-endpoint requests within a session.
+
+        In auth dev mode, returns mock userinfo without calling Zitadel.
         """
+        if settings.is_auth_dev_mode:
+            return {"sub": settings.auth_dev_user_id}
+
         now = time.monotonic()
         cached = self._userinfo_cache.get(access_token)
         if cached and (now - cached[0]) < self._USERINFO_TTL:
@@ -348,6 +353,8 @@ class ZitadelClient:
 
     async def has_any_mfa(self, user_id: str) -> bool:
         """Return True if the user has any second factor registered (TOTP, passkey, email OTP)."""
+        if settings.is_auth_dev_mode:
+            return False
         resp = await self._http.get(f"/v2/users/{user_id}/authentication_methods")
         resp.raise_for_status()
         methods = resp.json().get("authMethodTypes", [])
