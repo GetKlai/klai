@@ -3,7 +3,6 @@ import { useAuth } from 'react-oidc-context'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Brain,
   Globe,
   Users,
   Lock,
@@ -11,6 +10,7 @@ import {
   ArrowRight,
   Check,
   User,
+  Brain,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,7 +20,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { MemberPicker } from './new._components/MemberPicker'
-import type { WizardData, Step } from './new._types'
+import type { WizardData, Step, OrgGroup } from './new._types'
 
 export const Route = createFileRoute('/app/knowledge/new')({
   component: () => (
@@ -69,7 +69,11 @@ function NewKnowledgeBasePage() {
   // Queries for member picker (step 3)
   const { data: groupsData } = useQuery({
     queryKey: ['app-groups'],
-    queryFn: () => apiFetch<{ groups: { id: number; name: string }[] }>('/api/app/groups', token),
+    queryFn: () =>
+      apiFetch<{ groups: OrgGroup[] }>(
+        '/api/app/groups',
+        token
+      ),
     enabled: !!token && data.ownerType === 'org' && step >= 3,
   })
 
@@ -178,12 +182,9 @@ function NewKnowledgeBasePage() {
     <div className="p-8 max-w-lg">
       {/* Header with back/cancel */}
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Brain className="h-6 w-6 text-[var(--color-purple-deep)]" />
-          <h1 className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
-            {m.knowledge_new_heading()}
-          </h1>
-        </div>
+        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          {m.knowledge_new_heading()}
+        </h1>
         {step === 1 ? (
           <Button
             type="button"
@@ -520,7 +521,7 @@ function StepPermissions({
 }: {
   data: WizardData
   setData: React.Dispatch<React.SetStateAction<WizardData>>
-  groups: { id: number; name: string }[]
+  groups: OrgGroup[]
   users: { zitadel_user_id: string; display_name: string; email: string }[]
 }) {
   const isRestricted = data.visibilityMode === 'restricted'

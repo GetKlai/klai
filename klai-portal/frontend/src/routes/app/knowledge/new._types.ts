@@ -1,6 +1,7 @@
 export interface OrgGroup {
   id: number
   name: string
+  is_system: boolean
 }
 
 export interface OrgUser {
