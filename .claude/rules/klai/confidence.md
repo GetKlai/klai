@@ -1,3 +1,7 @@
+---
+paths:
+  - "**/scripts/confidence-check.py"
+---
 # Confidence Protocol
 
 Evidence-based confidence reporting. The stop hook enforces this mechanically.

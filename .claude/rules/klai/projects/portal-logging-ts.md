@@ -1,5 +1,7 @@
 ---
-paths: ["klai-portal/frontend/src/**/*.ts", "klai-portal/frontend/src/**/*.tsx"]
+paths:
+  - "klai-portal/frontend/src/**/*.ts"
+  - "klai-portal/frontend/src/**/*.tsx"
 ---
 
 # Logging Rules for klai-portal Frontend
@@ -71,4 +73,3 @@ Before committing, review all debug calls you added:
 - Always pass context as structured objects: `{ key: value }`, not template strings
 - `warn` and `error` go to Sentry in production -- write them carefully with actionable context
 - `debug` is free to use liberally during development; clean up noise before committing
-- Full pattern reference: `.claude/rules/klai/patterns/frontend.md` section `## logging`

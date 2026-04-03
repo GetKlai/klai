@@ -81,7 +81,3 @@ IDs, counts, and status values as separate kwargs make logs queryable in Victori
 3. Change the `service_name` default to the Docker service name
 4. Call `setup_logging("my-service-name")` at module level in `main.py` (before any imports that log)
 5. Use `structlog.get_logger()` everywhere
-
-## Full reference
-
-Pattern guide: `.claude/rules/klai/patterns/logging.md` — includes LogsQL query examples for debugging.
