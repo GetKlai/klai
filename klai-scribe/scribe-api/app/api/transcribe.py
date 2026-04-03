@@ -121,6 +121,17 @@ def _delete_audio(audio_path: str | None) -> None:
     path.unlink(missing_ok=True)
 
 
+def _title_from_text(text: str | None, max_words: int = 8) -> str | None:
+    """Generate a short title from the first words of a transcription."""
+    if not text:
+        return None
+    words = text.split()[:max_words]
+    title = " ".join(words)
+    if len(text.split()) > max_words:
+        title += "…"
+    return title
+
+
 def _to_response(record: Transcription) -> TranscriptionResponse:
     return TranscriptionResponse(
         id=record.id,
@@ -197,6 +208,11 @@ async def transcribe(
     record.inference_time_seconds = result.inference_time_seconds
     record.provider = result.provider
     record.model = result.model
+
+    # Auto-generate a title from transcription when name is a generic filename
+    if record.name and record.name.lower().startswith("recording."):
+        record.name = _title_from_text(result.text)
+
     await db.commit()
     await db.refresh(record)
 
@@ -259,6 +275,11 @@ async def retry_transcription(
     record.inference_time_seconds = transcription_result.inference_time_seconds
     record.provider = transcription_result.provider
     record.model = transcription_result.model
+
+    # Auto-generate a title from transcription when name is a generic filename
+    if record.name and record.name.lower().startswith("recording."):
+        record.name = _title_from_text(transcription_result.text)
+
     await db.commit()
     await db.refresh(record)
 
