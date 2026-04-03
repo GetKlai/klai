@@ -15,6 +15,7 @@ paths:
 | [backend-prometheus-fastapi-metrics](#backend-prometheus-fastapi-metrics) | Adding Prometheus metrics + `/metrics` endpoint to a FastAPI service | `curl /metrics` returns valid Prometheus text |
 | [backend-two-phase-crawl-ai-fallback](#backend-two-phase-crawl-ai-fallback) | Crawling a page when content selectors are unknown and word count may be too low | Response `word_count >= _MIN_WORDS` for test URL |
 | [backend-independent-session-fire-and-forget](#backend-independent-session-fire-and-forget) | Writing audit/analytics records that must survive caller exceptions | Audit row persists after endpoint returns 4xx/5xx |
+| [backend-data-driven-key-mapping](#backend-data-driven-key-mapping) | Mapping between API response keys and internal/display keys | Code uses tuple-driven dict comprehension, not verbose manual dict |
 
 ---
 
@@ -214,6 +215,30 @@ async def log_event(
 **Rule:** Observational writes (audit, analytics) that must survive caller exceptions need their own session and transaction, decoupled from the request lifecycle.
 
 **See also:** `pitfalls/backend.md#backend-request-session-rollback-loses-writes`, `pitfalls/backend.md#backend-sqlalchemy-returning-rls`
+
+---
+
+## backend-data-driven-key-mapping
+
+**When to use:** Mapping between external API keys and internal/display keys, especially when the same mapping is needed for multiple operations (parsing, rendering, i18n)
+
+Define the mapping once as a tuple of `(source_key, target_key)` pairs and use dict comprehension to build lookup dicts. Single source of truth, zero repetition.
+
+```python
+_FIELD_MAPPING: tuple[tuple[str, str], ...] = (
+    ("decisions", "decisions"),
+    ("action_items", "action_items"),
+    ("key_quotes", "key_quotes"),
+    ("topics_discussed", "topics"),
+)
+
+EXTRACTION_KEYS = {src: tgt for src, tgt in _FIELD_MAPPING}
+REVERSE_KEYS = {tgt: src for src, tgt in _FIELD_MAPPING}
+```
+
+**When NOT to use:** If the mapping has additional metadata per key (validators, defaults, types), use a dataclass or TypedDict instead of bare tuples.
+
+**Rule:** Define key mappings as data (tuple/list), derive dicts via comprehension. One source of truth, zero repetition.
 
 ---
 
