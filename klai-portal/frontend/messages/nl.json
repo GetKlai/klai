@@ -764,6 +764,7 @@
   "knowledge_sharing_min_one_member": "Minimaal 1 groep of persoon vereist",
   "knowledge_sharing_role_label": "Rol",
 
+  "knowledge_sharing_summary_docs_url": "docs.getklai.com/{slug}",
   "knowledge_sharing_summary_docs_auto": "Docs worden automatisch aangemaakt",
   "knowledge_sharing_summary_org_default": "Alle leden: {role}",
   "knowledge_sharing_summary_contributors_yes": "Teamleden bijdragen: Ja",
