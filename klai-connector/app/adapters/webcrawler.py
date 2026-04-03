@@ -105,18 +105,16 @@ class WebCrawlerAdapter(BaseAdapter):
         allowed_path_prefix: str | None = config.get("path_prefix") or None
         content_selector: str | None = config.get("content_selector") or None
 
-        # Always restrict crawl to the origin domain — never follow external links.
         parsed_base = urlparse(base_url)
-        domain_prefix = f"{parsed_base.scheme}://{parsed_base.netloc}"
-        patterns = [allowed_path_prefix] if allowed_path_prefix else [domain_prefix]
 
         deep_crawl_params: dict[str, Any] = {
             "max_depth": max_depth,
             "max_pages": max_pages,
-            "filter_chain": [
-                {"type": "URLPatternFilter", "params": {"patterns": patterns}},
-            ],
         }
+        if allowed_path_prefix:
+            deep_crawl_params["filter_chain"] = [
+                {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
+            ]
 
         # Pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
         # - With selector: trust the selector — PruningContentFilter but no JS chrome removal
@@ -220,13 +218,14 @@ class WebCrawlerAdapter(BaseAdapter):
         )
 
     def _process_results(
-        self, data: dict[str, Any], cache: dict[str, str]
+        self, data: dict[str, Any], cache: dict[str, str], base_url: str = "",
     ) -> list[DocumentRef]:
         """Convert crawl results into DocumentRef objects and populate the cache.
 
         Args:
             data: Raw Crawl4AI task result payload.
             cache: Per-connector cache dict to populate (url -> markdown).
+            base_url: Origin URL — results from other domains are discarded.
 
         Skips pages with empty or missing markdown content.
         """
@@ -234,6 +233,11 @@ class WebCrawlerAdapter(BaseAdapter):
         results = data.get("results", data.get("result", []))
         if isinstance(results, dict):
             results = [results]
+
+        # Always restrict to origin domain — Crawl4AI may follow external links.
+        if base_url:
+            base_netloc = urlparse(base_url).netloc.lower()
+            results = [p for p in results if urlparse(p.get("url", "")).netloc.lower() == base_netloc]
 
         warnings: list[str] = []
 
@@ -311,18 +315,20 @@ class WebCrawlerAdapter(BaseAdapter):
 
         # Resume a pending job from a previous sync run.
         pending_task_id = (cursor_context or {}).get("pending_task_id")
+        base_url: str = config.get("base_url", "")
+
         if pending_task_id:
             logger.info("Resuming pending crawl job %s", pending_task_id)
             data = await self._poll_task(pending_task_id)
-            refs = self._process_results(data, cache)
+            refs = self._process_results(data, cache, base_url=base_url)
             logger.info("Crawl job %s completed: %d pages", pending_task_id, len(refs))
             return refs
 
         # Start a new crawl job.
         task_id = await self._start_crawl(config)
         data = await self._poll_task(task_id)
-        refs = self._process_results(data, cache)
-        logger.info("Crawl completed: %d pages from %s", len(refs), config.get("base_url"))
+        refs = self._process_results(data, cache, base_url=base_url)
+        logger.info("Crawl completed: %d pages from %s", len(refs), base_url)
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:

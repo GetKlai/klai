@@ -255,18 +255,17 @@ async def crawl_site(
     """
     config = build_crawl_config(selector)
 
-    # Always restrict crawl to the origin domain — never follow external links.
+    # Derive origin domain for post-crawl filtering.
     parsed = urlparse(start_url)
-    domain_prefix = f"{parsed.scheme}://{parsed.netloc}"
-    patterns = include_patterns if include_patterns else [domain_prefix]
 
     deep_crawl_params: dict[str, Any] = {
         "max_depth": max_depth,
         "max_pages": max_pages,
-        "filter_chain": [
-            {"type": "URLPatternFilter", "params": {"patterns": patterns}},
-        ],
     }
+    if include_patterns:
+        deep_crawl_params["filter_chain"] = [
+            {"type": "URLPatternFilter", "params": {"patterns": include_patterns}},
+        ]
 
     config["deep_crawl_strategy"] = {
         "type": "BFSDeepCrawlStrategy",
@@ -334,11 +333,16 @@ async def crawl_site(
     if isinstance(results, dict):
         results = [results]
 
-    crawl_results = [_extract_result(start_url, page) for page in results if page]
+    all_results = [_extract_result(start_url, page) for page in results if page]
+
+    # Always restrict to origin domain — Crawl4AI may follow external links during BFS.
+    crawl_results = [r for r in all_results if urlparse(r.url).netloc == parsed.netloc]
+    skipped = len(all_results) - len(crawl_results)
     logger.info(
         "crawl_site_complete",
         start_url=start_url,
         pages=len(crawl_results),
+        skipped_external=skipped,
     )
     return crawl_results
 
