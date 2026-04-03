@@ -14,6 +14,7 @@ paths:
 |---|---|---|
 | [backend-prometheus-fastapi-metrics](#backend-prometheus-fastapi-metrics) | Adding Prometheus metrics + `/metrics` endpoint to a FastAPI service | `curl /metrics` returns valid Prometheus text |
 | [backend-two-phase-crawl-ai-fallback](#backend-two-phase-crawl-ai-fallback) | Crawling a page when content selectors are unknown and word count may be too low | Response `word_count >= _MIN_WORDS` for test URL |
+| [backend-independent-session-fire-and-forget](#backend-independent-session-fire-and-forget) | Writing audit/analytics records that must survive caller exceptions | Audit row persists after endpoint returns 4xx/5xx |
 
 ---
 
@@ -161,6 +162,58 @@ Reply with ONLY the selector string, nothing else.
 **Rule:** Two-phase crawl: full pipeline first, AI selector detection only when word count is too low. Store the selector only on confirmed success.
 
 **See also:** `pitfalls/backend.md#backend-crawl4ai-class-substring-selectors`
+
+---
+
+## backend-independent-session-fire-and-forget
+
+**When to use:** Writing audit logs, analytics events, or other observational records that must persist even when the request endpoint raises an exception
+
+The request-scoped database session rolls back on any unhandled exception (including `HTTPException`). SAVEPOINTs (`begin_nested()`) are also discarded on outer rollback. Use an independent `AsyncSessionLocal()` that opens and commits its own transaction.
+
+```python
+import json
+import structlog
+from sqlalchemy import text
+from app.database import AsyncSessionLocal
+
+logger = structlog.get_logger()
+
+async def log_event(
+    action: str,
+    user_id: str,
+    details: dict | None = None,
+    org_id: str | None = None,
+) -> None:
+    """Fire-and-forget audit write. Independent session survives caller rollback."""
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text("""
+                    INSERT INTO portal_audit_log (action, user_id, org_id, details)
+                    VALUES (:action, :user_id, :org_id, CAST(:details AS jsonb))
+                """),
+                {
+                    "action": action,
+                    "user_id": user_id,
+                    "org_id": org_id,
+                    "details": json.dumps(details) if details else None,
+                },
+            )
+            await session.commit()
+    except Exception:
+        logger.warning("audit_log_failed", action=action, exc_info=True)
+```
+
+**Key rules:**
+- Use `text()` raw SQL if the table has RLS — SQLAlchemy ORM adds implicit `RETURNING` which triggers SELECT policies (see `pitfalls/backend.md#backend-sqlalchemy-returning-rls`)
+- Use `CAST(:param AS jsonb)` instead of `::jsonb` — the `::` syntax conflicts with SQLAlchemy's `:param` binding
+- Never let audit failures crash the business endpoint — always wrap in try/except
+- The independent session is short-lived: open, insert, commit, close. No long-running connections.
+
+**Rule:** Observational writes (audit, analytics) that must survive caller exceptions need their own session and transaction, decoupled from the request lifecycle.
+
+**See also:** `pitfalls/backend.md#backend-request-session-rollback-loses-writes`, `pitfalls/backend.md#backend-sqlalchemy-returning-rls`
 
 ---
 

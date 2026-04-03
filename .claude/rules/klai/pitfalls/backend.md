@@ -21,6 +21,9 @@ paths:
 | [backend-fastapi-required-field-breaks-callers](#backend-fastapi-required-field-breaks-callers) | MED | Adding a required field to a FastAPI request model breaks existing callers — use optional with a guard instead |
 | [backend-silent-error-swallowing](#backend-silent-error-swallowing) | HIGH | Always log actual error details (status code, response body) before returning a generic user message |
 | [backend-ruff-catches-refactor-bugs](#backend-ruff-catches-refactor-bugs) | HIGH | Run `ruff check` after each refactor step — F821/F401 catch real runtime bugs |
+| [backend-sqlalchemy-returning-rls](#backend-sqlalchemy-returning-rls) | CRIT | SQLAlchemy ORM adds implicit RETURNING to all inserts — breaks RLS tables with separate SELECT/INSERT policies |
+| [backend-request-session-rollback-loses-writes](#backend-request-session-rollback-loses-writes) | HIGH | Fire-and-forget writes (audit, analytics) on the request session are lost when caller raises an exception |
+| [backend-api-status-rename-blast-radius](#backend-api-status-rename-blast-radius) | HIGH | Status string values are cross-layer contracts — grep entire codebase before renaming |
 
 ---
 
@@ -312,5 +315,82 @@ When consolidating duplicate auth helpers across files, removing a helper also r
 3. After removing a function, grep for all symbols it imported to verify none are used elsewhere in the file
 
 **Seen in:** SPEC-BACKEND-001 — removing `_get_org` from `billing.py` also removed its `zitadel` import, but `zitadel.get_userinfo()` was still called directly for Moneybird contact creation.
+
+---
+
+## backend-sqlalchemy-returning-rls
+
+**Severity:** CRIT
+
+**Trigger:** Using SQLAlchemy ORM inserts on a table with PostgreSQL Row-Level Security (RLS) policies
+
+SQLAlchemy ORM adds an implicit `RETURNING primary_key` clause to ALL insert statements — including `insert(Model).values()` and `insert(Model.__table__).values()`. PostgreSQL evaluates SELECT RLS policies on the `RETURNING` clause. If the inserting role (e.g. a service account) is not permitted by the SELECT policy, the insert fails with a permission error even though the INSERT policy allows it.
+
+**Why it happens:**
+SQLAlchemy's ORM layer needs the returned primary key to populate the mapped object's identity. There is no ORM-level option to suppress `RETURNING`. PostgreSQL treats `RETURNING` as a read operation, so it checks SELECT policies — not just INSERT policies.
+
+**Prevention:**
+1. If RLS SELECT and INSERT have different policy conditions, split the `ALL` policy into separate `SELECT` and `INSERT` policies with appropriate conditions for each
+2. If the inserting role should never read back rows (e.g. audit logging), use `text()` raw SQL to bypass ORM's implicit `RETURNING`:
+   ```python
+   await session.execute(
+       text("""
+           INSERT INTO my_table (col1, col2)
+           VALUES (:val1, CAST(:val2 AS jsonb))
+       """),
+       {"val1": value1, "val2": json.dumps(value2)},
+   )
+   ```
+3. Note: `::jsonb` type casts conflict with SQLAlchemy's `:param` syntax — always use `CAST(:param AS jsonb)` instead
+4. When adding RLS to a table, audit all insert paths for implicit `RETURNING` by checking whether they use ORM models
+
+**Seen in:** `portal_audit_log` table — RLS `ALL` policy required `auth.uid() = user_id` for SELECT, but audit inserts used a service role. All three ORM approaches (`session.add()`, `insert(Model).values()`, `insert(Model.__table__).values()`) failed. Only `text()` raw SQL worked.
+
+---
+
+## backend-request-session-rollback-loses-writes
+
+**Severity:** HIGH
+
+**Trigger:** Writing audit logs, analytics, or other fire-and-forget records using the request-scoped database session, when the caller may raise an exception afterward
+
+If the endpoint raises `HTTPException` (or any exception) after writing an audit log entry, the request-scoped session rolls back the entire transaction — including the audit entry. SAVEPOINTs do not help because the outer transaction rollback discards all savepoints.
+
+**Why it happens:**
+FastAPI middleware (or dependency cleanup) rolls back the session on any unhandled exception. The audit write and the business logic share the same session and transaction. Even `begin_nested()` (SAVEPOINT) is lost when the outer transaction rolls back.
+
+**Prevention:**
+1. Use an independent session (`AsyncSessionLocal()`) for writes that must survive caller exceptions:
+   ```python
+   async def log_event(action: str, user_id: str, details: dict) -> None:
+       async with AsyncSessionLocal() as session:
+           await session.execute(text("INSERT INTO audit_log ..."), params)
+           await session.commit()
+   ```
+2. The independent session opens and commits its own transaction — completely decoupled from the request lifecycle
+3. Wrap in try/except so audit failures never crash the business endpoint
+4. This pattern is appropriate for audit logs, analytics, and any write that is observational rather than transactional
+
+**Seen in:** `app/services/audit.py` — audit entries for failed login attempts, permission denials, and other error paths were silently lost because the caller raised `HTTPException` after `log_event()`, rolling back the shared session.
+
+---
+
+## backend-api-status-rename-blast-radius
+
+**Severity:** HIGH
+
+**Trigger:** Renaming status string values in an API response or database column
+
+Status string values (e.g., `"recording"`, `"processing"`, `"completed"`) are cross-layer contracts. The same string is hardcoded in: backend enum/constants, database queries, API response schemas, frontend polling logic, UI badge components, i18n translation keys, and sometimes external webhook consumers.
+
+**What happened:** SPEC-VEXA-001 renamed Vexa meeting statuses during the agentic-runtime migration. The backend was updated, but the frontend badges, polling intervals, and i18n keys still referenced the old values — requiring multiple follow-up fix commits.
+
+**Rule:** Before renaming any status value:
+1. `grep -r "old_value"` across the entire monorepo (backend, frontend, configs, tests, i18n)
+2. Check all case variants: `old_value`, `OLD_VALUE`, `OldValue`, `old-value`
+3. Update all consumers in a single commit or coordinated PR
+4. If the status is exposed via API, consider supporting both old and new values during a transition period
+
+**See also:** `process-search-all-case-variants`, `process-convention-change-blast-radius`
 
 ---

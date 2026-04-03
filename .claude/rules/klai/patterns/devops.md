@@ -27,6 +27,7 @@ paths:
 | [trivy-scan-new-workflow](#trivy-scan-new-workflow) | Adding Trivy container scanning to a new Docker build workflow | GitHub Security tab shows SARIF scan results |
 | [renovate](#renovate) | How Renovate works, automerge rules, and how to run it manually | `gh run watch --exit-status` exits 0 for Renovate |
 | [atomic-env-deploy](#atomic-env-deploy) | Writing `.env` files to a server without data loss risk | `wc -l /opt/klai/.env` matches expected count |
+| [local-image-build-from-source](#local-image-build-from-source) | Deploying a private Docker image not on a registry | `docker images repo-name` shows local tag |
 
 ---
 
@@ -417,5 +418,31 @@ On the same filesystem, `mv` is a single `rename()` syscall. The file is either 
 **Rule:** Any script or workflow that writes to a production `.env` must use the write-to-temp + validate + `mv` pattern. Direct overwrites (`cat >`, `echo >`, `tee >`) are never acceptable for production secrets files.
 
 **See also:** `pitfalls/infrastructure.md#infra-sync-env-no-safety-checks`
+
+---
+
+## local-image-build-from-source
+
+**When to use:** Deploying a private Docker image that is not published to a registry (e.g., custom fork, private repo).
+
+Build the image locally on the target server from source:
+
+```bash
+# On the target server
+git clone git@github.com:org/repo.git /opt/builds/repo
+cd /opt/builds/repo
+git checkout <commit-hash>
+docker build -t repo-name:klai .
+```
+
+**Key rules:**
+1. Always use a local tag namespace (e.g., `vexa-meeting-api:klai`) — never tag as `latest`
+2. Pin to a specific commit hash, not a branch name
+3. Reference the local tag in `docker-compose.yml`: `image: repo-name:klai`
+4. To update: `git pull && git checkout <new-hash> && docker build -t repo-name:klai .`
+
+**Evidence:** `docker images repo-name` shows the local tag with correct creation timestamp.
+
+**Seen in:** SPEC-VEXA-001 — agentic-runtime was built from source on core-01 because it's a private repository without GHCR publishing.
 
 ---

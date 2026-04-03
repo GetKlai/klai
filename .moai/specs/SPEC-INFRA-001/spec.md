@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-001
-version: "3.1.0"
+version: "3.2.0"
 status: partial
 created: 2026-04-02
 updated: 2026-04-02
@@ -14,6 +14,7 @@ priority: high
 
 | Versie | Datum | Auteur | Wijziging |
 |--------|-------|--------|-----------|
+| 3.2.0 | 2026-04-02 | MoAI | Sync: acceptatiecriteria beoordeeld, Definition of Done bijgewerkt, learnings vastgelegd |
 | 3.1.0 | 2026-04-02 | MoAI | Status update: jezweb vervangen door Twenty built-in MCP; DB-driven implementatie geparkeerd pending MCP management onderzoek |
 | 3.0.0 | 2026-04-02 | MoAI | MCP Catalog + encrypted secrets in DB; interne service URL voor klai-knowledge |
 | 2.0.0 | 2026-04-02 | MoAI | DB-driven MCP configuratie (was: statische yaml bestanden) |
@@ -281,15 +282,18 @@ servers:
 | Component | Status | Aanpak |
 |-----------|--------|--------|
 | `PortalOrg.mcp_servers` DB kolom | ✅ | JSON, migration `d2e3f4a5b6c7` |
-| `_generate_librechat_yaml()` in provisioning.py | ❌ | Niet geïmplementeerd — geparkeerd |
+| `_generate_librechat_yaml()` in provisioning.py | ✅ | Geïmplementeerd in `provisioning/generators.py`, aangeroepen in `infrastructure.py` |
 | twenty-crm voor getklai | ✅ | Twenty built-in MCP, streamable-http naar `crm.getklai.com/mcp` |
 | `IS_AI_ENABLED` feature flag | ✅ | Handmatig in `core.featureFlag` tabel + Redis cache gecleared |
 | Auth header in MCP verbinding | ✅ | `Authorization: Bearer ${TWENTY_API_KEY}` in librechat.yaml headers |
 | Auth header in http_request calls | ✅ workaround | Token hardcoded in system prompt (Twenty http_request injecteert geen auth) |
 | API key in container env | ✅ | `TWENTY_API_KEY` in `/opt/klai/.env` |
-| Secrets encrypted in DB | ❌ | Niet geïmplementeerd |
+| Secrets encrypted in DB | ✅ | AES-256-GCM via `portal_secrets.encrypt()` in SPEC-INFRA-002 (`mcp_servers.py`) |
 | Per-tenant MCP containers | ❌ | Toekomstige architectuur |
-| MCP Catalog yaml | ❌ | Toekomstige architectuur |
+| MCP Catalog yaml | ✅ | `deploy/librechat/mcp_catalog.yaml` aangemaakt in SPEC-INFRA-002 |
+| Portal UI MCP management | ✅ | Integrations admin page in SPEC-INFRA-002 |
+| Portal API MCP endpoints | ✅ | GET/PUT/POST `/api/mcp-servers` in SPEC-INFRA-002 |
+| KNOWLEDGE_INGEST_SECRET bugfix | ✅ | Toegevoegd aan docker-compose + provisioning .env template |
 | klai-knowledge interne URL | ⚠️ | getklai gebruikt nog public URL |
 
 **Bekende beperking (hardcoded token):** De Twenty `http_request` tool injecteert de Bearer token niet automatisch. De AI moet hem zelf meegeven in elke call. Omdat `${TWENTY_API_KEY}` niet geëxpandeerd wordt in de LibreChat `systemPrompt`, is de token tijdelijk hardcoded in de system prompt op de server (`/opt/klai/librechat/getklai/librechat.yaml`). Dit is een workaround — bij rotatie van de API key moet de system prompt handmatig bijgewerkt worden.

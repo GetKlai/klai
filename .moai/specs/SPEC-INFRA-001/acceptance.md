@@ -104,12 +104,12 @@ Scenario: Provisioning genereert .env met KNOWLEDGE_INGEST_SECRET en per-tenant 
 
 ## Definition of Done
 
-- [ ] `PortalOrg.mcp_servers` JSON kolom bestaat (migratie uitgevoerd)
-- [ ] getklai org heeft Twenty CRM config in `mcp_servers`
-- [ ] `_generate_librechat_yaml()` functie in provisioning.py
-- [ ] Per-tenant yaml wordt gegenereerd en gemount in containers
-- [ ] `KNOWLEDGE_INGEST_SECRET` in docker-compose voor pre-provisioned tenants
-- [ ] `KNOWLEDGE_INGEST_SECRET` in provisioning.py .env template
-- [ ] Server-side: `TWENTY_API_KEY` en `TWENTY_BASE_URL` in getklai .env
-- [ ] Alle 5 acceptatiecriteria (AC1-AC5) geverifieerd
-- [ ] Geen credentials in git of database
+- [x] `PortalOrg.mcp_servers` JSON kolom bestaat (migratie `d2e3f4a5b6c7`)
+- [x] getklai org heeft Twenty CRM config in `mcp_servers` (seed in migratie)
+- [x] `_generate_librechat_yaml()` functie in `provisioning/generators.py`
+- [x] Per-tenant yaml wordt gegenereerd en gemount in containers
+- [x] `KNOWLEDGE_INGEST_SECRET` in docker-compose voor pre-provisioned tenants
+- [x] `KNOWLEDGE_INGEST_SECRET` in provisioning.py .env template
+- [x] Server-side: `TWENTY_API_KEY` en `TWENTY_BASE_URL` in getklai .env
+- [ ] Alle 5 acceptatiecriteria (AC1-AC5) geverifieerd — AC3 deels (yaml generatie werkt, maar niet end-to-end getest met DB data)
+- [x] Geen credentials in git of database (secrets AES-256-GCM encrypted via SPEC-INFRA-002)

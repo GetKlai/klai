@@ -25,6 +25,7 @@ paths:
 | [devops-alembic-duplicate-object-on-rerun](#devops-alembic-duplicate-object-on-rerun) | HIGH | Use `IF NOT EXISTS` in all migration DDL statements |
 | [devops-recover-secrets-from-running-containers](#devops-recover-secrets-from-running-containers) | HIGH | Recover lost env vars from running containers before restarting |
 | [devops-no-manual-server-edits](#devops-no-manual-server-edits) | CRIT | Never edit compose/env on server — repo is source of truth |
+| [devops-deployment-integration-gap](#devops-deployment-integration-gap) | HIGH | Microservice migrations need integration verification checklist |
 
 ---
 
@@ -388,6 +389,26 @@ NEVER edit `docker-compose.yml` or `.env` directly on the server for values that
 **Rule:** During an env wipe incident, the first priority is recovering values from running containers. Never restart or `docker compose up -d` any service until you have recovered all critical vars. A restart reads the broken `.env` and permanently loses the in-memory values. After container recovery, also check for non-container vars by running `push-health.sh` and comparing against the script's expected variables.
 
 **See also:** `pitfalls/infrastructure.md#infra-sops-incomplete-wipes-server`, `pitfalls/infrastructure.md#infra-kuma-tokens-not-in-containers`
+
+---
+
+## devops-deployment-integration-gap
+
+**Severity:** HIGH
+
+**Trigger:** Migrating a service to a new architecture (e.g., monolith → microservice, new API provider)
+
+Microservice migrations that pass unit tests often require 10+ follow-up fix commits because integration surfaces were not tested before deployment. Common blind spots: Docker network connectivity, socket/file permissions, webhook authentication, API status value mapping, and frontend state synchronization.
+
+**What happened:** SPEC-VEXA-001 (agentic-runtime migration) had 2 feat commits but 13 fix commits post-deployment. Issues included Docker network names, Unix socket permissions, webhook auth tokens, renamed status values breaking frontend badges, and polling logic mismatches.
+
+**Prevention checklist for microservice migrations:**
+1. Docker network: can the new container reach all its dependencies? (`docker exec curl`)
+2. File/socket permissions: any shared volumes or Unix sockets accessible?
+3. Webhook/callback URLs: do external services have the new endpoint registered?
+4. Status value contracts: grep the entire codebase for all status strings being renamed
+5. Frontend state: does the UI handle all new/renamed status values?
+6. Health check: does the monitoring endpoint work from outside the container?
 
 ---
 

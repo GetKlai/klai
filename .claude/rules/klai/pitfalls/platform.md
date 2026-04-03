@@ -52,6 +52,9 @@ paths:
 | [platform-litellm-custom-router-fires-on-internal-calls](#platform-litellm-custom-router-fires-on-internal-calls) | HIGH | custom_router.py content heuristics fire on internal service LLM calls containing URLs |
 | [platform-mistral-monthly-quota](#platform-mistral-monthly-quota) | HIGH | Tier 1 has 4M token/month cap; looks like RPM limit but `x-ratelimit-remaining-tokens-month: 0` reveals it |
 | [platform-litellm-compose-env-silent-typo](#platform-litellm-compose-env-silent-typo) | HIGH | `${WRONG_VAR}` in docker-compose environment block silently injects wrong value |
+| [platform-twenty-mcp-http-request-no-auth](#platform-twenty-mcp-http-request-no-auth) | HIGH | Twenty's built-in `http_request` tool does not inject Authorization header |
+| [platform-librechat-npx-turbo-conflict](#platform-librechat-npx-turbo-conflict) | HIGH | `npx -y <pkg>` in LibreChat container fails due to turbo workspace detection |
+| [platform-community-mcp-abandoned](#platform-community-mcp-abandoned) | MED | Community MCP packages may be abandoned with broken tools — check vendor built-in first |
 
 ---
 
@@ -1049,6 +1052,51 @@ ssh core-01 "cd /opt/klai && docker compose config litellm" | grep -A 30 'enviro
 3. Verify: `docker compose config litellm | grep ANTHROPIC`
 4. Add to `klai-infra/core-01/litellm/.env.sops` for backup (non-interactive SOPS pattern)
 5. Restart: `docker compose up -d litellm`
+
+---
+
+## platform-twenty-mcp-http-request-no-auth
+
+**Severity:** HIGH
+
+**Trigger:** Configuring Twenty CRM MCP tools for a tenant
+
+Twenty's built-in `http_request` tool does NOT automatically inject the Authorization header. The AI must manually include the API token in every HTTP request it makes through this tool.
+
+**Workaround:** Hardcode the Twenty API token in the system prompt so the AI always has it available. This introduces a rotation risk — when the token is rotated, the system prompt must be updated too.
+
+**Seen in:** SPEC-INFRA-001 — per-tenant MCP configuration for LibreChat with Twenty CRM integration.
+
+---
+
+## platform-librechat-npx-turbo-conflict
+
+**Severity:** HIGH
+
+**Trigger:** Running `npx -y <package> start` inside a LibreChat container
+
+`npx` in the LibreChat container detects the turbo monorepo workspace and fails to install/run the MCP package correctly.
+
+**Workaround:**
+```bash
+npm install --prefix /tmp/<pkg> <package> && node /tmp/<pkg>/node_modules/<package>/dist/index.js
+```
+
+**Seen in:** SPEC-INFRA-001 assumption A-002 — attempting to run community MCP servers via npx in LibreChat.
+
+---
+
+## platform-community-mcp-abandoned
+
+**Severity:** MED
+
+**Trigger:** Selecting an MCP server package for integration
+
+Community MCP packages can be abandoned with many tools broken. Always check if the vendor provides a built-in MCP server before using a community package.
+
+**What happened:** `jezweb/twenty-mcp-server` had 20/29 tools broken — `create_note` used `body` instead of `bodyV2`, `create_comment` referenced non-existent `CommentCreateInput`. The Twenty team later shipped a built-in MCP server that worked correctly.
+
+**Rule:** Before integrating any community MCP package: (1) check if the vendor has a built-in alternative, (2) test at least the 5 most important tools end-to-end, (3) check GitHub issues and last commit date.
 
 ---
 
