@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
     # Public-facing base URL used as Gitea webhook callback URL (env: KNOWLEDGE_INGEST_PUBLIC_URL)
     knowledge_ingest_public_url: str = "http://knowledge-ingest:8000"
+    # Crawl4AI REST API (shared Docker container)
+    crawl4ai_api_url: str = "http://crawl4ai:11235"
+    crawl4ai_api_key: str = ""
     # Graphiti / FalkorDB knowledge graph
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379
