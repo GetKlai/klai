@@ -812,6 +812,7 @@
   "knowledge_wizard_confirm_title": "Klopt dit?",
   "knowledge_wizard_personal_only": "Alleen jij hebt toegang",
   "knowledge_wizard_create_button": "Knowledge base aanmaken",
+  "knowledge_wizard_edit_slug": "Slug aanpassen",
 
   "knowledge_page_personal_kbs_heading": "Mijn kennisbanken",
   "docs_kb_locked_tooltip": "U heeft geen toegang tot deze kennisbank",
