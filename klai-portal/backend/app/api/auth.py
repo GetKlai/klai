@@ -95,9 +95,7 @@ class TTLCache:
 # with a server-side key.  No server-side state is needed -- Zitadel is the
 # authority on whether the session is still valid.
 # ---------------------------------------------------------------------------
-_fernet = Fernet(
-    settings.sso_cookie_key.encode() if settings.sso_cookie_key else Fernet.generate_key()
-)
+_fernet = Fernet(settings.sso_cookie_key.encode() if settings.sso_cookie_key else Fernet.generate_key())
 
 
 def _encrypt_sso(session_id: str, session_token: str) -> str:
