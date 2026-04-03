@@ -107,7 +107,6 @@ class WebCrawlerAdapter(BaseAdapter):
                 "type": "BFSDeepCrawlStrategy",
                 "params": deep_crawl_params,
             },
-            "scraping_strategy": {"type": "LXMLWebScrapingStrategy", "params": {}},
         }
 
         if content_selector:
