@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relace - AI Models & Infrastructure for Coding Agents | Fast Code Generation</title>
+  <meta name="description" content="Source control with out-of-the box codebase retrieval, fast utility SLMs, and task-specific agents you can run on any repo.">
+  <link rel="icon" href="https://framerusercontent.com/images/CxcNTpe5oLKUDB43wY2Icj87s.png">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          rl: {
+            bg: '#fffef2',
+            dark: '#191918',
+            'dark-60': '#19191899',
+            'dark-30': '#1919184d',
+            'dark-10': '#1919181a',
+            accent: '#fcaa2d',
+            'accent-dark': '#a36404',
+            cream: '#f3f2e7',
+            border: '#e3e2d8',
+            'border-light': '#d1d0c666',
+            muted: '#bab9b0',
+            black: '#000',
+          }
+        },
+        fontFamily: {
+          display: ['"Parabole Trial Regular Text"', 'sans-serif'],
+          'display-bold': ['"Parabole Trial Bold Text"', 'sans-serif'],
+          'display-medium': ['"Parabole Trial Medium Text"', 'sans-serif'],
+          mono: ['"Decima Mono Pro Regular"', 'monospace'],
+        },
+        maxWidth: { container: '1064px' }
+      }
+    }
+  }
+  </script>
+
+  <style>
+    @font-face { font-family: "Parabole Trial Regular Text"; src: url("https://framerusercontent.com/assets/S2b9LKrD0CYGYR61brjh79NwTk.woff2") format("woff2"); font-display: swap; font-weight: 400 }
+    @font-face { font-family: "Parabole Trial Bold Text"; src: url("https://framerusercontent.com/assets/PX9JSONDIAO3ZJodmW6Qu6ujDc.woff2") format("woff2"); font-weight: 700 }
+    @font-face { font-family: "Parabole Trial Medium Text"; src: url("https://framerusercontent.com/assets/dQxMUUKNHsT2SlXtsq1ClLU9uiA.woff2") format("woff2"); font-display: swap; font-weight: 500 }
+    @font-face { font-family: "Parabole Trial Regular Display"; src: url("https://framerusercontent.com/assets/0y4e2dnjbvXv2rIsO8uj8iBVs.woff2") format("woff2"); font-display: swap; font-weight: 400 }
+    @font-face { font-family: "Decima Mono Pro Regular"; src: url("https://framerusercontent.com/assets/EsB0jFgJKAyzoh1vb6s3GNYOF4Q.woff2") format("woff2"); font-display: swap; font-weight: 400 }
+
+    html { -webkit-font-smoothing: antialiased; scroll-behavior: smooth; }
+    body { background: #fffef2; }
+
+    /* Accent button */
+    .btn-accent { background: #fcaa2d; color: #191918; border-radius: 999px; padding: 0.625rem 1.25rem; font-family: "Parabole Trial Regular Text", sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.2; transition: all 0.2s; display: inline-flex; align-items: center; gap: 0.5rem; }
+    .btn-accent:hover { background: #e89a1f; }
+
+    /* Ghost button */
+    .btn-ghost { border: 1px solid #1919181a; color: #191918; border-radius: 999px; padding: 0.625rem 1.25rem; font-family: "Parabole Trial Regular Text", sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.2; transition: all 0.2s; display: inline-flex; align-items: center; gap: 0.5rem; }
+    .btn-ghost:hover { border-color: #191918; }
+
+    /* Scroll indicator for Everything section */
+    .scroll-item { opacity: 0.3; transition: opacity 0.4s ease; }
+    .scroll-item.active { opacity: 1; }
+
+    /* FAQ accordion */
+    .faq-answer { max-height: 0; overflow: hidden; transition: max-height 0.35s cubic-bezier(0.4,0,0.2,1); }
+    .faq-answer.open { max-height: 300px; }
+    .faq-trigger svg { transition: transform 0.3s ease; }
+    .faq-trigger.open svg { transform: rotate(45deg); }
+
+    /* Noise overlay */
+    .noise-overlay { background-image: url('https://framerusercontent.com/images/T6GZgUBLVuKB.png'); opacity: 0.2; pointer-events: none; }
+  </style>
+</head>
+
+<body class="font-display text-rl-dark">
+
+  <!-- ===== 1. NAVIGATION ===== -->
+  <nav class="sticky top-0 z-50 bg-rl-bg px-5 md:px-10">
+    <div class="max-w-container mx-auto flex items-center justify-between h-[56px]">
+      <!-- Logo: "Relace" text -->
+      <a href="#" class="text-[18px] font-display-medium tracking-[-0.02em]">Relace</a>
+
+      <div class="hidden md:flex items-center gap-1">
+        <a href="https://docs.relace.ai/docs/introduction" class="px-3 py-1.5 text-[12px] uppercase tracking-[0.04em] text-rl-dark-60 hover:text-rl-dark transition-colors">docs</a>
+        <a href="./blog" class="px-3 py-1.5 text-[12px] uppercase tracking-[0.04em] text-rl-dark-60 hover:text-rl-dark transition-colors">Blog</a>
+        <a href="./pricing" class="px-3 py-1.5 text-[12px] uppercase tracking-[0.04em] text-rl-dark-60 hover:text-rl-dark transition-colors">Pricing</a>
+        <a href="./about-us" class="px-3 py-1.5 text-[12px] uppercase tracking-[0.04em] text-rl-dark-60 hover:text-rl-dark transition-colors">about us</a>
+      </div>
+
+      <div class="hidden md:flex items-center gap-2">
+        <a href="#" class="btn-ghost">App</a>
+        <a href="#" class="btn-accent">Get a Demo</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ===== 2. HERO ===== -->
+  <section class="px-5 md:px-10 pt-12 md:pt-20 pb-0" id="hero">
+    <div class="max-w-container mx-auto">
+      <!-- Header -->
+      <div class="max-w-[700px]">
+        <h1 class="text-[40px] md:text-[52px] leading-[110%] tracking-[-0.05em] text-rl-dark">
+          Models <strong class="font-display-bold">built</strong> for coding <strong class="font-display-bold">agents</strong>
+        </h1>
+      </div>
+
+      <div class="h-4 md:h-6"></div>
+
+      <p class="text-[16px] md:text-[18px] leading-[1.5] text-rl-dark-60 max-w-[55ch]">
+        Source control with out-of-the box codebase retrieval, fast utility SLMs, and task-specific agents you can run on&nbsp;any repo.
+      </p>
+
+      <div class="h-6 md:h-8"></div>
+
+      <div class="flex items-center gap-3">
+        <a href="#" class="btn-accent">
+          Get a Demo
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 12h14m-7-7l7 7-7 7"/></svg>
+        </a>
+        <a href="#" class="btn-ghost">
+          Sign Up for Free
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 12h14m-7-7l7 7-7 7"/></svg>
+        </a>
+      </div>
+
+      <div class="h-8 md:h-12"></div>
+
+      <!-- Trusted logos -->
+      <div class="flex items-center gap-4 flex-wrap">
+        <span class="text-[12px] uppercase tracking-[0.04em] text-rl-dark-30">Trusted by the best leading brands:</span>
+        <div class="flex items-center gap-6">
+          <img src="https://framerusercontent.com/images/K7SPlhJqoaWF6f54wsEJzpesBo.svg?width=155&height=24" alt="Lovable" class="h-[20px] opacity-50">
+          <img src="https://framerusercontent.com/images/FFActUeE4daoS9F9mpqmKv4y3ZI.svg" alt="Orchids" class="h-[18px] opacity-50">
+          <img src="https://framerusercontent.com/images/TB2DGULOnFPG9zuBavFwyqWZ2hw.svg" alt="A0 dev" class="h-[18px] opacity-50">
+        </div>
+      </div>
+
+      <div class="h-10 md:h-14"></div>
+
+      <!-- Hero visual: mountain landscape -->
+      <div class="rounded-2xl overflow-hidden border border-rl-border-light">
+        <img src="https://framerusercontent.com/images/IpHIdqVoOMzhY8zkGb0SKdPFg0.webp?width=1596&height=900" alt="Wide mountain range beneath a cloudy sky with subtle geometric overlay graphics." class="w-full aspect-[16/9] object-cover">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 3. EVERYTHING YOU NEED (sticky scroll section) ===== -->
+  <section class="px-5 md:px-10 py-20 md:py-32" id="how-it-works">
+    <div class="max-w-container mx-auto">
+      <div class="mb-12 md:mb-16">
+        <h2 class="text-[32px] md:text-[40px] leading-[110%] tracking-[-0.04em]">
+          Everything you need for <strong class="font-display-bold">autonomous codegen</strong>
+        </h2>
+      </div>
+
+      <!-- 3 feature items with visuals -->
+      <div class="grid md:grid-cols-2 gap-10 items-start">
+        <!-- Left: accordion items -->
+        <div class="space-y-0 border-t border-rl-border">
+          <!-- Item 1: Repos -->
+          <div class="border-b border-rl-border py-6 cursor-pointer scroll-item active" onclick="switchFeatureItem(0, this)">
+            <div class="flex items-start gap-4">
+              <span class="text-[12px] font-mono text-rl-muted mt-1">01</span>
+              <div>
+                <h3 class="text-[20px] tracking-[-0.02em] font-display-medium">Repos</h3>
+                <p class="text-[14px] text-rl-dark-60 leading-[1.5] mt-2">Source control designed for agents with light weight push/pull operations and no rate limits.</p>
+              </div>
+            </div>
+          </div>
+          <!-- Item 2: Code Retrieval -->
+          <div class="border-b border-rl-border py-6 cursor-pointer scroll-item" onclick="switchFeatureItem(1, this)">
+            <div class="flex items-start gap-4">
+              <span class="text-[12px] font-mono text-rl-muted mt-1">02</span>
+              <div>
+                <h3 class="text-[20px] tracking-[-0.02em] font-display-medium">Code Retrieval</h3>
+                <p class="text-[14px] text-rl-dark-60 leading-[1.5] mt-2">Best in class semantic search that scales to large codebases out-of-the-box.</p>
+              </div>
+            </div>
+          </div>
+          <!-- Item 3: Fast Apply -->
+          <div class="border-b border-rl-border py-6 cursor-pointer scroll-item" onclick="switchFeatureItem(2, this)">
+            <div class="flex items-start gap-4">
+              <span class="text-[12px] font-mono text-rl-muted mt-1">03</span>
+              <div>
+                <h3 class="text-[20px] tracking-[-0.02em] font-display-medium">Fast Apply</h3>
+                <p class="text-[14px] text-rl-dark-60 leading-[1.5] mt-2">Universal code merging model that applies file edits at 10,000 tok/s.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: visual that switches -->
+        <div class="sticky top-24 rounded-2xl overflow-hidden border border-rl-border-light">
+          <img id="feature-visual" src="https://framerusercontent.com/images/sopYjzQgoZd3HTmradpodLZRUEc.svg?width=532&height=494" alt="Feature visual" class="w-full aspect-[532/494] object-cover transition-opacity duration-300">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 4. MODELS ===== -->
+  <section class="px-5 md:px-10 py-16 md:py-24" id="models">
+    <div class="max-w-container mx-auto">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="w-2 h-2 rounded-full bg-rl-accent"></span>
+        <span class="text-[12px] uppercase tracking-[0.04em] text-rl-accent font-display-medium">Models</span>
+      </div>
+      <h2 class="text-[32px] md:text-[40px] leading-[110%] tracking-[-0.04em] max-w-[500px]">
+        State of the art SLMs as <strong class="font-display-bold">tools</strong> for coding agents
+      </h2>
+      <p class="text-[16px] text-rl-dark-60 leading-[1.5] mt-4 max-w-[55ch]">
+        Small, fast models trained in-house to outperform frontier LLMs on utility tasks. Equip your agent with tools to apply file edits at 10,000 tok/s, and search an entire codebase in less than 2s.
+      </p>
+
+      <div class="h-10 md:h-14"></div>
+      <div class="rounded-2xl overflow-hidden border border-rl-border-light relative">
+        <img src="https://framerusercontent.com/images/mWLbIwwLqHeiCLK0erqv1TEvdY.webp?width=1596&height=900" alt="Rocky peaks with warm tones and layered clouds" class="w-full aspect-[16/9] object-cover">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 5. INFRA ===== -->
+  <section class="px-5 md:px-10 py-16 md:py-24" id="infra">
+    <div class="max-w-container mx-auto">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="w-2 h-2 rounded-full bg-rl-accent"></span>
+        <span class="text-[12px] uppercase tracking-[0.04em] text-rl-accent font-display-medium">Infra</span>
+      </div>
+      <h2 class="text-[32px] md:text-[40px] leading-[110%] tracking-[-0.04em] max-w-[500px]">
+        Source control designed for the <strong class="font-display-bold">models</strong> using it
+      </h2>
+      <p class="text-[16px] text-rl-dark-60 leading-[1.5] mt-4 max-w-[55ch]">
+        Lightweight push/pull operation from sandboxes, fast branching for spawning subagents, automatic indexing for two-stage retrieval, and rate limits designed for high throughput.
+      </p>
+
+      <div class="h-10 md:h-14"></div>
+      <div class="rounded-2xl overflow-hidden border border-rl-border-light">
+        <img src="https://framerusercontent.com/images/Bj6BdvVC7GNAWhZbDFhJ2X9rTFI.webp?width=1596&height=900" alt="Mountain ridge at sunset with foreground trees" class="w-full aspect-[16/9] object-cover">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 6. FEATURES (6 cards) ===== -->
+  <section class="px-5 md:px-10 py-16 md:py-24" id="features">
+    <div class="max-w-container mx-auto">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="w-2 h-2 rounded-full bg-rl-accent"></span>
+        <span class="text-[12px] uppercase tracking-[0.04em] text-rl-accent font-display-medium">Features</span>
+      </div>
+      <h2 class="text-[32px] md:text-[40px] leading-[110%] tracking-[-0.04em]">
+        Building blocks for <strong class="font-display-bold">reliability and scale</strong>
+      </h2>
+      <p class="text-[16px] text-rl-dark-60 leading-[1.5] mt-4 max-w-[55ch]">
+        Source control with out-of-the box codebase retrieval, fast utility SLMs, and task-specific agents you can run on any repo.
+      </p>
+
+      <div class="h-10 md:h-14"></div>
+
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-6 flex flex-col gap-3">
+          <span class="text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]">No. 1</span>
+          <h3 class="text-[16px] font-display-medium">specialized models</h3>
+        </div>
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-6 flex flex-col gap-3">
+          <span class="text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]">No. 2</span>
+          <h3 class="text-[16px] font-display-medium">fast retrieval</h3>
+        </div>
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-6 flex flex-col gap-3">
+          <span class="text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]">No. 3</span>
+          <h3 class="text-[16px] font-display-medium">smart merging</h3>
+        </div>
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-6 flex flex-col gap-3">
+          <span class="text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]">No. 4</span>
+          <h3 class="text-[16px] font-display-medium">low latency</h3>
+        </div>
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-6 flex flex-col gap-3">
+          <span class="text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]">No. 5</span>
+          <h3 class="text-[16px] font-display-medium">simple integration</h3>
+        </div>
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-6 flex flex-col gap-3">
+          <span class="text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]">No. 6</span>
+          <h3 class="text-[16px] font-display-medium">built for reliability</h3>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 7. TESTIMONIALS ===== -->
+  <section class="px-5 md:px-10 py-16 md:py-24">
+    <div class="max-w-container mx-auto">
+      <h2 class="text-[32px] md:text-[40px] leading-[110%] tracking-[-0.04em] text-center mb-14">
+        Trusted by <strong class="font-display-bold">trailblazers</strong>
+      </h2>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Testimonial 1 -->
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-8 relative">
+          <div class="absolute top-6 right-6 opacity-10">
+            <img src="https://framerusercontent.com/images/3ExnUwdijE217iE33wOFOzPZyp0.svg" alt="" class="w-8 h-8">
+          </div>
+          <p class="text-[16px] leading-[1.6] text-rl-dark mb-8">
+            Relace has been a critical tool for us to create custom, design-focused AI models and allowed us to fine tune on our own data and continuously create better and better models.
+          </p>
+          <div class="flex items-center gap-3">
+            <img src="https://framerusercontent.com/images/Mw2cnIpdnUoEW60Ce79wqgu414.png" alt="Teddy Ni" class="w-10 h-10 rounded-full object-cover">
+            <div>
+              <p class="text-[14px] font-display-medium">Teddy Ni</p>
+              <p class="text-[12px] text-rl-dark-60">Co-Founder at magic patterns</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Testimonial 2 -->
+        <div class="bg-rl-cream border border-rl-border rounded-2xl p-8 relative">
+          <div class="absolute top-6 right-6 opacity-10">
+            <img src="https://framerusercontent.com/images/3ExnUwdijE217iE33wOFOzPZyp0.svg" alt="" class="w-8 h-8">
+          </div>
+          <p class="text-[16px] leading-[1.6] text-rl-dark mb-8">
+            Just wanted to say that Relace's fast rewriting model has been a big boon to our product. It's made edits more reliable with hardly any visible downsides. A whole class of bugs is gone for us now.
+          </p>
+          <div class="flex items-center gap-3">
+            <img src="https://framerusercontent.com/images/0QooaWnldML3OowpdLQ9ZHkeKhE.png" alt="James Grugett" class="w-10 h-10 rounded-full object-cover">
+            <div>
+              <p class="text-[14px] font-display-medium">James Grugett</p>
+              <p class="text-[12px] text-rl-dark-60">Co-Founder &amp; ceo at codebuff</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 8. FAQ ===== -->
+  <section class="px-5 md:px-10 py-16 md:py-24" id="faq">
+    <div class="max-w-container mx-auto">
+      <h2 class="text-[32px] md:text-[40px] leading-[110%] tracking-[-0.04em] mb-10">Frequently asked questions</h2>
+
+      <div class="max-w-[640px] divide-y divide-rl-border">
+        <div>
+          <button onclick="toggleFaq(this)" class="faq-trigger w-full flex items-center justify-between py-5 text-left">
+            <span class="text-[16px] font-display-medium pr-4">Why Relace?</span>
+            <svg class="w-4 h-4 shrink-0 text-rl-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <div class="faq-answer text-[14px] text-rl-dark-60 leading-[1.6] pr-8">Relace is purpose-built for coding workflows. Instead of relying on general-purpose LLMs, our in-house models specialize in retrieval, merging, and code generation &mdash; making them faster, more reliable, and easier to integrate into engineering pipelines. Teams use Relace to cut down errors, accelerate development, and gain a real competitive edge.</div>
+        </div>
+        <div>
+          <button onclick="toggleFaq(this)" class="faq-trigger w-full flex items-center justify-between py-5 text-left">
+            <span class="text-[16px] font-display-medium pr-4">Is Relace SOC 2 compliant?</span>
+            <svg class="w-4 h-4 shrink-0 text-rl-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <div class="faq-answer text-[14px] text-rl-dark-60 leading-[1.6] pr-8">Yes. Relace is built with enterprise security in mind, and our systems are SOC 2 compliant. This ensures your data is handled with the highest standards of confidentiality and integrity.</div>
+        </div>
+        <div>
+          <button onclick="toggleFaq(this)" class="faq-trigger w-full flex items-center justify-between py-5 text-left">
+            <span class="text-[16px] font-display-medium pr-4">Can I self-host Relace models?</span>
+            <svg class="w-4 h-4 shrink-0 text-rl-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <div class="faq-answer text-[14px] text-rl-dark-60 leading-[1.6] pr-8">Absolutely. For teams with stricter compliance or latency requirements, we offer on-premise and VPC-isolated deployments. You get full control of your environment while still benefiting from Relace&rsquo;s optimized inference stack.</div>
+        </div>
+        <div>
+          <button onclick="toggleFaq(this)" class="faq-trigger w-full flex items-center justify-between py-5 text-left">
+            <span class="text-[16px] font-display-medium pr-4">How does Relace handle sensitive code?</span>
+            <svg class="w-4 h-4 shrink-0 text-rl-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <div class="faq-answer text-[14px] text-rl-dark-60 leading-[1.6] pr-8">Your code never leaves your controlled environment when using self-hosted or VPC deployments. Even on our hosted tier, all data is encrypted in transit and at rest.</div>
+        </div>
+        <div>
+          <button onclick="toggleFaq(this)" class="faq-trigger w-full flex items-center justify-between py-5 text-left">
+            <span class="text-[16px] font-display-medium pr-4">What&rsquo;s the main advantage for source control workflows?</span>
+            <svg class="w-4 h-4 shrink-0 text-rl-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <div class="faq-answer text-[14px] text-rl-dark-60 leading-[1.6] pr-8">Relace outperforms frontier LLMs at code retrieval and merging. Our models can search a codebase in under a second and merge at 10,000 tokens per second &mdash; speeding up PR reviews, automated fixes, and CI/CD processes.</div>
+        </div>
+        <div>
+          <button onclick="toggleFaq(this)" class="faq-trigger w-full flex items-center justify-between py-5 text-left">
+            <span class="text-[16px] font-display-medium pr-4">How fast in onboarding?</span>
+            <svg class="w-4 h-4 shrink-0 text-rl-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <div class="faq-answer text-[14px] text-rl-dark-60 leading-[1.6] pr-8">You can start experimenting within minutes using our hosted API. For enterprise and self-hosted setups, our team provides guided onboarding to help you deploy Relace quickly and securely in your stack.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 9. CTA ===== -->
+  <section class="px-5 md:px-10 py-16 md:py-24">
+    <div class="max-w-container mx-auto bg-rl-dark text-white rounded-2xl p-10 md:p-16 text-center relative overflow-hidden">
+      <h2 class="text-[32px] md:text-[44px] leading-[110%] tracking-[-0.04em] relative z-10">
+        Get started in <strong class="font-display-bold">minutes</strong>
+      </h2>
+      <p class="text-[16px] text-white/60 mt-4 max-w-[50ch] mx-auto relative z-10">
+        Try out our playground, and start with our free tier to test Relace models in your application.
+      </p>
+      <div class="h-8"></div>
+      <div class="flex items-center justify-center gap-3 relative z-10">
+        <a href="#" class="btn-accent">Get a Demo <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 12h14m-7-7l7 7-7 7"/></svg></a>
+        <a href="#" class="btn-white-outline border border-white/20 text-white rounded-full px-5 py-2.5 text-[12px] uppercase tracking-[0.04em] hover:bg-white hover:text-rl-dark transition-all inline-flex items-center gap-2">Sign Up for Free <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 12h14m-7-7l7 7-7 7"/></svg></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 10. FOOTER ===== -->
+  <footer class="px-5 md:px-10 py-10 border-t border-rl-border">
+    <div class="max-w-container mx-auto">
+      <!-- Top row: links -->
+      <div class="flex flex-wrap items-center gap-4 mb-6">
+        <a href="#" class="text-[13px] text-rl-dark-60 hover:text-rl-dark transition-colors">y combinator</a>
+        <a href="./about-us" class="text-[13px] text-rl-dark-60 hover:text-rl-dark transition-colors">about us</a>
+        <a href="mailto:info@relace.ai" class="text-[13px] text-rl-dark hover:underline transition-colors">email us</a>
+        <!-- Social icons -->
+        <div class="flex items-center gap-3 ml-auto">
+          <a href="#" class="text-rl-dark-30 hover:text-rl-dark transition-colors">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+          <a href="#" class="text-rl-dark-30 hover:text-rl-dark transition-colors">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          </a>
+        </div>
+      </div>
+      <!-- Bottom legal row -->
+      <div class="flex flex-wrap items-center justify-between pt-4 border-t border-rl-border gap-4">
+        <p class="text-[12px] text-rl-muted">Copyright &copy; 2026 Relace</p>
+        <div class="flex items-center gap-4">
+          <a href="#" class="text-[12px] text-rl-muted hover:text-rl-dark transition-colors">Status</a>
+          <a href="#" class="text-[12px] text-rl-muted hover:text-rl-dark transition-colors">Terms of Use</a>
+          <a href="#" class="text-[12px] text-rl-muted hover:text-rl-dark transition-colors">Privacy Policy</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ===== JS ===== -->
+  <script>
+    const featureVisuals = [
+      'https://framerusercontent.com/images/sopYjzQgoZd3HTmradpodLZRUEc.svg?width=532&height=494',
+      'https://framerusercontent.com/images/ZOYRtqQFjn9TcXXEUejiuRiqExk.svg?width=532&height=494',
+      'https://framerusercontent.com/images/fibldtJSf1lpZt4u200RClW60s.svg?width=532&height=494',
+    ];
+
+    function switchFeatureItem(index, el) {
+      document.querySelectorAll('.scroll-item').forEach(i => i.classList.remove('active'));
+      el.classList.add('active');
+      const img = document.getElementById('feature-visual');
+      img.style.opacity = '0';
+      setTimeout(() => { img.src = featureVisuals[index]; img.style.opacity = '1'; }, 150);
+    }
+
+    function toggleFaq(trigger) {
+      const answer = trigger.nextElementSibling;
+      const isOpen = answer.classList.contains('open');
+      document.querySelectorAll('.faq-answer').forEach(a => a.classList.remove('open'));
+      document.querySelectorAll('.faq-trigger').forEach(t => t.classList.remove('open'));
+      if (!isOpen) { answer.classList.add('open'); trigger.classList.add('open'); }
+    }
+  </script>
+
+</body>
+</html>
