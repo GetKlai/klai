@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, BookMarked, Globe, Lock, Pencil } from 'lucide-react'
+import { Loader2, BookMarked, Globe, Lock, Pencil, ExternalLink } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -89,7 +89,7 @@ function DocsPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-32">
                     {m.docs_kb_visibility_label()}
                   </th>
-                  <th className="px-3 py-3 w-20" />
+                  <th className="px-3 py-3 w-24" />
                 </tr>
               </thead>
               <tbody>
@@ -119,8 +119,21 @@ function DocsPage() {
                           : m.docs_kb_visibility_private()}
                       </span>
                     </td>
-                    <td className="px-3 py-3 w-20 text-right">
+                    <td className="px-3 py-3 w-24 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {kb.visibility === 'public' && (
+                          <Tooltip label={m.docs_kb_view_public()}>
+                            <a
+                              href={`/docs/${kb.slug}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={m.docs_kb_view_public()}
+                              className="flex h-7 w-7 items-center justify-center text-[var(--color-muted-foreground)] transition-opacity hover:opacity-70"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </Tooltip>
+                        )}
                         <Tooltip label={m.docs_kb_edit_label()}>
                           <button
                             onClick={() =>
@@ -158,7 +171,7 @@ function DocsPage() {
                     <td className="px-6 py-3">
                       <Badge variant="outline" className="text-xs">{m.docs_kb_locked_badge()}</Badge>
                     </td>
-                    <td className="px-3 py-3 w-20 text-right">
+                    <td className="px-3 py-3 w-24 text-right">
                       <Tooltip label={m.docs_kb_locked_tooltip()}>
                         <button
                           disabled

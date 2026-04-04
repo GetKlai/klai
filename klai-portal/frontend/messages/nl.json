@@ -818,6 +818,7 @@
   "docs_kb_locked_tooltip": "U heeft geen toegang tot deze kennisbank",
   "docs_kb_request_access": "Toegang aanvragen",
   "docs_kb_locked_badge": "Geen toegang",
+  "docs_kb_view_public": "Publieke site bekijken",
   "app_tool_meetings_title": "Vergaderingen",
   "app_tool_meetings_description": "Vergaderingen opnemen en transcriberen",
   "app_meetings_empty_heading": "Geen vergaderingen",
