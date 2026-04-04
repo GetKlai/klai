@@ -33,6 +33,12 @@ paths:
 - `log` is site-level, not handler-level. Cannot go inside `handle` blocks.
 - Place at server block level (`*.example.com { log { ... } }`).
 
+## header vs request_header (HIGH)
+- `header` sets RESPONSE headers — backends never see them.
+- `request_header` sets REQUEST headers forwarded to upstream.
+- **When:** injecting `X-Request-ID` or other trace headers for backend services.
+- **Source:** SPEC-INFRA-004 — used `header` initially, backends didn't receive the ID.
+
 ## Docker socket proxy
 - portal-api accesses Docker via `tcp://docker-socket-proxy:2375` (never direct socket mount).
 - Proxy allows: CONTAINERS, NETWORKS, POST, DELETE. Everything else denied.
