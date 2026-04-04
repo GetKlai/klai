@@ -11,6 +11,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
 
@@ -58,6 +59,7 @@ class VexaClient:
         """Start a bot for the given meeting. Returns the bot response dict."""
         resp = await self._http.post(
             "/bots",
+            headers={**get_trace_headers()},
             json={
                 "platform": platform,
                 "native_meeting_id": native_meeting_id,
@@ -75,7 +77,7 @@ class VexaClient:
 
     async def stop_bot(self, platform: str, native_meeting_id: str) -> None:
         """Stop an active bot."""
-        resp = await self._http.delete(f"/bots/{platform}/{native_meeting_id}")
+        resp = await self._http.delete(f"/bots/{platform}/{native_meeting_id}", headers={**get_trace_headers()})
         resp.raise_for_status()
 
     async def get_running_bots(self) -> list[dict]:
@@ -85,7 +87,7 @@ class VexaClient:
         Each entry has: platform, native_meeting_id, status, normalized_status, container_id.
         Returns an empty list if the call fails — treated as "unknown, assume still running".
         """
-        resp = await self._http.get("/bots/status")
+        resp = await self._http.get("/bots/status", headers={**get_trace_headers()})
         resp.raise_for_status()
         return resp.json().get("running_bots", [])
 
@@ -97,7 +99,7 @@ class VexaClient:
 
         Returns (audio_bytes, format) where format is e.g. 'wav' or 'webm'.
         """
-        resp = await self._http.get("/recordings", params={"meeting_id": vexa_meeting_id})
+        resp = await self._http.get("/recordings", params={"meeting_id": vexa_meeting_id}, headers={**get_trace_headers()})
         resp.raise_for_status()
         recordings = resp.json().get("recordings", [])
         if not recordings:
@@ -114,6 +116,7 @@ class VexaClient:
                     fmt = mf.get("format", "wav")
                     raw_resp = await self._http.get(
                         f"/recordings/{rec_id}/media/{mf_id}/raw",
+                        headers={**get_trace_headers()},
                         timeout=120.0,
                     )
                     raw_resp.raise_for_status()
@@ -127,7 +130,7 @@ class VexaClient:
         Returns list of segment dicts: {start, end, text, speaker, language, absolute_start_time}
         Raises httpx.HTTPStatusError on HTTP error, httpx.RequestError on network error.
         """
-        resp = await self._http.get(f"/transcripts/{platform}/{native_meeting_id}")
+        resp = await self._http.get(f"/transcripts/{platform}/{native_meeting_id}", headers={**get_trace_headers()})
         resp.raise_for_status()
         return resp.json().get("segments", [])
 
@@ -138,7 +141,7 @@ class VexaClient:
         Docker exec approach in recording_cleanup.py.
         """
         try:
-            resp = await self._http.delete(f"/recordings/{recording_id}")
+            resp = await self._http.delete(f"/recordings/{recording_id}", headers={**get_trace_headers()})
             resp.raise_for_status()
             return True
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.transcribe import router as transcribe_router
-from app.logging_setup import setup_logging
+from app.logging_setup import RequestContextMiddleware, setup_logging
 
 setup_logging()
 
@@ -32,6 +32,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(health_router)
 app.include_router(transcribe_router)

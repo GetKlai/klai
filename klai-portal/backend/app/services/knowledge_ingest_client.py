@@ -7,6 +7,7 @@ import logging
 import httpx
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
             timeout=5.0,
         ) as client:
             resp = await client.get(
@@ -39,7 +40,7 @@ async def get_source_count(org_id: str, kb_slug: str) -> int | None:
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
             timeout=5.0,
         ) as client:
             resp = await client.get(
@@ -62,7 +63,7 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
     """
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
-        headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
         timeout=30.0,
     ) as client:
         resp = await client.delete(
@@ -86,7 +87,7 @@ async def preview_crawl(
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
             timeout=20.0,
         ) as client:
             resp = await client.post(
@@ -114,7 +115,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
-            headers={"X-Internal-Secret": settings.knowledge_ingest_secret},
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
             timeout=10.0,
         ) as client:
             resp = await client.patch(

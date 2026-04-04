@@ -10,6 +10,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
 
@@ -56,7 +57,7 @@ async def ingest_vexa_meeting(
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        headers = {}
+        headers = {**get_trace_headers()}
         if settings.knowledge_ingest_secret:
             headers["X-Internal-Secret"] = settings.knowledge_ingest_secret
         resp = await client.post(

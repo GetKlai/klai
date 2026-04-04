@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ async def provision_gitea_repo(
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
             "Content-Type": "application/json",
+            **get_trace_headers(),
         },
         timeout=10.0,
     ) as client:
@@ -49,6 +51,7 @@ async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
+            **get_trace_headers(),
         },
         timeout=5.0,
     ) as client:
@@ -69,6 +72,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
+            **get_trace_headers(),
         },
         timeout=30.0,  # longer timeout: Gitea + Qdrant cleanup
     ) as client:

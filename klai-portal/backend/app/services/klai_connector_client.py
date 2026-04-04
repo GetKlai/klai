@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class KlaiConnectorClient:
     """
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {settings.klai_connector_secret}"}
+        return {"Authorization": f"Bearer {settings.klai_connector_secret}", **get_trace_headers()}
 
     async def trigger_sync(self, connector_id: str) -> SyncRunData:
         """Trigger an on-demand sync. Returns the created SyncRun (status: running).

@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.logging_setup import setup_logging
+from app.logging_setup import RequestContextMiddleware, setup_logging
 from app.mailer import send_email
 from app.models import ZitadelPayload
 from app.portal_client import get_user_language
@@ -29,6 +29,8 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="klai-mailer", docs_url=None, redoc_url=None, openapi_url=None)
+
+app.add_middleware(RequestContextMiddleware)
 
 renderer = Renderer(theme_dir=Path(settings.theme_dir))
 

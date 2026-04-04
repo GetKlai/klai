@@ -31,6 +31,7 @@ class TestLoggingContextMiddleware:
             return MagicMock()
 
         request = MagicMock()
+        request.headers = {}  # No X-Request-ID → middleware generates UUID
         # Ensure request.state has no org_id/user_id yet
         request.state = MagicMock(spec=[])
 
@@ -61,6 +62,7 @@ class TestLoggingContextMiddleware:
             return MagicMock()
 
         request = MagicMock()
+        request.headers = {}
         request.state = MagicMock(spec=[])
 
         await middleware.dispatch(request, mock_call_next)
@@ -83,9 +85,55 @@ class TestLoggingContextMiddleware:
             return MagicMock()
 
         request = MagicMock()
+        request.headers = {}
         # state exists but has no org_id/user_id attributes
         request.state = MagicMock(spec=[])
 
         # Should not raise
         result = await middleware.dispatch(request, mock_call_next)
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_accepts_upstream_request_id(self) -> None:
+        """When X-Request-ID is provided by upstream (e.g. Caddy), use it
+        instead of generating a new UUID."""
+        middleware = LoggingContextMiddleware(app=MagicMock())
+        upstream_id = "caddy-trace-abc-123"
+
+        request_id_during_call_next: str | None = None
+
+        async def mock_call_next(request: object) -> MagicMock:
+            nonlocal request_id_during_call_next
+            ctx = structlog.contextvars.get_contextvars()
+            request_id_during_call_next = ctx.get("request_id")
+            return MagicMock()
+
+        request = MagicMock()
+        request.headers = {"x-request-id": upstream_id}
+        request.state = MagicMock(spec=[])
+
+        response = await middleware.dispatch(request, mock_call_next)
+
+        assert request_id_during_call_next == upstream_id
+        assert response.headers.__setitem__.call_args_list[-1] == (
+            ("X-Request-ID", upstream_id),
+        )
+
+    @pytest.mark.asyncio
+    async def test_response_includes_request_id_header(self) -> None:
+        """X-Request-ID must be set on the response for client-side correlation."""
+        middleware = LoggingContextMiddleware(app=MagicMock())
+
+        async def mock_call_next(request: object) -> MagicMock:
+            return MagicMock()
+
+        request = MagicMock()
+        request.headers = {}
+        request.state = MagicMock(spec=[])
+
+        response = await middleware.dispatch(request, mock_call_next)
+
+        # Verify X-Request-ID was set on response headers
+        response.headers.__setitem__.assert_called_with(
+            "X-Request-ID", response.headers.__setitem__.call_args[0][1]
+        )

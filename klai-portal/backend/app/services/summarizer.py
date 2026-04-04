@@ -11,6 +11,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
 
@@ -56,7 +57,7 @@ async def _call_llm(system: str, user: str, model: str, temperature: float = 0.1
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
+            headers={"Authorization": f"Bearer {settings.litellm_master_key}", **get_trace_headers()},
             json={
                 "model": model,
                 "temperature": temperature,
