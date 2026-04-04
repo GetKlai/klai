@@ -57,6 +57,20 @@ It is **cross-platform** — all platform-specific settings live in local config
       "command": "npx",
       "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
       "env": {}
+    },
+    "codeindex": {
+      "type": "stdio",
+      "command": "codeindex",
+      "args": ["mcp"],
+      "env": {}
+    },
+    "grafana": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-grafana", "--disable-write"],
+      "env": {
+        "GRAFANA_URL": "https://grafana.getklai.com"
+      }
     }
   }
 }
@@ -69,6 +83,8 @@ It is **cross-platform** — all platform-specific settings live in local config
 | **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Uses a persistent browser profile so login sessions survive across Claude Code restarts. |
+| **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
+| **grafana** | Read-only access to Grafana dashboards, VictoriaLogs queries, and alerts for production debugging. Preferred over `docker logs` for investigating issues. |
 
 ## 3. Set up Playwright (per machine)
 
@@ -163,6 +179,75 @@ gh auth login
 
 For other platforms: https://github.com/cli/cli#installation
 
+## 7. Install CodeIndex
+
+CodeIndex provides graph-powered code intelligence (call graphs, impact analysis, semantic search).
+It is distributed as a private npm package.
+
+```bash
+# Install from klai-private
+npm install -g klai-private/tools/codeindex-1.3.56.tgz
+
+# Configure MCP, hooks, and skills
+codeindex setup
+
+# Index the codebase (creates KuzuDB graph in ~/.codeindex/klai/)
+codeindex analyze
+
+# Run enrichment (git hotspots, SPEC links, test mapping, PageRank)
+node scripts/codeindex-enrich.mjs
+```
+
+After code changes, refresh the index:
+
+```bash
+codeindex update && node scripts/codeindex-enrich.mjs
+```
+
+Or force a full re-index:
+
+```bash
+./scripts/codeindex-analyze-and-enrich.sh --force
+```
+
+**File locations:**
+
+| What | Where | Committed |
+|------|-------|-----------|
+| KuzuDB graph | `~/.codeindex/klai/kuzu` | No (per-machine) |
+| Enrichment sidecar | `~/.codeindex/klai/enrichment.json` | No |
+| CodeIndex hooks | `~/.claude/hooks/codeindex/` | No (installed by setup) |
+| CodeIndex skills | `.claude/skills/codeindex/` | Yes |
+| Enrichment script | `scripts/codeindex-enrich.mjs` | Yes |
+| Wrapper script | `scripts/codeindex-analyze-and-enrich.sh` | Yes |
+
+For usage guidelines (when to use CodeIndex vs Serena), see `.claude/rules/klai/codeindex.md`.
+
+## 8. Install Grafana MCP
+
+Grafana MCP provides read-only access to dashboards, VictoriaLogs, and alerts for production
+debugging. It runs via `uvx` (acceptable here since `mcp-grafana` is a small, fast package).
+
+**Prerequisites:**
+
+1. Create a service account token in Grafana → Admin → Service Accounts
+2. Set the token as environment variable `GRAFANA_SERVICE_ACCOUNT_TOKEN`
+
+The token is **not** stored in `.mcp.json` — it is read from the environment. Add it to your
+shell profile:
+
+```bash
+export GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_..."
+```
+
+**Verify:**
+
+```bash
+uvx mcp-grafana --help
+```
+
+For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observability.md`.
+
 ## Common failure modes
 
 1. **Serena binary missing** — `which serena` returns nothing. Cause: uv cache eviction or never
@@ -173,3 +258,6 @@ For other platforms: https://github.com/cli/cli#installation
    file patterns.
 4. **Playwright config missing** — `config.json` not found. Fix: `cp .playwright-mcp/config.example.json .playwright-mcp/config.json` and edit paths.
 5. **Playwright profile locked** — Browser didn't close cleanly. Fix: remove `SingletonLock` files (see above) or kill lingering browser processes.
+6. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
+7. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
+8. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create service account in Grafana and export the token in your shell profile.
