@@ -138,6 +138,22 @@ Scrolled border: 1px solid rgba(255,255,255,0.06)
 
 ---
 
+## GTM agents require klai-website as working directory (HIGH)
+
+`gtm-blog-writer`, `gtm-blog-seo`, and `gtm-voice-editor` live in `klai-website/.claude/agents/gtm/` and are invisible from the monorepo root — agent invocations fail silently.
+
+**Prevention:** Start Claude from inside the website: `cd klai-website && claude`
+
+---
+
+## klai-website is a separate git repo (MED)
+
+`klai-website/` has its own git history and is ignored by the root `.gitignore`. Commits from the root miss website changes.
+
+**Prevention:** Always commit and push from within `klai-website/`.
+
+---
+
 ## See Also
 
 - Shared brand DNA: `design/styleguide.md` (auto-loads for website files)
