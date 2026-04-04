@@ -11,7 +11,7 @@
 #   DATABASE_URL       — asyncpg DSN (proves PORTAL_API_DB_PASSWORD is set)
 #   DOMAIN             — getklai.com
 #
-# See: .claude/rules/klai/pitfalls/platform.md#platform-portal-api-deploy-env-preflight
+# See: .claude/rules/klai/projects/portal-backend.md
 
 set -euo pipefail
 
@@ -76,7 +76,7 @@ reason = (
     'Fix before restarting:\n'
     '  1. Check /opt/klai/.env on core-01 has the missing variables\n'
     '  2. Run: ssh core-01 \"docker compose config portal-api\" | grep -A 60 environment:\n'
-    '  3. See: .claude/rules/klai/pitfalls/platform.md#platform-portal-api-deploy-env-preflight\n'
+    '  3. See: .claude/rules/klai/projects/portal-backend.md\n'
 )
 print(json.dumps({'decision': 'block', 'reason': reason}))
 "
