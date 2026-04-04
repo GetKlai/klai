@@ -99,7 +99,9 @@ class VexaClient:
 
         Returns (audio_bytes, format) where format is e.g. 'wav' or 'webm'.
         """
-        resp = await self._http.get("/recordings", params={"meeting_id": vexa_meeting_id}, headers={**get_trace_headers()})
+        resp = await self._http.get(
+            "/recordings", params={"meeting_id": vexa_meeting_id}, headers={**get_trace_headers()}
+        )
         resp.raise_for_status()
         recordings = resp.json().get("recordings", [])
         if not recordings:

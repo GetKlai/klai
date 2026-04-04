@@ -115,9 +115,7 @@ class TestLoggingContextMiddleware:
         response = await middleware.dispatch(request, mock_call_next)
 
         assert request_id_during_call_next == upstream_id
-        assert response.headers.__setitem__.call_args_list[-1] == (
-            ("X-Request-ID", upstream_id),
-        )
+        assert response.headers.__setitem__.call_args_list[-1] == (("X-Request-ID", upstream_id),)
 
     @pytest.mark.asyncio
     async def test_response_includes_request_id_header(self) -> None:
@@ -134,6 +132,4 @@ class TestLoggingContextMiddleware:
         response = await middleware.dispatch(request, mock_call_next)
 
         # Verify X-Request-ID was set on response headers
-        response.headers.__setitem__.assert_called_with(
-            "X-Request-ID", response.headers.__setitem__.call_args[0][1]
-        )
+        response.headers.__setitem__.assert_called_with("X-Request-ID", response.headers.__setitem__.call_args[0][1])
