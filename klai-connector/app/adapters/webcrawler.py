@@ -99,26 +99,31 @@ class WebCrawlerAdapter(BaseAdapter):
         """Crawl a list of URLs via the synchronous /crawl endpoint and return DocumentRefs.
 
         Used for sitemap supplement: pages that BFS missed because they are not linked.
+        Sends URLs in batches of 100 (Crawl4AI's /crawl endpoint max_length limit).
         """
         if not urls:
             return []
-        payload: dict[str, Any] = {
-            "urls": urls,
-            "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
-        }
-        try:
-            response = await self._http_client.post(
-                f"{self._api_url}/crawl",
-                json=payload,
-                headers=self._auth_headers(),
-                timeout=120.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:
-            logger.warning("Supplement crawl failed: %s", exc)
-            return []
-        return self._process_results(data, cache, base_url=base_url)
+        refs: list[DocumentRef] = []
+        batch_size = 100
+        for i in range(0, len(urls), batch_size):
+            batch = urls[i : i + batch_size]
+            payload: dict[str, Any] = {
+                "urls": batch,
+                "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
+            }
+            try:
+                response = await self._http_client.post(
+                    f"{self._api_url}/crawl",
+                    json=payload,
+                    headers=self._auth_headers(),
+                    timeout=120.0,
+                )
+                response.raise_for_status()
+                data = response.json()
+                refs.extend(self._process_results(data, cache, base_url=base_url))
+            except Exception as exc:
+                logger.warning("Supplement crawl batch %d failed: %s", i // batch_size, exc)
+        return refs
 
     def _build_page_crawl_params(self, config: dict[str, Any]) -> dict[str, Any]:
         """Build CrawlerRunConfig params for single-page crawling (no deep_crawl_strategy).
