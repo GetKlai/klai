@@ -62,3 +62,28 @@ Never write prompts or audit templates to .md files. Output in chat directly.
 ## External libraries
 
 Use context7 MCP for current library/framework docs — not for internal code or business logic. During SPEC plan phase with external dependencies, run context7 during the research sub-phase.
+
+## CodeIndex
+
+Graph-powered code intelligence (call graphs, communities, execution flows). Enriched with git hotspots, SPEC links, test mapping, and PageRank.
+
+**When to use CodeIndex vs Serena:**
+
+| Question | Tool | Why |
+|---|---|---|
+| "What's in this file?" | Serena `get_symbols_overview` | Real-time, always up-to-date |
+| "Where is X defined?" | Serena `find_symbol` | Type-accurate LSP resolution |
+| "Who calls X?" (direct) | Serena `find_referencing_symbols` | Precise, 1-hop |
+| "What's the blast radius?" | CodeIndex `impact` | Full call chain traversal |
+| "How does auth work?" | CodeIndex `query` | Semantic search + process flows |
+| "What breaks if I change X?" | CodeIndex `impact` + `context` | Upstream/downstream analysis |
+| "Is this code tested?" | CodeIndex cypher `_tested_by` | Enrichment data |
+| "How often does this change?" | CodeIndex cypher `git_hotspot` | Enrichment data |
+| "Which SPEC does this implement?" | CodeIndex cypher `_specs` | Enrichment data |
+| Replace a function body | Serena `replace_symbol_body` | Type-safe editing |
+
+**Serena is primary for editing. CodeIndex is primary for understanding.**
+
+**After code changes:** run `codeindex update` then `node scripts/codeindex-enrich.mjs` to refresh.
+
+**Memory:** Serena memories are primary for long-term project knowledge. CodeIndex memory is available for short-lived observations.

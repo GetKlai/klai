@@ -213,3 +213,8 @@ klai-infra/
 # Playwright MCP — keep example config, ignore local config/screenshots/logs
 .playwright-mcp/*
 !.playwright-mcp/config.example.json
+
+# CodeIndex — local knowledge graph + source code (not shared)
+.codeindex/
+AGENTS.md
+codeindex-src/
