@@ -36,11 +36,30 @@ Common LogsQL queries:
 `/etc/docker/daemon.json`: `max-size: 50m`, `max-file: 3`.
 Alloy captures real-time — rotation only affects local Docker cache.
 
+## Product events (SPEC-GRAFANA-METRICS)
+All user-facing actions emit to the `product_events` table in the `klai` database.
+Query via Grafana PostgreSQL datasource or direct SQL on core-01.
+
+| Event | Service | Emitted from |
+|---|---|---|
+| `signup`, `login` | portal-api | auth/signup endpoints |
+| `billing.*` | portal-api | billing endpoints |
+| `meeting.*` | portal-api | meetings endpoints |
+| `knowledge.uploaded` | portal-api | connectors endpoint |
+| `notebook.created`, `notebook.opened` | research-api | notebooks endpoint (SQLAlchemy) |
+| `source.added` | research-api | sources endpoint (SQLAlchemy) |
+| `knowledge.queried` | retrieval-api | retrieve endpoint (asyncpg pool) |
+
+Useful queries:
+- Feature adoption: `SELECT event_type, COUNT(*) FROM product_events GROUP BY 1`
+- Tenant activity: `SELECT * FROM product_events WHERE org_id = <id> ORDER BY created_at DESC`
+
 ## When to use what
 | Scenario | Tool |
 |---|---|
 | Production error investigation | Grafana MCP → VictoriaLogs |
 | Cross-service request trace | Grafana MCP with `request_id:<uuid>` |
+| Feature usage / business metrics | `product_events` table via Grafana PostgreSQL |
 | Container startup issues | `docker logs --tail 30 <container>` |
 | Real-time log tailing (dev) | `docker logs -f <container>` |
 | HTTP-level debugging | Caddy JSON logs via `service:caddy` in VictoriaLogs |
