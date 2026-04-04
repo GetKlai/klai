@@ -19,11 +19,21 @@ def _patch_episode_type(monkeypatch):
     monkeypatch.setattr(graph_module, "EpisodeType", _FakeEpisodeType, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _reset_semaphore():
+    """Reset the cached semaphore between tests."""
+    graph_module._episode_semaphore = None
+    yield
+    graph_module._episode_semaphore = None
+
+
 def _make_episode_result(uuid: str = "ep-001") -> MagicMock:
+    episode_node = MagicMock()
+    episode_node.uuid = uuid
     result = MagicMock()
-    result.uuid = uuid
-    result.entity_count = 3
-    result.edge_count = 2
+    result.episode = episode_node
+    result.nodes = []
+    result.edges = []
     return result
 
 
@@ -53,6 +63,8 @@ async def test_ingest_episode_success():
         patch("knowledge_ingest.graph._get_graphiti", return_value=mock_graphiti),
     ):
         mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
         result = await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello world",
@@ -82,6 +94,8 @@ async def test_ingest_episode_retry_success():
         patch("knowledge_ingest.graph.asyncio.sleep", new_callable=AsyncMock),
     ):
         mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
         result = await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello",
@@ -106,6 +120,8 @@ async def test_ingest_episode_all_retries_fail():
         patch("knowledge_ingest.graph.asyncio.sleep", new_callable=AsyncMock),
     ):
         mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
         result = await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello",
@@ -131,6 +147,8 @@ async def test_ingest_episode_reference_time_matches_belief_time_start():
         patch("knowledge_ingest.graph._get_graphiti", return_value=mock_graphiti),
     ):
         mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
         await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello",
