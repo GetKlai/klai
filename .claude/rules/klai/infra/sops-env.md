@@ -40,7 +40,13 @@ After ANY change: `docker compose up -d <service>`, verify with `docker exec <ct
 - `$` in values: use `$$` in `.env` (docker-compose interpolation).
 - `(`, `)`, `&`, `!`: wrap value in double quotes. All CI scripts `source .env`.
 
+## Never redirect into .env.sops (CRIT)
+`sops -e ... > core-01/.env.sops` destroys the file — the shell truncates BEFORE the
+command runs. If encryption fails, the file is 0 bytes and ALL production secrets are gone.
+Source: April 2026 incident — agent used `>` redirect, SOPS command failed, file wiped.
+
 ## Non-interactive SOPS (for agents)
+The ONLY safe procedure. No shortcuts, no `>` redirects into `.env.sops`:
 ```bash
 sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
 # append/modify
