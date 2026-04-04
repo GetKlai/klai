@@ -34,7 +34,7 @@ export const BlockPageEditor = forwardRef<
 >(({ initialContent, onChange, pageIndex = [], kbSlug = '', currentPageSlug = '', onNavigateToPage, onRequestWikilinkPicker }, ref) => {
   const editor = useCreateBlockNote({
     schema: wikilinkSchema,
-    pasteHandler: ({ event, editor, defaultPasteHandler }) => {
+    pasteHandler: ({ defaultPasteHandler }) => {
       return defaultPasteHandler({
         prioritizeMarkdownOverHTML: true,
         plainTextAsMarkdown: true,
