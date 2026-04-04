@@ -107,15 +107,6 @@ class WebCrawlerAdapter(BaseAdapter):
 
         parsed_base = urlparse(base_url)
 
-        deep_crawl_params: dict[str, Any] = {
-            "max_depth": max_depth,
-            "max_pages": max_pages,
-        }
-        if allowed_path_prefix:
-            deep_crawl_params["filter_chain"] = [
-                {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
-            ]
-
         # Pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
         # - With selector: trust the selector — PruningContentFilter but no JS chrome removal
         # - Without selector: full pipeline — JS chrome removal + excluded_tags + PruningContentFilter
@@ -127,10 +118,6 @@ class WebCrawlerAdapter(BaseAdapter):
             "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
         }
         crawl_params: dict[str, Any] = {
-            "deep_crawl_strategy": {
-                "type": "BFSDeepCrawlStrategy",
-                "params": deep_crawl_params,
-            },
             "cache_mode": "bypass",
             "word_count_threshold": 10,
             "wait_for": "js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
@@ -154,6 +141,19 @@ class WebCrawlerAdapter(BaseAdapter):
             "params": md_gen_params,
         }
 
+        deep_crawl_params: dict[str, Any] = {
+            "max_depth": max_depth,
+            "max_pages": max_pages,
+        }
+        if allowed_path_prefix:
+            deep_crawl_params["filter_chain"] = [
+                {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
+            ]
+        crawl_params["deep_crawl_strategy"] = {
+            "type": "BFSDeepCrawlStrategy",
+            "params": deep_crawl_params,
+        }
+
         payload: dict[str, Any] = {
             "urls": [base_url],
             "crawler_config": {
@@ -161,20 +161,6 @@ class WebCrawlerAdapter(BaseAdapter):
                 "params": crawl_params,
             },
         }
-
-        # Supplement BFS seeds with URLs from sitemap.xml (if available).
-        # Cap total seeds at max_pages — sitemap seeds are crawled individually
-        # and are not subject to the BFSDeepCrawlStrategy max_pages limit.
-        sitemap_urls = await self._fetch_sitemap_urls(base_url)
-        if sitemap_urls:
-            existing = set(payload["urls"])
-            for u in sitemap_urls:
-                if len(payload["urls"]) >= max_pages:
-                    break
-                if u not in existing:
-                    payload["urls"].append(u)
-                    existing.add(u)
-            logger.info("Added %d seed URLs from sitemap.xml", len(payload["urls"]) - 1)
 
         response = await self._http_client.post(
             f"{self._api_url}/crawl/job",
