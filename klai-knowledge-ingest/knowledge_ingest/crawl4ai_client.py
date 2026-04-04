@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -119,6 +120,23 @@ def _auth_headers() -> dict[str, str]:
     if settings.crawl4ai_api_key:
         return {"Authorization": f"Bearer {settings.crawl4ai_api_key}"}
     return {}
+
+
+async def _fetch_sitemap_urls(base_url: str) -> list[str]:
+    """Fetch same-domain URLs from sitemap.xml.
+
+    Best-effort — returns [] on any error (sitemap is optional).
+    """
+    sitemap_url = base_url.rstrip("/") + "/sitemap.xml"
+    base_domain = urlparse(base_url).netloc.lower()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(sitemap_url, headers=_auth_headers())
+            resp.raise_for_status()
+            locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", resp.text)
+            return [u for u in locs if urlparse(u).netloc.lower() == base_domain]
+    except Exception:
+        return []
 
 
 async def _crawl_sync(
@@ -301,11 +319,38 @@ async def crawl_site(
     crawl_results = [r for r in all_results if urlparse(r.url).netloc == parsed.netloc]
     skipped = len(all_results) - len(crawl_results)
     logger.info(
-        "crawl_site_complete",
+        "crawl_site_bfs_complete",
         start_url=start_url,
         pages=len(crawl_results),
         skipped_external=skipped,
     )
+
+    # Phase 2: supplement with sitemap URLs if BFS returned fewer pages than requested.
+    # BFS only finds pages reachable via links; orphaned pages (in sitemap but not linked)
+    # would be missed without this step.
+    if len(crawl_results) < max_pages:
+        remaining = max_pages - len(crawl_results)
+        seen_urls = {r.url for r in crawl_results}
+        sitemap_urls = await _fetch_sitemap_urls(start_url)
+        supplement_urls = [u for u in sitemap_urls if u not in seen_urls][:remaining]
+        if supplement_urls:
+            logger.info(
+                "crawl_site_supplement",
+                start_url=start_url,
+                bfs_pages=len(crawl_results),
+                supplement_count=len(supplement_urls),
+            )
+            supplement_results = await asyncio.gather(
+                *[crawl_page(u, selector=selector) for u in supplement_urls],
+                return_exceptions=True,
+            )
+            for result in supplement_results:
+                if isinstance(result, CrawlResult) and result.success and (
+                    result.fit_markdown or result.raw_markdown
+                ):
+                    crawl_results.append(result)
+
+    logger.info("crawl_site_complete", start_url=start_url, pages=len(crawl_results))
     return crawl_results
 
 

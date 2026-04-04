@@ -34,12 +34,14 @@ _JS_REMOVE_CHROME = """
 # JS injected AFTER wait_for fires: open collapsed toggles (Notion/details).
 _JS_EXPAND_TOGGLES = """
 document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
-document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
+document.querySelectorAll(
+  '.notion-toggle__summary, [data-block-type="toggle"] > *:first-child'
+).forEach(s => s.click());
 await new Promise(r => setTimeout(r, 300));
 """
 
 
-class CrawlJobPending(Exception):
+class CrawlJobPendingError(Exception):
     """Raised when a crawl job is still running and needs to be checked later.
 
     The SyncEngine catches this to set the sync run status to PENDING and
@@ -80,36 +82,51 @@ class WebCrawlerAdapter(BaseAdapter):
         return {}
 
     async def _fetch_sitemap_urls(self, base_url: str) -> list[str]:
-        """Fetch URLs from {base_url}/sitemap.xml for use as additional seed URLs.
-
-        Returns only URLs on the same domain as base_url.
-        Returns an empty list on any error (sitemap is optional).
-        """
+        """Fetch same-domain URLs from sitemap.xml. Returns [] on any error."""
         sitemap_url = f"{base_url.rstrip('/')}/sitemap.xml"
         base_domain = urlparse(base_url).netloc.lower()
         try:
             resp = await self._http_client.get(sitemap_url, timeout=10.0)
             resp.raise_for_status()
             locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", resp.text)
-            urls = [u for u in locs if urlparse(u).netloc.lower() == base_domain]
-            return urls
+            return [u for u in locs if urlparse(u).netloc.lower() == base_domain]
         except Exception:
-            logger.debug("Could not fetch sitemap from %s, continuing without it", sitemap_url)
             return []
 
-    async def _start_crawl(self, config: dict[str, Any]) -> str:
-        """Submit a crawl job to Crawl4AI and return the task_id."""
-        base_url: str = config["base_url"]
-        max_depth: int = config.get("max_depth", 3)
-        max_pages: int = min(config.get("max_pages", 200), 2000)
-        allowed_path_prefix: str | None = config.get("path_prefix") or None
+    async def _crawl_pages_sync(
+        self, urls: list[str], crawl_params: dict[str, Any], cache: dict[str, str], base_url: str,
+    ) -> list[DocumentRef]:
+        """Crawl a list of URLs via the synchronous /crawl endpoint and return DocumentRefs.
+
+        Used for sitemap supplement: pages that BFS missed because they are not linked.
+        """
+        if not urls:
+            return []
+        payload: dict[str, Any] = {
+            "urls": urls,
+            "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
+        }
+        try:
+            response = await self._http_client.post(
+                f"{self._api_url}/crawl",
+                json=payload,
+                headers=self._auth_headers(),
+                timeout=120.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            logger.warning("Supplement crawl failed: %s", exc)
+            return []
+        return self._process_results(data, cache, base_url=base_url)
+
+    def _build_page_crawl_params(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Build CrawlerRunConfig params for single-page crawling (no deep_crawl_strategy).
+
+        Used for sitemap supplement: crawling individual pages that BFS did not find.
+        Pipeline switching aligned with SPEC-CRAWL-001.
+        """
         content_selector: str | None = config.get("content_selector") or None
-
-        parsed_base = urlparse(base_url)
-
-        # Pipeline switching (aligned with knowledge-ingest SPEC-CRAWL-001):
-        # - With selector: trust the selector — PruningContentFilter but no JS chrome removal
-        # - Without selector: full pipeline — JS chrome removal + excluded_tags + PruningContentFilter
         md_gen_params: dict[str, Any] = {
             "content_filter": {
                 "type": "PruningContentFilter",
@@ -117,7 +134,7 @@ class WebCrawlerAdapter(BaseAdapter):
             },
             "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
         }
-        crawl_params: dict[str, Any] = {
+        params: dict[str, Any] = {
             "cache_mode": "bypass",
             "word_count_threshold": 10,
             "wait_for": "js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
@@ -125,21 +142,23 @@ class WebCrawlerAdapter(BaseAdapter):
             "remove_consent_popups": True,
             "remove_overlay_elements": True,
             "page_timeout": 30000,
+            "markdown_generator": {"type": "DefaultMarkdownGenerator", "params": md_gen_params},
         }
-
         if content_selector:
-            crawl_params["css_selector"] = content_selector
-            logger.info("Using content selector: %s", content_selector)
+            params["css_selector"] = content_selector
         else:
-            crawl_params["js_code_before_wait"] = _JS_REMOVE_CHROME
-            crawl_params["excluded_tags"] = [
-                "nav", "footer", "header", "aside", "script", "style",
-            ]
+            params["js_code_before_wait"] = _JS_REMOVE_CHROME
+            params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
+        return params
 
-        crawl_params["markdown_generator"] = {
-            "type": "DefaultMarkdownGenerator",
-            "params": md_gen_params,
-        }
+    async def _start_crawl(self, config: dict[str, Any]) -> str:
+        """Submit a crawl job to Crawl4AI and return the task_id."""
+        base_url: str = config["base_url"]
+        max_depth: int = config.get("max_depth", 3)
+        max_pages: int = min(config.get("max_pages", 200), 2000)
+        allowed_path_prefix: str | None = config.get("path_prefix") or None
+
+        crawl_params = self._build_page_crawl_params(config)
 
         deep_crawl_params: dict[str, Any] = {
             "max_depth": max_depth,
@@ -180,7 +199,7 @@ class WebCrawlerAdapter(BaseAdapter):
             The full task result payload on completion.
 
         Raises:
-            CrawlJobPending: If the job is still running after _MAX_POLL_SECONDS.
+            CrawlJobPendingError: If the job is still running after _MAX_POLL_SECONDS.
         """
         started = datetime.now(UTC)
         elapsed = 0.0
@@ -204,7 +223,7 @@ class WebCrawlerAdapter(BaseAdapter):
             elapsed = (datetime.now(UTC) - started).total_seconds()
 
         # Timeout: signal to the SyncEngine to mark as PENDING.
-        raise CrawlJobPending(
+        raise CrawlJobPendingError(
             task_id=task_id,
             job_started_at=started.isoformat(),
         )
@@ -297,7 +316,7 @@ class WebCrawlerAdapter(BaseAdapter):
         cross-contamination during concurrent syncs.
 
         Raises:
-            CrawlJobPending: If the crawl is still running (SyncEngine handles this).
+            CrawlJobPendingError: If the crawl is still running (SyncEngine handles this).
         """
         connector_id = str(connector.connector_id)
         cache: dict[str, str] = {}
@@ -312,14 +331,35 @@ class WebCrawlerAdapter(BaseAdapter):
             logger.info("Resuming pending crawl job %s", pending_task_id)
             data = await self._poll_task(pending_task_id)
             refs = self._process_results(data, cache, base_url=base_url)
-            logger.info("Crawl job %s completed: %d pages", pending_task_id, len(refs))
-            return refs
+            logger.info("Resumed crawl job %s: %d pages", pending_task_id, len(refs))
+            return refs  # No supplement on resume — job was already submitted with fixed max_pages.
 
         # Start a new crawl job.
         task_id = await self._start_crawl(config)
         data = await self._poll_task(task_id)
         refs = self._process_results(data, cache, base_url=base_url)
-        logger.info("Crawl completed: %d pages from %s", len(refs), base_url)
+        logger.info("Crawl BFS completed: %d pages from %s", len(refs), base_url)
+
+        # Phase 2: supplement with sitemap URLs that BFS did not reach.
+        # Pages can exist in the sitemap but not be reachable via internal links.
+        max_pages: int = min(config.get("max_pages", 200), 2000)
+        if len(refs) < max_pages:
+            remaining = max_pages - len(refs)
+            seen_urls = {ref.ref for ref in refs}
+            sitemap_urls = await self._fetch_sitemap_urls(base_url)
+            supplement_urls = [u for u in sitemap_urls if u not in seen_urls][:remaining]
+            if supplement_urls:
+                logger.info(
+                    "Supplementing %d BFS pages with %d sitemap URLs",
+                    len(refs), len(supplement_urls),
+                )
+                page_params = self._build_page_crawl_params(config)
+                supplement_refs = await self._crawl_pages_sync(
+                    supplement_urls, page_params, cache, base_url=base_url,
+                )
+                refs.extend(supplement_refs)
+                logger.info("Crawl complete: %d pages from %s", len(refs), base_url)
+
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
