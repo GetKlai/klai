@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
+import { requireAuth, requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import {
@@ -46,9 +46,15 @@ export async function GET(
   const resolved = await resolveKB(orgSlug, kbSlug);
   if (!resolved) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Personal and private KBs are not served via the public reader
+  // Private and personal KBs require authentication + org membership
   if (resolved.kb.kb_type === "personal" || resolved.kb.visibility === "private") {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const payload = await requireAuth(_req);
+    if (!payload) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (payload.org_id && payload.org_id !== resolved.org.zitadel_org_id) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    const denied = checkKBAccess(resolved.kb, payload.sub);
+    if (denied) return denied;
   }
 
   const filePath = `${path.join("/")}.md`;
