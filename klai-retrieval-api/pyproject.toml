@@ -13,6 +13,7 @@ dependencies = [
     "graphiti-core[falkordb]>=0.28,<0.29",
     "structlog>=25.0",
     "prometheus-client>=0.21",
+    "asyncpg>=0.30",
 ]
 
 [project.optional-dependencies]

@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.notebook import Notebook
 from app.models.source import Source
+from app.services.events import emit_event
 from app.services.ingestion import ingest_source
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,9 @@ async def add_source_file(
 
     background_tasks.add_task(ingest_source, src_id)
 
+    emit_event("source.added", tenant_id=nb.tenant_id, user_id=user.user_id,
+               properties={"scope": nb.scope})
+
     return SourceResponse(
         id=source.id,
         name=source.name,
@@ -254,6 +258,9 @@ async def add_source_url(
     await db.refresh(source)
 
     background_tasks.add_task(ingest_source, src_id)
+
+    emit_event("source.added", tenant_id=nb.tenant_id, user_id=user.user_id,
+               properties={"scope": nb.scope})
 
     return SourceResponse(
         id=source.id,
