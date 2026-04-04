@@ -163,12 +163,18 @@ class WebCrawlerAdapter(BaseAdapter):
         }
 
         # Supplement BFS seeds with URLs from sitemap.xml (if available).
+        # Cap total seeds at max_pages — sitemap seeds are crawled individually
+        # and are not subject to the BFSDeepCrawlStrategy max_pages limit.
         sitemap_urls = await self._fetch_sitemap_urls(base_url)
         if sitemap_urls:
             existing = set(payload["urls"])
-            new_urls = [u for u in sitemap_urls if u not in existing]
-            payload["urls"].extend(new_urls)
-            logger.info("Added %d seed URLs from sitemap.xml", len(new_urls))
+            for u in sitemap_urls:
+                if len(payload["urls"]) >= max_pages:
+                    break
+                if u not in existing:
+                    payload["urls"].append(u)
+                    existing.add(u)
+            logger.info("Added %d seed URLs from sitemap.xml", len(payload["urls"]) - 1)
 
         response = await self._http_client.post(
             f"{self._api_url}/crawl/job",
