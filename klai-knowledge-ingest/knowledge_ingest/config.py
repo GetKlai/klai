@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     ingest_debounce_seconds: int = 180
     enrichment_model: str = "klai-fast"
     enrichment_timeout: float = 15.0
-    enrichment_max_concurrent: int = 5
+    enrichment_max_concurrent: int = 2  # Mistral account limit: 60 RPM shared across all aliases
     enrichment_max_document_tokens: int = 2000
     # Sparse embedding sidecar (BGE-M3 FlagEmbedding)
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
