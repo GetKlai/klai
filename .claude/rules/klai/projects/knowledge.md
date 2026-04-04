@@ -11,9 +11,10 @@ paths:
 - Spot-check `raw_words` on a known-good page after any crawl config change.
 
 ## crawl4ai usage
-- **klai-knowledge-ingest**: direct Python library (`crawl4ai>=0.4,<1`) — full control over crawl config, JS execution, content filtering.
-- **klai-connector**: HTTP REST API client to `http://crawl4ai:11235` — submits async jobs, polls completion, processes markdown results.
-- No other services use crawl4ai.
+- **Both klai-knowledge-ingest and klai-connector**: HTTP REST API client to `http://crawl4ai:11235` — `POST /crawl` (sync), processes markdown results.
+- Crawl4AI runs as a shared Docker container with Playwright; neither service has a local browser install.
+- Connector uses `POST /crawl` with batches of up to 100 URLs (sitemap supplement strategy).
+- No other services use crawl4ai. Firecrawl is a separate service used by the chat application only.
 
 ## Embedding pipeline (knowledge-ingest)
 1. Chunking: 1500 chars, 200-char overlap
