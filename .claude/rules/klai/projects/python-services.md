@@ -17,7 +17,7 @@ paths:
 
 ## httpx client patterns
 - Always set `timeout=` on external calls. Default httpx timeout is the safety net, not the deadline.
-- Always include `**get_trace_headers()` from `app.trace` for inter-service calls — enables X-Request-ID correlation.
+- For portal-api inter-service calls: include `**get_trace_headers()` from `app.trace` — propagates X-Request-ID correlation. Other services receive trace context via `RequestContextMiddleware` in their `logging_setup.py`.
 - Log status code + response body before returning generic errors.
 - Catch `ConnectError` separately (no `.response` attribute).
 
