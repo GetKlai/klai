@@ -44,6 +44,37 @@ structlog.contextvars.unbind_contextvars("org_id", "connector_id")  # or clear_c
 
 portal-api's `LoggingContextMiddleware` binds `request_id`, `org_id`, `user_id` automatically on each request.
 
+## Cross-service trace correlation
+
+Caddy generates `X-Request-ID` per request. Portal-api reads it (or generates a UUID fallback)
+and propagates it to all downstream services via `get_trace_headers()`:
+
+```python
+from app.trace import get_trace_headers
+
+# In every httpx client call to internal services:
+async with httpx.AsyncClient(
+    headers={"X-Internal-Secret": secret, **get_trace_headers()},
+) as client:
+    resp = await client.get("/ingest/v1/...")
+```
+
+Downstream services (`knowledge-ingest`, `retrieval-api`, `connector`, `scribe`, `mailer`,
+`research-api`) bind `X-Request-ID` and `X-Org-ID` from incoming headers via
+`RequestContextMiddleware` in their `logging_setup.py`.
+
+**Result:** One `request_id:<uuid>` query in VictoriaLogs shows the full chain across all services.
+
+## Debugging with Grafana MCP
+
+The `grafana` MCP server in `.mcp.json` gives AI agents direct access to VictoriaLogs.
+Use it for production debugging instead of `docker logs`:
+
+- All errors for a service: `service:portal-api AND level:error`
+- Trace a request across services: `request_id:<uuid>`
+- Tenant-scoped logs: `org_id:<org> AND level:error`
+- Caddy access logs: `service:caddy AND status:5*`
+
 ## Log levels
 
 | Level | When |

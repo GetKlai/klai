@@ -29,7 +29,7 @@
       "args": ["mcp-grafana", "--disable-write"],
       "env": {
         "GRAFANA_URL": "https://grafana.getklai.com",
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": ""
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_SERVICE_ACCOUNT_TOKEN}"
       }
     }
   }
