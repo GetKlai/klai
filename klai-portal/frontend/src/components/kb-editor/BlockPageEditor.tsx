@@ -34,11 +34,18 @@ export const BlockPageEditor = forwardRef<
 >(({ initialContent, onChange, pageIndex = [], kbSlug = '', currentPageSlug = '', onNavigateToPage, onRequestWikilinkPicker }, ref) => {
   const editor = useCreateBlockNote({
     schema: wikilinkSchema,
-    pasteHandler: ({ defaultPasteHandler }) => {
-      return defaultPasteHandler({
-        prioritizeMarkdownOverHTML: true,
-        plainTextAsMarkdown: true,
-      })
+    pasteHandler: ({ event, editor, defaultPasteHandler }) => {
+      // When clipboard has both text/html and text/plain (e.g. VS Code copy),
+      // BlockNote defaults to HTML which often lacks heading structure.
+      // Detect markdown in text/plain and prefer it over lossy HTML.
+      const plain = event.clipboardData?.getData('text/plain') ?? ''
+      const hasHtml = event.clipboardData?.types.includes('text/html')
+      const looksLikeMarkdown = /(?:^|\n) {0,3}#{1,6} ./.test(plain)
+      if (hasHtml && looksLikeMarkdown) {
+        editor.pasteMarkdown(plain)
+        return true
+      }
+      return defaultPasteHandler()
     },
   })
 
