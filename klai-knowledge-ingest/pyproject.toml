@@ -17,7 +17,7 @@ dependencies = [
     # DB schema was already 3.x-compatible (queueing_lock + full status enum added in 2.15).
     "procrastinate>=3.0,<4",
     "structlog>=25.0",
-    "graphiti-core[falkordb]>=0.28,<1",
+    "graphiti-core[falkordb]>=0.28,<0.29",
 ]
 
 [project.optional-dependencies]
