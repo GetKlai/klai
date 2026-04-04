@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -171,22 +170,6 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
     )
 
 
-async def _fetch_sitemap_urls(base_url: str) -> list[str]:
-    """Fetch same-domain URLs from sitemap.xml.
-
-    Best-effort — returns [] on any error (sitemap is optional).
-    """
-    sitemap_url = base_url.rstrip("/") + "/sitemap.xml"
-    base_domain = urlparse(base_url).netloc.lower()
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(sitemap_url, headers=_auth_headers())
-            resp.raise_for_status()
-            locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", resp.text)
-            return [u for u in locs if urlparse(u).netloc.lower() == base_domain]
-    except Exception:
-        return []
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -244,8 +227,7 @@ async def crawl_site(
 ) -> list[CrawlResult]:
     """Deep-crawl a website using BFS strategy via the Crawl4AI REST API.
 
-    Seeds the crawl with start_url + any URLs found in sitemap.xml, then
-    recurses to max_depth using Crawl4AI's BFSDeepCrawlStrategy.
+    Crawls from start_url using BFS up to max_depth and max_pages.
 
     Aligned with klai-connector's webcrawler (SPEC-CRAWL-001).
     Uses POST /crawl/job → GET /crawl/job/{task_id} (bulk/deep-crawl endpoint).
@@ -272,28 +254,8 @@ async def crawl_site(
         "params": deep_crawl_params,
     }
 
-    # Seed crawl with start_url + sitemap URLs (same strategy as klai-connector).
-    # Cap seed list at max_pages: sitemap seeds are each crawled individually —
-    # they are not subject to the BFSDeepCrawlStrategy max_pages limit.
-    urls = [start_url]
-    sitemap_urls = await _fetch_sitemap_urls(start_url)
-    if sitemap_urls:
-        existing = {start_url}
-        for u in sitemap_urls:
-            if len(urls) >= max_pages:
-                break
-            if u not in existing:
-                urls.append(u)
-                existing.add(u)
-        logger.info(
-            "crawl_site_sitemap_seeds",
-            start_url=start_url,
-            found=len(sitemap_urls),
-            seeded=len(urls),
-        )
-
     payload = {
-        "urls": urls,
+        "urls": [start_url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
 
