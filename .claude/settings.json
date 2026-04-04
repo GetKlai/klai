@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Edit(**)",
-      "Write(**)"
+      "Write(**)",
+      "mcp__playwright__browser_snapshot"
     ],
     "additionalDirectories": [
       "/Users/mark/Server/projects/klai/.claude/rules/klai",
