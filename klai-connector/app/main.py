@@ -7,15 +7,15 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from sqlalchemy import update
 
+import app.core.database as _db
 from app.adapters.github import GitHubAdapter
+from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
 from app.adapters.webcrawler import WebCrawlerAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
-import app.core.database as _db
 from app.core.database import dispose_engine, init_engine
 from app.core.enums import SyncStatus
 from app.core.logging import RequestContextMiddleware, get_logger, setup_logging
@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
         registry = AdapterRegistry()
         registry.register("github", GitHubAdapter(settings))
         registry.register("web_crawler", WebCrawlerAdapter(settings))
+        registry.register("notion", NotionAdapter(settings))
         app.state.registry = registry
 
         # Knowledge-ingest client
