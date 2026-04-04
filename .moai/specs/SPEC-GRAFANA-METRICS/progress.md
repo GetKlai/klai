@@ -35,9 +35,20 @@
 | meeting.completed | Yes | meetings.py | AC-5 |
 | meeting.summarized | Yes | meetings.py | AC-5 |
 | knowledge.uploaded | Yes | connectors.py | Added 2026-04-03 |
-| notebook.created | No | klai-docs | Needs klai-docs implementation |
-| notebook.opened | No | klai-docs | Needs klai-docs implementation |
-| source.added | No | knowledge-ingest | Needs knowledge-ingest implementation |
-| knowledge.queried | No | knowledge-ingest | Needs knowledge-ingest implementation |
+| notebook.created | Yes | research-api/notebooks.py | Added 2026-04-04 |
+| notebook.opened | Yes | research-api/notebooks.py | Added 2026-04-04 |
+| source.added | Yes | research-api/sources.py | Added 2026-04-04 (file + URL) |
+| knowledge.queried | Yes | retrieval-api/retrieve.py | Added 2026-04-04 (skip notebook scope) |
 
-## Status: In Progress (8/12 events, 3/3 dashboards)
+## Phase 3 complete (2026-04-04): cross-service events via portal DB
+  - NEW: klai-focus/research-api/app/services/events.py (asyncpg event emitter)
+  - NEW: klai-retrieval-api/retrieval_api/services/events.py (asyncpg event emitter)
+  - MOD: klai-focus/research-api/app/core/config.py (portal_events_dsn setting)
+  - MOD: klai-focus/research-api/app/api/notebooks.py (notebook.created, notebook.opened)
+  - MOD: klai-focus/research-api/app/api/sources.py (source.added for file + URL)
+  - MOD: klai-retrieval-api/retrieval_api/config.py (portal_events_dsn setting)
+  - MOD: klai-retrieval-api/retrieval_api/api/retrieve.py (knowledge.queried)
+  - MOD: klai-retrieval-api/pyproject.toml (asyncpg dependency)
+  - MOD: deploy/docker-compose.yml (PORTAL_EVENTS_DSN + net-postgres for retrieval-api)
+
+## Status: Complete (12/12 events, 3/3 dashboards)
