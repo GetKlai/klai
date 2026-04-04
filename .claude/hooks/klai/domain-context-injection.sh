@@ -25,39 +25,36 @@ CONTEXT=""
 # --- SSH commands → infrastructure knowledge ---
 if echo "$COMMAND" | grep -qE '^\s*ssh\s'; then
     CONTEXT="You're about to SSH into a server. Before making changes, read:
-- ${RULES_DIR}/pitfalls/infrastructure.md (env wipes, dollar sign truncation, fail2ban)
-- ${RULES_DIR}/patterns/infrastructure.md (SOPS commands, atomic env deploy)
-- ${RULES_DIR}/patterns/devops.md#core-01-ssh (ALWAYS use 'ssh core-01' alias, never direct IP)"
+- ${RULES_DIR}/infra/servers.md (ALWAYS use 'ssh core-01' alias, never direct IP, fail2ban)
+- ${RULES_DIR}/infra/sops-env.md (env wipes, dollar sign truncation, SOPS workflow)
+- ${RULES_DIR}/infra/deploy.md (atomic env writes, secret recovery from containers)"
 fi
 
 # --- docker compose → devops + platform knowledge ---
 if echo "$COMMAND" | grep -qE 'docker[[:space:]-]?compose'; then
     CONTEXT="You're running docker compose. Before proceeding, read:
-- ${RULES_DIR}/pitfalls/devops.md (restart vs up -d, env inheritance, image staleness)
-- ${RULES_DIR}/patterns/devops.md (compose sync, rebuild patterns)
+- ${RULES_DIR}/infra/deploy.md (restart vs up -d, env inheritance, image staleness, GHCR auth)
+- ${RULES_DIR}/lang/docker.md (rebuild patterns, image tags)
 Key reminder: 'docker compose restart' does NOT reload .env — use 'up -d' instead."
 fi
 
 # --- docker (non-compose) → devops knowledge ---
 if [ -z "$CONTEXT" ] && echo "$COMMAND" | grep -qE '^\s*docker\s'; then
     CONTEXT="You're running a docker command. Relevant context:
-- ${RULES_DIR}/pitfalls/devops.md (GHCR auth, image versions, env recovery from running containers)
-- ${RULES_DIR}/patterns/devops.md (local image builds, no-cache rebuilds)"
+- ${RULES_DIR}/lang/docker.md (image versions, no-cache rebuilds, GHCR auth)
+- ${RULES_DIR}/infra/deploy.md (env recovery from running containers)"
 fi
 
 # --- alembic → migration pitfalls ---
 if echo "$COMMAND" | grep -qE '^\s*alembic\s|uv run alembic'; then
     CONTEXT="You're running Alembic migrations. Before proceeding, read:
-- ${RULES_DIR}/pitfalls/devops.md#devops-alembic-multiple-heads (check 'alembic heads' after branch merges)
-- ${RULES_DIR}/pitfalls/devops.md#devops-alembic-duplicate-object-on-rerun (use IF NOT EXISTS in DDL)"
+- ${RULES_DIR}/infra/deploy.md (alembic heads after merge, IF NOT EXISTS in DDL)"
 fi
 
 # --- sops → secrets management ---
 if echo "$COMMAND" | grep -qE '^\s*sops\s'; then
     CONTEXT="You're editing SOPS secrets. Before proceeding, read:
-- ${RULES_DIR}/pitfalls/infrastructure.md (incomplete file wipes server, placeholder values)
-- ${RULES_DIR}/patterns/infrastructure.md#sops-secret-edit (correct edit workflow)
-- ${RULES_DIR}/patterns/devops.md#sops-env-sync (safety guards in sync-env.yml)
+- ${RULES_DIR}/infra/sops-env.md (incomplete file wipes server, placeholder values, correct edit workflow)
 CRITICAL: SOPS file must be COMPLETE — missing vars will be wiped from the server on next sync."
 fi
 
@@ -66,14 +63,14 @@ if echo "$COMMAND" | grep -qE "(sed|echo|cat\s*>).*\.env"; then
     CONTEXT="You're modifying a .env file via shell command. This is DANGEROUS.
 - NEVER modify existing secrets via sed/echo — dollar signs get truncated by shell interpolation
 - For new vars only: use single quotes: echo 'NEW=value' >> file
-- For changes: use SOPS workflow (${RULES_DIR}/patterns/infrastructure.md#sops-secret-edit)
+- For changes: use SOPS workflow (${RULES_DIR}/infra/sops-env.md)
 - After ANY change: verify with 'docker exec <container> printenv VAR_NAME'"
 fi
 
 # --- curl to production → platform knowledge ---
 if echo "$COMMAND" | grep -qE 'curl.*(core-01|getklai\.com|localhost:8)'; then
     CONTEXT="You're curling a production or local service. Relevant context:
-- ${RULES_DIR}/pitfalls/platform.md (Zitadel, LiteLLM, LibreChat, Caddy issues)
+- ${RULES_DIR}/platform/litellm.md, ${RULES_DIR}/platform/zitadel.md, ${RULES_DIR}/platform/caddy.md
 - Always use --connect-timeout 2 --max-time 3 to avoid hanging"
 fi
 
