@@ -5,7 +5,8 @@
       "Write(**)"
     ],
     "additionalDirectories": [
-      "/Users/mark/Server/projects/klai/.claude/rules/klai"
+      "/Users/mark/Server/projects/klai/.claude/rules/klai",
+      "/Users/mark"
     ]
   },
   "hooks": {
@@ -22,6 +23,10 @@
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/bash-grep-guard.sh\""
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/domain-context-injection.sh\""
