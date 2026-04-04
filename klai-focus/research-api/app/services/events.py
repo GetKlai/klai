@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import unquote, urlparse
 
 import asyncpg
 import structlog
@@ -41,7 +42,16 @@ async def init_pool() -> None:
         logger.info("events: portal_events_dsn not set, event emission disabled")
         return
     try:
-        _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        parsed = urlparse(dsn)
+        _pool = await asyncpg.create_pool(
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=parsed.path.lstrip("/"),
+            min_size=1,
+            max_size=2,
+        )
         logger.info("events: portal DB pool created")
     except Exception:
         logger.warning("events: failed to create portal DB pool", exc_info=True)
