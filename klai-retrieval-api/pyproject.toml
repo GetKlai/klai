@@ -10,7 +10,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "qdrant-client>=1.12",
     "sse-starlette>=2.1",
-    "graphiti-core[falkordb]>=0.28,<0.30",
+    "graphiti-core[falkordb]>=0.28,<0.29",
     "structlog>=25.0",
     "prometheus-client>=0.21",
 ]
