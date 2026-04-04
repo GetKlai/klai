@@ -19,7 +19,7 @@
       "$comment": "Browser automation for E2E spot-checks. Uses persistent Brave profile. Stop hook auto-enforces browser_close. Supports localhost (dev) and *.getklai.com (prod).",
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
+      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
       "env": {}
     },
     "codeindex": {
