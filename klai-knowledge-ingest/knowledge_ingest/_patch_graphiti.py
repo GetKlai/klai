@@ -1,15 +1,11 @@
-"""Monkey-patch for graphiti-core FalkorDB edge search performance bug.
+"""Monkey-patches for graphiti-core 0.28.x bugs.
 
-Upstream issue: https://github.com/getzep/graphiti/issues/1272
-Upstream fix (not yet released): https://github.com/getzep/graphiti/pull/1282
+Remove this file once graphiti-core >= 0.29 ships fixes for all three issues.
 
-The original `edge_fulltext_search` and `edge_bfs_search` methods re-MATCH
-relationships by UUID after a fulltext lookup, causing an O(n*m) full graph
-scan that times out on moderately-sized graphs (~1000+ RELATES_TO edges).
-
-The fix uses `startNode(e)` / `endNode(e)` instead, which is O(n).
-
-Remove this patch once graphiti-core >= 0.29 includes the fix.
+Patches applied:
+1. FalkorDB edge search O(n*m) timeout (getzep/graphiti#1272)
+2. Node dedup case-sensitive name matching (no upstream issue)
+3. FalkorDriver default_db ghost graph on init
 """
 
 from __future__ import annotations
@@ -20,7 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 def apply() -> None:
-    """Patch FalkorSearchOperations.edge_fulltext_search and edge_bfs_search."""
+    _patch_edge_search()
+    _patch_node_dedup()
+    _patch_default_db()
+
+
+# ---------------------------------------------------------------------------
+# 1. FalkorDB edge search: startNode(e)/endNode(e) instead of re-MATCH
+#    Upstream: https://github.com/getzep/graphiti/issues/1272
+# ---------------------------------------------------------------------------
+
+def _patch_edge_search() -> None:
     try:
         from graphiti_core.driver.falkordb.operations.search_ops import (
             FalkorSearchOperations,
@@ -39,11 +45,8 @@ def apply() -> None:
             edge_search_filter_query_constructor,
         )
     except ImportError:
-        logger.debug("graphiti-core not installed, skipping search patch")
+        logger.debug("graphiti-core not installed, skipping edge search patch")
         return
-
-    _original_edge_fulltext = FalkorSearchOperations.edge_fulltext_search
-    _original_edge_bfs = FalkorSearchOperations.edge_bfs_search
 
     async def _patched_edge_fulltext_search(
         self,
@@ -149,7 +152,118 @@ def apply() -> None:
 
     FalkorSearchOperations.edge_fulltext_search = _patched_edge_fulltext_search
     FalkorSearchOperations.edge_bfs_search = _patched_edge_bfs_search
-    logger.info(
-        "graphiti_search_patched",
-        extra={"methods": ["edge_fulltext_search", "edge_bfs_search"]},
-    )
+    logger.info("graphiti_edge_search_patched")
+
+
+# ---------------------------------------------------------------------------
+# 2. Node dedup: case-insensitive duplicate_name matching
+#    The LLM returns a duplicate_name that must match an existing node name,
+#    but the lookup dict at node_operations.py:311 is case-sensitive while
+#    the summary lookup at :650 already uses .lower(). This causes the LLM's
+#    dedup suggestion to silently fail whenever casing differs.
+# ---------------------------------------------------------------------------
+
+def _patch_node_dedup() -> None:
+    try:
+        from graphiti_core.utils.maintenance import node_operations
+    except ImportError:
+        logger.debug("graphiti-core not installed, skipping node dedup patch")
+        return
+
+    _original_escalate = node_operations._escalate_unresolved_nodes
+
+    async def _patched_escalate(
+        llm_client,
+        extracted_nodes,
+        indexes,
+        state,
+        episode=None,
+        previous_episodes=None,
+        entity_types=None,
+    ):
+        # Build case-insensitive lookup before the original runs
+        lower_to_node = {
+            node.name.lower(): node for node in indexes.existing_nodes
+        }
+        exact_names = {node.name for node in indexes.existing_nodes}
+
+        # Run original (which may leave nodes unresolved due to case mismatch)
+        result = await _original_escalate(
+            llm_client,
+            extracted_nodes,
+            indexes,
+            state,
+            episode=episode,
+            previous_episodes=previous_episodes,
+            entity_types=entity_types,
+        )
+
+        # Post-fix: find nodes that the original left as "no duplicate" where
+        # a case-insensitive match to an existing node exists
+        for i, resolved in enumerate(state.resolved_nodes):
+            if resolved is None:
+                continue
+            extracted = extracted_nodes[i]
+            # Only fix nodes that resolved to themselves (= not deduped)
+            if resolved.uuid != extracted.uuid:
+                continue
+            lower_name = extracted.name.lower()
+            if lower_name in lower_to_node and extracted.name not in exact_names:
+                existing = lower_to_node[lower_name]
+                state.resolved_nodes[i] = existing
+                state.uuid_map[extracted.uuid] = existing.uuid
+                state.duplicate_pairs.append((extracted, existing))
+                logger.info(
+                    "case_insensitive_dedup_fixed",
+                    extra={
+                        "extracted": extracted.name,
+                        "matched": existing.name,
+                    },
+                )
+
+        return result
+
+    node_operations._escalate_unresolved_nodes = _patched_escalate
+    logger.info("graphiti_node_dedup_patched")
+
+
+# ---------------------------------------------------------------------------
+# 3. FalkorDriver: prevent ghost default_db graph on init
+#    FalkorDriver.__init__ schedules build_indices_and_constraints() via
+#    loop.create_task() on the default database. Since add_episode()
+#    immediately clones to database=group_id, default_db is never used
+#    but gets created with empty indexes on every restart.
+# ---------------------------------------------------------------------------
+
+def _patch_default_db() -> None:
+    try:
+        from graphiti_core.driver.falkordb_driver import FalkorDriver
+    except ImportError:
+        logger.debug("graphiti-core not installed, skipping default_db patch")
+        return
+
+    _original_init = FalkorDriver.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        import asyncio
+
+        # Temporarily suppress create_task so build_indices_and_constraints
+        # doesn't run on the default database. Indices are built when
+        # clone(database=group_id) is called by add_episode().
+        _saved_create_task = None
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+            _saved_create_task = loop.create_task
+            loop.create_task = lambda coro: coro.close()
+        except RuntimeError:
+            pass
+
+        try:
+            _original_init(self, *args, **kwargs)
+        finally:
+            if loop is not None and _saved_create_task is not None:
+                loop.create_task = _saved_create_task
+
+    FalkorDriver.__init__ = _patched_init
+    logger.info("graphiti_default_db_patch_applied")
