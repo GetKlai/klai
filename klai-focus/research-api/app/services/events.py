@@ -3,6 +3,8 @@
 Events are inserted into the portal's ``product_events`` table via a
 lightweight asyncpg connection pool.  The ``org_id`` foreign key is
 resolved automatically from the Zitadel ``tenant_id`` using a sub-query.
+
+Pool lifecycle is managed by the FastAPI lifespan (init_pool / close_pool).
 """
 
 from __future__ import annotations
@@ -31,19 +33,26 @@ _INSERT_SQL = """
 """
 
 
-async def _get_pool() -> asyncpg.Pool | None:
+async def init_pool() -> None:
+    """Create the portal events connection pool. Call from FastAPI lifespan."""
     global _pool
-    if _pool is not None:
-        return _pool
     dsn = settings.portal_events_dsn
     if not dsn:
-        return None
+        logger.info("events: portal_events_dsn not set, event emission disabled")
+        return
     try:
         _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        logger.info("events: portal DB pool created")
     except Exception:
         logger.warning("events: failed to create portal DB pool", exc_info=True)
-        return None
-    return _pool
+
+
+async def close_pool() -> None:
+    """Close the portal events connection pool. Call from FastAPI lifespan."""
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
 
 
 def emit_event(
@@ -58,11 +67,10 @@ def emit_event(
     """
 
     async def _insert() -> None:
-        pool = await _get_pool()
-        if pool is None:
+        if _pool is None:
             return
         try:
-            await pool.execute(
+            await _pool.execute(
                 _INSERT_SQL,
                 event_type,
                 tenant_id,

@@ -36,10 +36,14 @@ async def _warmup_docling() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    await _warmup_docling()
     from app.services import qdrant_store
+    from app.services.events import close_pool, init_pool
+
+    await init_pool()
+    await _warmup_docling()
     qdrant_store.ensure_collection()
     yield
+    await close_pool()
 
 
 app = FastAPI(
