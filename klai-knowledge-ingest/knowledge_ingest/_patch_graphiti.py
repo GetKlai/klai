@@ -4,6 +4,7 @@ Remove this file once graphiti-core ships fixes for all issues listed below.
 
 Patches applied:
 1. Edge search O(n*m) timeout — startNode/endNode (getzep/graphiti#1272)
+   Patches BOTH search_utils.py module functions AND FalkorSearchOperations methods.
 2. Node dedup case-sensitive name matching (no upstream issue)
 3. Decorator single group_id routing (getzep/graphiti#1305, #1326)
 4. FalkorDriver.clone race condition — copy.copy instead of __init__ (#1305)
@@ -37,104 +38,177 @@ def apply() -> None:
 # ---------------------------------------------------------------------------
 # 1. FalkorDB edge search: startNode(e)/endNode(e) instead of re-MATCH
 #    Upstream: https://github.com/getzep/graphiti/issues/1272
+#
+#    The bug exists in TWO places:
+#    a) search_utils.py — module-level functions used during add_episode (ingest)
+#    b) FalkorSearchOperations — class methods (unused because search_interface=None)
+#    We patch BOTH to be safe.
 # ---------------------------------------------------------------------------
 
 def _patch_edge_search() -> None:
-    from graphiti_core.driver.falkordb.operations.search_ops import (
-        FalkorSearchOperations,
-        _build_falkor_fulltext_query,
-    )
-    from graphiti_core.driver.driver import GraphProvider
-    from graphiti_core.driver.query_executor import QueryExecutor
-    from graphiti_core.driver.record_parsers import entity_edge_from_record
-    from graphiti_core.edges import EntityEdge
+    from graphiti_core.driver.driver import GraphDriver, GraphProvider
+    from graphiti_core.edges import EntityEdge, get_entity_edge_from_record
     from graphiti_core.graph_queries import get_relationships_query
     from graphiti_core.models.edges.edge_db_queries import get_entity_edge_return_query
     from graphiti_core.search.search_filters import (
         SearchFilters,
         edge_search_filter_query_constructor,
     )
+    from graphiti_core.search import search_utils
 
-    async def _patched_edge_fulltext_search(
-        self,
-        executor: QueryExecutor,
+    # --- Patch (a): module-level edge_fulltext_search in search_utils.py ---
+    _original_fulltext = search_utils.edge_fulltext_search
+
+    async def _patched_module_edge_fulltext_search(
+        driver: GraphDriver,
         query: str,
         search_filter: SearchFilters,
         group_ids: list[str] | None = None,
-        limit: int = 10,
+        limit=search_utils.RELEVANT_SCHEMA_LIMIT,
     ) -> list[EntityEdge]:
-        fuzzy_query = _build_falkor_fulltext_query(query, group_ids)
-        if fuzzy_query == "":
+        # If there's a search_interface, delegate (same as original)
+        if driver.search_interface:
+            return await driver.search_interface.edge_fulltext_search(
+                driver, query, search_filter, group_ids, limit
+            )
+
+        fuzzy_query = search_utils.fulltext_query(query, group_ids, driver)
+        if fuzzy_query == '':
             return []
 
+        # FIX: use startNode/endNode instead of re-MATCH
+        if driver.provider == GraphProvider.FALKORDB:
+            match_query = """
+    YIELD relationship AS e, score
+    WITH e, score, startNode(e) AS n, endNode(e) AS m
+    """
+        elif driver.provider == GraphProvider.KUZU:
+            match_query = """
+        YIELD node, score
+        MATCH (n:Entity)-[:RELATES_TO]->(e:RelatesToNode_ {uuid: node.uuid})-[:RELATES_TO]->(m:Entity)
+        """
+        else:
+            # Neo4j — original pattern is fine (fast with native indexes)
+            match_query = """
+    YIELD relationship AS rel, score
+    MATCH (n:Entity)-[e:RELATES_TO {uuid: rel.uuid}]->(m:Entity)
+    """
+
         filter_queries, filter_params = edge_search_filter_query_constructor(
-            search_filter, GraphProvider.FALKORDB
+            search_filter, driver.provider
         )
         if group_ids is not None:
-            filter_queries.append("e.group_id IN $group_ids")
-            filter_params["group_ids"] = group_ids
+            filter_queries.append('e.group_id IN $group_ids')
+            filter_params['group_ids'] = group_ids
 
-        filter_query = ""
+        filter_query = ''
         if filter_queries:
-            filter_query = " WHERE " + (" AND ".join(filter_queries))
+            filter_query = ' WHERE ' + (' AND '.join(filter_queries))
 
         cypher = (
-            get_relationships_query(
-                "edge_name_and_fact", limit=limit, provider=GraphProvider.FALKORDB,
-            )
-            + "\n            YIELD relationship AS e, score"
-            + "\n            WITH e, score, startNode(e) AS n, endNode(e) AS m"
+            get_relationships_query('edge_name_and_fact', limit=limit, provider=driver.provider)
+            + match_query
             + filter_query
-            + "\n            RETURN\n            "
-            + get_entity_edge_return_query(GraphProvider.FALKORDB)
-            + "\n            ORDER BY score DESC\n            LIMIT $limit"
+            + """
+            RETURN
+            """
+            + get_entity_edge_return_query(driver.provider)
+            + """
+            ORDER BY score DESC
+            LIMIT $limit
+            """
         )
-        records, _, _ = await executor.execute_query(
-            cypher, query=fuzzy_query, limit=limit, **filter_params,
+        records, _, _ = await driver.execute_query(
+            cypher, query=fuzzy_query, limit=limit, routing_='r', **filter_params,
         )
-        return [entity_edge_from_record(r) for r in records]
+        return [get_entity_edge_from_record(r, driver.provider) for r in records]
 
-    async def _patched_edge_bfs_search(
-        self,
-        executor: QueryExecutor,
-        origin_uuids: list[str],
-        max_depth: int,
+    # --- Patch (a): module-level edge_bfs_search ---
+    _original_bfs = search_utils.edge_bfs_search
+
+    async def _patched_module_edge_bfs_search(
+        driver: GraphDriver,
+        bfs_origin_node_uuids: list[str] | None,
+        bfs_max_depth: int,
         search_filter: SearchFilters,
         group_ids: list[str] | None = None,
-        limit: int = 10,
+        limit: int = search_utils.RELEVANT_SCHEMA_LIMIT,
     ) -> list[EntityEdge]:
-        if not origin_uuids:
+        if driver.search_interface:
+            try:
+                return await driver.search_interface.edge_bfs_search(
+                    driver, bfs_origin_node_uuids, bfs_max_depth, search_filter, group_ids, limit
+                )
+            except NotImplementedError:
+                pass
+
+        if bfs_origin_node_uuids is None or len(bfs_origin_node_uuids) == 0:
             return []
 
         filter_queries, filter_params = edge_search_filter_query_constructor(
-            search_filter, GraphProvider.FALKORDB
+            search_filter, driver.provider
         )
         if group_ids is not None:
-            filter_queries.append("e.group_id IN $group_ids")
-            filter_params["group_ids"] = group_ids
+            filter_queries.append('e.group_id IN $group_ids')
+            filter_params['group_ids'] = group_ids
 
-        extra_filter = (" AND " + " AND ".join(filter_queries)) if filter_queries else ""
+        filter_query = ''
+        if filter_queries:
+            filter_query = ' WHERE ' + (' AND '.join(filter_queries))
 
-        cypher = (
-            f"""
-            UNWIND $bfs_origin_node_uuids AS origin_uuid
-            MATCH path = (origin {{uuid: origin_uuid}})-[:RELATES_TO|MENTIONS*1..{max_depth}]->(:Entity)
-            UNWIND relationships(path) AS rel
-            WITH rel AS e, startNode(rel) AS n, endNode(rel) AS m
-            WHERE type(e) = 'RELATES_TO'"""
-            + extra_filter
-            + "\n            RETURN DISTINCT\n            "
-            + get_entity_edge_return_query(GraphProvider.FALKORDB)
-            + "\n            LIMIT $limit"
+        # FIX: use startNode/endNode for FalkorDB
+        if driver.provider == GraphProvider.FALKORDB:
+            query = (
+                f"""
+                UNWIND $bfs_origin_node_uuids AS origin_uuid
+                MATCH path = (origin {{uuid: origin_uuid}})-[:RELATES_TO|MENTIONS*1..{bfs_max_depth}]->(:Entity)
+                UNWIND relationships(path) AS rel
+                WITH rel AS e, startNode(rel) AS n, endNode(rel) AS m
+                WHERE type(e) = 'RELATES_TO'
+                """
+                + (' AND ' + ' AND '.join(filter_queries) if filter_queries else '')
+                + """
+                RETURN DISTINCT
+                """
+                + get_entity_edge_return_query(driver.provider)
+                + """
+                LIMIT $limit
+                """
+            )
+        else:
+            # Neo4j / other — use original pattern
+            query = (
+                f"""
+                UNWIND $bfs_origin_node_uuids AS origin_uuid
+                MATCH path = (origin {{uuid: origin_uuid}})-[:RELATES_TO|MENTIONS*1..{bfs_max_depth}]->(:Entity)
+                UNWIND relationships(path) AS rel
+                MATCH (n:Entity)-[e:RELATES_TO {{uuid: rel.uuid}}]-(m:Entity)
+                """
+                + filter_query
+                + """
+                RETURN DISTINCT
+                """
+                + get_entity_edge_return_query(driver.provider)
+                + """
+                LIMIT $limit
+                """
+            )
+
+        records, _, _ = await driver.execute_query(
+            query, bfs_origin_node_uuids=bfs_origin_node_uuids, depth=bfs_max_depth,
+            limit=limit, routing_='r', **filter_params,
         )
-        records, _, _ = await executor.execute_query(
-            cypher, bfs_origin_node_uuids=origin_uuids, depth=max_depth, limit=limit,
-            **filter_params,
-        )
-        return [entity_edge_from_record(r) for r in records]
+        return [get_entity_edge_from_record(r, driver.provider) for r in records]
 
-    FalkorSearchOperations.edge_fulltext_search = _patched_edge_fulltext_search
-    FalkorSearchOperations.edge_bfs_search = _patched_edge_bfs_search
+    # Apply module-level patches
+    search_utils.edge_fulltext_search = _patched_module_edge_fulltext_search
+    search_utils.edge_bfs_search = _patched_module_edge_bfs_search
+
+    # Also patch the import in search.py (it imports at module level)
+    from graphiti_core.search import search as search_module
+    search_module.edge_fulltext_search = _patched_module_edge_fulltext_search
+    search_module.edge_bfs_search = _patched_module_edge_bfs_search
+
     logger.info("graphiti_edge_search_patched")
 
 
@@ -188,7 +262,6 @@ def _patch_node_dedup() -> None:
 def _patch_driver_clone() -> None:
     from graphiti_core.driver.falkordb_driver import FalkorDriver
 
-    # Add _initialized_databases tracking to existing instances
     _original_init = FalkorDriver.__init__
 
     def _patched_init(self, *args, **kwargs):
@@ -225,15 +298,13 @@ def _patch_driver_clone() -> None:
 
 def _patch_decorator_routing() -> None:
     import functools
-    from collections.abc import Awaitable, Callable
-    from typing import Any
 
     from graphiti_core.driver.driver import GraphProvider
     from graphiti_core import decorators
     from graphiti_core.helpers import semaphore_gather
     from graphiti_core.search.search_config import SearchResults
 
-    def _get_parameter_position(func: Callable, param_name: str) -> int | None:
+    def _get_parameter_position(func, param_name: str) -> int | None:
         import inspect
         sig = inspect.signature(func)
         for idx, (name, _) in enumerate(sig.parameters.items()):
@@ -251,7 +322,6 @@ def _patch_decorator_routing() -> None:
             if group_ids is None and group_ids_pos is not None and len(args) > group_ids_pos:
                 group_ids = args[group_ids_pos]
 
-            # Route ALL group_ids for FalkorDB (not just len > 1)
             if (
                 hasattr(self, 'clients')
                 and hasattr(self.clients, 'driver')
@@ -299,17 +369,14 @@ def _patch_decorator_routing() -> None:
 
         return wrapper
 
-    # Replace the decorator in the module so new usages pick it up
     decorators.handle_multiple_group_ids = handle_multiple_group_ids
 
-    # Re-decorate already-imported Graphiti methods that use this decorator
     try:
         from graphiti_core.graphiti import Graphiti
         for method_name in ['search', 'build_communities', 'build_communities_with_endpoint',
                             'get_all_edges']:
             if hasattr(Graphiti, method_name):
                 method = getattr(Graphiti, method_name)
-                # Unwrap the original function from the old decorator
                 original = getattr(method, '__wrapped__', method)
                 setattr(Graphiti, method_name, handle_multiple_group_ids(original))
     except Exception as e:
@@ -326,7 +393,7 @@ def _patch_decorator_routing() -> None:
 
 def _patch_bidirectional_edge_dedup() -> None:
     from graphiti_core.edges import EntityEdge
-    from graphiti_core.driver.driver import GraphDriver, GraphProvider
+    from graphiti_core.driver.driver import GraphDriver
     from graphiti_core.models.edges.edge_db_queries import get_entity_edge_return_query
     from graphiti_core.driver.record_parsers import entity_edge_from_record
 
@@ -348,33 +415,23 @@ def _patch_bidirectional_edge_dedup() -> None:
 
     EntityEdge.get_between_nodes_bidirectional = get_between_nodes_bidirectional
 
-    # Patch resolve_extracted_edges to use bidirectional search
     from graphiti_core.utils.maintenance import edge_operations
-    import inspect
 
-    src = inspect.getsource(edge_operations.resolve_extracted_edges)
-    if 'get_between_nodes_bidirectional' not in src:
-        from graphiti_core.helpers import semaphore_gather
+    _original_resolve = edge_operations.resolve_extracted_edges
 
-        _original_resolve = edge_operations.resolve_extracted_edges
+    async def _patched_resolve(clients, extracted_edges, existing_edges, episode, nodes,
+                               previous_episodes=None, entity_types=None):
+        _original_get = EntityEdge.get_between_nodes
+        EntityEdge.get_between_nodes = EntityEdge.get_between_nodes_bidirectional
+        try:
+            return await _original_resolve(
+                clients, extracted_edges, existing_edges, episode, nodes,
+                previous_episodes=previous_episodes, entity_types=entity_types,
+            )
+        finally:
+            EntityEdge.get_between_nodes = _original_get
 
-        async def _patched_resolve(clients, extracted_edges, existing_edges, episode, nodes,
-                                   previous_episodes=None, entity_types=None):
-            # The original calls get_between_nodes (forward only).
-            # We wrap it to use bidirectional instead by temporarily
-            # pointing get_between_nodes to the bidirectional version.
-            _original_get = EntityEdge.get_between_nodes
-            EntityEdge.get_between_nodes = EntityEdge.get_between_nodes_bidirectional
-            try:
-                return await _original_resolve(
-                    clients, extracted_edges, existing_edges, episode, nodes,
-                    previous_episodes=previous_episodes, entity_types=entity_types,
-                )
-            finally:
-                EntityEdge.get_between_nodes = _original_get
-
-        edge_operations.resolve_extracted_edges = _patched_resolve
-
+    edge_operations.resolve_extracted_edges = _patched_resolve
     logger.info("graphiti_bidirectional_edge_dedup_patched")
 
 
@@ -382,38 +439,27 @@ def _patch_bidirectional_edge_dedup() -> None:
 # 6. Empty fulltext query guard
 #    Stopword-only queries produce invalid RediSearch syntax.
 #    From getzep/graphiti#1375
+#    Patches the module-level fulltext_query() in search_utils.py
 # ---------------------------------------------------------------------------
 
 def _patch_empty_fulltext_guard() -> None:
-    from graphiti_core.driver.falkordb.operations.search_ops import (
-        FalkorSearchOperations,
-        _sanitize,
-        MAX_QUERY_LENGTH,
-    )
-    from graphiti_core.driver.falkordb import STOPWORDS
+    from graphiti_core.search import search_utils
 
-    def _patched_build_fulltext_query(
-        self, query: str, group_ids: list[str] | None = None,
-        max_query_length: int = MAX_QUERY_LENGTH,
-    ) -> str:
-        if group_ids is None or len(group_ids) == 0:
-            group_filter = ''
-        else:
-            escaped = [f'"{gid}"' for gid in group_ids]
-            group_filter = f'(@group_id:{"| ".join(escaped)})'
+    _original_fulltext_query = search_utils.fulltext_query
 
-        sanitized = _sanitize(query)
-        words = sanitized.split()
-        filtered = [w for w in words if w and w.lower() not in STOPWORDS]
-        sanitized_query = ' | '.join(filtered)
-
-        if not sanitized_query:
+    def _patched_fulltext_query(query, group_ids, driver):
+        result = _original_fulltext_query(query, group_ids, driver)
+        # Guard: if all query words were stopwords, the result may be
+        # "(@group_id:...) ()" which is invalid RediSearch syntax.
+        if result and result.endswith('()'):
             return ''
+        return result
 
-        if len(sanitized_query.split(' ')) + len(group_ids or '') >= max_query_length:
-            return ''
+    search_utils.fulltext_query = _patched_fulltext_query
 
-        return group_filter + ' (' + sanitized_query + ')'
+    # Also patch in search.py which imports it
+    from graphiti_core.search import search as search_module
+    if hasattr(search_module, 'fulltext_query'):
+        search_module.fulltext_query = _patched_fulltext_query
 
-    FalkorSearchOperations.build_fulltext_query = _patched_build_fulltext_query
     logger.info("graphiti_empty_fulltext_guard_patched")
