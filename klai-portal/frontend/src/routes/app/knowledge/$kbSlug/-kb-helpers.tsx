@@ -1,8 +1,20 @@
 // Shared helpers for knowledge base detail routes
 
 import { Badge } from '@/components/ui/badge'
+import { Tooltip } from '@/components/ui/tooltip'
 import { type MultiSelectOption } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
+
+function formatRelativeTime(dateStr: string): string {
+  const diffMs = new Date(dateStr).getTime() - Date.now()
+  const diffMin = Math.round(diffMs / 60_000)
+  const diffHour = Math.round(diffMs / 3_600_000)
+  const diffDay = Math.round(diffMs / 86_400_000)
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  if (Math.abs(diffMin) < 60) return rtf.format(diffMin, 'minute')
+  if (Math.abs(diffHour) < 24) return rtf.format(diffHour, 'hour')
+  return rtf.format(diffDay, 'day')
+}
 
 export function roleBadge(role: string) {
   const labels: Record<string, () => string> = {
@@ -13,10 +25,18 @@ export function roleBadge(role: string) {
   return <Badge variant="secondary">{(labels[role] ?? (() => role))()}</Badge>
 }
 
-export function SyncStatusBadge({ status }: { status: string | null }) {
+export function SyncStatusBadge({ status, lastSyncAt }: { status: string | null; lastSyncAt?: string | null }) {
   switch (status?.toUpperCase()) {
     case 'RUNNING': return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
-    case 'COMPLETED': return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
+    case 'COMPLETED': {
+      if (!lastSyncAt) return <Badge variant="success">{m.admin_connectors_status_completed()}</Badge>
+      const exact = new Date(lastSyncAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+      return (
+        <Tooltip label={exact}>
+          <Badge variant="success">{m.admin_connectors_status_completed()} · {formatRelativeTime(lastSyncAt)}</Badge>
+        </Tooltip>
+      )
+    }
     case 'FAILED': return <Badge variant="destructive">{m.admin_connectors_status_failed()}</Badge>
     case 'AUTH_ERROR': return <Badge variant="destructive">{m.admin_connectors_status_auth_error()}</Badge>
     case 'PENDING': return <Badge variant="accent">{m.admin_connectors_status_running()}</Badge>
