@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services.gap_classification import classify_gap
+from app.trace import get_trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,9 @@ async def rescore_open_gaps(
         return 0
 
     resolved_count = 0
-    headers = {"Authorization": f"Bearer {settings.internal_secret}"} if settings.internal_secret else {}
+    headers = {**get_trace_headers()}
+    if settings.internal_secret:
+        headers["Authorization"] = f"Bearer {settings.internal_secret}"
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
         for row in gap_queries:

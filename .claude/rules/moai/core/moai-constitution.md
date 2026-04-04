@@ -1,3 +1,9 @@
+---
+paths:
+  - "**/.claude/**"
+  - "**/.moai/**"
+  - "**/CLAUDE.md"
+---
 # MoAI Constitution
 
 Core principles that MUST always be followed. These are HARD rules.

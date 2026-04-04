@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 
 export const Route = createFileRoute('/admin/users/$userId/edit')({
@@ -64,14 +64,8 @@ function EditUserPage() {
   const [saving, setSaving] = useState(false)
 
   const { data: usersData } = useQuery({
-    queryKey: ['admin-users', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_fetch({ status: String(res.status) }))
-      return res.json() as Promise<{ users: User[] }>
-    },
+    queryKey: ['admin-users'],
+    queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`, token),
     enabled: !!token,
   })
 
@@ -86,25 +80,25 @@ function EditUserPage() {
   }, [user])
 
   const { data: userGroupsData } = useQuery({
-    queryKey: ['admin-user-groups', userId, token],
+    queryKey: ['admin-user-groups', userId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/groups`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return { groups: [] as Group[] }
-      return res.json() as Promise<{ groups: Group[] }>
+      try {
+        return await apiFetch<{ groups: Group[] }>(`/api/admin/users/${userId}/groups`, token)
+      } catch {
+        return { groups: [] as Group[] }
+      }
     },
     enabled: !!token,
   })
 
   const { data: allGroupsData } = useQuery({
-    queryKey: ['admin-groups', token],
+    queryKey: ['admin-groups'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return { groups: [] as Group[] }
-      return res.json() as Promise<{ groups: Group[] }>
+      try {
+        return await apiFetch<{ groups: Group[] }>(`/api/admin/groups`, token)
+      } catch {
+        return { groups: [] as Group[] }
+      }
     },
     enabled: !!token,
   })
@@ -146,23 +140,18 @@ function EditUserPage() {
       const groupsToRemove = [...originalGroupIds].filter((id) => !memberGroupIds.has(id))
 
       await Promise.all([
-        fetch(`${API_BASE}/api/admin/users/${userId}`, {
+        apiFetch(`/api/admin/users/${userId}`, token, {
           method: 'PATCH',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ first_name: firstName, last_name: lastName, preferred_language: language }),
-        }).then((r) => { if (!r.ok) throw new Error(m.admin_users_error_edit({ status: String(r.status) })) }),
+        }),
         ...groupsToAdd.map((id) =>
-          fetch(`${API_BASE}/api/admin/groups/${id}/members`, {
+          apiFetch(`/api/admin/groups/${id}/members`, token, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ zitadel_user_id: userId }),
-          }).then((r) => { if (!r.ok) throw new Error(`Groep toevoegen mislukt (${r.status})`) }),
+          }),
         ),
         ...groupsToRemove.map((id) =>
-          fetch(`${API_BASE}/api/admin/groups/${id}/members/${userId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          }).then((r) => { if (!r.ok) throw new Error(`Groep verwijderen mislukt (${r.status})`) }),
+          apiFetch(`/api/admin/groups/${id}/members/${userId}`, token, { method: 'DELETE' }),
         ),
       ])
 

@@ -1,0 +1,50 @@
+# Klai Local Development — LiteLLM config
+# Simplified version without custom callbacks (klai_knowledge.py, custom_router.py)
+#
+# Set ANTHROPIC_API_KEY or MISTRAL_API_KEY in .env.dev to enable the models.
+
+model_list:
+  # Primary: standard quality, user-facing
+  - model_name: klai-primary
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 200000
+
+  # Fast: lightweight, high-volume
+  - model_name: klai-fast
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 100000
+
+  # Large: agentic / tool use
+  - model_name: klai-large
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 200000
+
+  # Pipeline: internal services (bypasses routing in prod)
+  - model_name: klai-pipeline
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 100000
+
+router_settings:
+  routing_strategy: simple-shuffle
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true

@@ -3,7 +3,7 @@ import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BookOpen } from 'lucide-react'
 
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
@@ -29,25 +29,13 @@ export function KBScopeBar() {
 
   const { data: pref } = useQuery<KBPref>({
     queryKey: ['kb-preference'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/account/kb-preference`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Failed to load KB preference')
-      return res.json()
-    },
+    queryFn: async () => apiFetch<KBPref>('/api/app/account/kb-preference', token),
     enabled: !!token,
   })
 
   const { data: kbsData } = useQuery<{ knowledge_bases: OrgKB[] }>({
     queryKey: ['org-kbs-for-bar'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases?owner_type=org`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Failed to load knowledge bases')
-      return res.json()
-    },
+    queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases?owner_type=org', token),
     enabled: !!token,
   })
 
@@ -55,16 +43,10 @@ export function KBScopeBar() {
 
   const mutation = useMutation({
     mutationFn: async (patch: Partial<Omit<KBPref, 'kb_pref_version'>>) => {
-      const res = await fetch(`${API_BASE}/api/app/account/kb-preference`, {
+      return apiFetch<KBPref>('/api/app/account/kb-preference', token, {
         method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(patch),
       })
-      if (!res.ok) throw new Error('Failed to save preference')
-      return res.json() as Promise<KBPref>
     },
     onMutate: async (patch) => {
       await queryClient.cancelQueries({ queryKey: ['kb-preference'] })

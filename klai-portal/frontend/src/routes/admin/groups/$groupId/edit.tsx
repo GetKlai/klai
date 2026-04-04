@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin/groups/$groupId/edit')({
   component: EditGroupPage,
@@ -59,38 +59,20 @@ function EditGroupPage() {
 
   const { data: group, isLoading: groupLoading } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch groups (${res.status})`)
-      return res.json() as Promise<{ groups: Group[] }>
-    },
+    queryFn: async () => apiFetch<{ groups: Group[] }>(`/api/admin/groups`, token),
     enabled: !!token,
     select: (data) => data.groups.find((g) => g.id === Number(groupId)),
   })
 
   const { data: membersData } = useQuery({
     queryKey: ['admin-group-members', groupId],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch members (${res.status})`)
-      return res.json() as Promise<{ members: Member[] }>
-    },
+    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`, token),
     enabled: !!token,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`)
-      return res.json() as Promise<{ users: OrgUser[] }>
-    },
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`, token),
     enabled: !!token,
   })
 
@@ -138,26 +120,18 @@ function EditGroupPage() {
       const toRemove = [...originalMemberIds].filter((id) => !memberUserIds.has(id))
 
       await Promise.all([
-        fetch(`${API_BASE}/api/admin/groups/${groupId}`, {
+        apiFetch(`/api/admin/groups/${groupId}`, token, {
           method: 'PATCH',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name.trim(), description: description.trim() || null }),
-        }).then((r) => {
-          if (r.status === 409) throw new Error(m.admin_groups_error_duplicate())
-          if (!r.ok) throw new Error(`Failed to update group (${r.status})`)
         }),
         ...toAdd.map((uid) =>
-          fetch(`${API_BASE}/api/admin/groups/${groupId}/members`, {
+          apiFetch(`/api/admin/groups/${groupId}/members`, token, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ zitadel_user_id: uid }),
-          }).then((r) => { if (!r.ok) throw new Error(`Failed to add member (${r.status})`) }),
+          }),
         ),
         ...toRemove.map((uid) =>
-          fetch(`${API_BASE}/api/admin/groups/${groupId}/members/${uid}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          }).then((r) => { if (!r.ok) throw new Error(`Failed to remove member (${r.status})`) }),
+          apiFetch(`/api/admin/groups/${groupId}/members/${uid}`, token, { method: 'DELETE' }),
         ),
       ])
 

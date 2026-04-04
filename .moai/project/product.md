@@ -55,6 +55,9 @@ Bot-assisted meeting transcription via Vexa integration. A Vexa bot joins Google
 - Calendar invite parsing via IMAP listener (meet@getklai.com)
 - Consent notice displayed and recorded before any bot is dispatched
 
+### Product Entitlements & Plans
+Each org has a plan that determines which products are available: `free` (none), `core` (chat), `professional` (chat, scribe), `complete` (chat, scribe, knowledge). Products are assigned per user (direct) or per group (inherited). Effective products are the union of both. Seat limits are enforced at invite time (409 when full). Plan upgrades make new products assignable but don't auto-enable; downgrades revoke over-ceiling assignments. JWT access tokens contain a `klai:products` claim enriched by a Zitadel Action calling the portal's internal API.
+
 ---
 
 ## Core Features

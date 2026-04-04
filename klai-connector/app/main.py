@@ -18,7 +18,7 @@ from app.core.config import Settings
 import app.core.database as _db
 from app.core.database import dispose_engine, init_engine
 from app.core.enums import SyncStatus
-from app.core.logging import get_logger, setup_logging
+from app.core.logging import RequestContextMiddleware, get_logger, setup_logging
 from app.core.security import AESGCMCipher
 from app.middleware.auth import AuthMiddleware
 from app.models.sync_run import SyncRun
@@ -120,6 +120,9 @@ def create_app() -> FastAPI:
 
     # Auth middleware (excludes /health internally)
     app.add_middleware(AuthMiddleware, settings=settings)
+
+    # Request context middleware (binds request_id, org_id to structlog)
+    app.add_middleware(RequestContextMiddleware)
 
     # Routes
     app.include_router(health_router)

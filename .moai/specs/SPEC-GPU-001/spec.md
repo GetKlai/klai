@@ -1,9 +1,9 @@
 ---
 id: SPEC-GPU-001
-version: "2.0.0"
-status: draft
+version: "2.1.0"
+status: done
 created: "2026-03-27"
-updated: "2026-03-29"
+updated: "2026-04-03"
 author: MoAI
 priority: high
 ---
@@ -16,6 +16,7 @@ priority: high
 |---------|------------|--------|-----------------------------------------------|
 | 1.0.0   | 2026-03-27 | MoAI   | Initial SPEC — Vast.ai target                 |
 | 2.0.0   | 2026-03-29 | MoAI   | Rewrite — Hetzner dedicated server (gpu-01)   |
+| 2.1.0   | 2026-04-03 | MoAI   | Status done — update to actual TEI/Infinity split architecture |
 
 ---
 
@@ -30,18 +31,21 @@ Migrate three GPU inference services (Infinity embeddings/reranking, BGE-M3 spar
 - **core-01**: Primary server running all Klai services via Docker Compose (Hetzner, EU)
 - **gpu-01**: Dedicated Hetzner server `GEX44 #2963286`, IP `5.9.10.215`, FSN1-DC13 (Germany)
 - **Naming convention**: `gpu-01` — follows `core-01` naming pattern
-- **GPU services currently on core-01 (to be migrated)**:
-  - TEI (text-embeddings-inference) on port 8080 — REPLACED by Infinity
+- **GPU services on gpu-01 (migrated from core-01)**:
+  - TEI (text-embeddings-inference) on port 7997 — dense embeddings (bge-m3)
+  - Infinity on port 7998 — reranking (bge-reranker-v2-m3)
   - BGE-M3 sparse sidecar on port 8001
   - faster-whisper on port 8000
 - **Consumer services on core-01 (unchanged)**:
-  - `retrieval-api` — calls Infinity (embeddings + reranker) and BGE-M3 sparse
-  - `knowledge-ingest` — calls Infinity (embeddings) and BGE-M3 sparse
+  - `retrieval-api` — calls TEI (embeddings), Infinity (reranker), and BGE-M3 sparse
+  - `knowledge-ingest` — calls TEI (embeddings) and BGE-M3 sparse
   - `scribe-api` — calls faster-whisper
-- **Port layout**:
-  - Infinity (bge-m3 + bge-reranker-v2-m3): `127.0.0.1:7997` on gpu-01
-  - BGE-M3 sparse: `127.0.0.1:8001` on gpu-01
-  - faster-whisper: `127.0.0.1:8000` on gpu-01
+- **Port layout (gpu-01, all bound to 127.0.0.1)**:
+  - TEI (bge-m3 dense embeddings): `127.0.0.1:7997`
+  - Infinity (bge-reranker-v2-m3): `127.0.0.1:7998`
+  - BGE-M3 sparse: `127.0.0.1:8001`
+  - faster-whisper: `127.0.0.1:8000`
+- **Tunnel binding on core-01**: `172.18.0.1` (Docker bridge gateway) — accessible from containers without `host.docker.internal`
 
 ---
 
@@ -62,10 +66,10 @@ Migrate three GPU inference services (Infinity embeddings/reranking, BGE-M3 spar
 ### Module 1: GPU Box Setup (gpu-01)
 
 **REQ-GPU-001** (Ubiquitous):
-The gpu-01 server SHALL run three inference services as Docker containers: Infinity (bge-m3 + bge-reranker-v2-m3), BGE-M3 sparse sidecar, and faster-whisper.
+The gpu-01 server SHALL run four inference services as Docker containers: TEI (bge-m3 dense embeddings), Infinity (bge-reranker-v2-m3 reranking), BGE-M3 sparse sidecar, and faster-whisper.
 
 **REQ-GPU-002** (Ubiquitous — SECURITY CRITICAL):
-All inference service containers on gpu-01 SHALL bind exclusively to `127.0.0.1` — never to `0.0.0.0`.
+All inference service containers on gpu-01 SHALL bind exclusively to `127.0.0.1` — never to `0.0.0.0`. Ports: 7997 (TEI), 7998 (Infinity), 8001 (BGE-M3 sparse), 8000 (faster-whisper).
 
 **REQ-GPU-003** (Ubiquitous):
 Services on gpu-01 SHALL be defined as a Docker Compose file (`/opt/klai-gpu/docker-compose.yml`) using the same images and patterns as core-01.
@@ -91,10 +95,11 @@ A dedicated SSH keypair SHALL be generated for GPU tunnel authentication — per
 WHEN an SSH tunnel drops, THEN autossh SHALL automatically re-establish the connection within 60 seconds.
 
 **REQ-SSH-004** (Ubiquitous):
-Three SSH local port forwards SHALL be maintained persistently via a single autossh process:
-- `localhost:7997` on core-01 → `127.0.0.1:7997` on gpu-01 (Infinity)
-- `localhost:8001` on core-01 → `127.0.0.1:8001` on gpu-01 (BGE-M3 sparse)
-- `localhost:8000` on core-01 → `127.0.0.1:8000` on gpu-01 (faster-whisper)
+Four SSH local port forwards SHALL be maintained persistently via a single autossh process, bound to `172.18.0.1` (Docker bridge gateway) on core-01:
+- `172.18.0.1:7997` on core-01 → `127.0.0.1:7997` on gpu-01 (TEI embeddings)
+- `172.18.0.1:7998` on core-01 → `127.0.0.1:7998` on gpu-01 (Infinity reranker)
+- `172.18.0.1:8001` on core-01 → `127.0.0.1:8001` on gpu-01 (BGE-M3 sparse)
+- `172.18.0.1:8000` on core-01 → `127.0.0.1:8000` on gpu-01 (faster-whisper)
 
 **REQ-SSH-005** (Unwanted):
 The SSH tunnel configuration SHALL NOT use password authentication — only public key authentication is permitted.
@@ -109,10 +114,10 @@ WHEN consumer services are restarted with updated environment variables, THEN th
 
 **REQ-MIG-002** (Ubiquitous):
 The following environment variable mappings SHALL be applied:
-- `TEI_URL` → `http://localhost:7997` (was Docker service name)
-- `SPARSE_URL` → `http://localhost:8001` (was Docker service name)
-- `WHISPER_URL` → `http://localhost:8000` (was Docker service name)
-- `RERANKER_URL` → `http://localhost:7997` (same Infinity instance as TEI_URL)
+- `TEI_URL` → `http://172.18.0.1:7997` (TEI dense embeddings via tunnel)
+- `RERANKER_URL` → `http://172.18.0.1:7998` (Infinity reranker via tunnel)
+- `SPARSE_URL` → `http://172.18.0.1:8001` (BGE-M3 sparse via tunnel)
+- `WHISPER_URL` → `http://172.18.0.1:8000` (faster-whisper via tunnel)
 
 **REQ-MIG-003** (Event-Driven):
 WHEN GPU services are migrated to gpu-01, THEN the old GPU service containers (TEI, BGE-M3 sparse, faster-whisper) SHALL be stopped and disabled in `deploy/docker-compose.yml` on core-01.
@@ -172,25 +177,28 @@ The system SHALL NOT auto-unlock the disk without operator authentication — no
 ### Service Architecture
 
 ```
-core-01 (Hetzner DE)            SSH Tunnels (encrypted)           gpu-01 (Hetzner DE, 5.9.10.215)
-┌────────────────────┐          ─────────────────────────>        ┌───────────────────────────────┐
-│ retrieval-api      │──localhost:7997──>                          │ Infinity :7997                │
-│ knowledge-ingest   │──localhost:7997──>                          │   (bge-m3 + bge-reranker)     │
-│                    │──localhost:8001──>                          │ BGE-M3 sparse :8001           │
-│ scribe-api         │──localhost:8000──>                          │ faster-whisper :8000          │
-├────────────────────┤                                             │                               │
-│ autossh            │                                             │ All bound to 127.0.0.1        │
-│ (systemd service)  │                                             │ Docker Compose managed        │
-└────────────────────┘                                             └───────────────────────────────┘
+core-01 (Hetzner DE)              SSH Tunnels (encrypted)           gpu-01 (Hetzner DE, 5.9.10.215)
+┌──────────────────────┐          ─────────────────────────>        ┌───────────────────────────────┐
+│ retrieval-api        │──172.18.0.1:7997──>                        │ TEI :7997                     │
+│ knowledge-ingest     │──172.18.0.1:7997──>                        │   (bge-m3 dense embeddings)   │
+│ retrieval-api        │──172.18.0.1:7998──>                        │ Infinity :7998                │
+│                      │──172.18.0.1:8001──>                        │   (bge-reranker-v2-m3)        │
+│ scribe-api           │──172.18.0.1:8000──>                        │ BGE-M3 sparse :8001           │
+├──────────────────────┤                                             │ faster-whisper :8000          │
+│ autossh              │                                             │                               │
+│ (systemd service)    │                                             │ All bound to 127.0.0.1        │
+│ binds 172.18.0.1     │                                             │ Docker Compose managed        │
+└──────────────────────┘                                             └───────────────────────────────┘
 ```
 
 ### Port Mapping
 
 | Service | gpu-01 Port | core-01 Tunnel Port | Consumers |
 |---------|------------|---------------------|-----------|
-| Infinity (embeddings + reranker) | 127.0.0.1:7997 | localhost:7997 | retrieval-api, knowledge-ingest |
-| BGE-M3 sparse | 127.0.0.1:8001 | localhost:8001 | retrieval-api, knowledge-ingest |
-| faster-whisper | 127.0.0.1:8000 | localhost:8000 | scribe-api |
+| TEI (bge-m3 dense embeddings) | 127.0.0.1:7997 | 172.18.0.1:7997 | retrieval-api, knowledge-ingest |
+| Infinity (bge-reranker-v2-m3) | 127.0.0.1:7998 | 172.18.0.1:7998 | retrieval-api |
+| BGE-M3 sparse | 127.0.0.1:8001 | 172.18.0.1:8001 | retrieval-api, knowledge-ingest |
+| faster-whisper | 127.0.0.1:8000 | 172.18.0.1:8000 | scribe-api |
 
 ### Files Changed
 

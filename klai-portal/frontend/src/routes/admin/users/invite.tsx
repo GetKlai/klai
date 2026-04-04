@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin/users/invite')({
   component: InviteUserPage,
@@ -38,13 +38,13 @@ function InviteUserPage() {
   const navigate = useNavigate()
 
   const { data: orgSettings } = useQuery({
-    queryKey: ['admin-org-settings', token],
+    queryKey: ['admin-org-settings'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/settings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return null
-      return res.json() as Promise<OrgSettings>
+      try {
+        return await apiFetch<OrgSettings>(`/api/admin/settings`, token)
+      } catch {
+        return null
+      }
     },
     enabled: !!token,
   })
@@ -61,15 +61,10 @@ function InviteUserPage() {
 
   const inviteMutation = useMutation({
     mutationFn: async (data: InviteForm) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/invite`, {
+      await apiFetch(`/api/admin/users/invite`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(data),
       })
-      if (!res.ok) throw new Error(m.admin_users_error_invite({ status: String(res.status) }))
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] })

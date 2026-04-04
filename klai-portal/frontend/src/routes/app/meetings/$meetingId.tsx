@@ -9,6 +9,7 @@ import { ArrowLeft, Loader2, Square, Copy, CheckCheck, Download, FileJson } from
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/meetings/$meetingId')({
   component: () => (
@@ -19,7 +20,7 @@ export const Route = createFileRoute('/app/meetings/$meetingId')({
 })
 
 const BOTS_BASE = '/api/bots'
-const ACTIVE_STATUSES = ['pending', 'joining', 'recording', 'processing']
+const ACTIVE_STATUSES = ['pending', 'joining', 'recording', 'stopping', 'processing']
 
 interface TranscriptSegment {
   start: number
@@ -31,8 +32,9 @@ interface TranscriptSegment {
 interface SummaryStructured {
   speakers: string[]
   topics: string[]
-  decisions: string[]
-  action_items: { owner: string | null; task: string }[]
+  decisions: (string | { decision: string; rationale: string | null; decided_by: string | null })[]
+  action_items: { owner: string | null; task: string; deadline?: string | null }[]
+  key_quotes?: string[]
   open_questions: string[]
   next_steps: string[]
 }
@@ -73,6 +75,7 @@ function StatusBadge({ status }: { status: string }) {
     pending:    { label: m.app_meetings_status_pending(),    variant: 'secondary' },
     joining:    { label: m.app_meetings_status_joining(),    variant: 'default',     pulse: true },
     recording:  { label: m.app_meetings_status_recording(),  variant: 'destructive', pulse: true },
+    stopping:   { label: m.app_meetings_status_stopping(),   variant: 'warning',     pulse: true },
     processing: { label: m.app_meetings_status_processing(), variant: 'warning',     pulse: true },
     done:       { label: m.app_meetings_status_done(),       variant: 'success' },
     failed:     { label: m.app_meetings_status_failed(),     variant: 'destructive' },
@@ -83,6 +86,27 @@ function StatusBadge({ status }: { status: string }) {
       {c.label}
     </Badge>
   )
+}
+
+/** Build a markdown action items section from structured data */
+function buildActionItemsMd(
+  items: { owner: string | null; task: string; deadline?: string | null }[],
+  title: string,
+): string {
+  if (!items.length) return ''
+  const lines = items.map((item) => {
+    let line = item.owner ? `**${item.owner}**: ${item.task}` : item.task
+    if (item.deadline) line += ` _(${item.deadline})_`
+    return `- ${line}`
+  })
+  return `\n\n## ${title}\n\n${lines.join('\n')}`
+}
+
+/** Build a markdown key quotes section */
+function buildKeyQuotesMd(quotes: string[], title: string): string {
+  if (!quotes.length) return ''
+  const lines = quotes.map((q) => `> ${q}`)
+  return `\n\n## ${title}\n\n${lines.join('\n\n')}`
 }
 
 /** Strip markdown syntax to produce plain text for clipboard copy */
@@ -107,14 +131,8 @@ function MeetingDetailPage() {
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const { data: meeting, isLoading } = useQuery<MeetingDetail>({
-    queryKey: ['meeting', meetingId, token],
-    queryFn: async () => {
-      const res = await fetch(`${BOTS_BASE}/meetings/${meetingId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Ophalen mislukt')
-      return res.json()
-    },
+    queryKey: ['meeting', meetingId],
+    queryFn: async () => apiFetch<MeetingDetail>(`${BOTS_BASE}/meetings/${meetingId}`, token),
     enabled: !!token,
     refetchInterval: (query) =>
       query.state.data && ACTIVE_STATUSES.includes(query.state.data.status) ? 3000 : false,
@@ -122,32 +140,20 @@ function MeetingDetailPage() {
 
   const stopMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${BOTS_BASE}/meetings/${meetingId}/stop`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Stoppen mislukt')
+      await apiFetch(`${BOTS_BASE}/meetings/${meetingId}/stop`, token, { method: 'POST' })
     },
     onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId, token] }),
+      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId] }),
   })
 
   const summarizeMutation = useMutation({
     mutationFn: async (force: boolean) => {
       const url = `${BOTS_BASE}/meetings/${meetingId}/summarize${force ? '?force=true' : ''}`
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-        throw new Error(err.detail ?? 'Summarization failed')
-      }
-      return res.json()
+      return apiFetch(url, token, { method: 'POST' })
     },
     onSuccess: () => {
       setSummaryError(null)
-      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId] })
     },
     onError: (err: Error) => {
       setSummaryError(err.message)
@@ -172,9 +178,21 @@ function MeetingDetailPage() {
     URL.revokeObjectURL(url)
   }
 
+  const fullSummaryMd = meeting?.summary_json
+    ? meeting.summary_json.markdown +
+      buildActionItemsMd(
+        meeting.summary_json.structured?.action_items ?? [],
+        m.app_meetings_action_items_title(),
+      ) +
+      buildKeyQuotesMd(
+        meeting.summary_json.structured?.key_quotes ?? [],
+        m.app_meetings_key_quotes_title(),
+      )
+    : ''
+
   async function copySummaryText() {
-    if (!meeting?.summary_json?.markdown) return
-    await navigator.clipboard.writeText(stripMarkdown(meeting.summary_json.markdown))
+    if (!fullSummaryMd) return
+    await navigator.clipboard.writeText(stripMarkdown(fullSummaryMd))
     setSummaryCopied('text')
     setTimeout(() => setSummaryCopied(null), 2000)
   }
@@ -191,8 +209,8 @@ function MeetingDetailPage() {
   }
 
   async function copySummaryMarkdown() {
-    if (!meeting?.summary_json?.markdown) return
-    await navigator.clipboard.writeText(meeting.summary_json.markdown)
+    if (!fullSummaryMd) return
+    await navigator.clipboard.writeText(fullSummaryMd)
     setSummaryCopied('markdown')
     setTimeout(() => setSummaryCopied(null), 2000)
   }
@@ -404,7 +422,7 @@ function MeetingDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="text-sm text-[var(--color-foreground)] space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
-              <Markdown>{meeting.summary_json.markdown}</Markdown>
+              <Markdown>{fullSummaryMd}</Markdown>
             </div>
           </CardContent>
         </Card>

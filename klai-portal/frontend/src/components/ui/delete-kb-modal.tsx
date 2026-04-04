@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 interface DeleteKbModalProps {
   open: boolean
@@ -45,20 +45,7 @@ export function DeleteKbModal({
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        let detail = 'Verwijderen mislukt'
-        try {
-          const data = await res.json()
-          detail = data.detail ?? detail
-        } catch {
-          // keep default detail
-        }
-        throw new Error(detail)
-      }
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}`, token, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })

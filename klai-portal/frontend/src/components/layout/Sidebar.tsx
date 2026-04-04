@@ -4,6 +4,7 @@ import { useAuth } from 'react-oidc-context'
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/locale'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { STORAGE_KEYS } from '@/lib/storage'
 import * as m from '@/paraglide/messages'
 
@@ -24,9 +25,10 @@ export function Sidebar({ navItems }: SidebarProps) {
   const auth = useAuth()
   const location = useLocation()
   const { locale, switchLocale } = useLocale()
+  const { user } = useCurrentUser()
 
   const inAdmin = location.pathname.startsWith('/admin')
-  const isAdmin = inAdmin || sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const isAdmin = inAdmin || user?.isAdmin === true
 
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === 'true'
@@ -40,6 +42,8 @@ export function Sidebar({ navItems }: SidebarProps) {
 
   return (
     <aside
+      role="navigation"
+      aria-label="Main navigation"
       className={cn(
         'flex h-screen shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-foreground)] transition-[width] duration-200',
         collapsed ? 'w-14' : 'w-60'

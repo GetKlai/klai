@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
+import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 const FOCUS_BASE = '/research/v1'
@@ -62,16 +63,13 @@ function AddSourcePage() {
     mutationFn: async (file: File) => {
       const form = new FormData()
       form.append('file', file)
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: form,
       })
-      if (!res.ok) throw new Error('Uploaden mislukt')
-      return res.json()
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId] })
       void navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
     },
     onError: (err: Error) => { focusLogger.error('File source upload failed', { notebookId, err }); setAddError(err.message) },
@@ -79,19 +77,13 @@ function AddSourcePage() {
 
   const addUrlMutation = useMutation({
     mutationFn: async (url: string) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/url`, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/url`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ url, type: detectUrlType(url) }),
       })
-      if (!res.ok) throw new Error('Toevoegen mislukt')
-      return res.json()
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId, token] })
+      void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId] })
       void navigate({ to: '/app/focus/$notebookId', params: { notebookId } })
     },
     onError: (err: Error) => { focusLogger.error('URL source add failed', { notebookId, err }); setAddError(err.message) },

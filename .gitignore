@@ -121,6 +121,7 @@ logs/
 .env
 .env.*
 !.env.example
+!.env.dev.example
 
 # SOPS encrypted files (never commit unencrypted)
 *.sops
@@ -209,5 +210,11 @@ dist-ssr/
 klai-website/
 klai-infra/
 
-# Playwright MCP screenshots
-.playwright-mcp/
+# Playwright MCP — keep example config, ignore local config/screenshots/logs
+.playwright-mcp/*
+!.playwright-mcp/config.example.json
+
+# CodeIndex — local knowledge graph + source code (not shared)
+.codeindex/
+AGENTS.md
+codeindex-src/

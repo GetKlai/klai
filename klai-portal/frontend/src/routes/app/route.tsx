@@ -1,13 +1,12 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
-import { STORAGE_KEYS } from '@/lib/storage'
-import { authLogger } from '@/lib/logger'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/chat': ['chat'],
@@ -17,14 +16,6 @@ const PRODUCT_ROUTES: Record<string, string[]> = {
   '/app/docs': ['knowledge'],
 }
 
-function getUserProducts(): string[] {
-  try {
-    return JSON.parse(sessionStorage.getItem(STORAGE_KEYS.products) ?? '[]') as string[]
-  } catch {
-    return []
-  }
-}
-
 export const Route = createFileRoute('/app')({
   component: AppLayout,
 })
@@ -32,7 +23,7 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const auth = useAuth()
   const navigate = useNavigate()
-  const [products, setProducts] = useState<string[]>(getUserProducts)
+  const { user, isPending: userLoading } = useCurrentUser()
 
   const allNavItems = [
     { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
@@ -42,7 +33,8 @@ function AppLayout() {
     { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
   ]
 
-  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const isAdmin = user?.isAdmin === true
+  const products = user?.products ?? []
   const appNav = isAdmin
     ? allNavItems
     : allNavItems.filter((item) => {
@@ -51,27 +43,17 @@ function AppLayout() {
       })
 
   useEffect(() => {
-    if (auth.isLoading) return
+    if (auth.isLoading || userLoading) return
     if (!auth.isAuthenticated) {
       void navigate({ to: '/' })
       return
     }
-    // Re-check 2FA requirement in case user navigated directly here without going through /callback
-    fetch(`${API_BASE}/api/me`, {
-      headers: { Authorization: `Bearer ${auth.user!.access_token}` },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((me) => {
-        if (!me) return
-        if (me.requires_2fa_setup) window.location.replace('/setup/2fa')
-        const refreshed = (me.products as string[] | undefined) ?? []
-        sessionStorage.setItem(STORAGE_KEYS.products, JSON.stringify(refreshed))
-        setProducts(refreshed)
-      })
-      .catch((err) => authLogger.warn('2FA re-check failed in app route guard', err))
-  }, [auth.isLoading, auth.isAuthenticated, auth.user, navigate])
+    if (user?.requires_2fa_setup) {
+      window.location.replace('/setup/2fa')
+    }
+  }, [auth.isLoading, auth.isAuthenticated, user, userLoading, navigate])
 
-  if (auth.isLoading || !auth.isAuthenticated) {
+  if (auth.isLoading || userLoading || !auth.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
@@ -83,6 +65,7 @@ function AppLayout() {
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar navItems={appNav} />
       <main className="flex-1 overflow-y-auto">
+        <SessionBanner />
         <Outlet />
       </main>
       <HelpButton />

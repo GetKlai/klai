@@ -145,6 +145,27 @@ Key variable groups:
 
 ---
 
+## Observability
+
+Structured logging is collected centrally:
+
+| Component | Purpose |
+|-----------|---------|
+| Grafana Alloy | Log collection from Docker containers |
+| VictoriaLogs | Log storage (30-day retention) |
+| Grafana | Dashboards and log exploration |
+
+Configuration files:
+- `deploy/alloy/config.alloy` — Alloy collection config
+- `deploy/grafana/provisioning/datasources/victorialogs.yaml` — Grafana datasource
+- `deploy/grafana/provisioning/dashboards/logs.json` — Log explorer dashboard
+
+For cross-server log shipping (public-01 to core-01):
+- DNS: `logs-ingest.${DOMAIN}` pointing to core-01
+- Environment variable: `VICTORIALOGS_INGEST_TOKEN` (bearer auth)
+
+---
+
 ## Updating
 
 Pull the latest compose file and restart:

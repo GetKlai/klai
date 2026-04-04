@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from 'react-oidc-context'
 import { toast } from 'sonner'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
 function useLifecycleMutation(
@@ -14,18 +14,9 @@ function useLifecycleMutation(
 
   return useMutation({
     mutationFn: async (userId: string) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}/${action}`, {
+      await apiFetch(`/api/admin/users/${userId}/${action}`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => null)
-        const message = body?.detail ?? body?.message ?? m.admin_users_error_generic()
-        if (res.status === 409) {
-          throw new Error(message as string)
-        }
-        throw new Error(message as string)
-      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] })

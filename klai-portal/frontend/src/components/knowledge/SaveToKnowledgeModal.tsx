@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { DOCS_BASE, getOrgSlug, slugify } from '@/lib/kb-editor/tree-utils'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { editorLogger } from '@/lib/logger'
 
@@ -37,11 +38,11 @@ export function SaveToKnowledgeModal({
   const { data: pageIndex = [] } = useQuery<Array<{ slug: string }>>({
     queryKey: ['docs-page-index', orgSlug, 'personal'],
     queryFn: async () => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/page-index`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) return []
-      return res.json()
+      try {
+        return await apiFetch<Array<{ slug: string }>>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/page-index`, token)
+      } catch {
+        return []
+      }
     },
     enabled: !!token,
   })
@@ -72,15 +73,14 @@ export function SaveToKnowledgeModal({
 
       const fullContent = metaLines.join('\n') + initialContent
 
-      const res = await fetch(
+      await apiFetch(
         `${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/pages/users/${userUuid}/${pageSlug}`,
+        token,
         {
           method: 'PUT',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: title.trim(), content: fullContent, icon: '\u{1F4A1}' }),
         }
       )
-      if (!res.ok) throw new Error('Opslaan mislukt')
       return { slug: pageSlug }
     },
     onSuccess: ({ slug }) => {

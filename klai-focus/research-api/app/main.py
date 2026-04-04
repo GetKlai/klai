@@ -12,7 +12,7 @@ from app.api.history import router as history_router
 from app.api.notebooks import router as notebooks_router
 from app.api.sources import router as sources_router
 from app.core.config import settings
-from app.logging_setup import setup_logging
+from app.logging_setup import RequestContextMiddleware, setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -58,6 +58,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(health_router)
 app.include_router(notebooks_router)

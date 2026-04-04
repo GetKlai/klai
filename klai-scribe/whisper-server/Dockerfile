@@ -1,6 +1,7 @@
-FROM python:3.12-slim
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv \
     ffmpeg \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
@@ -8,21 +9,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir uv && \
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+RUN pip install --no-cache-dir --break-system-packages uv && \
     uv pip install --system --no-cache -r pyproject.toml
 
 COPY logging_setup.py main.py ./
 
 ENV WHISPER_MODEL=large-v3-turbo
-ENV WHISPER_DEVICE=cpu
-ENV WHISPER_COMPUTE_TYPE=int8
+ENV WHISPER_DEVICE=cuda
+ENV WHISPER_COMPUTE_TYPE=float16
 ENV WHISPER_DOWNLOAD_ROOT=/models
 ENV LOG_LEVEL=INFO
 
-RUN adduser --disabled-password --gecos "" klai
+RUN adduser --disabled-password --gecos "" klai && \
+    mkdir -p /models && chown klai:klai /models
 
 EXPOSE 8000
 
 USER klai
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

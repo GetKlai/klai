@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/docs/new')({
   component: NewKBPage,
@@ -32,19 +33,10 @@ function NewKBPage() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, {
+      return apiFetch<{ slug: string }>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name, visibility }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error ?? 'Aanmaken mislukt')
-      }
-      return res.json()
     },
     onSuccess: (kb) => {
       void queryClient.invalidateQueries({ queryKey: ['docs-kbs', orgSlug] })

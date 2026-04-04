@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuthOrService } from "@/lib/auth";
+import { requireAuthOrService, requireOrgAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import * as ki from "@/lib/knowledge_ingest";
@@ -11,13 +11,11 @@ export async function GET(
   { params }: { params: Promise<{ org: string }> }
 ) {
   const { org: orgSlug } = await params;
-  const payload = await requireAuthOrService(request);
-  if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireOrgAccess(request, orgSlug);
+  if (access.error) return access.error;
+  const { payload, org } = access;
 
-  const org = await db.getOrgBySlug(orgSlug);
-  if (!org) return NextResponse.json([], { status: 200 });
-
-  const kbs = await db.getKBsByOrg(org.id);
+  const kbs = await db.getKBsByOrg(org.id, payload.sub);
   return NextResponse.json(kbs);
 }
 
@@ -30,7 +28,11 @@ export async function POST(
   const payload = await requireAuthOrService(request);
   if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { name, slug: reqSlug, visibility = "private" } = await request.json();
+  const { name, slug: reqSlug, visibility = "private", kb_type = "org" } = await request.json();
+  const validKbTypes = ["org", "personal"];
+  if (!validKbTypes.includes(kb_type)) {
+    return NextResponse.json({ error: "Invalid kb_type" }, { status: 400 });
+  }
   if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
   const slug = reqSlug ?? slugify(name);
@@ -41,9 +43,18 @@ export async function POST(
   // Auto-provision org record if it doesn't exist yet
   if (!org) {
     const zitadelOrgId =
-      (payload["urn:zitadel:iam:user:resourceowner:id"] as string) ?? orgSlug;
+      (payload["urn:zitadel:iam:user:resourceowner:id"] as string) ?? payload.org_id ?? orgSlug;
+    // Verify caller's org matches the org being created
+    if (payload.org_id && payload.org_id !== zitadelOrgId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     org = await db.createOrg(orgSlug, orgSlug, zitadelOrgId);
     await gitea.createOrg(`org-${orgSlug}`, orgSlug);
+  } else {
+    // Existing org: verify caller belongs to it
+    if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const giteaOrg = `org-${orgSlug}`;
@@ -63,7 +74,8 @@ export async function POST(
     "Initialize navigation"
   );
 
-  const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo);
+  const createdBy = kb_type === "personal" ? payload.sub : undefined;
+  const kb = await db.createKB(org.id, slug, name, visibility, giteaRepo, kb_type, createdBy);
 
   // Register Gitea webhook via knowledge-ingest (owns the HMAC secret and webhook lifecycle)
   // Use zitadel_org_id — knowledge-ingest uses Zitadel org ID as the org namespace in Qdrant.

@@ -1,13 +1,10 @@
 """
 Crawl route:
-  POST /ingest/v1/crawl         — fetch a URL with crawl4ai, convert to markdown, and ingest
+  POST /ingest/v1/crawl         — fetch a URL via Crawl4AI REST API, convert to markdown, and ingest
   POST /ingest/v1/crawl/preview — fetch a URL with PruningContentFilter and return fit_markdown
 
-Pipeline selection (SPEC-CRAWL-001 / R-1):
-- No selector (no user selector AND no stored domain selector):
-    full pipeline — _JS_REMOVE_CHROME, excluded_tags, PruningContentFilter
-- Selector present (user-provided or stored domain selector):
-    trusted pipeline — no JS chrome removal, no excluded_tags, css_selector=selector
+All crawling goes through the shared Crawl4AI Docker container via crawl4ai_client.
+Pipeline selection (SPEC-CRAWL-001 / R-1) is handled by crawl4ai_client.build_crawl_config().
 """
 import asyncio
 import hashlib
@@ -20,11 +17,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.crawl4ai_client import crawl_dom_summary, crawl_page
 from knowledge_ingest.db import get_pool
-from knowledge_ingest.domain_selectors import extract_domain, get_domain_selector, upsert_domain_selector
+from knowledge_ingest.domain_selectors import (
+    extract_domain,
+    get_domain_selector,
+    upsert_domain_selector,
+)
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
-from knowledge_ingest.selector_ai import detect_selector_via_llm, extract_dom_summary
+from knowledge_ingest.selector_ai import detect_selector_via_llm
 from knowledge_ingest.utils.url_validator import validate_url
 
 logger = structlog.get_logger()
@@ -71,6 +73,7 @@ class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
     org_id: str = ""  # optional for backwards compatibility; required for domain selector lookup
+    try_ai: bool = False  # explicit opt-in for AI selector detection
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -78,110 +81,22 @@ class CrawlPreviewResponse(BaseModel):
     fit_markdown: str
     word_count: int
     warnings: list[str] = []
-
-
-# JS injected BEFORE wait_for: strip nav chrome so the word-count condition fires
-# only when article content is present, not on pre-hydration nav words.
-#
-# IMPORTANT: use only semantic tag/role selectors here.
-# Class/id substring selectors (e.g. [class*="sidebar"]) are dangerous — they
-# match layout wrappers like class="has-sidebar" or class="sidebar-open" and
-# delete the article element along with the wrapper. Verified with Playwright on
-# help.voys.nl: [class*="sidebar"] removed the super-content-wrapper that wraps
-# <main>, wiping all article content and producing raw_words=0.
-_JS_REMOVE_CHROME = """
-[
-  'nav', 'header', 'footer', 'aside',
-  '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
-  '[role="search"]',
-].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-"""
-
-# JS injected AFTER wait_for fires: open collapsed toggles (Notion/details).
-# Nav removal is NOT repeated here — _JS_REMOVE_CHROME runs pre-hydration and
-# excluded_tags handles any semantic nav/header/footer/aside in markdown generation.
-# Running nav-removal JS post-hydration risks matching layout wrappers that React
-# added during hydration (see note on _JS_REMOVE_CHROME above).
-_JS_EXPAND_TOGGLES = """
-document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''));
-document.querySelectorAll('.notion-toggle__summary, [data-block-type="toggle"] > *:first-child').forEach(s => s.click());
-await new Promise(r => setTimeout(r, 300));
-"""
+    content_selector: str | None = None
+    selector_source: str | None = None  # "user" | "ai" | None
 
 
 # Minimum word count for a crawl result to be considered usable content.
 _MIN_WORD_COUNT = 100
 
 
-def _build_crawl_config(selector: str | None):  # type: ignore[return]
-    """Build a CrawlerRunConfig for the appropriate pipeline.
-
-    - selector is None  → full pipeline (JS chrome removal, excluded_tags)
-    - selector provided → trusted pipeline (no JS removal, no excluded_tags, css_selector set)
-
-    SPEC-CRAWL-001 / R-1
-    """
-    from crawl4ai import CrawlerRunConfig, CacheMode  # noqa: PLC0415
-    from crawl4ai.content_filter_strategy import PruningContentFilter  # noqa: PLC0415
-    from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator  # noqa: PLC0415
-
-    if selector:
-        return CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            word_count_threshold=10,
-            excluded_tags=[],
-            markdown_generator=DefaultMarkdownGenerator(
-                content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
-            ),
-            css_selector=selector,
-            js_code_before_wait=None,
-            wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
-            js_code=_JS_EXPAND_TOGGLES,
-            remove_consent_popups=True,
-            remove_overlay_elements=True,
-            page_timeout=30000,
-        )
-    else:
-        return CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            word_count_threshold=10,
-            excluded_tags=["nav", "footer", "header", "aside", "script", "style"],
-            markdown_generator=DefaultMarkdownGenerator(
-                content_filter=PruningContentFilter(threshold=0.45, threshold_type="dynamic")
-            ),
-            css_selector=None,
-            js_code_before_wait=_JS_REMOVE_CHROME,
-            wait_for="js:() => document.body.innerText.trim().split(/\\s+/).length > 50",
-            js_code=_JS_EXPAND_TOGGLES,
-            remove_consent_popups=True,
-            remove_overlay_elements=True,
-            page_timeout=30000,
-        )
-
-
 async def _run_crawl(url: str, selector: str | None) -> tuple[str, int, str]:
-    """Run crawl4ai and return (fit_markdown, word_count, raw_html)."""
-    from crawl4ai import AsyncWebCrawler  # noqa: PLC0415
+    """Crawl a single page via the Crawl4AI REST API.
 
-    config = _build_crawl_config(selector)
-    async with AsyncWebCrawler() as crawler:
-        result = await asyncio.wait_for(
-            crawler.arun(url=url, config=config),
-            timeout=30.0,
-        )
-    raw_md = result.markdown.raw_markdown or ""
-    fit_md_raw = result.markdown.fit_markdown or ""
-    raw_html = result.html or ""
-    logger.info(
-        "crawl4ai_result",
-        url=url,
-        selector=selector,
-        raw_words=len(raw_md.split()),
-        fit_words=len(fit_md_raw.split()),
-        raw_preview=raw_md[:200],
-    )
-    fit_md = fit_md_raw or raw_md
-    return fit_md, len(fit_md.split()), raw_html
+    Returns (fit_markdown, word_count, raw_html).
+    """
+    result = await crawl_page(url, selector)
+    fit_md = result.fit_markdown or result.raw_markdown
+    return fit_md, result.word_count, result.html
 
 
 @router.post("/ingest/v1/crawl/preview", response_model=CrawlPreviewResponse)
@@ -203,10 +118,10 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
         fit_md, word_count, _ = await _run_crawl(body.url, effective_selector)
         warnings: list[str] = _detect_nav_contamination(fit_md)
 
-        # AI-assisted selector detection when result is too thin and no selector was used
+        # AI-assisted selector detection — only when explicitly requested via try_ai flag
         # SPEC-CRAWL-001 / R-4
-        if word_count < _MIN_WORD_COUNT and not effective_selector and body.org_id:
-            dom_summary = await extract_dom_summary(body.url)
+        if body.try_ai and word_count < _MIN_WORD_COUNT and not effective_selector and body.org_id:
+            dom_summary = await crawl_dom_summary(body.url)
             if dom_summary:
                 ai_selector = await detect_selector_via_llm(dom_summary)
                 if ai_selector:
@@ -247,6 +162,8 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             fit_markdown=fit_md,
             word_count=word_count,
             warnings=warnings,
+            content_selector=effective_selector,
+            selector_source=selector_source,
         )
     except Exception as exc:
         logger.warning("crawl_preview_failed", url=body.url, error=str(exc))
@@ -264,7 +181,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     try:
         await validate_url(request.url)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def _derive_path() -> str:
         if request.path:
@@ -281,11 +198,10 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         if stored_sel:
             effective_selector, _ = stored_sel
 
-    # WARNING (pipeline config change): modifying the crawl4ai settings in
-    # _build_crawl_config() — excluded_tags, PruningContentFilter threshold,
-    # JS removal scripts — changes content_hash for every page even when the
-    # actual page content has not changed. After such a change, force a full
-    # re-ingest by clearing content_hash:
+    # WARNING (pipeline config change): modifying crawl4ai settings in
+    # crawl4ai_client.build_crawl_config() changes content_hash for every page
+    # even when the actual page content has not changed.  After such a change,
+    # force a full re-ingest by clearing content_hash:
     #   UPDATE knowledge.crawled_pages
     #      SET content_hash = ''
     #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
@@ -342,7 +258,7 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     # SPEC-CRAWLER-003 R11: populate link graph fields when source_url present
     extra: dict = {"source_url": request.url}
     try:
-        from knowledge_ingest import link_graph  # noqa: PLC0415
+        from knowledge_ingest import link_graph
         pool = await get_pool()
         outbound, anchors, incoming = await asyncio.gather(
             link_graph.get_outbound_urls(request.url, request.org_id, request.kb_slug, pool),

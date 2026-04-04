@@ -95,7 +95,7 @@ class TTLCache:
 # with a server-side key.  No server-side state is needed -- Zitadel is the
 # authority on whether the session is still valid.
 # ---------------------------------------------------------------------------
-_fernet = Fernet(settings.sso_cookie_key.encode())
+_fernet = Fernet(settings.sso_cookie_key.encode() if settings.sso_cookie_key else Fernet.generate_key())
 
 
 def _encrypt_sso(session_id: str, session_token: str) -> str:
@@ -147,6 +147,8 @@ async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
 ) -> str:
     """FastAPI dependency: validate Bearer token and return the Zitadel user_id (sub)."""
+    if settings.is_auth_dev_mode:
+        return settings.auth_dev_user_id
     try:
         info = await zitadel.get_userinfo(credentials.credentials)
     except Exception as exc:
@@ -171,7 +173,15 @@ async def _finalize_and_set_cookie(
             session_token=session_token,
         )
     except httpx.HTTPStatusError as exc:
-        logger.exception("finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        resp_text = exc.response.text
+        # Auth request already handled (stale browser tab / back button / double-submit)
+        if exc.response.status_code == 400 and "already been handled" in resp_text:
+            logger.warning("finalize_auth_request: stale auth request %s", auth_request_id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="auth_request_stale",
+            ) from exc
+        logger.exception("finalize_auth_request failed %s: %s", exc.response.status_code, resp_text)
         if exc.response.status_code == 404:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -277,9 +287,9 @@ async def password_reset(body: PasswordResetRequest) -> None:
     try:
         await zitadel.send_password_reset(user_id)
     except httpx.HTTPStatusError as exc:
-        logger.exception(
+        logger.exception(  # nosemgrep: python-logger-credential-disclosure
             "send_password_reset failed status=%s", exc.response.status_code
-        )  # nosemgrep: python-logger-credential-disclosure
+        )
         return  # fail silently
 
 
@@ -289,9 +299,9 @@ async def password_set(body: PasswordSetRequest) -> None:
     try:
         await zitadel.set_password_with_code(body.user_id, body.code, body.new_password)
     except httpx.HTTPStatusError as exc:
-        logger.exception(
+        logger.exception(  # nosemgrep: python-logger-credential-disclosure
             "set_password_with_code failed status=%s", exc.response.status_code
-        )  # nosemgrep: python-logger-credential-disclosure
+        )
         if exc.response.status_code in (400, 404, 410):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -323,7 +333,6 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         logger.exception("create_session failed %s: %s", exc.response.status_code, exc.response.text)
         if exc.response.status_code in (400, 401, 404, 412):
             await audit.log_event(
-                db,
                 org_id=0,
                 actor=zitadel_user_id or "unknown",
                 action="auth.login.failed",
@@ -374,7 +383,6 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     # Audit log: successful login (non-fatal -- must not block login)
     try:
         await audit.log_event(
-            db,
             org_id=portal_user_for_mfa.org_id if portal_user_for_mfa else 0,
             actor=zitadel_user_id or "unknown",
             action="auth.login",
@@ -435,7 +443,6 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
         if exc.response.status_code in (400, 401):
             pending["failures"] += 1
             await audit.log_event(
-                db,
                 org_id=0,
                 actor="unknown",
                 action="auth.totp.failed",
@@ -460,7 +467,6 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
 
     # Audit: successful TOTP login
     await audit.log_event(
-        db,
         org_id=0,
         actor="unknown",
         action="auth.login.totp",
@@ -529,7 +535,6 @@ async def logout(
     session_data = _decrypt_sso(klai_sso) if klai_sso else None
     session_id = session_data["sid"] if session_data else "unknown"
     await audit.log_event(
-        db,
         org_id=0,
         actor="unknown",
         action="auth.logout",

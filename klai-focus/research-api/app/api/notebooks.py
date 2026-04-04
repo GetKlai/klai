@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.notebook import Notebook
+from app.services.events import emit_event
 
 router = APIRouter(prefix="/v1", tags=["notebooks"])
 
@@ -114,6 +115,9 @@ async def create_notebook(
     await db.commit()
     await db.refresh(nb)
 
+    emit_event("notebook.created", tenant_id=user.tenant_id, user_id=user.user_id,
+               properties={"scope": body.scope})
+
     return NotebookResponse(
         id=nb.id,
         name=nb.name,
@@ -187,6 +191,9 @@ async def get_notebook(
 ) -> NotebookResponse:
     nb = await _get_notebook_or_404(nb_id, db, user)
     count = await _sources_count(db, nb.id)
+
+    emit_event("notebook.opened", tenant_id=user.tenant_id, user_id=user.user_id,
+               properties={"scope": nb.scope})
 
     return NotebookResponse(
         id=nb.id,

@@ -20,7 +20,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch, ApiError } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/admin/groups/$groupId/add-member')({
   component: AddMemberPage,
@@ -51,25 +51,13 @@ function AddMemberPage() {
 
   const { data: membersData } = useQuery({
     queryKey: ['admin-group-members', groupId],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch members (${res.status})`)
-      return res.json() as Promise<{ members: Member[] }>
-    },
+    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`, token),
     enabled: !!token,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`)
-      return res.json() as Promise<{ users: OrgUser[] }>
-    },
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`, token),
     enabled: !!token,
   })
 
@@ -84,16 +72,10 @@ function AddMemberPage() {
 
   const addMemberMutation = useMutation({
     mutationFn: async (zitadel_user_id: string) => {
-      const res = await fetch(`${API_BASE}/api/admin/groups/${groupId}/members`, {
+      await apiFetch(`/api/admin/groups/${groupId}/members`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ zitadel_user_id }),
       })
-      if (res.status === 409) throw new Error('already_member')
-      if (!res.ok) throw new Error(`Failed to add member (${res.status})`)
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-group-members', groupId] })
@@ -101,7 +83,7 @@ function AddMemberPage() {
       void navigate({ to: '/admin/groups/$groupId', params: { groupId } })
     },
     onError: (err: Error) => {
-      if (err.message === 'already_member') {
+      if (err instanceof ApiError && err.status === 409) {
         toast.error(m.admin_groups_members_error_already_member())
       } else {
         toast.error(err.message)

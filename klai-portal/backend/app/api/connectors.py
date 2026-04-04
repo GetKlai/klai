@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services.access import get_user_role_for_kb
+from app.services.events import emit_event
 from app.services.klai_connector_client import SyncRunData, klai_connector_client
 
 logger = logging.getLogger(__name__)
@@ -301,6 +302,12 @@ async def trigger_sync(
     # Optimistically mark as running so the UI reflects it immediately.
     connector.last_sync_status = "running"
     await db.commit()
+    emit_event(
+        "knowledge.uploaded",
+        org_id=org.id,
+        user_id=caller_id,
+        properties={"scope": "org", "file_type": connector.connector_type},
+    )
     return sync_run
 
 

@@ -1,53 +1,21 @@
 """
 AI-assisted CSS selector detection for the crawl wizard.
 
-When a crawl yields too little content (< 100 words), this module:
-1. Re-crawls the URL with a JS snippet that extracts a DOM summary
-2. Calls the klai-fast LLM alias to identify the main content selector
-3. Returns the selector string (or None on failure)
+When a crawl yields too little content (< 100 words), the crawl route:
+1. Calls crawl4ai_client.crawl_dom_summary() to extract a ranked DOM summary
+2. Calls detect_selector_via_llm() (this module) to identify the main content selector
+3. Re-crawls with the detected selector
 
 SPEC-CRAWL-001 / R-4
 """
 import json
-import structlog
 
 import httpx
+import structlog
 
 from knowledge_ingest.config import settings
 
 logger = structlog.get_logger()
-
-# JS injected into the page to extract a DOM summary.
-# Appends a <pre> element off-screen (NOT display:none — innerText returns ""
-# for hidden elements, which would break crawl4ai's text extraction).
-# Captured via css_selector="#__klai_dom_summary__".
-# Uses only direct selector construction (id, classes) to avoid compound paths
-# that differ between crawl passes.
-_DOM_SUMMARY_JS = """
-(async () => {
-  const els = [...document.body.querySelectorAll('*')]
-    .filter(el => el.innerText && el.children.length < 5)
-    .map(el => ({
-      tag: el.tagName.toLowerCase(),
-      id: el.id || null,
-      className: (typeof el.className === 'string' ? el.className : null) || null,
-      wordCount: el.innerText.trim().split(/\\s+/).length,
-      selector: el.id
-        ? '#' + el.id
-        : (typeof el.className === 'string' && el.className.trim())
-          ? el.tagName.toLowerCase() + '.' + el.className.trim().split(/\\s+/).join('.')
-          : el.tagName.toLowerCase()
-    }))
-    .sort((a, b) => b.wordCount - a.wordCount)
-    .slice(0, 25);
-
-  const pre = document.createElement('pre');
-  pre.id = '__klai_dom_summary__';
-  pre.style.cssText = 'position:absolute;left:-9999px;top:-9999px;';
-  pre.textContent = JSON.stringify(els);
-  document.body.appendChild(pre);
-})();
-"""
 
 _LLM_PROMPT = """\
 Given this DOM summary of a webpage (sorted by word count descending), identify the \
@@ -56,39 +24,6 @@ sidebar, footer, and header elements. Return ONLY the CSS selector string, nothi
 
 DOM Summary:
 {json_summary}"""
-
-
-async def extract_dom_summary(url: str) -> list[dict] | None:
-    """Crawl url with DOM extraction JS and return the parsed summary, or None on failure."""
-    try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode  # noqa: PLC0415
-
-        config = CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            js_code=_DOM_SUMMARY_JS,
-            css_selector="#__klai_dom_summary__",
-            word_count_threshold=0,
-            page_timeout=30000,
-            remove_consent_popups=True,
-        )
-        import asyncio  # noqa: PLC0415
-
-        async with AsyncWebCrawler() as crawler:
-            result = await asyncio.wait_for(
-                crawler.arun(url=url, config=config),
-                timeout=30.0,
-            )
-        raw = (result.markdown.raw_markdown or "").strip()
-        if not raw:
-            return None
-        # crawl4ai wraps the <pre> content in markdown code fences or plain text
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        return json.loads(raw)
-    except Exception as exc:
-        logger.warning("crawl_dom_summary_failed", url=url, error=str(exc))
-        return None
 
 
 async def detect_selector_via_llm(dom_summary: list[dict]) -> str | None:

@@ -1,12 +1,80 @@
 {
+  "permissions": {
+    "allow": [
+      "Edit(**)",
+      "Write(**)",
+      "mcp__playwright__browser_snapshot"
+    ],
+    "additionalDirectories": [
+      "/Users/mark/Server/projects/klai/.claude/rules/klai",
+      "/Users/mark"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/serena-read-reminder.sh\""
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/klai/portal-api-preflight.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/bash-grep-guard.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/domain-context-injection.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/git-safety-guard.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/portal-api-preflight.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__playwright__browser_navigate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/playwright-url-guard.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/post-push-ci.py\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/klai/playwright-browser-cleanup.sh\"",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/confidence-check.py\"",
+            "timeout": 10000
           }
         ]
       }

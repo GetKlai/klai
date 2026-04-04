@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
 
@@ -22,25 +22,16 @@ function AdminSettingsPage() {
   const [savedMfa, setSavedMfa] = useState(false)
 
   const { data: settings, isLoading, error } = useQuery({
-    queryKey: ['admin-settings', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/settings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_settings_error_fetch())
-      return res.json() as Promise<{ name: string; default_language: 'nl' | 'en'; mfa_policy: 'optional' | 'recommended' | 'required' }>
-    },
+    queryKey: ['admin-settings'],
+    queryFn: async () => apiFetch<{ name: string; default_language: 'nl' | 'en'; mfa_policy: 'optional' | 'recommended' | 'required' }>(`/api/admin/settings`, token),
     enabled: !!token,
   })
 
   async function patchSettings(payload: { default_language?: 'nl' | 'en'; mfa_policy?: 'optional' | 'recommended' | 'required' }) {
-    const res = await fetch(`${API_BASE}/api/admin/settings`, {
+    return apiFetch(`/api/admin/settings`, token, {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    if (!res.ok) throw new Error(m.admin_settings_error_save())
-    return res.json()
   }
 
   const langMutation = useMutation({

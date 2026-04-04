@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.models.groups import PortalGroupMembership
-
 
 def _mock_org(org_id: int = 1) -> MagicMock:
     org = MagicMock()
@@ -40,7 +38,7 @@ def _mock_user(status: str = "active", org_id: int = 1) -> MagicMock:
 class TestSuspendUser:
     @pytest.mark.asyncio
     async def test_suspend_active_user_succeeds(self) -> None:
-        from app.api.admin import suspend_user
+        from app.api.admin.users import suspend_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -52,16 +50,16 @@ class TestSuspendUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             result = await suspend_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
         assert user.status == "suspended"
-        assert "geschorst" in result.message
+        assert "suspended" in result.message.lower()
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_suspend_offboarded_user_returns_409(self) -> None:
-        from app.api.admin import suspend_user
+        from app.api.admin.users import suspend_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -73,7 +71,7 @@ class TestSuspendUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await suspend_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
@@ -81,7 +79,7 @@ class TestSuspendUser:
 
     @pytest.mark.asyncio
     async def test_suspend_already_suspended_returns_409(self) -> None:
-        from app.api.admin import suspend_user
+        from app.api.admin.users import suspend_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -93,7 +91,7 @@ class TestSuspendUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await suspend_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
@@ -108,7 +106,7 @@ class TestSuspendUser:
 class TestReactivateUser:
     @pytest.mark.asyncio
     async def test_reactivate_suspended_user_succeeds(self) -> None:
-        from app.api.admin import reactivate_user
+        from app.api.admin.users import reactivate_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -120,16 +118,16 @@ class TestReactivateUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             result = await reactivate_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
         assert user.status == "active"
-        assert "gereactiveerd" in result.message
+        assert "reactivated" in result.message.lower()
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_reactivate_active_user_returns_409(self) -> None:
-        from app.api.admin import reactivate_user
+        from app.api.admin.users import reactivate_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -141,7 +139,7 @@ class TestReactivateUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await reactivate_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
@@ -149,7 +147,7 @@ class TestReactivateUser:
 
     @pytest.mark.asyncio
     async def test_reactivate_offboarded_user_returns_409(self) -> None:
-        from app.api.admin import reactivate_user
+        from app.api.admin.users import reactivate_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -161,7 +159,7 @@ class TestReactivateUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await reactivate_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
@@ -177,7 +175,7 @@ class TestOffboardUser:
     @pytest.mark.asyncio
     async def test_offboard_active_user_cascade(self) -> None:
         """Offboard deletes memberships, products, calls Zitadel, sets status."""
-        from app.api.admin import offboard_user
+        from app.api.admin.users import offboard_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -195,9 +193,9 @@ class TestOffboardUser:
         mock_zitadel = AsyncMock()
 
         with (
-            patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)),
-            patch("app.api.admin.zitadel", mock_zitadel),
-            patch("app.api.admin.settings") as mock_settings,
+            patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
+            patch("app.api.admin.users.zitadel", mock_zitadel),
+            patch("app.api.admin.users.settings") as mock_settings,
         ):
             mock_settings.zitadel_portal_org_id = "org-id"
             result = await offboard_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
@@ -211,7 +209,7 @@ class TestOffboardUser:
 
     @pytest.mark.asyncio
     async def test_offboard_offboarded_user_returns_409(self) -> None:
-        from app.api.admin import offboard_user
+        from app.api.admin.users import offboard_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -223,7 +221,7 @@ class TestOffboardUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await offboard_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
@@ -232,7 +230,7 @@ class TestOffboardUser:
     @pytest.mark.asyncio
     async def test_offboard_suspended_user_succeeds(self) -> None:
         """Suspended users can be offboarded (terminal state from any non-offboarded state)."""
-        from app.api.admin import offboard_user
+        from app.api.admin.users import offboard_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -247,9 +245,9 @@ class TestOffboardUser:
         mock_zitadel = AsyncMock()
 
         with (
-            patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)),
-            patch("app.api.admin.zitadel", mock_zitadel),
-            patch("app.api.admin.settings") as mock_settings,
+            patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
+            patch("app.api.admin.users.zitadel", mock_zitadel),
+            patch("app.api.admin.users.settings") as mock_settings,
         ):
             mock_settings.zitadel_portal_org_id = "org-id"
             await offboard_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
@@ -258,7 +256,7 @@ class TestOffboardUser:
 
     @pytest.mark.asyncio
     async def test_offboard_user_not_found_returns_404(self) -> None:
-        from app.api.admin import offboard_user
+        from app.api.admin.users import offboard_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -269,7 +267,7 @@ class TestOffboardUser:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await offboard_user(zitadel_user_id="user-999", credentials=mock_credentials, db=mock_db)
 
@@ -285,7 +283,7 @@ class TestSuspendPreservesMemberships:
     @pytest.mark.asyncio
     async def test_suspend_does_not_delete_memberships(self) -> None:
         """Suspending a user should NOT remove their group memberships."""
-        from app.api.admin import suspend_user
+        from app.api.admin.users import suspend_user
 
         org = _mock_org()
         caller = _mock_caller()
@@ -297,7 +295,7 @@ class TestSuspendPreservesMemberships:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             await suspend_user(zitadel_user_id="user-1", credentials=mock_credentials, db=mock_db)
 
         # Only 1 execute call (user lookup), no delete calls
@@ -325,13 +323,13 @@ class TestRequireAdminOrGroupAdmin:
     async def test_group_admin_passes(self) -> None:
         from app.api.dependencies import _require_admin_or_group_admin
 
-        caller = _mock_caller(role="member")
+        caller = _mock_caller(role="group-admin")
         mock_db = AsyncMock()
 
-        membership = MagicMock(spec=PortalGroupMembership)
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = membership
-        mock_db.execute.return_value = mock_result
+        # system_key check returns None (not a system group)
+        system_key_result = MagicMock()
+        system_key_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = system_key_result
 
         # Should not raise
         await _require_admin_or_group_admin(group_id=1, caller_user=caller, db=mock_db)

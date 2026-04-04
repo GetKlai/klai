@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/focus/$notebookId_/edit')({
   component: () => (
@@ -54,14 +55,8 @@ function EditFocusPage() {
   })
 
   const { data: notebook } = useQuery<NotebookResponse>({
-    queryKey: ['focus-notebook', notebookId, token],
-    queryFn: async () => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.app_focus_loading())
-      return res.json()
-    },
+    queryKey: ['focus-notebook', notebookId],
+    queryFn: async () => apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks/${notebookId}`, token),
     enabled: !!token,
   })
 
@@ -78,12 +73,8 @@ function EditFocusPage() {
 
   const editMutation = useMutation({
     mutationFn: async (data: NotebookForm) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}`, token, {
         method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           name: data.name,
           description: data.description || null,
@@ -91,8 +82,6 @@ function EditFocusPage() {
           default_mode: data.default_mode,
         }),
       })
-      if (!res.ok) throw new Error(m.app_focus_edit_submit() + ' mislukt')
-      return res.json()
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })

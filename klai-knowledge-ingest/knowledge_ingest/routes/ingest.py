@@ -474,13 +474,34 @@ async def gitea_webhook(request: Request) -> dict:
                 logger.warning("ingest_failed", path=path, error=str(exc))
 
     # Delete removed files — immediate, no debounce needed
+    # Order: Qdrant → fetch episode IDs → Graphiti → PG metadata → PG soft-delete
+    # Each step has its own try/except so partial failures don't block subsequent steps.
     for path in removed:
         try:
             await qdrant_store.delete_document(org_id, kb_slug, path)
+        except Exception as exc:
+            logger.warning("page_qdrant_delete_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+
+        # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
+        if settings.graphiti_enabled:
+            try:
+                episode_ids = await pg_store.get_page_episode_ids(org_id, kb_slug, path)
+                if episode_ids:
+                    await graph_module.delete_kb_episodes(org_id, episode_ids)
+            except Exception as exc:
+                logger.warning("page_graph_cleanup_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+
+        # Metadata cleanup: derivations, artifact_entities, embedding_queue
+        try:
+            await pg_store.cleanup_page_metadata(org_id, kb_slug, path)
+        except Exception as exc:
+            logger.warning("page_metadata_cleanup_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+
+        try:
             await pg_store.soft_delete_artifact(org_id, kb_slug, path)
             deleted += 1
         except Exception as exc:
-            logger.warning("delete_failed", path=path, error=str(exc))
+            logger.warning("page_soft_delete_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 

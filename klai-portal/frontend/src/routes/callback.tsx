@@ -4,7 +4,6 @@ import { useAuth } from 'react-oidc-context'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { API_BASE } from '@/lib/api'
-import { STORAGE_KEYS } from '@/lib/storage'
 import { authLogger } from '@/lib/logger'
 
 const ADMIN_ROLES = ['org:owner', 'org:admin']
@@ -47,18 +46,11 @@ function CallbackPage() {
             }
           }
 
-          // Persist product entitlements for frontend access control
-          sessionStorage.setItem(STORAGE_KEYS.products, JSON.stringify(me.products ?? []))
-
-          // Resolve role first so MFA redirect can use it
+          // Resolve role for routing decisions (useCurrentUser handles persistence)
           const isAdmin = me.roles?.some((r: string) => ADMIN_ROLES.includes(r)) ?? false
-          sessionStorage.setItem(STORAGE_KEYS.isAdmin, String(isAdmin))
-          const isGroupAdmin = me.portal_role === 'group-admin'
-          sessionStorage.setItem(STORAGE_KEYS.isGroupAdmin, String(isGroupAdmin))
 
           // MFA not yet enrolled — send to setup
           if (!me.mfa_enrolled) {
-            sessionStorage.setItem(STORAGE_KEYS.mfaPolicy, me.mfa_policy ?? 'optional')
             window.location.replace('/setup/mfa')
             return
           }
@@ -78,12 +70,8 @@ function CallbackPage() {
             } catch (err) {
               authLogger.warn('Billing status check failed during post-login routing', err)
             }
-            window.location.replace('/admin')
-          } else if (isGroupAdmin) {
-            window.location.replace('/admin')
-          } else {
-            window.location.replace('/app')
           }
+          window.location.replace('/app')
           return
         }
       } catch (err) {
@@ -92,8 +80,6 @@ function CallbackPage() {
 
       // /api/me failed (e.g. backend not running) — go to /app
       authLogger.warn('Post-login routing fell through to default /app')
-      sessionStorage.setItem(STORAGE_KEYS.isAdmin, 'false')
-      sessionStorage.setItem(STORAGE_KEYS.isGroupAdmin, 'false')
       window.location.replace('/app')
     }
 

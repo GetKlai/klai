@@ -8,17 +8,26 @@ against portal_audit_log from this module or anywhere in the application.
                           All access control events must go through this function.
 """
 
-import logging
+import json
 
-from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
+from sqlalchemy import text
 
-from app.models.audit import PortalAuditLog
+from app.core.database import AsyncSessionLocal
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
+
+# Raw SQL avoids ORM's implicit INSERT...RETURNING which triggers the
+# SELECT RLS policy. That policy fails when app.current_org_id is unset
+# (login/logout events with org_id=0).
+_INSERT_SQL = text(
+    "INSERT INTO portal_audit_log "
+    "(org_id, actor_user_id, action, resource_type, resource_id, details) "
+    "VALUES (:org_id, :actor, :action, :resource_type, :resource_id, CAST(:details AS jsonb))"
+)
 
 
 async def log_event(
-    db: AsyncSession,
     org_id: int,
     actor: str,
     action: str,
@@ -28,25 +37,28 @@ async def log_event(
 ) -> None:
     """Write an immutable audit log entry.
 
-    Uses a SAVEPOINT (begin_nested) so a failure rolls back only the audit
-    insert, not the caller's transaction. Audit failures must not block
-    business operations.
+    Opens its own database session so the insert commits independently
+    of the caller's transaction. Callers often raise HTTPException after
+    logging, which rolls back the request session and any SAVEPOINTs.
     """
     try:
-        async with db.begin_nested():
-            entry = PortalAuditLog(
-                org_id=org_id,
-                actor_user_id=actor,
-                action=action,
-                resource_type=resource_type,
-                resource_id=str(resource_id),
-                details=details,
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                _INSERT_SQL,
+                {
+                    "org_id": org_id,
+                    "actor": actor,
+                    "action": action,
+                    "resource_type": resource_type,
+                    "resource_id": str(resource_id),
+                    "details": json.dumps(details) if details else None,
+                },
             )
-            db.add(entry)
+            await session.commit()
     except Exception:
         logger.exception(
-            "Audit log write failed (non-fatal): action=%s resource_type=%s resource_id=%s",
-            action,
-            resource_type,
-            resource_id,
+            "Audit log write failed (non-fatal)",
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
         )

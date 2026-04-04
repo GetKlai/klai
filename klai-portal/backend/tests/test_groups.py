@@ -27,12 +27,15 @@ def _mock_caller(role: str = "admin") -> MagicMock:
     return caller
 
 
-def _mock_group(group_id: int = 10, org_id: int = 1, name: str = "Engineering") -> MagicMock:
+def _mock_group(
+    group_id: int = 10, org_id: int = 1, name: str = "Engineering", *, is_system: bool = False
+) -> MagicMock:
     group = MagicMock(spec=PortalGroup)
     group.id = group_id
     group.org_id = org_id
     group.name = name
     group.description = None
+    group.is_system = is_system
     group.created_at = MagicMock()
     group.created_by = "caller-1"
     return group
@@ -202,7 +205,7 @@ class TestAddMember:
         ):
             result = await add_member(group_id=10, body=body, credentials=mock_credentials, db=mock_db)
 
-        assert "Lid toegevoegd" in result.message
+        assert "Member added to group" in result.message
 
     @pytest.mark.asyncio
     async def test_add_member_cross_org_returns_403(self) -> None:
@@ -327,7 +330,7 @@ class TestToggleGroupAdmin:
             )
 
         assert membership.is_group_admin is True
-        assert "toegekend" in result.message
+        assert "granted" in result.message
 
 
 # ---------------------------------------------------------------------------

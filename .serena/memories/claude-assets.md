@@ -1,10 +1,10 @@
 # Claude Assets
 
 ## Location
-All Claude Code assets live directly in the monorepo at `/Users/mark/Server/projects/klai/.claude/`.
-There is no longer a separate `klai-claude` repo — everything was merged into the monorepo.
+All Claude Code assets live in the monorepo at `/Users/mark/Server/projects/klai/.claude/`.
+klai-website has its own `.claude/` at `/Users/mark/Server/projects/klai/klai-website/.claude/` — separate git repo, separate Claude context.
 
-## Structure
+## Structure (monorepo)
 ```
 .claude/
   agents/
@@ -15,30 +15,46 @@ There is no longer a separate `klai-claude` repo — everything was merged into 
     klai/       ← Klai slash commands (/sparring, /retro)
     moai/       ← MoAI slash commands (/plan, /run, /sync, etc.)
   rules/
-    klai/       ← Klai rules (loaded via CLAUDE.md @imports + paths: frontmatter)
-      patterns/ ← Copy-paste solutions (devops, infrastructure, platform, frontend, etc.)
-      pitfalls/ ← Mistakes to avoid (process-rules, git, devops, platform, backend, etc.)
-    gtm/        ← GTM rules
-    moai/       ← MoAI core rules (constitution, coding-standards, etc.)
-  skills/       ← Skill definitions (moai-*, klai-portal-ui)
-  hooks/        ← Claude Code hooks
-  output-styles/ ← Output formatting
+    klai/       ← Klai rules (paths: frontmatter triggers loading)
+      confidence.md     ← always loaded
+      serena.md         ← always loaded
+      pitfalls/process-rules.md  ← always loaded
+      design/styleguide.md
+      infra/deploy.md, servers.md, sops-env.md
+      lang/docker.md, python.md, typescript.md, testing.md
+      platform/caddy.md, litellm.md, librechat.md, vllm.md, zitadel.md
+      projects/portal-backend.md, portal-frontend.md, portal-security.md,
+               portal-logging-py.md, portal-logging-ts.md, website.md,
+               docs.md, knowledge.md, python-services.md
+      workflow/process-full.md
+    gtm/        ← GTM rules (brand-voice, humanizer, mark-tone-of-voice)
+    moai/       ← MoAI core rules
+  hooks/
+    klai/       ← Klai hooks (confidence-check.py, domain-context-injection.sh, git-safety-guard.sh)
+    moai/       ← MoAI hooks
+  skills/       ← Skill definitions
 ```
 
-## Key Knowledge Base Files (in .claude/rules/klai/)
-- `pitfalls/process-rules.md` — universal AI dev rules (loaded every session)
-- `pitfalls/git.md` — before committing
-- `pitfalls/devops.md` + `patterns/devops.md` — before infra work
-- `pitfalls/platform.md` + `patterns/platform.md` — LiteLLM/LibreChat/Zitadel/Caddy
-- `pitfalls/infrastructure.md` + `patterns/infrastructure.md` — SOPS, env, DNS
-- `patterns/frontend.md` — i18n, component patterns
-- `styleguide.md` — full UI design system (auto-loads for matching files)
-- `patterns/logging.md` — structlog + VictoriaLogs patterns
-- `patterns/code-quality.md` — ruff, pyright, ESLint
+## Knowledge base routing
+Decision tree in `.claude/rules/klai/knowledge-structure.md`:
+1. Platform component → `platform/{component}.md`
+2. Infrastructure → `infra/`
+3. Language/tool → `lang/`
+4. Project-specific → `projects/`
+5. AI dev process → `pitfalls/process-rules.md`
+6. Design/branding → `design/styleguide.md`
 
-## Index files
-- Patterns index: `.claude/rules/klai/patterns.md`
-- Pitfalls index: `.claude/rules/klai/pitfalls.md`
+No index files. `paths:` frontmatter handles loading automatically.
+
+## Key hooks
+- `scripts/confidence-check.py` — blocks stop without confidence + evidence + self-review (>=80)
+- `.claude/hooks/klai/domain-context-injection.sh` — injects domain context before DevOps commands
+- `.claude/hooks/klai/git-safety-guard.sh` — blocks destructive git commands
+
+## GTM agents (klai-website only)
+GTM agents (`gtm-blog-writer`, `gtm-blog-seo`, `gtm-voice-editor`, etc.) live in `klai-website/.claude/agents/gtm/`.
+They are ONLY available when Claude is started from `klai-website/`. Invisible from monorepo root.
 
 ## Commit destination
 Work on Claude agents/rules/commands → commit in the monorepo (klai), not a separate repo.
+klai-website Claude assets → commit from within `klai-website/`.

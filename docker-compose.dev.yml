@@ -1,0 +1,99 @@
+# Klai Local Development Stack
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Requires: .env.dev (copy from .env.dev.example)
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - klai-dev-postgres:/var/lib/postgresql
+      - ./dev/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      POSTGRES_USER: klai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-klai-dev}
+      POSTGRES_DB: klai
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U klai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - klai-dev-redis:/data
+    command: redis-server --save 60 1 --appendonly yes --loglevel warning --requirepass ${REDIS_PASSWORD:-klai-dev}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-klai-dev} --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - klai-dev-mongodb:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: klai
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-klai-dev}
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.13
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7700:7700"
+    volumes:
+      - klai-dev-meilisearch:/meili_data
+    environment:
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-klai-dev-meili-key}
+      MEILI_NO_ANALYTICS: "true"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./dev/litellm-config.yaml:/app/config.yaml:ro
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-dev-key}
+      DATABASE_URL: postgresql://litellm:litellm-dev@postgres:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      DISABLE_ADMIN_UI: "False"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health/liveliness"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  klai-dev-postgres:
+  klai-dev-redis:
+  klai-dev-mongodb:
+  klai-dev-meilisearch:

@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     ingest_debounce_seconds: int = 180
     enrichment_model: str = "klai-fast"
     enrichment_timeout: float = 15.0
-    enrichment_max_concurrent: int = 5
+    enrichment_max_concurrent: int = 2  # Mistral account limit: 60 RPM shared across all aliases
     enrichment_max_document_tokens: int = 2000
     # Sparse embedding sidecar (BGE-M3 FlagEmbedding)
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     qdrant_collection: str = "klai_knowledge"
     # Public-facing base URL used as Gitea webhook callback URL (env: KNOWLEDGE_INGEST_PUBLIC_URL)
     knowledge_ingest_public_url: str = "http://knowledge-ingest:8000"
+    # Crawl4AI REST API (shared Docker container)
+    crawl4ai_api_url: str = "http://crawl4ai:11235"
+    crawl4ai_api_key: str = ""
     # Graphiti / FalkorDB knowledge graph
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379
