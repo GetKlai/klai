@@ -4,9 +4,13 @@
 Before fixing a bug: check the logs and follow the actual code path.
 No guessing. No stacking patches. Trace what happens at runtime — logs,
 DB state, API responses — not what you think should happen from memory
-or stale files. If the data isn't visible, add debug logging and
-reproduce first. One root cause confirmed by real data = one fix. If
-the first fix doesn't work, go back to the data, not to another guess.
+or stale files. For production issues, query VictoriaLogs via Grafana
+MCP using `request_id:<uuid>` to trace the full chain across services.
+If the data isn't visible, add debug logging and reproduce first. One
+root cause confirmed by real data = one fix. If the first fix doesn't
+work, go back to the data, not to another guess.
+Trust your own working system over external GitHub issues — if something
+works in 28 files, don't present an obscure issue as a showstopper.
 
 ## debug-holistic-view
 When debugging, zoom out before zooming in. Don't fixate on the line

@@ -17,6 +17,7 @@ paths:
 
 ## httpx client patterns
 - Always set `timeout=` on external calls. Default httpx timeout is the safety net, not the deadline.
+- Always include `**get_trace_headers()` from `app.trace` for inter-service calls — enables X-Request-ID correlation.
 - Log status code + response body before returning generic errors.
 - Catch `ConnectError` separately (no `.response` attribute).
 
