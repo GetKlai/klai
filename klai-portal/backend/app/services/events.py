@@ -6,13 +6,19 @@ Usage:
 
 Events are written to `product_events` in a separate lightweight transaction.
 Failures are logged at WARNING level; the caller is never affected.
+
+Uses raw SQL to avoid SQLAlchemy ORM's implicit RETURNING clause, which
+triggers RLS SELECT policies and fails when no tenant context is set
+(e.g. login events before org resolution).
 """
 
 import asyncio
+import json
 import logging
 
+from sqlalchemy import text
+
 from app.core.database import AsyncSessionLocal
-from app.models.events import ProductEvent
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +41,17 @@ def emit_event(
     async def _insert() -> None:
         try:
             async with AsyncSessionLocal() as session:
-                session.add(
-                    ProductEvent(
-                        event_type=event_type,
-                        org_id=org_id,
-                        user_id=user_id,
-                        properties=properties or {},
-                    )
+                await session.execute(
+                    text("""
+                        INSERT INTO product_events (event_type, org_id, user_id, properties)
+                        VALUES (:event_type, :org_id, :user_id, CAST(:properties AS jsonb))
+                    """),
+                    {
+                        "event_type": event_type,
+                        "org_id": org_id,
+                        "user_id": user_id,
+                        "properties": json.dumps(properties or {}),
+                    },
                 )
                 await session.commit()
         except Exception:

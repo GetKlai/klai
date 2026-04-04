@@ -26,6 +26,24 @@ Customers sign up, log in via Zitadel, and are redirected to their LibreChat env
 - Self-service: update company name and VAT number
 - Request PDF invoice (generated from Mollie data)
 
+### User Groups & Lifecycle
+
+**Groups**
+- Groups provide organizational structure within orgs
+- Table `portal_groups`: id, org_id, name, description, created_at, created_by
+- Unique constraint: `(org_id, LOWER(name))` — case-insensitive per org
+- Group admins can manage members without org-level admin role
+
+**Group-Based Product Entitlements**
+- Products assigned at group level via `portal_group_products` table
+- Effective products = union of direct (per-user) + inherited (via group memberships)
+- JWT tokens enriched with effective products (~15 min expiry)
+
+**User Lifecycle**
+- Three states: `active` → `suspended` (reversible) → `offboarded` (destructive, non-reversible)
+- Suspension: revokes access, preservable for reactivation
+- Offboarding: cascading cleanup of memberships, product assignments
+
 ## Multi-tenancy model
 
 Per customer: own subdomain (`company.getklai.com`) with the full Klai application. Inside: Chat, Usage, Settings, Invoices. LibreChat runs as a feature within the application, not as the main page.
@@ -117,6 +135,21 @@ Added early, already working in another stack. UI likely custom-built. Architect
 **Whisper model (Phase 3+):** faster-whisper large-v3-turbo, INT8 quantization. ~2-2.5 GB weights, ~4-6 GB VRAM total. 6x faster than large-v3, multilingual (NL/DE/EN), less than 1-2% quality loss. Deployed on ai-01 alongside vLLM — ~34 GB VRAM free, no conflict. NVIDIA MPS with `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20` prevents SM contention.
 
 **Scaling trigger:** dedicated GPU (L4, ~€0.50/hr) when more than 5 concurrent audio streams or hard p99 SLO <500ms required. At that usage level there is also revenue to justify it.
+
+## GDPR / AVG Compliance
+
+**Subject Access Request (Art. 15)**
+- Self-service SAR export: `POST /api/me/sar-export`
+- Returns JSON with all personal data: identity, account, memberships, KB access, audit events, usage events, meetings
+- Graceful degradation if Zitadel fails (identity section becomes null)
+
+**Data Minimization (Art. 5(1)(c))**
+- Vexa recordings automatically deleted after successful transcription
+- Ephemeral storage in vexa-bot-manager container (`/var/lib/vexa/recordings/`)
+- Background cleanup task: recordings >30 min old with `status="done"` and `recording_deleted=False`
+- Tracked via `VexaMeeting.recording_deleted` and `recording_deleted_at` columns
+
+---
 
 ## Privacy-first principle
 
@@ -381,6 +414,36 @@ PostgreSQL dumps are negligibly small (<5 GB total for hundreds of tenants).
 **Restic** (recommended): single binary, native S3 support, deduplication and encryption built in. Daily cronjob on core-01. Ref: [restic.net](https://restic.net)
 
 Hetzner Object Storage credentials via environment variables, SOPS/age encrypted — same approach as other secrets in the stack.
+
+---
+
+## Observability & Logging
+
+### Structured Logging (structlog)
+
+- All 8 Python services emit JSON to stdout via `structlog`
+- Standard fields: `timestamp` (ISO 8601), `level`, `service`, `logger`, `event`, context vars
+- FastAPI middleware auto-binds: `org_id`, `user_id`, `request_id`
+- Fallback: `LOG_FORMAT=console` for human-readable output
+- Logger naming: `logger = logging.getLogger(__name__)`
+
+### Collection & Storage
+
+- Grafana Alloy with `loki.source.docker` discovers containers on core-01
+- Labels: `service` (Docker label), `server`, `env=production`
+- VictoriaLogs storage with 30-day retention (`-retentionPeriod=30d`)
+- Grafana datasource provisioning: `deploy/grafana/provisioning/datasources/victorialogs.yaml`
+
+### Cross-Server Shipping
+
+- public-01 → core-01 via Alloy over HTTPS
+- Caddy reverse proxy: `https://logs-ingest.${DOMAIN}` with bearer token auth
+- Config: `deploy/alloy/config.alloy`
+
+### Dashboards
+
+- Provisioned log explorer: `deploy/grafana/provisioning/dashboards/logs.json`
+- Filters: service, server, level
 
 ---
 

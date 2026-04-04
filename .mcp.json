@@ -15,19 +15,28 @@
       "args": ["-y", "@upstash/context7-mcp@latest"],
       "env": {}
     },
-    "sequential-thinking": {
-      "$comment": "Step-by-step reasoning for complex problems (UltraThink mode)",
+    "playwright": {
+      "$comment": "Browser automation for E2E spot-checks. Uses persistent Brave profile. Stop hook auto-enforces browser_close. Supports localhost (dev) and *.getklai.com (prod).",
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
       "env": {}
     },
-    "playwright": {
-      "$comment": "Browser automation for E2E spot-checks. Platform-specific paths in .playwright-mcp/config.json (gitignored, create per machine).",
+    "codeindex": {
+      "$comment": "Graph-powered code intelligence. Install: npm i -g klai-private/tools/codeindex-1.3.56.tgz && codeindex analyze",
       "type": "stdio",
-      "command": "npx",
-      "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
+      "command": "codeindex",
+      "args": ["mcp"],
       "env": {}
+    },
+    "grafana": {
+      "$comment": "AI agent access to Grafana dashboards, VictoriaLogs queries, and alerts. Read-only mode. Requires GRAFANA_SERVICE_ACCOUNT_TOKEN (create in Grafana → Admin → Service Accounts).",
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-grafana", "--disable-write"],
+      "env": {
+        "GRAFANA_URL": "https://grafana.getklai.com"
+      }
     }
   }
 }

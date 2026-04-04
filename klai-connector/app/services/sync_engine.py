@@ -12,13 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.registry import AdapterRegistry
-from app.adapters.webcrawler import CrawlJobPending
+from app.adapters.webcrawler import CrawlJobPendingError
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.parser import parse_document
-from app.services.portal_client import PortalClient, PortalConnectorConfig
+from app.services.portal_client import PortalClient
 
 logger = get_logger(__name__)
 
@@ -228,7 +228,7 @@ class SyncEngine:
 
                 await adapter.post_sync(portal_config)
 
-            except CrawlJobPending as exc:
+            except CrawlJobPendingError as exc:
                 # Async crawl job not finished yet: mark as PENDING so the
                 # next scheduled sync resumes polling.
                 sync_run.status = SyncStatus.PENDING
@@ -259,10 +259,7 @@ class SyncEngine:
 
             except BadRequest as err:
                 # gidgethub raises BadRequest for 401/403; treat as auth failure
-                if err.status_code in (401, 403):
-                    status = SyncStatus.AUTH_ERROR
-                else:
-                    status = SyncStatus.FAILED
+                status = SyncStatus.AUTH_ERROR if err.status_code in (401, 403) else SyncStatus.FAILED
                 error_details.append({"error": str(err)})
                 logger.exception(
                     "Sync failed for connector %s",

@@ -33,8 +33,9 @@ import { Trash2, Send, Loader2, Pencil, Check, X, MoreHorizontal, Pause, Play, U
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { adminLogger } from '@/lib/logger'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { useSuspendUser, useReactivateUser, useOffboardUser } from '@/hooks/useUserLifecycle'
 
 export const Route = createFileRoute('/admin/users/')({
@@ -100,29 +101,17 @@ function UsersPage() {
   const reactivateMutation = useReactivateUser()
   const offboardMutation = useOffboardUser()
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['admin-users', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_fetch({ status: String(res.status) }))
-      return res.json() as Promise<{ users: User[] }>
-    },
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`, token),
     enabled: !!token,
   })
 
   const users = data?.users ?? []
 
   const { data: membershipsData } = useQuery({
-    queryKey: ['admin-group-memberships', token],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/group-memberships`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch memberships (${res.status})`)
-      return res.json() as Promise<{ memberships: Record<string, { id: number; name: string; products: string[] }[]> }>
-    },
+    queryKey: ['admin-group-memberships'],
+    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number; name: string; products: string[] }[]> }>(`/api/admin/group-memberships`, token),
     enabled: !!token,
   })
 
@@ -130,11 +119,7 @@ function UsersPage() {
 
   const resendInviteMutation = useMutation({
     mutationFn: async (user: User) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}/resend-invite`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_resend_invite({ status: String(res.status) }))
+      await apiFetch(`/api/admin/users/${user.zitadel_user_id}/resend-invite`, token, { method: 'POST' })
     },
     onSuccess: (_data, user) => {
       adminLogger.info('Invite resent', { userId: user.zitadel_user_id, email: user.email })
@@ -144,11 +129,7 @@ function UsersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (user: User) => {
-      const res = await fetch(`${API_BASE}/api/admin/users/${user.zitadel_user_id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.admin_users_error_delete({ status: String(res.status) }))
+      await apiFetch(`/api/admin/users/${user.zitadel_user_id}`, token, { method: 'DELETE' })
     },
     onSuccess: (_data, user) => {
       adminLogger.info('User deleted', { userId: user.zitadel_user_id, email: user.email })
@@ -158,8 +139,7 @@ function UsersPage() {
 
 
 
-  const pageError =
-    (error instanceof Error ? error.message : error ? m.admin_users_error_generic() : null) ??
+  const mutationError =
     (deleteMutation.error instanceof Error ? deleteMutation.error.message : deleteMutation.error ? m.admin_users_error_delete_generic() : null) ??
     (resendInviteMutation.error instanceof Error ? resendInviteMutation.error.message : resendInviteMutation.error ? m.admin_users_error_resend_invite_generic() : null)
 
@@ -355,8 +335,11 @@ function UsersPage() {
         </Button>
       </div>
 
-      {pageError && (
-        <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
+      {error ? (
+        <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
+      ) : <>
+      {mutationError && (
+        <p className="text-sm text-[var(--color-destructive)]">{mutationError}</p>
       )}
 
       <Card data-help-id="admin-users-table">
@@ -438,6 +421,7 @@ function UsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </>}
     </div>
   )
 }

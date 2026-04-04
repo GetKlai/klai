@@ -9,35 +9,60 @@ All query functions enforce org-level scoping. Group-scoped access is layered on
                          KB access checks. Do not bypass.
 """
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.groups import PortalGroupMembership
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.meetings import VexaMeeting
+from app.models.portal import PortalUser
+
+
+def _accessible_meetings_filter(user_id: str, org_id: int):
+    """Return the WHERE clause for meetings accessible by this user."""
+    group_ids_subquery = (
+        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
+    )
+    return [
+        VexaMeeting.org_id == org_id,
+        or_(
+            VexaMeeting.zitadel_user_id == user_id,
+            VexaMeeting.group_id.in_(group_ids_subquery),
+        ),
+    ]
 
 
 async def get_accessible_meetings(
     user_id: str,
     org_id: int | None,
     db: AsyncSession,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[VexaMeeting]:
     """Return meetings the user can access: owned + group-scoped (within the same org)."""
     if org_id is None:
         return []
-    group_ids_subquery = (
-        select(PortalGroupMembership.group_id).where(PortalGroupMembership.zitadel_user_id == user_id).scalar_subquery()
+    stmt = (
+        select(VexaMeeting)
+        .where(*_accessible_meetings_filter(user_id, org_id))
+        .order_by(VexaMeeting.created_at.desc())
+        .offset(offset)
     )
-    result = await db.execute(
-        select(VexaMeeting).where(
-            VexaMeeting.org_id == org_id,
-            or_(
-                VexaMeeting.zitadel_user_id == user_id,
-                VexaMeeting.group_id.in_(group_ids_subquery),
-            ),
-        )
-    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def count_accessible_meetings(
+    user_id: str,
+    org_id: int,
+    db: AsyncSession,
+) -> int:
+    """Return count of meetings accessible by this user."""
+    result = await db.execute(select(func.count(VexaMeeting.id)).where(*_accessible_meetings_filter(user_id, org_id)))
+    return result.scalar_one()
 
 
 async def can_write_meeting(user_id: str, meeting: VexaMeeting, db: AsyncSession) -> bool:
@@ -101,14 +126,39 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
     )
     user_kb_slugs = [row[0] for row in user_kb_result.all()]
 
-    all_named = list({*group_kb_slugs, *user_kb_slugs})
+    # Named KB slugs via default_org_role (org-wide defaults)
+    default_kb_slugs: list[str] = []
+    user_result2 = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == user_id))
+    user_org_id = user_result2.scalar_one_or_none()
+    if user_org_id:
+        default_kb_result = await db.execute(
+            select(PortalKnowledgeBase.slug)
+            .where(
+                PortalKnowledgeBase.org_id == user_org_id,
+                PortalKnowledgeBase.default_org_role.isnot(None),
+                PortalKnowledgeBase.owner_type == "org",
+            )
+            .distinct()
+        )
+        default_kb_slugs = [row[0] for row in default_kb_result.all()]
+
+    all_named = list({*group_kb_slugs, *user_kb_slugs, *default_kb_slugs})
     return base_slugs + all_named
 
 
-async def get_user_role_for_kb(kb_id: int, user_id: str, db: AsyncSession) -> str | None:
+async def get_user_role_for_kb(
+    kb_id: int,
+    user_id: str,
+    db: AsyncSession,
+    *,
+    default_org_role: str | None = None,
+    kb_org_id: int | None = None,
+) -> str | None:
     """Return the effective role for user_id on kb_id, or None if no access.
 
     Checks both portal_user_kb_access (direct) and portal_group_kb_access (via groups).
+    If no explicit access is found and default_org_role is set, falls back to the
+    org-wide default role for users in the same org.
     Returns the highest role found: owner > contributor > viewer.
     """
     role_rank = {"viewer": 1, "contributor": 2, "owner": 3}
@@ -138,6 +188,13 @@ async def get_user_role_for_kb(kb_id: int, user_id: str, db: AsyncSession) -> st
     )
     for row in group_result.all():
         roles.append(row[0])
+
+    # Fallback to default_org_role if user is in the same org
+    if default_org_role and kb_org_id:
+        user_result = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == user_id))
+        user_org_id = user_result.scalar_one_or_none()
+        if user_org_id == kb_org_id:
+            roles.append(default_org_role)
 
     if not roles:
         return None

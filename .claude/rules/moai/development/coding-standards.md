@@ -1,3 +1,9 @@
+---
+paths:
+  - "**/.claude/**"
+  - "**/.moai/**"
+  - "**/CLAUDE.md"
+---
 # Coding Standards
 
 MoAI-specific coding standards. General coding conventions are not included as Claude already knows them.

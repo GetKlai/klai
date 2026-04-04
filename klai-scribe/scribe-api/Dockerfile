@@ -15,7 +15,8 @@ COPY . .
 
 ENV LOG_LEVEL=INFO
 
-RUN adduser --disabled-password --gecos "" klai
+RUN adduser --disabled-password --gecos "" klai && \
+    mkdir -p /data/audio && chown klai:klai /data/audio
 
 EXPOSE 8020
 

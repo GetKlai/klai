@@ -9,17 +9,17 @@
 
 ## 1. Environment
 
-- **Service:** klai-knowledge-ingest (FastAPI, asyncpg, crawl4ai)
+- **Service:** klai-knowledge-ingest (FastAPI, asyncpg, crawl4ai REST API)
 - **Database:** PostgreSQL with `knowledge` schema (asyncpg via `db.get_pool()`)
 - **LLM access:** LiteLLM proxy at `LITELLM_URL` env var, model alias `klai-fast`
-- **Browser engine:** Playwright (bundled with crawl4ai's `AsyncWebCrawler`)
+- **Browser engine:** Playwright (run inside shared `crawl4ai` container, accessed via REST API at `http://crawl4ai:11235`)
 - **Existing config:** `knowledge_ingest/config.py` (`Settings` via pydantic-settings)
 - **Existing models:** `knowledge_ingest/models.py` (`CrawlRequest`, `CrawlResponse`, `IngestRequest`)
 
 ## 2. Assumptions
 
 - The `knowledge.artifacts` table already has a JSONB `extra` column -- no migration needed for source URL storage.
-- crawl4ai's `AsyncWebCrawler` uses Playwright internally; the Playwright page object is accessible for DOM inspection via `result.page` or equivalent API.
+- crawl4ai runs as a shared Docker container; both klai-knowledge-ingest and klai-connector access it via REST API (`POST /crawl`). No local Playwright install needed in either service.
 - The `klai-fast` LiteLLM alias is available and returns structured text responses suitable for CSS selector extraction.
 - The `preview_crawl` endpoint is the primary entry point for the crawl wizard; the `crawl_url` endpoint is used for final ingestion.
 - Domain selectors are scoped per org -- the same domain may have different selectors for different tenants.

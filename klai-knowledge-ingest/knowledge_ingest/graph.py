@@ -73,6 +73,101 @@ class _RateLimitedTransport(httpx.AsyncBaseTransport):
         return await self._wrapped.handle_async_request(request)
 
 
+if _GRAPHITI_AVAILABLE:
+    from collections.abc import Iterable
+
+    from graphiti_core.embedder.client import EmbedderClient
+
+    class _BatchSplittingEmbedder(EmbedderClient):
+        """Wraps an OpenAIEmbedder to split large batches into sub-batches.
+
+        Graphiti's OpenAIEmbedder.create_batch() sends all items in a single API
+        call. TEI enforces --max-client-batch-size (default 32). As the FalkorDB
+        graph grows, entity resolution batches exceed this limit.
+
+        This wrapper queries TEI's /info endpoint once to discover the actual limit,
+        then splits create_batch() calls into sub-batches. Falls back to per-item
+        embedding if a sub-batch fails (following graphiti_core's Gemini pattern).
+        """
+
+        def __init__(
+            self,
+            inner: OpenAIEmbedder,
+            tei_base_url: str,
+            default_batch_size: int = 32,
+        ) -> None:
+            self._inner = inner
+            self.config = inner.config
+            self._tei_base_url = tei_base_url.rstrip("/").removesuffix("/v1")
+            self._batch_size = default_batch_size
+            self._resolved = False
+
+        async def _resolve_batch_size(self) -> int:
+            if self._resolved:
+                return self._batch_size
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"{self._tei_base_url}/info")
+                    resp.raise_for_status()
+                    info = resp.json()
+                    server_max = info.get("max_client_batch_size")
+                    if server_max and isinstance(server_max, int) and server_max > 0:
+                        self._batch_size = server_max
+                        self._resolved = True
+                        logger.info(
+                            "tei_batch_size_resolved",
+                            max_client_batch_size=self._batch_size,
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "tei_info_query_failed",
+                    error=str(exc),
+                    default_batch_size=self._batch_size,
+                )
+            return self._batch_size
+
+        async def create(
+            self,
+            input_data: str | list[str] | Iterable[int] | Iterable[Iterable[int]],
+        ) -> list[float]:
+            return await self._inner.create(input_data)
+
+        async def create_batch(self, input_data_list: list[str]) -> list[list[float]]:
+            if not input_data_list:
+                return []
+
+            batch_size = await self._resolve_batch_size()
+
+            if len(input_data_list) <= batch_size:
+                return await self._inner.create_batch(input_data_list)
+
+            logger.info(
+                "embedding_batch_splitting",
+                total=len(input_data_list),
+                batch_size=batch_size,
+                sub_batches=(len(input_data_list) + batch_size - 1) // batch_size,
+            )
+
+            all_embeddings: list[list[float]] = []
+            for i in range(0, len(input_data_list), batch_size):
+                sub_batch = input_data_list[i : i + batch_size]
+                try:
+                    result = await self._inner.create_batch(sub_batch)
+                    all_embeddings.extend(result)
+                except Exception as exc:
+                    logger.warning(
+                        "embedding_sub_batch_failed",
+                        sub_batch_index=i // batch_size,
+                        sub_batch_size=len(sub_batch),
+                        error=str(exc),
+                    )
+                    for item in sub_batch:
+                        embedding = await self._inner.create(item)
+                        all_embeddings.append(embedding)
+
+            return all_embeddings
+
+
 def _get_semaphore() -> asyncio.Semaphore:
     global _episode_semaphore
     if _episode_semaphore is None:
@@ -119,13 +214,16 @@ def _get_graphiti() -> Graphiti:
             ),
         )
         llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
-        embedder = OpenAIEmbedder(
-            config=OpenAIEmbedderConfig(
-                base_url=f"{settings.tei_url}/v1",
-                api_key=api_key,
-                embedding_model="bge-m3",
-                embedding_dim=1024,
-            )
+        embedder = _BatchSplittingEmbedder(
+            inner=OpenAIEmbedder(
+                config=OpenAIEmbedderConfig(
+                    base_url=f"{settings.tei_url}/v1",
+                    api_key=api_key,
+                    embedding_model="bge-m3",
+                    embedding_dim=1024,
+                )
+            ),
+            tei_base_url=settings.tei_url,
         )
         driver = FalkorDriver(
             host=settings.falkordb_host,

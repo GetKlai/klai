@@ -135,7 +135,7 @@ class TestAssignProduct:
     @pytest.mark.asyncio
     async def test_assign_product_exceeds_plan_ceiling_returns_403(self) -> None:
         """TS-007: Assigning a product not in plan returns 403."""
-        from app.api.admin import assign_product
+        from app.api.admin.products import assign_product
 
         org = self._mock_org(plan="core")
         caller = self._mock_caller()
@@ -143,7 +143,7 @@ class TestAssignProduct:
         mock_db = AsyncMock()
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 body = MagicMock()
                 body.product = "knowledge"  # not in core plan
@@ -160,7 +160,7 @@ class TestAssignProduct:
     @pytest.mark.asyncio
     async def test_assign_product_within_ceiling_succeeds(self) -> None:
         """TS-008: Valid assignment within plan ceiling creates record."""
-        from app.api.admin import assign_product
+        from app.api.admin.products import assign_product
 
         org = self._mock_org(plan="professional")
         caller = self._mock_caller()
@@ -172,7 +172,7 @@ class TestAssignProduct:
         mock_db.scalar.side_effect = [mock_user, None]
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             body = MagicMock()
             body.product = "chat"
             result = await assign_product(
@@ -189,7 +189,7 @@ class TestAssignProduct:
     @pytest.mark.asyncio
     async def test_assign_duplicate_product_returns_409(self) -> None:
         """TS-009: Duplicate assignment returns 409."""
-        from app.api.admin import assign_product
+        from app.api.admin.products import assign_product
 
         org = self._mock_org(plan="professional")
         caller = self._mock_caller()
@@ -200,7 +200,7 @@ class TestAssignProduct:
         mock_db.scalar.side_effect = [mock_user, mock_existing]
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             body = MagicMock()
             body.product = "chat"
             with pytest.raises(HTTPException) as exc_info:
@@ -225,7 +225,7 @@ class TestRevokeProduct:
     @pytest.mark.asyncio
     async def test_revoke_existing_product_succeeds(self) -> None:
         """TS-010: Revoking an existing product assignment."""
-        from app.api.admin import revoke_product
+        from app.api.admin.products import revoke_product
 
         org = MagicMock()
         org.id = 1
@@ -239,7 +239,7 @@ class TestRevokeProduct:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             await revoke_product(
                 zitadel_user_id="user-1",
                 product="chat",
@@ -252,7 +252,7 @@ class TestRevokeProduct:
 
     @pytest.mark.asyncio
     async def test_revoke_nonexistent_product_returns_404(self) -> None:
-        from app.api.admin import revoke_product
+        from app.api.admin.products import revoke_product
 
         org = MagicMock()
         org.id = 1
@@ -265,7 +265,7 @@ class TestRevokeProduct:
         mock_db.execute.return_value = mock_result
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await revoke_product(
                     zitadel_user_id="user-1",
@@ -288,7 +288,7 @@ class TestAutoAssignOnInvite:
     @pytest.mark.asyncio
     async def test_invite_auto_assigns_plan_products(self) -> None:
         """TS-002: invite_user adds PortalUserProduct rows for the org's plan."""
-        from app.api.admin import invite_user
+        from app.api.admin.users import invite_user
 
         org = MagicMock()
         org.id = 1
@@ -322,9 +322,9 @@ class TestAutoAssignOnInvite:
         mock_db.add = MagicMock(side_effect=added_objects.append)
 
         with (
-            patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)),
-            patch("app.api.admin.zitadel", mock_zitadel),
-            patch("app.api.admin.settings") as mock_settings,
+            patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)),
+            patch("app.api.admin.users.zitadel", mock_zitadel),
+            patch("app.api.admin.users.settings") as mock_settings,
         ):
             mock_settings.zitadel_portal_org_id = "org-id"
             result = await invite_user(body=body, credentials=mock_credentials, db=mock_db)
@@ -354,7 +354,7 @@ class TestSeatLimitEnforcement:
     @pytest.mark.asyncio
     async def test_invite_at_seat_limit_returns_409(self) -> None:
         """TS-003: invite_user raises 409 when seat limit is reached."""
-        from app.api.admin import invite_user
+        from app.api.admin.users import invite_user
 
         org = MagicMock()
         org.id = 1
@@ -378,7 +378,7 @@ class TestSeatLimitEnforcement:
         body.role = "member"
         body.preferred_language = "nl"
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.users._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await invite_user(body=body, credentials=mock_credentials, db=mock_db)
 
@@ -397,7 +397,7 @@ class TestPlanChange:
     @pytest.mark.asyncio
     async def test_upgrade_plan_keeps_products(self) -> None:
         """TS-011: Upgrading from core to professional does not revoke existing products."""
-        from app.api.admin import change_plan
+        from app.api.admin.settings import change_plan
 
         org = MagicMock()
         org.id = 1
@@ -419,7 +419,7 @@ class TestPlanChange:
         body = MagicMock()
         body.plan = "professional"
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
             await change_plan(body=body, credentials=mock_credentials, db=mock_db)
 
         assert org.plan == "professional"
@@ -430,7 +430,7 @@ class TestPlanChange:
     @pytest.mark.asyncio
     async def test_downgrade_plan_revokes_over_ceiling_products(self) -> None:
         """TS-012: Downgrading from professional to core revokes scribe."""
-        from app.api.admin import change_plan
+        from app.api.admin.settings import change_plan
 
         org = MagicMock()
         org.id = 1
@@ -447,16 +447,20 @@ class TestPlanChange:
         scribe_product.org_id = 1
         scribe_product.zitadel_user_id = "user-1"
 
+        # First execute: user products; second execute: group products (empty)
+        mock_user_result = MagicMock()
+        mock_user_result.scalars.return_value.all.return_value = [chat_product, scribe_product]
+        mock_group_result = MagicMock()
+        mock_group_result.scalars.return_value.all.return_value = []
+
         mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [chat_product, scribe_product]
-        mock_db.execute.return_value = mock_result
+        mock_db.execute.side_effect = [mock_user_result, mock_group_result]
         mock_credentials = MagicMock()
 
         body = MagicMock()
         body.plan = "core"
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
             await change_plan(body=body, credentials=mock_credentials, db=mock_db)
 
         assert org.plan == "core"
@@ -466,7 +470,7 @@ class TestPlanChange:
     @pytest.mark.asyncio
     async def test_downgrade_to_free_revokes_all_products(self) -> None:
         """Downgrading to free revokes all product assignments."""
-        from app.api.admin import change_plan
+        from app.api.admin.settings import change_plan
 
         org = MagicMock()
         org.id = 1
@@ -479,23 +483,27 @@ class TestPlanChange:
         scribe_product = MagicMock(spec=PortalUserProduct)
         scribe_product.product = "scribe"
 
+        # First execute: user products; second execute: group products (empty)
+        mock_user_result = MagicMock()
+        mock_user_result.scalars.return_value.all.return_value = [chat_product, scribe_product]
+        mock_group_result = MagicMock()
+        mock_group_result.scalars.return_value.all.return_value = []
+
         mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [chat_product, scribe_product]
-        mock_db.execute.return_value = mock_result
+        mock_db.execute.side_effect = [mock_user_result, mock_group_result]
         mock_credentials = MagicMock()
 
         body = MagicMock()
         body.plan = "free"
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
             await change_plan(body=body, credentials=mock_credentials, db=mock_db)
 
         assert mock_db.delete.await_count == 2
 
     @pytest.mark.asyncio
     async def test_change_to_unknown_plan_returns_400(self) -> None:
-        from app.api.admin import change_plan
+        from app.api.admin.settings import change_plan
 
         org = MagicMock()
         org.plan = "core"
@@ -508,7 +516,7 @@ class TestPlanChange:
         body = MagicMock()
         body.plan = "enterprise"  # not in PLAN_PRODUCTS
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.settings._get_caller_org", return_value=("admin-1", org, caller)):
             with pytest.raises(HTTPException) as exc_info:
                 await change_plan(body=body, credentials=mock_credentials, db=mock_db)
 
@@ -526,7 +534,7 @@ class TestProductSummary:
     @pytest.mark.asyncio
     async def test_product_summary_returns_counts(self) -> None:
         """TS-016: product_summary returns per-product user counts."""
-        from app.api.admin import product_summary
+        from app.api.admin.products import product_summary
 
         org = MagicMock()
         org.id = 1
@@ -545,7 +553,7 @@ class TestProductSummary:
         mock_db.execute.return_value = [row1, row2]
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             result = await product_summary(credentials=mock_credentials, db=mock_db)
 
         assert len(result.items) == 2
@@ -565,7 +573,7 @@ class TestListAvailableProducts:
     @pytest.mark.asyncio
     async def test_list_products_returns_plan_products(self) -> None:
         """TS-018: list_available_products returns products for org's plan."""
-        from app.api.admin import list_available_products
+        from app.api.admin.products import list_available_products
 
         org = MagicMock()
         org.plan = "professional"
@@ -575,14 +583,14 @@ class TestListAvailableProducts:
         mock_db = AsyncMock()
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             result = await list_available_products(credentials=mock_credentials, db=mock_db)
 
         assert result.products == ["chat", "scribe"]
 
     @pytest.mark.asyncio
     async def test_list_products_free_plan_returns_empty(self) -> None:
-        from app.api.admin import list_available_products
+        from app.api.admin.products import list_available_products
 
         org = MagicMock()
         org.plan = "free"
@@ -592,7 +600,7 @@ class TestListAvailableProducts:
         mock_db = AsyncMock()
         mock_credentials = MagicMock()
 
-        with patch("app.api.admin._get_caller_org", return_value=("admin-1", org, caller)):
+        with patch("app.api.admin.products._get_caller_org", return_value=("admin-1", org, caller)):
             result = await list_available_products(credentials=mock_credentials, db=mock_db)
 
         assert result.products == []

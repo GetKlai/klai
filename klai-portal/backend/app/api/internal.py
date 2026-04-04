@@ -69,9 +69,14 @@ async def get_user_language(
     if not user_id:
         return UserLanguageResponse(preferred_language="nl")
 
-    result = await db.execute(select(PortalUser.preferred_language).where(PortalUser.zitadel_user_id == user_id))
-    lang = result.scalar_one_or_none()
-    return UserLanguageResponse(preferred_language=lang or "nl")
+    result = await db.execute(
+        select(PortalUser.preferred_language, PortalUser.org_id).where(PortalUser.zitadel_user_id == user_id)
+    )
+    row = result.first()
+    if not row:
+        return UserLanguageResponse(preferred_language="nl")
+    await set_tenant(db, row.org_id)
+    return UserLanguageResponse(preferred_language=row.preferred_language or "nl")
 
 
 class UserProductsResponse(BaseModel):
@@ -89,6 +94,12 @@ async def get_user_products(
     Returns empty list if user not found (fail-closed behavior for JWT).
     """
     _require_internal_token(request)
+
+    # Set tenant context so get_effective_products can query RLS-protected tables
+    result = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == zitadel_user_id))
+    org_id = result.scalar_one_or_none()
+    if org_id is not None:
+        await set_tenant(db, org_id)
 
     products = await get_effective_products(zitadel_user_id, db)
     return UserProductsResponse(products=products)
@@ -172,6 +183,7 @@ async def receive_sync_status(
     connector = await db.get(PortalConnector, connector_id)
     if connector is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    await set_tenant(db, connector.org_id)
     connector.last_sync_at = body.completed_at
     connector.last_sync_status = body.status
     await db.commit()
@@ -217,6 +229,13 @@ async def get_knowledge_feature(
     it in portal_users.librechat_user_id for all subsequent calls (pure PostgreSQL).
     """
     _require_internal_token(request)
+
+    # Set tenant context early using the org_id query param (Zitadel org ID).
+    # This is needed so subsequent queries on RLS-protected tables work correctly.
+    org_lookup = await db.execute(select(PortalOrg.id).where(PortalOrg.zitadel_org_id == org_id))
+    portal_org_id = org_lookup.scalar_one_or_none()
+    if portal_org_id is not None:
+        await set_tenant(db, portal_org_id)
 
     # Step 1: fast path — librechat_user_id already mapped in PostgreSQL
     result = await db.execute(select(PortalUser).where(PortalUser.librechat_user_id == librechat_user_id))
@@ -340,6 +359,7 @@ async def create_gap_event(
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+    await set_tenant(db, org.id)
 
     gap = PortalRetrievalGap(
         org_id=org.id,

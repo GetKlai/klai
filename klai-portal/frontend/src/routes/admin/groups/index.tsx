@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, Eye, Lock, Pencil, Plus } from 'lucide-react'
+import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -30,7 +30,8 @@ function avatarColor(uid: string): string {
 }
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { QueryErrorState } from '@/components/ui/query-error-state'
+import { apiFetch } from '@/lib/apiFetch'
 
 type GroupsSearch = { create?: true }
 
@@ -111,40 +112,23 @@ function AdminGroups() {
   const { create } = Route.useSearch()
   const showCreate = create === true
   const [newGroupName, setNewGroupName] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch groups (${res.status})`)
-      return res.json() as Promise<{ groups: Group[] }>
-    },
+    queryFn: async () => apiFetch<{ groups: Group[] }>('/api/admin/groups', token),
     enabled: !!token,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`)
-      return res.json() as Promise<{ users: OrgUser[] }>
-    },
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>('/api/admin/users', token),
     enabled: !!token,
   })
 
   const { data: membershipsData } = useQuery({
     queryKey: ['admin-group-memberships'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/admin/group-memberships`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Failed to fetch memberships (${res.status})`)
-      return res.json() as Promise<{ memberships: Record<string, { id: number }[]> }>
-    },
+    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number }[]> }>('/api/admin/group-memberships', token),
     enabled: !!token,
   })
 
@@ -166,22 +150,32 @@ function AdminGroups() {
 
   const createMutation = useMutation({
     mutationFn: async (name: string) => {
-      const res = await fetch(`${API_BASE}/api/admin/groups`, {
+      return apiFetch('/api/admin/groups', token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name }),
       })
-      if (!res.ok) throw new Error(`Failed to create group (${res.status})`)
-      return res.json()
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
       void navigate({ search: {} })
       setNewGroupName('')
       toast.success(m.admin_groups_success_created())
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (groupId: number) => {
+      return apiFetch(`/api/admin/groups/${groupId}`, token, {
+        method: 'DELETE',
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-group-memberships'] })
+      toast.success(m.admin_groups_success_deleted())
     },
     onError: (err: Error) => {
       toast.error(err.message)
@@ -234,6 +228,38 @@ function AdminGroups() {
       header: () => '',
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
+          {!row.original.is_system && (
+            confirmDeleteId === row.original.id ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  className="bg-[var(--color-destructive)] text-white hover:opacity-90"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.mutate(row.original.id)
+                    setConfirmDeleteId(null)
+                  }}
+                >
+                  {deleteMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    m.admin_groups_delete()
+                  )}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                  {m.admin_users_cancel()}
+                </Button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDeleteId(row.original.id)}
+                aria-label={`Delete ${row.original.name}`}
+                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )
+          )}
           {!row.original.is_system && (
             <button
               onClick={() =>
@@ -294,7 +320,7 @@ function AdminGroups() {
                   id="new-group-name"
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder="Team naam..."
+                  placeholder={m.admin_groups_name_placeholder()}
                 />
               </div>
               <Button
@@ -321,13 +347,9 @@ function AdminGroups() {
         </Card>
       )}
 
-      {error && (
-        <p className="text-sm text-[var(--color-destructive)]">
-          {error instanceof Error ? error.message : String(error)}
-        </p>
-      )}
-
-      <Card>
+      {error ? (
+        <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
+      ) : <Card>
         <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
           {isLoading ? (
             <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
@@ -389,7 +411,7 @@ function AdminGroups() {
             </table>
           )}
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   )
 }

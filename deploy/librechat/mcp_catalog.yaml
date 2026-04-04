@@ -1,0 +1,21 @@
+version: "1.0"
+# MCP Catalog -- whitelist van ondersteunde MCP servers met config templates.
+# Alleen entries in dit bestand kunnen door tenants worden geactiveerd via de Portal.
+# config_template bevat ${VAR} placeholders die LibreChat bij startup expandeert.
+servers:
+  twenty-crm:
+    description: "Twenty CRM -- contacten, bedrijven, deals, taken"
+    required_env_vars:
+      - TWENTY_API_KEY
+      - TWENTY_BASE_URL
+    config_template:
+      type: streamable-http
+      url: "${TWENTY_BASE_URL}/mcp"
+      headers:
+        Authorization: "Bearer ${TWENTY_API_KEY}"
+    system_prompt_hint: |
+      ## Twenty CRM
+      Use http_request_mcp_twenty-crm tool. Base URL already configured.
+      Notes require bodyV2 (NOT body):
+        { "title": "...", "bodyV2": { "markdown": "...", "blocknote": null } }
+      POST /objects/noteTargets to link notes to records.

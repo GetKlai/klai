@@ -4,14 +4,18 @@ Invite scheduler -- schedule bot joins for calendar invites.
 Manages an in-memory dict of asyncio.Task objects keyed by iCal UID.
 Each task sleeps until DTSTART - 60s, then creates a VexaMeeting and
 dispatches a bot via the VexaClient.
+
+Includes rate limiting (AC-14b): max N invite-triggered bot joins per user per UTC day.
 """
 
 import asyncio
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.meetings import VexaMeeting
 from app.services.ical_parser import ParsedInvite
@@ -24,6 +28,21 @@ _scheduled: dict[str, asyncio.Task[None]] = {}
 
 # How many seconds before DTSTART to join the meeting
 JOIN_LEAD_SECONDS = 60
+
+
+async def _check_rate_limit(zitadel_user_id: str, db: AsyncSession) -> bool:
+    """Return True if the user has exceeded the daily invite rate limit (AC-14b)."""
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    count = await db.scalar(
+        select(func.count())
+        .select_from(VexaMeeting)
+        .where(
+            VexaMeeting.zitadel_user_id == zitadel_user_id,
+            VexaMeeting.ical_uid.isnot(None),
+            VexaMeeting.created_at >= today_start,
+        )
+    )
+    return (count or 0) >= settings.invite_bot_rate_limit_per_user_per_day
 
 
 async def schedule_invite(invite: ParsedInvite, zitadel_user_id: str, org_id: int | None) -> None:
@@ -40,11 +59,20 @@ async def schedule_invite(invite: ParsedInvite, zitadel_user_id: str, org_id: in
         logger.info("Ignoring past/imminent meeting: uid=%s dtstart=%s", invite.uid, invite.dtstart)
         return
 
-    # Check DB for existing ical_uid (dedup)
+    # Check DB for existing ical_uid (dedup) and rate limit
     async with AsyncSessionLocal() as db:
         existing = await db.scalar(select(VexaMeeting.id).where(VexaMeeting.ical_uid == invite.uid))
         if existing is not None:
             logger.info("Duplicate invite ignored: uid=%s already in DB", invite.uid)
+            return
+
+        # AC-14b: rate limit check
+        if await _check_rate_limit(zitadel_user_id, db):
+            logger.warning(
+                "Rate limit exceeded for user %s (limit=%d/day)",
+                zitadel_user_id,
+                settings.invite_bot_rate_limit_per_user_per_day,
+            )
             return
 
     # Cancel existing task for this UID if any (updated invite)

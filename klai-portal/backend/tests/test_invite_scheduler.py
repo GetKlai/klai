@@ -110,3 +110,59 @@ async def test_duplicate_invite_skipped() -> None:
         await schedule_invite(invite, "user-1", None)
 
     assert invite.uid not in _scheduled
+
+
+# --- AC-14b: Rate limit tests ---
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_exceeded_blocks_invite() -> None:
+    """An invite is blocked when the user has exceeded the daily rate limit (AC-14b)."""
+    invite = _make_invite(uid="rate@example.com", dtstart=datetime.now(UTC) + timedelta(hours=2))
+
+    call_count = 0
+
+    async def _scalar_side_effect(*_args: object, **_kwargs: object) -> object:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None  # no duplicate ical_uid
+        # _check_rate_limit query returns count >= limit
+        return 10  # at limit (default is 10)
+
+    mock_session = AsyncMock()
+    mock_session.scalar = AsyncMock(side_effect=_scalar_side_effect)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+        await schedule_invite(invite, "user-1", None)
+
+    assert invite.uid not in _scheduled
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_not_exceeded_allows_invite() -> None:
+    """An invite is allowed when the user is below the daily rate limit (AC-14b)."""
+    invite = _make_invite(uid="ok@example.com", dtstart=datetime.now(UTC) + timedelta(hours=2))
+
+    call_count = 0
+
+    async def _scalar_side_effect(*_args: object, **_kwargs: object) -> object:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None  # no duplicate ical_uid
+        # _check_rate_limit query returns count below limit
+        return 5  # below default limit of 10
+
+    mock_session = AsyncMock()
+    mock_session.scalar = AsyncMock(side_effect=_scalar_side_effect)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+        await schedule_invite(invite, "user-1", 42)
+
+    assert invite.uid in _scheduled
+    _scheduled[invite.uid].cancel()

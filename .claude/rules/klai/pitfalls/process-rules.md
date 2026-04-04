@@ -1,20 +1,96 @@
-# Process Rules (Compact)
+# Process Rules
 
-> Quick reference for every session. Full descriptions with examples: `pitfalls/process.md`
+## data-before-code
+Before fixing a bug: check the logs and follow the actual code path.
+No guessing. No stacking patches. Trace what happens at runtime — logs,
+DB state, API responses — not what you think should happen from memory
+or stale files. For production issues, query VictoriaLogs via Grafana
+MCP using `request_id:<uuid>` to trace the full chain across services.
+If the data isn't visible, add debug logging and reproduce first. One
+root cause confirmed by real data = one fix. If the first fix doesn't
+work, go back to the data, not to another guess.
+Trust your own working system over external GitHub issues — if something
+works in 28 files, don't present an obscure issue as a showstopper.
 
-| ID | Sev | Trigger | Rule |
-|---|---|---|---|
-| validate-before-code-change | HIGH | Fixing a bug based on an error | Validate hypothesis with real data (logs, DB, API) before changing code. One root cause = one fix. |
-| verify-completion-claims | CRIT | AI reports task complete with metrics | AI can hallucinate completion. Verify with `git diff --stat`, `wc -l`. Watch for detailed metrics without actual work. |
-| server-restart-protocol | CRIT | Restarting a service | NEVER use `run_in_background=true` to start servers. Use restart scripts or `docker compose restart`. |
-| test-user-facing-not-imports | HIGH | Completing a migration/refactor/bugfix | Test actual user-facing functionality, not just that a module imports. |
-| debug-logging-first | HIGH | Investigating API/integration errors | Add debug logging FIRST to see actual data. Never implement fixes before seeing the real payload. |
-| trust-user-feedback | CRIT | User says it's broken, your tests pass | Stop. Reproduce the EXACT scenario the user described with ALL their parameters. |
-| read-spec-first | CRIT | Starting work on a SPEC/feature | Read the full SPEC document before implementing. Check `.workflow/specs/`. |
-| minimal-changes | HIGH | Working on any task | Only make changes that were explicitly asked for. No "improvements" to surrounding code. |
-| wait-after-question | HIGH | You asked the user a question | STOP and WAIT for the answer. Do not continue with tool calls in the same response. |
-| listen-before-acting | CRIT | User starts explaining something | Read the ENTIRE message before taking ANY action. Summarize understanding first. |
-| ask-before-retry | HIGH | Operation failed 1-2 times | After 2 failures, STOP and ask the user. Summarize findings before retrying. |
-| debug-data-before-theory | HIGH | Investigating unexpected behavior | Examine actual data (logs, DB, API responses) BEFORE forming theories. |
-| verify-full-flow | HIGH | Fixing a bug in a multi-step pipeline | Verify ALL downstream steps still work, not just the step you touched. |
-| check-process-not-curl | HIGH | Checking if a server is running | Use `lsof -nP -iTCP:PORT -sTCP:LISTEN`. Never `curl` without `--connect-timeout 2 --max-time 3`. |
+## debug-holistic-view
+When debugging, zoom out before zooming in. Don't fixate on the line
+that errors — trace the full flow: where does the data come from? What
+transforms it? What consumes it downstream? Search the codebase for
+related patterns and callers. Search online for the error message or
+library behavior. The bug is often not where the error appears.
+
+## verify-changes-landed
+After completing work, verify autonomously that changes actually landed:
+1. `git diff --stat` — confirm the right files changed
+2. Logs or health check — confirm the service runs with new code
+3. Browser flow (Playwright MCP) — for UI changes, click through the
+   actual user flow before reporting done
+Detailed metrics without matching file changes are a hallucination
+signal. Never report done based on "looks correct."
+
+## report-confidence
+End completion messages with `Confidence: [0-100] — [evidence summary]`.
+Only observable evidence counts: test output, curl response, log output,
+browser verification. "Code looks correct" and "should work" score zero.
+The stop hook enforces this mechanically.
+
+## adversarial-at-high-confidence
+At confidence >= 80, ask yourself "what bugs can I find in what I just
+did?" Frame as bug-hunting, not confirmation — "is this correct?"
+triggers confirmation bias. The stop hook enforces this at >= 80.
+
+## trust-user-feedback
+When a user reports something is broken but your tests pass, stop and
+reproduce the exact scenario they described with all their parameters.
+The user's environment is the ground truth — your test setup may be
+missing a key variable.
+
+## minimal-changes
+Make only the changes that were explicitly requested. Resist the urge
+to "improve" surrounding code, refactor adjacent functions, or update
+formatting in files you didn't need to touch. Unasked changes introduce
+risk without authorization.
+
+## communication-discipline
+Read the user's entire message before taking any action. Summarize
+your understanding before starting work — acting on the first sentence
+means missing critical context. After asking a question, stop and wait.
+Do not continue with tool calls — the answer may change everything.
+Never instruct the user to "check in the browser" or "verify in the
+UI" — verify autonomously with Playwright, or trust them to check.
+
+## ask-before-retry
+After two failed attempts at the same operation, stop and ask the
+user for guidance. Summarize what you tried and what happened — a
+third blind retry rarely succeeds where the first two failed.
+
+## search-broadly-when-changing
+When renaming or changing a default value, search the entire codebase
+for all consumers — not just files in your plan. Check all case
+variants: kebab-case, snake_case, camelCase, PascalCase, SCREAMING_SNAKE.
+Defaults have unbounded blast radius: tests, configs, docs, scripts,
+other services. Missing one variant breaks silently.
+
+## follow-loaded-procedures
+When a rules file is in your context that documents a procedure (SOPS
+workflow, deploy steps, migration sequence), follow it step by step.
+Do not improvise shell commands for the same operation. If the rules
+say "decrypt → modify → encrypt-in-place → mv", do exactly that — not
+a creative alternative with redirects or pipes.
+
+## spec-discipline
+Before implementing a SPEC, read the full document in `.moai/specs/`
+or `.workflow/specs/`. Write down each constraint and how to verify it:
+image tags, resource limits, excluded services. Then during work:
+- If your architecture diverges from the SPEC — STOP. State the
+  mismatch and ask before continuing. Never assume "close enough."
+- If logs show a SPEC constraint violation (wrong service, wrong
+  memory, forbidden process) — STOP. Report the violation before
+  debugging downstream symptoms.
+- If any constraint is unclear — ask before implementing.
+
+## read-before-delegate
+Before giving a subagent a "rewrite this file" task, Read the file
+yourself first. If the user edited it, extract their text and pass it
+verbatim in the prompt as content to preserve. Subagents have no
+context about prior user edits — they will overwrite silently.

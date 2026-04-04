@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAuthOrService } from "@/lib/auth";
+import { requireAuthOrService, requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import {
@@ -19,10 +19,14 @@ const knowledgeFrontmatterSchema = z.object({
   synthesis_depth: z.number().int().min(0).max(4).optional(),
   confidence: z.enum(["high", "medium", "low"]).nullable().optional(),
   belief_time_start: z.string().optional(),
-  belief_time_end: z.number().nullable().optional(),
+  belief_time_end: z.string().nullable().optional(),
   superseded_by: uuidSchema.nullable().optional(),
   derived_from: z.array(uuidSchema).optional(),
-}).strict();
+  source_note: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  created_by: z.string().optional(),
+  system_time: z.string().optional(),
+}).passthrough();
 
 type Params = { org: string; kb: string; path: string[] };
 
@@ -42,6 +46,17 @@ export async function GET(
   const resolved = await resolveKB(orgSlug, kbSlug);
   if (!resolved) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Private and personal KBs require authentication + org membership
+  if (resolved.kb.kb_type === "personal" || resolved.kb.visibility === "private") {
+    const payload = await requireAuthOrService(_req);
+    if (!payload) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (payload.org_id && payload.org_id !== resolved.org.zitadel_org_id) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    const denied = checkKBAccess(resolved.kb, payload.sub);
+    if (denied) return denied;
+  }
+
   const filePath = `${path.join("/")}.md`;
   const raw = await gitea.getFileContent(resolved.kb.gitea_repo, filePath);
   if (!raw) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -55,18 +70,20 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const payload = await requireAuthOrService(request);
-  if (!payload?.sub)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { org: orgSlug, kb: kbSlug, path } = await params;
-  const resolved = await resolveKB(orgSlug, kbSlug);
-  if (!resolved) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await requireOrgAccess(request, orgSlug);
+  if (access.error) return access.error;
+  const { payload, org } = access;
+
+  const kb = await db.getKB(org.id, kbSlug);
+  if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const pagePath = path.join("/");
 
   // Check edit permissions
-  const restriction = await db.getPageEditRestriction(resolved.kb.id, pagePath);
+  const restriction = await db.getPageEditRestriction(kb.id, pagePath);
   if (restriction?.user_ids?.length > 0) {
     if (!restriction.user_ids.includes(payload.sub)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -88,12 +105,12 @@ export async function PUT(
 
   const filePath = `${pagePath}.md`;
 
-  const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
+  const file = await gitea.getFile(kb.gitea_repo, filePath);
   const currentSha = file?.sha ?? sha;
   const isNewPage = !currentSha;
 
   // Read existing frontmatter to preserve fields (e.g. id, redirects)
-  const existingRaw = !isNewPage ? await gitea.getFileContent(resolved.kb.gitea_repo, filePath) : null;
+  const existingRaw = !isNewPage ? await gitea.getFileContent(kb.gitea_repo, filePath) : null;
   const existingFm = existingRaw ? parsePage(existingRaw).frontmatter : {};
 
   // Assign a stable UUID on first save; preserve existing id thereafter
@@ -112,7 +129,7 @@ export async function PUT(
   const fileContent = serializePage(frontmatter as Parameters<typeof serializePage>[0], content ?? "");
 
   await gitea.putFile(
-    resolved.kb.gitea_repo,
+    kb.gitea_repo,
     filePath,
     fileContent,
     `Update ${filePath}`,
@@ -121,13 +138,13 @@ export async function PUT(
 
   // Append new slug to _sidebar.yaml when creating a new page
   if (isNewPage) {
-    const sidebarFile = await gitea.getFile(resolved.kb.gitea_repo, "_sidebar.yaml");
+    const sidebarFile = await gitea.getFile(kb.gitea_repo, "_sidebar.yaml");
     if (sidebarFile) {
-      const sidebarRaw = await gitea.getFileContent(resolved.kb.gitea_repo, "_sidebar.yaml");
+      const sidebarRaw = await gitea.getFileContent(kb.gitea_repo, "_sidebar.yaml");
       const manifest = sidebarRaw ? parseSidebar(sidebarRaw) : { pages: [] };
       manifest.pages.push({ slug: pagePath });
       await gitea.putFile(
-        resolved.kb.gitea_repo,
+        kb.gitea_repo,
         "_sidebar.yaml",
         serializeSidebar(manifest),
         `Add ${pagePath} to navigation`,
@@ -144,34 +161,36 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const payload = await requireAuthOrService(request);
-  if (!payload?.sub)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { org: orgSlug, kb: kbSlug, path } = await params;
-  const resolved = await resolveKB(orgSlug, kbSlug);
-  if (!resolved) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await requireOrgAccess(request, orgSlug);
+  if (access.error) return access.error;
+  const { payload, org } = access;
+
+  const kb = await db.getKB(org.id, kbSlug);
+  if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const filePath = `${path.join("/")}.md`;
-  const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
+  const file = await gitea.getFile(kb.gitea_repo, filePath);
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await gitea.deleteFile(
-    resolved.kb.gitea_repo,
+    kb.gitea_repo,
     filePath,
     file.sha,
     `Delete ${filePath}`
   );
 
   // Remove slug from _sidebar.yaml after deleting the page
-  const sidebarFile = await gitea.getFile(resolved.kb.gitea_repo, "_sidebar.yaml");
+  const sidebarFile = await gitea.getFile(kb.gitea_repo, "_sidebar.yaml");
   if (sidebarFile) {
-    const sidebarRaw = await gitea.getFileContent(resolved.kb.gitea_repo, "_sidebar.yaml");
+    const sidebarRaw = await gitea.getFileContent(kb.gitea_repo, "_sidebar.yaml");
     if (sidebarRaw) {
       const slug = path.join("/");
       const updated = removeSlugFromSidebar(parseSidebar(sidebarRaw), slug);
       await gitea.putFile(
-        resolved.kb.gitea_repo,
+        kb.gitea_repo,
         "_sidebar.yaml",
         serializeSidebar(updated),
         `Remove ${slug} from navigation`,

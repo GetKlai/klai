@@ -6,7 +6,6 @@ Endpoints:
   GET  /health                   — readiness + queue depth
 """
 import asyncio
-import logging
 import os
 import tempfile
 import time
@@ -15,6 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
+import structlog
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from faster_whisper import WhisperModel
@@ -22,7 +22,7 @@ from logging_setup import setup_logging
 
 setup_logging()
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3-turbo")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
@@ -38,10 +38,10 @@ model: WhisperModel
 
 def _load_model() -> WhisperModel:
     logger.info(
-        "Loading whisper model %s on %s (%s)",
-        WHISPER_MODEL,
-        WHISPER_DEVICE,
-        WHISPER_COMPUTE_TYPE,
+        "Loading whisper model",
+        model=WHISPER_MODEL,
+        device=WHISPER_DEVICE,
+        compute_type=WHISPER_COMPUTE_TYPE,
     )
     return WhisperModel(
         WHISPER_MODEL,
@@ -64,7 +64,7 @@ def _warmup(m: WhisperModel) -> None:
         segs, _ = m.transcribe(str(tmp), language="nl")
         list(segs)  # consume generator to trigger full compilation
     except Exception as exc:
-        logger.warning("Warmup failed (non-fatal): %s", exc)
+        logger.warning("Warmup failed (non-fatal)", error=str(exc))
     finally:
         tmp.unlink(missing_ok=True)
     logger.info("Model ready.")
@@ -73,7 +73,7 @@ def _warmup(m: WhisperModel) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global model
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     model = await loop.run_in_executor(None, _load_model)
     await loop.run_in_executor(None, _warmup, model)
     yield
@@ -95,7 +95,7 @@ async def transcribe(
     _queue_depth += 1
     try:
         async with _inference_lock:
-            result = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_running_loop().run_in_executor(
                 None, _run_transcription, audio_bytes, language
             )
     finally:

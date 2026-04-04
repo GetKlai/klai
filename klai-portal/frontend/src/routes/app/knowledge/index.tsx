@@ -1,14 +1,15 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Brain, MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTriangle } from 'lucide-react'
+import { MessageSquare, Database, Users, BookOpen, Plus, Lock, AlertTriangle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
-import { STORAGE_KEYS } from '@/lib/storage'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -81,48 +82,43 @@ function KnowledgePage() {
   const { data: stats, isLoading: statsLoading } = useQuery<KnowledgeStats>({
     queryKey: ['knowledge-stats'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/knowledge/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Knowledge stats fetch failed', { status: res.status })
-        throw new Error('Stats laden mislukt')
+      try {
+        return await apiFetch<KnowledgeStats>(`/api/knowledge/stats`, token)
+      } catch (err) {
+        queryLogger.warn('Knowledge stats fetch failed', { err })
+        throw err
       }
-      return res.json() as Promise<KnowledgeStats>
     },
     enabled: !!token,
     retry: false,
   })
 
-  const isAdmin = sessionStorage.getItem(STORAGE_KEYS.isAdmin) === 'true'
+  const { user: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.isAdmin === true
 
   const { data: gapSummary } = useQuery<GapSummary>({
-    queryKey: ['gap-summary', token],
+    queryKey: ['gap-summary'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/gaps/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Gap summary fetch failed', { status: res.status })
-        throw new Error(`${res.status}`)
+      try {
+        return await apiFetch<GapSummary>(`/api/app/gaps/summary`, token)
+      } catch (err) {
+        queryLogger.warn('Gap summary fetch failed', { err })
+        throw err
       }
-      return res.json() as Promise<GapSummary>
     },
     enabled: !!token && isAdmin,
     retry: false,
   })
 
-  const { data: kbsData, isLoading: kbsLoading } = useQuery<KBsResponse>({
+  const { data: kbsData, isLoading: kbsLoading, error: kbsError, refetch: refetchKbs } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases'],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        queryLogger.warn('Knowledge bases fetch failed', { status: res.status })
-        throw new Error('Kennisbanken laden mislukt')
+      try {
+        return await apiFetch<KBsResponse>(`/api/app/knowledge-bases`, token)
+      } catch (err) {
+        queryLogger.warn('Knowledge bases fetch failed', { err })
+        throw err
       }
-      return res.json() as Promise<KBsResponse>
     },
     enabled: !!token,
     retry: false,
@@ -138,7 +134,6 @@ function KnowledgePage() {
     <div className="p-8 max-w-2xl">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
-          <Brain className="h-7 w-7 text-[var(--color-purple-deep)]" />
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
             {m.knowledge_page_intro_heading()}
           </h1>
@@ -148,7 +143,9 @@ function KnowledgePage() {
         {m.knowledge_page_intro_body()}
       </p>
 
-      <div className="flex flex-col gap-6">
+      {kbsError ? (
+        <QueryErrorState error={kbsError instanceof Error ? kbsError : new Error(String(kbsError))} onRetry={() => void refetchKbs()} />
+      ) : <div className="flex flex-col gap-6">
         {/* Personal knowledge base (chat RAG) */}
         <Link to="/app/knowledge/$kbSlug" params={{ kbSlug: 'personal' }}>
         <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
@@ -320,7 +317,7 @@ function KnowledgePage() {
             </Card>
           </Link>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

@@ -54,3 +54,84 @@ When an admin invites a user:
 2. A portal user record is created with the specified role
 3. Zitadel sends an invitation email via klai-mailer (`InviteUser` notification type)
 4. The invited user sets their password via the link in the email
+
+## User Groups
+
+Groups provide organizational structure within an org. Each group belongs to exactly one org.
+
+### Data Model
+
+| Table | Columns |
+|-------|---------|
+| `portal_groups` | id, org_id, name, description, created_at, created_by |
+| `portal_group_memberships` | id, group_id, zitadel_user_id, is_group_admin, joined_at |
+
+- Group names are unique per org (case-insensitive)
+- ON DELETE CASCADE on memberships when group is deleted
+
+### API Endpoints
+
+| Method | Endpoint | Description | Role |
+|--------|----------|-------------|------|
+| GET | `/api/admin/groups` | List all groups | Admin |
+| POST | `/api/admin/groups` | Create group | Admin |
+| PATCH | `/api/admin/groups/{id}` | Update group | Admin |
+| DELETE | `/api/admin/groups/{id}` | Delete group | Admin |
+| GET | `/api/admin/groups/{id}/members` | List members | Admin |
+| POST | `/api/admin/groups/{id}/members` | Add member | Admin |
+| DELETE | `/api/admin/groups/{id}/members/{user_id}` | Remove member | Admin |
+| PATCH | `/api/admin/groups/{id}/members/{user_id}` | Toggle group admin | Admin |
+
+### Group Admins
+
+Group admins can manage members of their group without needing the org-level admin role.
+
+## Group-Based Product Entitlements
+
+Products are assigned at group level. Users inherit product access through group membership.
+
+### How it works
+
+1. Org admin assigns products to a group via `portal_group_products`
+2. All members of that group inherit those products
+3. Effective products = union of direct (per-user) + inherited (via groups)
+4. JWT tokens are enriched with effective products (~15 min expiry)
+
+### API Endpoints
+
+| Method | Endpoint | Description | Role |
+|--------|----------|-------------|------|
+| GET | `/api/admin/groups/{group_id}/products` | List group products | Admin |
+| POST | `/api/admin/groups/{group_id}/products` | Assign product | Admin |
+| DELETE | `/api/admin/groups/{group_id}/products/{product}` | Revoke product | Admin |
+
+### Per-user product toggles
+
+Per-user product assignment still works for backwards compatibility. The admin UI shows "Effective Products" (read-only) combining direct + inherited assignments.
+
+## User Lifecycle
+
+Users transition through three states:
+
+| State | Description | Reversible |
+|-------|-------------|------------|
+| `active` | Normal access | — |
+| `suspended` | Access revoked, data preserved | Yes → reactivate |
+| `offboarded` | Cascading cleanup, non-reversible | No |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/users/{id}/suspend` | Suspend user |
+| POST | `/api/admin/users/{id}/reactivate` | Reactivate suspended user |
+| POST | `/api/admin/users/{id}/offboard` | Permanently offboard user |
+
+### Suspension
+- Revokes access via Zitadel user deactivation
+- Preserves all data and memberships for potential reactivation
+
+### Offboarding
+- Destructive: cascading cleanup of memberships and product assignments
+- Non-reversible: user cannot be reactivated after offboarding
+- Requires confirmation dialog in the admin UI

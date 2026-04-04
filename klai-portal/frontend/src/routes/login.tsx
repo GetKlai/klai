@@ -93,6 +93,12 @@ function LoginPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
+        // Stale auth request — restart the OIDC flow from scratch
+        if (resp.status === 409 && data?.detail === 'auth_request_stale') {
+          authLogger.warn('Auth request stale, restarting OIDC flow')
+          window.location.href = '/'
+          return
+        }
         setError(data?.detail ?? m.login_error_generic())
         return
       }
@@ -133,6 +139,12 @@ function LoginPage() {
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
+        // Stale auth request — restart the OIDC flow from scratch
+        if (resp.status === 409 && data?.detail === 'auth_request_stale') {
+          authLogger.warn('Auth request stale, restarting OIDC flow')
+          window.location.href = '/'
+          return
+        }
         setError(data?.detail ?? m.totp_error_generic())
         return
       }

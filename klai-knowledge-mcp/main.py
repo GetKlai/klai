@@ -22,9 +22,10 @@ from datetime import date
 from typing import Literal, get_args
 
 import httpx
-from logging_setup import setup_logging
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+
+from logging_setup import setup_logging
 
 setup_logging()
 
@@ -41,13 +42,17 @@ DEFAULT_ORG_SLUG = os.getenv("DEFAULT_ORG_SLUG", "")
 # Path validation patterns
 _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-AssertionMode = Literal["fact", "claim", "speculation", "procedural", "quoted", "unknown"]
+AssertionMode = Literal["factual", "procedural", "quoted", "belief", "hypothesis"]
 VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 
 # Error messages (bilingual NL/EN)
 _ERR_SAVE = (
     "Er is een fout opgetreden bij het opslaan. Probeer het opnieuw.\n"
     "(An error occurred while saving. Please try again.)"
+)
+_ERR_ASSERTION_MODE = (
+    "Error: invalid assertion_mode '{}'. "
+    f"Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
 )
 
 
@@ -61,7 +66,8 @@ class Identity:
     org_slug: str
 
 
-# @MX:NOTE _get_identity — headers injected by LibreChat config; X-User-ID = LibreChat MongoDB user ID = same as data["user"] in LiteLLM hook
+# @MX:NOTE _get_identity — headers injected by LibreChat config;
+# X-User-ID = LibreChat MongoDB user ID = same as data["user"] in LiteLLM hook
 def _get_identity(ctx: Context) -> Identity:
     """Extract identity headers from the FastMCP request context.
 
@@ -200,8 +206,8 @@ something for their own reference.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "fact", "claim", "speculation",
-                   "procedural", "quoted", or "unknown"
+  assertion_mode - pick the best fit: "factual", "procedural", "quoted",
+                   "belief", or "hypothesis"
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -221,9 +227,9 @@ async def save_personal_knowledge(
         return f"Error: {exc}"
 
     if not assertion_mode:
-        assertion_mode = "unknown"
+        assertion_mode = "factual"
     elif assertion_mode not in VALID_ASSERTION_MODES:
-        return f"Error: invalid assertion_mode '{assertion_mode}'. Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
+        return _ERR_ASSERTION_MODE.format(assertion_mode)
 
     ok = await _save_to_ingest(
         org_id=identity.org_id,
@@ -252,8 +258,8 @@ or expresses intent to share knowledge with the whole organisation.
 PARAMETERS:
   title          - short, descriptive title (max 80 chars); you generate this
   content        - the text to save; may be a summary, quote, or elaboration
-  assertion_mode - pick the best fit: "fact", "claim", "speculation",
-                   "procedural", "quoted", or "unknown"
+  assertion_mode - pick the best fit: "factual", "procedural", "quoted",
+                   "belief", or "hypothesis"
   tags           - 1-5 tags; free-form or from seed list
   source_note    - (optional) source reference if mentioned by user
 """
@@ -273,9 +279,9 @@ async def save_org_knowledge(
         return f"Error: {exc}"
 
     if not assertion_mode:
-        assertion_mode = "unknown"
+        assertion_mode = "factual"
     elif assertion_mode not in VALID_ASSERTION_MODES:
-        return f"Error: invalid assertion_mode '{assertion_mode}'. Valid values: {', '.join(sorted(VALID_ASSERTION_MODES))}"
+        return _ERR_ASSERTION_MODE.format(assertion_mode)
 
     ok = await _save_to_ingest(
         org_id=identity.org_id,
@@ -324,7 +330,10 @@ async def save_to_docs(
 
     # V009: reject path traversal in caller-supplied KB coordinates
     if kb_name is not None and not _KB_NAME_PATTERN.match(kb_name):
-        return "Error: kb_name contains invalid characters. Only alphanumeric, hyphens, and underscores are allowed."
+        return (
+            "Error: kb_name contains invalid characters. "
+            "Only alphanumeric, hyphens, and underscores are allowed."
+        )
     if page_path is not None:
         if ".." in page_path or "\\" in page_path or page_path.startswith("/"):
             return "Error: page_path contains invalid path components."
@@ -342,12 +351,18 @@ async def save_to_docs(
                     headers={
                         _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
                         "X-User-ID": identity.user_id,
+                        "X-Org-ID": identity.org_id,
                     },
                 )
-        except httpx.RequestError:
+        except httpx.RequestError as exc:
+            logger.error("KB list fetch failed: %s", exc)
             return _ERR_SAVE
 
         if resp.status_code != 200:
+            logger.error(
+                "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
+                resp.status_code, resp.text[:200], org_slug, identity.org_id,
+            )
             return _ERR_SAVE
 
         kbs = resp.json()
@@ -386,7 +401,7 @@ async def save_to_docs(
         "edit_access": "owner",
         "frontmatter": {
             "provenance_type": "synthesized",
-            "assertion_mode": "unknown",
+            "assertion_mode": "factual",
             "synthesis_depth": 1,
             "belief_time_start": today,
             "belief_time_end": None,
@@ -406,6 +421,7 @@ async def save_to_docs(
                 headers={
                     _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
                     "X-User-ID": identity.user_id,
+                    "X-Org-ID": identity.org_id,
                     "Content-Type": "application/json",
                 },
             )
@@ -424,4 +440,4 @@ app = mcp.streamable_http_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, log_level="info")  # noqa: S104

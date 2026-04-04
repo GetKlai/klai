@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { AlertTriangle, Loader2, ArrowLeft, Info, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/meetings/start')({
   component: () => (
@@ -55,27 +56,14 @@ function StartMeetingPage() {
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${BOTS_BASE}/meetings`, {
+      return apiFetch<{ id: string }>(`${BOTS_BASE}/meetings`, token, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           meeting_url: meetingUrl,
           meeting_title: meetingTitle.trim() || null,
           consent_given: consentGiven,
         }),
       })
-      if (res.status === 422) {
-        const body = await res.json()
-        throw new Error(body.detail ?? m.app_meetings_url_error())
-      }
-      if (res.status === 429) {
-        throw new Error(m.app_meetings_limit_error())
-      }
-      if (!res.ok) throw new Error('Starten mislukt')
-      return res.json() as Promise<{ id: string }>
     },
     onSuccess: (meeting) => {
       void navigate({ to: '/app/meetings/$meetingId', params: { meetingId: meeting.id } })

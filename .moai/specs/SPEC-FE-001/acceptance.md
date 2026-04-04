@@ -2,9 +2,9 @@
 id: SPEC-FE-001
 document: acceptance
 version: "1.0.0"
-status: draft
+status: completed
 created: "2026-03-24"
-updated: "2026-03-24"
+updated: "2026-04-03"
 ---
 
 # SPEC-FE-001: Acceptatiecriteria

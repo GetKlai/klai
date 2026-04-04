@@ -6,3 +6,4 @@ argument-hint: "\"description\" [--pitfall] [--pattern] [--domain devops|infra|f
 Invoke the manager-learn agent to capture the following learning: $ARGUMENTS
 
 If no arguments were provided, the agent will ask a few short questions to understand what happened before writing anything.
+

@@ -5,9 +5,11 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { Input } from '@/components/ui/input'
 import { Plus, Loader2, Trash2, Check, X, BookOpen, Pencil } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { apiFetch } from '@/lib/apiFetch'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -74,25 +76,15 @@ function FocusPage() {
 
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
 
-  const { data, isLoading, error } = useQuery<NotebookListResponse>({
-    queryKey: ['focus-notebooks', token],
-    queryFn: async () => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.app_focus_loading())
-      return res.json()
-    },
+  const { data, isLoading, error, refetch } = useQuery<NotebookListResponse>({
+    queryKey: ['focus-notebooks'],
+    queryFn: async () => apiFetch<NotebookListResponse>(`${FOCUS_BASE}/notebooks`, token),
     enabled: !!token,
   })
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${FOCUS_BASE}/notebooks/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(m.app_focus_delete_label() + ' mislukt')
+      await apiFetch(`${FOCUS_BASE}/notebooks/${id}`, token, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })
@@ -113,13 +105,12 @@ function FocusPage() {
       ? m.app_focus_count_one()
       : m.app_focus_count({ count: String(data?.total ?? 0) })
 
-  const pageError =
-    (error instanceof Error ? error.message : error ? m.app_focus_loading() : null) ??
-    (deleteMutation.error instanceof Error
+  const mutationError =
+    deleteMutation.error instanceof Error
       ? deleteMutation.error.message
       : deleteMutation.error
         ? m.app_focus_delete_label() + ' mislukt'
-        : null)
+        : null
 
   return (
     <div className="p-8 space-y-6">
@@ -138,8 +129,11 @@ function FocusPage() {
         </Button>
       </div>
 
-      {pageError && (
-        <p className="text-sm text-[var(--color-destructive)]">{pageError}</p>
+      {error ? (
+        <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
+      ) : <>
+      {mutationError && (
+        <p className="text-sm text-[var(--color-destructive)]">{mutationError}</p>
       )}
 
       <Card data-help-id="focus-list">
@@ -305,6 +299,7 @@ function FocusPage() {
           )}
         </CardContent>
       </Card>
+      </>}
     </div>
   )
 }

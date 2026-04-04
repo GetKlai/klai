@@ -63,7 +63,7 @@ async def client(app):
 
 
 # ---------------------------------------------------------------------------
-# POST /api/vitals -- valid payloads
+# POST /api/perf -- valid payloads
 # ---------------------------------------------------------------------------
 
 
@@ -71,14 +71,14 @@ async def client(app):
 async def test_post_valid_metrics_returns_204(client: AsyncClient) -> None:
     """A valid list of metrics returns HTTP 204 No Content."""
     payload = [_valid_metric(), _valid_metric(name="CLS", value=0.15, rating="good")]
-    resp = await client.post("/api/vitals", json=payload)
+    resp = await client.post("/api/perf", json=payload)
     assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
 async def test_post_empty_list_returns_204(client: AsyncClient) -> None:
     """An empty list is valid -- nothing to observe, still 204."""
-    resp = await client.post("/api/vitals", json=[])
+    resp = await client.post("/api/perf", json=[])
     assert resp.status_code == 204
 
 
@@ -92,40 +92,40 @@ async def test_post_all_metric_names(client: AsyncClient) -> None:
         _valid_metric(name="CLS", value=0.1),
         _valid_metric(name="TTFB", value=600),
     ]
-    resp = await client.post("/api/vitals", json=payload)
+    resp = await client.post("/api/perf", json=payload)
     assert resp.status_code == 204
 
 
 # ---------------------------------------------------------------------------
-# POST /api/vitals -- validation errors (422)
+# POST /api/perf -- validation errors (422)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_post_invalid_metric_name_returns_422(client: AsyncClient) -> None:
     """A metric name not in the Literal set is rejected."""
-    resp = await client.post("/api/vitals", json=[_valid_metric(name="XYZ")])
+    resp = await client.post("/api/perf", json=[_valid_metric(name="XYZ")])
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_post_invalid_rating_returns_422(client: AsyncClient) -> None:
     """A rating not in the Literal set is rejected."""
-    resp = await client.post("/api/vitals", json=[_valid_metric(rating="bad")])
+    resp = await client.post("/api/perf", json=[_valid_metric(rating="bad")])
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_post_negative_value_returns_422(client: AsyncClient) -> None:
     """A negative value is rejected by the ge=0 constraint."""
-    resp = await client.post("/api/vitals", json=[_valid_metric(value=-1)])
+    resp = await client.post("/api/perf", json=[_valid_metric(value=-1)])
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_post_value_too_large_returns_422(client: AsyncClient) -> None:
     """A value above 60000 is rejected by the le=60000 constraint."""
-    resp = await client.post("/api/vitals", json=[_valid_metric(value=70000)])
+    resp = await client.post("/api/perf", json=[_valid_metric(value=70000)])
     assert resp.status_code == 422
 
 
@@ -133,7 +133,7 @@ async def test_post_value_too_large_returns_422(client: AsyncClient) -> None:
 async def test_post_page_too_long_returns_422(client: AsyncClient) -> None:
     """A page string exceeding 256 chars is rejected."""
     long_page = "/" + "x" * 256  # 257 chars total
-    resp = await client.post("/api/vitals", json=[_valid_metric(page=long_page)])
+    resp = await client.post("/api/perf", json=[_valid_metric(page=long_page)])
     assert resp.status_code == 422
 
 
@@ -141,7 +141,7 @@ async def test_post_page_too_long_returns_422(client: AsyncClient) -> None:
 async def test_post_oversized_batch_returns_422(client: AsyncClient) -> None:
     """More than 10 items in a single POST is rejected."""
     payload = [_valid_metric() for _ in range(11)]
-    resp = await client.post("/api/vitals", json=payload)
+    resp = await client.post("/api/perf", json=payload)
     assert resp.status_code == 422
 
 
@@ -168,7 +168,7 @@ async def test_get_metrics_returns_prometheus_format(client: AsyncClient) -> Non
 @pytest.mark.asyncio
 async def test_ms_to_seconds_conversion(client: AsyncClient) -> None:
     """LCP value 2500 (ms) should be observed as 2.5 seconds in Prometheus."""
-    await client.post("/api/vitals", json=[_valid_metric(name="LCP", value=2500)])
+    await client.post("/api/perf", json=[_valid_metric(name="LCP", value=2500)])
     resp = await client.get("/metrics")
     body = resp.text
     # The histogram should record a value of 2.5 -- that falls in the 2.5 bucket
@@ -181,7 +181,7 @@ async def test_ms_to_seconds_conversion(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_cls_no_conversion(client: AsyncClient) -> None:
     """CLS values are unitless scores -- stored as-is without ms-to-s conversion."""
-    await client.post("/api/vitals", json=[_valid_metric(name="CLS", value=0.15)])
+    await client.post("/api/perf", json=[_valid_metric(name="CLS", value=0.15)])
     resp = await client.get("/metrics")
     body = resp.text
     assert "webvitals_cls_score_bucket" in body
@@ -192,8 +192,8 @@ async def test_cls_no_conversion(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_post_increments_reports_counter(client: AsyncClient) -> None:
     """Each POST increments the webvitals_reports_total counter."""
-    await client.post("/api/vitals", json=[_valid_metric()])
-    await client.post("/api/vitals", json=[_valid_metric(), _valid_metric(name="FCP", value=1000)])
+    await client.post("/api/perf", json=[_valid_metric()])
+    await client.post("/api/perf", json=[_valid_metric(), _valid_metric(name="FCP", value=1000)])
     resp = await client.get("/metrics")
     body = resp.text
     assert "webvitals_reports_total" in body
@@ -205,7 +205,7 @@ async def test_post_increments_reports_counter(client: AsyncClient) -> None:
 async def test_histogram_labels_include_page_and_rating(client: AsyncClient) -> None:
     """Histogram observations include page and rating labels."""
     await client.post(
-        "/api/vitals",
+        "/api/perf",
         json=[_valid_metric(name="TTFB", value=400, rating="needs-improvement", page="/dashboard")],
     )
     resp = await client.get("/metrics")

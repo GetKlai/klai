@@ -2,6 +2,19 @@
 
 ## [Unreleased] — 2026-04-01
 
+### Added — SPEC-AUTH-002: Product Entitlements
+
+- **Plan-to-products mapping** (`app/core/plans.py`): `free` (none), `core` (chat), `professional` (chat, scribe), `complete` (chat, scribe, knowledge). Application-level constant, not stored in DB.
+- **Product assignments**: direct per-user assignments via `portal_user_products` table + group-based inheritance via `portal_group_products`. Effective products = union of both.
+- **`require_product()` dependency**: FastAPI dependency factory that returns 403 if the user lacks the required product. Applied to `/meetings` (scribe) and `/knowledge` (knowledge) routes.
+- **Seat enforcement**: invite endpoint returns 409 Conflict when `active_users >= org.seats`, with `FOR UPDATE` lock to prevent race conditions.
+- **Auto-assignment on invite**: new users automatically receive all products included in the org's current plan.
+- **Plan change handling**: upgrade makes new products assignable (no auto-enable); downgrade revokes over-ceiling assignments for both user and group products.
+- **JWT enrichment endpoint**: `GET /api/internal/users/{id}/products` for Zitadel Action to enrich access tokens with `klai:products` claim. Fail-closed (empty list on error).
+- **Admin product API**: `GET/POST/DELETE /api/admin/users/{id}/products`, `GET /api/admin/users/{id}/effective-products`, `GET /api/admin/products`, `GET /api/admin/products/summary`.
+- **Migration**: `portal_user_products` table with UNIQUE constraint on `(zitadel_user_id, product)`, index on `(org_id, product)`, and backfill from existing org plans.
+- **28 unit tests** covering all 9 SPEC requirements (TS-001 through TS-018).
+
 ### Added — SPEC-CRAWLER-003: Link-Graph Retrieval Enrichment
 
 - **Link graph helpers** (`link_graph.py`): four async query functions against `knowledge.page_links` — `get_outbound_urls`, `get_anchor_texts`, `get_incoming_count`, `compute_incoming_counts` — all org- and kb-scoped.

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2,
+  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
-import { API_BASE } from '@/lib/api'
+import { apiFetch } from '@/lib/apiFetch'
 
 // -- Types -------------------------------------------------------------------
 
@@ -83,7 +83,10 @@ function AddConnectorPage() {
   const [wcStep, setWcStep] = useState<WcStep>('details')
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
+  const [previewResult, setPreviewResult] = useState<{
+    fit_markdown: string; word_count: number; warnings: string[]
+    content_selector: string | null; selector_source: string | null
+  } | null>(null)
 
   function goBack() {
     void navigate({ to: '/app/knowledge/$kbSlug', params: { kbSlug }, search: { tab: 'connectors' } })
@@ -106,9 +109,8 @@ function AddConnectorPage() {
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
       }
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/`, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           connector_type: selectedType,
@@ -117,7 +119,6 @@ function AddConnectorPage() {
           allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
-      if (!res.ok) throw new Error(m.admin_connectors_error_create({ status: String(res.status) }))
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
@@ -128,16 +129,23 @@ function AddConnectorPage() {
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   const previewMutation = useMutation({
-    mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
-      const res = await fetch(`${API_BASE}/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
+    mutationFn: async ({ url, content_selector, try_ai }: { url: string; content_selector?: string; try_ai?: boolean }) => {
+      return apiFetch<{
+        fit_markdown: string; word_count: number; warnings: string[]; url: string
+        content_selector: string | null; selector_source: string | null
+      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, content_selector: content_selector || null }),
+        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false }),
       })
-      if (!res.ok) throw new Error(`Preview failed (${String(res.status)})`)
-      return res.json() as Promise<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>
     },
-    onSuccess: (data) => { setPreviewResult(data); setPreviewError(null) },
+    onSuccess: (data) => {
+      setPreviewResult(data)
+      setPreviewError(null)
+      // Auto-expand CSS selector section when there are problems
+      if (data.word_count === 0 || (data.warnings ?? []).length > 0) {
+        setShowAdvancedSelector(true)
+      }
+    },
     onError: (err) => { setPreviewError(err instanceof Error ? err.message : 'Preview failed'); setPreviewResult(null) },
   })
 
@@ -343,6 +351,21 @@ function AddConnectorPage() {
                         />
                       </div>
                     )}
+                    {!webcrawlerConfig.content_selector && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                        disabled={previewMutation.isPending || !wcPreviewUrl}
+                        onClick={() => {
+                          setPreviewResult(null)
+                          setPreviewError(null)
+                          previewMutation.mutate({ url: wcPreviewUrl, try_ai: true })
+                        }}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {m.admin_connectors_webcrawler_try_ai()}
+                      </button>
+                    )}
                     {/* Single run preview button */}
                     <Button
                       type="button"
@@ -382,10 +405,48 @@ function AddConnectorPage() {
                         <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
                       </div>
                     )}
-                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && (
-                      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                        <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
+                      <div className="space-y-2">
+                        <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                        </div>
+                        {!webcrawlerConfig.content_selector && (
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors"
+                            onClick={() => {
+                              setPreviewResult(null)
+                              setPreviewError(null)
+                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true })
+                            }}
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            {m.admin_connectors_webcrawler_try_ai()}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
+                      <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
+                        <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]">
+                          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                          <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
+                        </div>
+                        {webcrawlerConfig.content_selector !== previewResult.content_selector && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7"
+                            onClick={() => {
+                              setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! }))
+                              setShowAdvancedSelector(true)
+                            }}
+                          >
+                            {m.admin_connectors_webcrawler_ai_selector_use()}
+                          </Button>
+                        )}
                       </div>
                     )}
                     {!previewResult && !previewMutation.isPending && (

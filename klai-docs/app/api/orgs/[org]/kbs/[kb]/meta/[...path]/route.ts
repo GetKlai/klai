@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as gitea from "@/lib/gitea";
 import { parseMeta, serializeMeta } from "@/lib/markdown";
@@ -13,15 +13,15 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const payload = await requireAuth(request);
-  if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { org: orgSlug, kb: kbSlug, path } = await params;
-  const org = await db.getOrgBySlug(orgSlug);
-  if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await requireOrgAccess(request, orgSlug);
+  if (access.error) return access.error;
+  const { payload, org } = access;
 
   const kb = await db.getKB(org.id, kbSlug);
   if (!kb) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const denied = checkKBAccess(kb, payload.sub);
+  if (denied) return denied;
 
   const { order } = await request.json() as { order: string[] };
   if (!Array.isArray(order)) {

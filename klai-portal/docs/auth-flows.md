@@ -175,6 +175,32 @@ auth.signoutRedirect() (react-oidc-context)
 
 ---
 
+## 8. JWT product enrichment flow
+
+Zitadel enriches access tokens with product entitlements at login time via a Pre-access-token-creation Action.
+
+```
+User authenticates -> Zitadel issues access token
+  |
+Pre-access-token-creation Action fires
+  |
+Action calls GET /api/internal/users/{zitadel_user_id}/products
+  (authenticated via PORTAL_INTERNAL_SECRET)
+  |
+portal-api returns effective products (direct + group-inherited)
+  <- {"products": ["chat", "scribe"]}
+  |
+Action adds custom claim: klai:products = ["chat", "scribe"]
+  |
+Access token issued with product claims
+```
+
+**Fail-closed:** If the portal API is unreachable or times out, the Action returns an empty product list. The `require_product()` FastAPI dependency acts as the authoritative second gate — even if the JWT claim is stale, the DB check blocks access.
+
+**Latency budget:** The Action must complete within 500ms. The internal endpoint is optimized for this.
+
+---
+
 ## Route guards
 
 ### `/app/*` and `/admin/*`

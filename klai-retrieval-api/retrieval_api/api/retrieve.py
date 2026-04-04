@@ -12,9 +12,14 @@ import structlog
 from fastapi import APIRouter, HTTPException
 
 from retrieval_api.config import settings
-from retrieval_api.metrics import retrieval_chunks_total, retrieval_requests_total, step_latency_seconds
+from retrieval_api.metrics import (
+    retrieval_chunks_total,
+    retrieval_requests_total,
+    step_latency_seconds,
+)
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
+from retrieval_api.services.events import emit_event
 from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +63,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     t_coref = time.perf_counter()
     query_resolved = await coreference.resolve(req.query, req.conversation_history)
     coref_ms = (time.perf_counter() - t_coref) * 1000
-    step_latency_seconds.labels(step="coref").observe((time.perf_counter() - t_coref))
+    step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
 
     # 2. Embed resolved query (dense + sparse in parallel)
     t_embed = time.perf_counter()
@@ -67,7 +72,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         embed_sparse(query_resolved),
     )
     embed_ms = (time.perf_counter() - t_embed) * 1000
-    step_latency_seconds.labels(step="embed").observe((time.perf_counter() - t_embed))
+    step_latency_seconds.labels(step="embed").observe(time.perf_counter() - t_embed)
 
     # 3. Gate check
     bypassed, gate_margin = await gate.should_bypass(query_vector)
@@ -234,6 +239,19 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
         retrieval_bypassed=bypassed,
     )
+
+    # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own)
+    if req.scope != "notebook":
+        emit_event(
+            "knowledge.queried",
+            tenant_id=req.org_id,
+            user_id=req.user_id,
+            properties={
+                "scope": req.scope,
+                "had_results": len(chunks_out) > 0,
+                "result_count": len(chunks_out),
+            },
+        )
 
     return RetrieveResponse(
         query_resolved=query_resolved,

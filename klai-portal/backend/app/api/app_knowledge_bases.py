@@ -1,10 +1,11 @@
 """App-facing API for Knowledge Bases (any org member, not admin-only)."""
 
 import datetime as dt
-import logging
 from datetime import datetime, timedelta
+from typing import Literal
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -23,8 +24,26 @@ from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.zitadel import zitadel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
+
+
+async def _get_non_system_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> PortalGroup:
+    """Fetch a non-system group within the org, or 404."""
+    result = await db.execute(
+        select(PortalGroup).where(
+            PortalGroup.id == group_id,
+            PortalGroup.org_id == org_id,
+            PortalGroup.is_system == False,  # noqa: E712
+        )
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found in your organisation",
+        )
+    return group
 
 
 async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
@@ -62,6 +81,12 @@ router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
 # -- Pydantic schemas ---------------------------------------------------------
 
 
+class InitialMember(BaseModel):
+    type: Literal["user", "group"]
+    id: str  # user_id (str) or group_id (str, will be converted to int)
+    role: str
+
+
 class AppKBCreateRequest(BaseModel):
     name: str
     slug: str
@@ -69,6 +94,8 @@ class AppKBCreateRequest(BaseModel):
     visibility: str = "internal"
     docs_enabled: bool = True
     owner_type: str = "org"
+    default_org_role: str | None = "viewer"
+    initial_members: list[InitialMember] | None = None
 
 
 class AppKBOut(BaseModel):
@@ -83,6 +110,7 @@ class AppKBOut(BaseModel):
     gitea_repo_slug: str | None
     owner_type: str
     owner_user_id: str | None
+    default_org_role: str | None = None
 
 
 class AppKBsResponse(BaseModel):
@@ -171,6 +199,7 @@ def _kb_out(kb: PortalKnowledgeBase) -> AppKBOut:
         gitea_repo_slug=kb.gitea_repo_slug,
         owner_type=kb.owner_type,
         owner_user_id=kb.owner_user_id,
+        default_org_role=kb.default_org_role,
     )
 
 
@@ -229,7 +258,7 @@ async def _get_or_create_personal_kb(caller_id: str, org_id: int, db: AsyncSessi
 
 
 async def _require_owner(kb: PortalKnowledgeBase, caller_id: str, db: AsyncSession) -> None:
-    role = await get_user_role_for_kb(kb.id, caller_id, db)
+    role = await get_user_role_for_kb(kb.id, caller_id, db, default_org_role=kb.default_org_role, kb_org_id=kb.org_id)
     if role != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -300,6 +329,12 @@ async def create_app_knowledge_base(
             detail="owner_type must be 'org' or 'user'",
         )
 
+    if body.default_org_role is not None and body.default_org_role not in ("viewer", "contributor"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="default_org_role must be 'viewer', 'contributor', or null",
+        )
+
     owner_user_id = caller_id if body.owner_type == "user" else None
 
     kb = PortalKnowledgeBase(
@@ -312,6 +347,7 @@ async def create_app_knowledge_base(
         docs_enabled=body.docs_enabled,
         owner_type=body.owner_type,
         owner_user_id=owner_user_id,
+        default_org_role=body.default_org_role,
     )
     db.add(kb)
     try:
@@ -333,6 +369,30 @@ async def create_app_knowledge_base(
             granted_by=caller_id,
         )
     )
+
+    # Add initial members (from sharing wizard)
+    if body.initial_members:
+        for member in body.initial_members:
+            _validate_role(member.role)
+            if member.type == "user":
+                db.add(
+                    PortalUserKBAccess(
+                        kb_id=kb.id,
+                        user_id=member.id,
+                        org_id=org.id,
+                        role=member.role,
+                        granted_by=caller_id,
+                    )
+                )
+            elif member.type == "group":
+                db.add(
+                    PortalGroupKBAccess(
+                        group_id=int(member.id),
+                        kb_id=kb.id,
+                        role=member.role,
+                        granted_by=caller_id,
+                    )
+                )
 
     kb.gitea_repo_slug = await docs_client.provision_and_store(org.slug, body.name, body.slug, body.visibility, db)
 
@@ -376,6 +436,98 @@ async def delete_app_knowledge_base(
     # No tombstone: slug is free to reuse after a full delete (all data wiped).
     await db.delete(kb)
     await db.commit()
+
+
+# -- Default org role ---------------------------------------------------------
+
+
+class UpdateDefaultOrgRoleRequest(BaseModel):
+    default_org_role: str | None  # "viewer", "contributor", or null
+
+
+@router.put("/knowledge-bases/{kb_slug}/default-org-role", response_model=AppKBOut)
+async def update_default_org_role(
+    kb_slug: str,
+    body: UpdateDefaultOrgRoleRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppKBOut:
+    """Update the default org role for a KB. Requires owner access."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+
+    if body.default_org_role is not None and body.default_org_role not in ("viewer", "contributor"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="default_org_role must be 'viewer', 'contributor', or null",
+        )
+
+    kb.default_org_role = body.default_org_role
+    await db.commit()
+    await db.refresh(kb)
+    return _kb_out(kb)
+
+
+# -- Owner update (name, description, visibility) ---------------------------
+
+
+class AppKBUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    visibility: str | None = None
+    default_org_role: str | None = None
+
+
+@router.patch("/knowledge-bases/{kb_slug}", response_model=AppKBOut)
+async def update_knowledge_base(
+    kb_slug: str,
+    body: AppKBUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppKBOut:
+    """Update KB properties. Requires owner access."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_owner(kb, caller_id, db)
+
+    if body.name is not None:
+        kb.name = body.name
+    if body.description is not None:
+        kb.description = body.description
+
+    visibility_changed = body.visibility is not None and body.visibility != kb.visibility
+    if body.visibility is not None:
+        if body.visibility not in ("public", "internal"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="visibility must be 'public' or 'internal'",
+            )
+        kb.visibility = body.visibility
+
+    if body.default_org_role is not None:
+        if body.default_org_role == "":
+            kb.default_org_role = None
+        elif body.default_org_role in ("viewer", "contributor"):
+            kb.default_org_role = body.default_org_role
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="default_org_role must be 'viewer', 'contributor', or empty",
+            )
+
+    await db.commit()
+
+    # expire_on_commit=False keeps all attributes valid after commit — no re-fetch needed.
+    # A re-fetch after commit acquires a new connection without app.current_org_id set,
+    # causing RLS to return no rows and a spurious 404.
+    if visibility_changed:
+        try:
+            await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
+        except Exception:
+            logger.warning("Failed to propagate visibility change to knowledge-ingest", kb_slug=kb.slug)
+
+    return _kb_out(kb)
 
 
 # -- Stats --------------------------------------------------------------------
@@ -511,6 +663,7 @@ async def list_members(
         select(PortalGroupKBAccess, PortalGroup.name)
         .join(PortalGroup, PortalGroup.id == PortalGroupKBAccess.group_id)
         .where(PortalGroupKBAccess.kb_id == kb.id)
+        .where(PortalGroup.is_system == False)  # noqa: E712
     )
     group_members = [
         GroupMemberOut(
@@ -694,16 +847,8 @@ async def invite_group(
             detail="Personal KBs cannot be shared",
         )
 
-    # Verify group exists in org
-    group_result = await db.execute(
-        select(PortalGroup).where(
-            PortalGroup.id == body.group_id,
-            PortalGroup.org_id == org.id,
-        )
-    )
-    group = group_result.scalar_one_or_none()
-    if not group:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found in your organisation")
+    # Verify group exists in org and is not a system group
+    group = await _get_non_system_group_or_404(body.group_id, org.id, db)
 
     access = PortalGroupKBAccess(
         group_id=body.group_id,
@@ -860,12 +1005,16 @@ async def list_kbs_with_access(
 class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
+    try_ai: bool = False
 
 
 class CrawlPreviewResponse(BaseModel):
     url: str
     fit_markdown: str
     word_count: int
+    warnings: list[str] = []
+    content_selector: str | None = None
+    selector_source: str | None = None
 
 
 @router.post("/knowledge-bases/{kb_slug}/connectors/crawl-preview", response_model=CrawlPreviewResponse)
@@ -882,9 +1031,90 @@ async def crawl_preview(
     result = await knowledge_ingest_client.preview_crawl(
         url=body.url,
         content_selector=body.content_selector,
+        org_id=str(org.id),
+        try_ai=body.try_ai,
     )
     return CrawlPreviewResponse(
         url=result.get("url", body.url),
         fit_markdown=result.get("fit_markdown", ""),
         word_count=result.get("word_count", 0),
+        warnings=result.get("warnings", []),
+        content_selector=result.get("content_selector"),
+        selector_source=result.get("selector_source"),
     )
+
+
+# ---------------------------------------------------------------------------
+# App-level member picker endpoints (any org member, no admin required)
+# ---------------------------------------------------------------------------
+
+
+class AppGroupItem(BaseModel):
+    id: int
+    name: str
+
+
+class AppGroupsResponse(BaseModel):
+    groups: list[AppGroupItem]
+
+
+class AppUserItem(BaseModel):
+    zitadel_user_id: str
+    email: str
+    display_name: str
+
+
+class AppUsersResponse(BaseModel):
+    users: list[AppUserItem]
+
+
+@router.get("/groups", response_model=AppGroupsResponse)
+async def list_groups_for_picker(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppGroupsResponse:
+    """Lightweight group list for the member picker. Any org member can access."""
+    _, org, _ = await _get_caller_org(credentials, db)
+    result = await db.execute(
+        select(PortalGroup.id, PortalGroup.name)
+        .where(PortalGroup.org_id == org.id)
+        .where(PortalGroup.is_system == False)  # noqa: E712
+        .order_by(PortalGroup.name)
+    )
+    return AppGroupsResponse(groups=[AppGroupItem(id=row.id, name=row.name) for row in result.all()])
+
+
+@router.get("/users", response_model=AppUsersResponse)
+async def list_users_for_picker(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppUsersResponse:
+    """Lightweight user list for the member picker. Any org member can access."""
+    _, org, _ = await _get_caller_org(credentials, db)
+
+    result = await db.execute(select(PortalUser).where(PortalUser.org_id == org.id).order_by(PortalUser.created_at))
+    portal_users = {u.zitadel_user_id: u for u in result.scalars().all()}
+
+    if not portal_users:
+        return AppUsersResponse(users=[])
+
+    zitadel_users = await zitadel.list_org_users(settings.zitadel_portal_org_id)
+
+    users_out: list[AppUserItem] = []
+    for z in zitadel_users:
+        uid = z.get("id", "")
+        if uid not in portal_users:
+            continue
+        profile = z.get("human", {}).get("profile", {})
+        email_obj = z.get("human", {}).get("email", {})
+        first = profile.get("firstName", "")
+        last = profile.get("lastName", "")
+        users_out.append(
+            AppUserItem(
+                zitadel_user_id=uid,
+                email=email_obj.get("email", ""),
+                display_name=f"{first} {last}".strip() or email_obj.get("email", uid),
+            )
+        )
+
+    return AppUsersResponse(users=users_out)

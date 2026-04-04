@@ -320,6 +320,69 @@ async def upsert_page_links(
     )
 
 
+async def get_page_episode_ids(org_id: str, kb_slug: str, path: str) -> list[str]:
+    """Return Graphiti episode UUIDs for artifacts matching a specific page path.
+
+    Like get_episode_ids() but scoped to a single page. Used during page deletion
+    to clean up Graphiti graph nodes before soft-deleting the artifact.
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT extra::jsonb->>'graphiti_episode_id' AS episode_id
+           FROM knowledge.artifacts
+           WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+             AND extra IS NOT NULL
+             AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
+        org_id, kb_slug, path,
+    )
+    return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
+
+
+async def cleanup_page_metadata(org_id: str, kb_slug: str, path: str) -> None:
+    """Hard-delete metadata records (derivations, artifact_entities, embedding_queue)
+    for all artifacts matching this page path.
+
+    Must be called BEFORE soft_delete_artifact to avoid FK issues.
+    Follows the same pattern as delete_kb() but scoped to a single page.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Nullify self-references first to avoid FK violations
+            await conn.execute(
+                """UPDATE knowledge.artifacts SET superseded_by = NULL
+                   WHERE superseded_by IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+                   )""",
+                org_id, kb_slug, path,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+                   )""",
+                org_id, kb_slug, path,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+                   )""",
+                org_id, kb_slug, path,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.derivations WHERE child_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+                   ) OR parent_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2 AND path = $3
+                   )""",
+                org_id, kb_slug, path,
+            )
+
+
 async def update_artifact_extra(artifact_id: str, extra_patch: dict) -> None:
     """Merge extra_patch into knowledge.artifacts.extra (JSONB merge, AC-2)."""
     pool = await get_pool()

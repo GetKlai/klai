@@ -6,13 +6,14 @@ Prompt 2 (synthesis): readable Markdown summary in the meeting's language.
 """
 
 import json
-import logging
 
 import httpx
+import structlog
 
 from app.core.config import settings
+from app.trace import get_trace_headers
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _LANGUAGE_NAMES = {
     "nl": "Dutch",
@@ -30,8 +31,9 @@ Return ONLY valid JSON with this exact structure:
 {
   "speakers_present": ["name1", "name2"],
   "topics": ["topic1", "topic2"],
-  "decisions": ["decision1"],
-  "action_items": [{"owner": "name or null", "task": "description"}],
+  "decisions": [{"decision": "what was decided", "rationale": "why, or null", "decided_by": "name, or null"}],
+  "action_items": [{"owner": "name or null", "task": "description", "deadline": "when, or null"}],
+  "key_quotes": ["verbatim sentence worth preserving"],
   "open_questions": ["question1"],
   "next_steps": ["step1"]
 }
@@ -40,13 +42,13 @@ Do not add commentary. If a field has no data, use an empty array.
 
 _SYNTHESIS_SYSTEM = """\
 You are a professional meeting summarizer. Write a clear, concise meeting summary
-based on the extracted facts provided. Use the language specified. Structure:
+based on the extracted facts provided. Use the language specified in the user message.
+Structure (use headings in the target language):
 1. A short executive summary paragraph (2-3 sentences).
-2. ## Beslissingen / Decisions (if any)
-3. ## Actiepunten / Action Items (if any, with owner)
-4. ## Open vragen / Open Questions (if any)
-5. ## Volgende stappen / Next Steps (if any)
-Adapt section headings to the target language.
+2. A decisions section (if any decisions were made)
+3. An open questions section (if any)
+4. A next steps section (if any)
+Do NOT include an action items section or a key quotes section — those are displayed separately in the UI.
 """
 
 
@@ -55,7 +57,7 @@ async def _call_llm(system: str, user: str, model: str, temperature: float = 0.1
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
+            headers={"Authorization": f"Bearer {settings.litellm_master_key}", **get_trace_headers()},
             json={
                 "model": model,
                 "temperature": temperature,
@@ -66,7 +68,9 @@ async def _call_llm(system: str, user: str, model: str, temperature: float = 0.1
             },
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        content = resp.json()["choices"][0]["message"]["content"]
+        logger.info("llm_call_complete", model=model, response_length=len(content))
+        return content
 
 
 def _build_transcript_text(transcript_text: str, segments: list[dict] | None) -> str:
@@ -93,12 +97,7 @@ async def extract_facts(
     )
 
     raw = await _call_llm(_EXTRACTION_SYSTEM, user_prompt, model=settings.extraction_model, temperature=0.1)
-
-    # Parse JSON -- strip markdown code fences if present
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(raw)
+    return _parse_json_response(raw)
 
 
 async def synthesize_summary(facts: dict, language: str) -> str:
@@ -108,6 +107,29 @@ async def synthesize_summary(facts: dict, language: str) -> str:
         f"Write the summary in {lang_name}.\n\nExtracted facts:\n{json.dumps(facts, ensure_ascii=False, indent=2)}"
     )
     return await _call_llm(_SYNTHESIS_SYSTEM, user_prompt, model=settings.synthesis_model, temperature=0.3)
+
+
+def _parse_json_response(raw: str) -> dict:
+    """Parse LLM JSON response, stripping markdown code fences if present."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.exception("extraction_json_parse_failed", raw_preview=raw[:200])
+        raise
+
+
+_STRUCTURED_KEYS = (
+    ("speakers_present", "speakers"),
+    ("topics", "topics"),
+    ("decisions", "decisions"),
+    ("action_items", "action_items"),
+    ("key_quotes", "key_quotes"),
+    ("open_questions", "open_questions"),
+    ("next_steps", "next_steps"),
+)
 
 
 async def summarize_meeting(
@@ -120,12 +142,5 @@ async def summarize_meeting(
     markdown = await synthesize_summary(facts, language)
     return {
         "markdown": markdown,
-        "structured": {
-            "speakers": facts.get("speakers_present", []),
-            "topics": facts.get("topics", []),
-            "decisions": facts.get("decisions", []),
-            "action_items": facts.get("action_items", []),
-            "open_questions": facts.get("open_questions", []),
-            "next_steps": facts.get("next_steps", []),
-        },
+        "structured": {out: facts.get(src, []) for src, out in _STRUCTURED_KEYS},
     }

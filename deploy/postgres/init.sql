@@ -26,4 +26,14 @@ GRANT ALL PRIVILEGES ON DATABASE gitea TO gitea;
 GRANT ALL ON SCHEMA public TO gitea;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO gitea;
 
+CREATE DATABASE vexa;
+CREATE USER vexa WITH PASSWORD 'PLACEHOLDER_CHANGE_ME';
+GRANT ALL PRIVILEGES ON DATABASE vexa TO vexa;
+\c vexa
+GRANT ALL ON SCHEMA public TO vexa;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO vexa;
+-- Note: after first startup of vexa-meeting-api, seed the system user:
+-- INSERT INTO users (id, email, name, max_concurrent_bots, data)
+-- VALUES (0, 'system@klai.internal', 'Klai System', 999, '{}') ON CONFLICT DO NOTHING;
+
 -- The klai database (portal data, billing, docs) uses the root klai user

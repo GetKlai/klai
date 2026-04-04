@@ -1,15 +1,4 @@
-# klai-portal: Project Instructions
-
-Project-specific instructions for the klai-portal monorepo (FastAPI backend + React/Vite frontend).
-
-## Before writing any frontend code
-
-Component rules, form page patterns, and button alignment standards:
-
-- [.claude/rules/klai/patterns/frontend.md](../.claude/rules/klai/patterns/frontend.md) — auto-loads for .tsx/.ts/.css files
-- [docs/ui-components.md](docs/ui-components.md) — component reference
-
-The reference implementation is `frontend/src/routes/admin/users/invite.tsx`.
+# klai-portal
 
 ## Deploy workflow
 
@@ -19,21 +8,12 @@ After every commit to klai-portal:
 2. `gh run watch --exit-status` — wait for the GitHub Action to complete
 3. Verify server rollout — check bundle timestamp or container age on core-01
 
-The Action `Build and deploy portal-frontend` runs automatically on every push to main, builds the Vite frontend, and rsyncs it to core-01. Never claim something is deployed before both CI is green AND the new code is confirmed on the server.
-
-Full verification protocol (CI + server health check, cross-platform): `.claude/rules/klai/post-push.md`
-
-Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
-
-## Stack
-
-- **Backend:** FastAPI (Python), SQLAlchemy, Alembic, PostgreSQL
-- **Frontend:** React + Vite + TanStack Router + TanStack Query, Paraglide i18n, shadcn-style `components/ui/`
+Never claim something is deployed before both CI is green AND the new code is confirmed on the server. Do not run `portal-deploy.sh` manually — the GitHub Action handles it.
 
 ## Key rules
 
-- All UI components must come from `components/ui/` (`<Button>`, `<Input>`, `<Label>`, `<Select>`, `<Card>`)
-- Never use raw `<button>`, `<input>`, `<label>`, `<select>` with inline Tailwind in pages
+- All UI components must come from `components/ui/` — never use raw `<button>`, `<input>`, `<select>` with inline Tailwind
 - Form pages: `max-w-lg`, header `flex items-center justify-between mb-6` (title left, ghost cancel button right)
 - Error text: `text-[var(--color-destructive)]` not `text-red-600`
-- i18n: all UI strings go through Paraglide (`import * as m from '@/paraglide/messages'`)
+- i18n: all UI strings via Paraglide (`import * as m from '@/paraglide/messages'`)
+- Reference implementation: `frontend/src/routes/admin/users/invite.tsx`

@@ -3,8 +3,12 @@
 import logging
 import os
 import sys
+import uuid
 
 import structlog
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 
 def setup_logging(service_name: str = "knowledge-ingest") -> None:
@@ -64,3 +68,21 @@ def setup_logging(service_name: str = "knowledge-ingest") -> None:
 
     # Bind service name to every log line
     structlog.contextvars.bind_contextvars(service=service_name)
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Bind trace context from upstream services to structlog for log correlation."""
+
+    async def dispatch(self, request: Request, call_next: ...) -> Response:
+        structlog.contextvars.clear_contextvars()
+        # Re-bind service name after clear (set during setup_logging)
+        structlog.contextvars.bind_contextvars(service="knowledge-ingest")
+
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+        if org_id := request.headers.get("x-org-id"):
+            structlog.contextvars.bind_contextvars(org_id=org_id)
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response

@@ -33,6 +33,7 @@ networks:
     name: klai-net-meilisearch
     internal: true   # only Meilisearch <-> LibreChat containers
   vexa-bots:
+    name: vexa-bots
     driver: bridge
     # NOT internal — bot containers need internet egress to join meeting platforms
 
@@ -53,6 +54,13 @@ volumes:
   gitea-data:
   qdrant-data:
   vexa-recordings-data:
+  scribe-audio-data:
+
+# Default log rotation — prevents unbounded disk growth on json-file driver.
+# Alloy captures logs in real-time via Docker socket, so rotated logs are only
+# a local fallback. Configure Docker daemon default: /etc/docker/daemon.json
+#   { "log-driver": "json-file", "log-opts": { "max-size": "50m", "max-file": "3" } }
+# This applies to ALL containers without per-service config.
 
 services:
 
@@ -256,6 +264,7 @@ services:
       FIRECRAWL_API_KEY: ${FIRECRAWL_INTERNAL_KEY}
       JINA_API_URL: "http://172.18.0.1:7998/v1/rerank"
       JINA_API_KEY: "klai-internal"
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -276,8 +285,9 @@ services:
       - ./librechat/getklai/.env
     environment:
       REDIS_URI: ${REDIS_URI}
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     volumes:
-      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat/getklai/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/getklai/images:/app/client/public/images
       # Persistent patches - survive image updates until fixed upstream
       - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
@@ -315,7 +325,6 @@ services:
     environment:
       CONTAINERS: 1
       NETWORKS: 1
-      EXEC: 1          # recording cleanup: docker exec inside vexa-bot-manager
       POST: 1
       DELETE: 1
     volumes:
@@ -617,8 +626,11 @@ services:
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
+      PORTAL_EVENTS_HOST: postgres
+      PORTAL_EVENTS_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - klai-net
+      - net-postgres
     depends_on:
       - qdrant
       - falkordb
@@ -712,61 +724,114 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       WHISPER_SERVER_URL: http://172.18.0.1:8000
       ZITADEL_ISSUER: https://auth.${DOMAIN}
+    volumes:
+      - scribe-audio-data:/data/audio
     networks:
       - klai-net
       - net-postgres
     depends_on:
       - postgres
 
-  # ─── Vexa meeting bot manager ───────────────────────────────────────────
-  vexa-bot-manager:
-    image: ghcr.io/getklai/vexa-lite:latest
+  # ─── Vexa meeting API (bot lifecycle, transcription collector) ──────────
+  # Built from feature/agentic-runtime @ 600cba04b9575c44cb74ee384c63b3fd7df98fe7
+  # Build: docker build -t vexa-meeting-api:klai -f services/meeting-api/Dockerfile .
+  vexa-meeting-api:
+    image: vexa-meeting-api:klai
     restart: unless-stopped
     environment:
-      API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
-      WEBHOOK_URL: https://${DOMAIN}/api/bots/internal/webhook
-      WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
-      STORAGE_BACKEND: local
-      LOCAL_STORAGE_DIR: /var/lib/vexa/recordings
-      # Use external PostgreSQL so recordings survive container restarts
-      DATABASE_URL: postgresql://vexa:${VEXA_DB_PASSWORD}@postgres:5432/vexa
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: vexa
       DB_USER: vexa
       DB_PASSWORD: ${VEXA_DB_PASSWORD}
-      # We transcribe in portal-api, not in vexa-bot-manager
-      SKIP_TRANSCRIPTION_CHECK: "true"
-      TRANSCRIBER_URL: http://172.18.0.1:8000/v1/audio/transcriptions
-      TRANSCRIBER_API_KEY: internal
-      ADMIN_API_TOKEN: ${VEXA_ADMIN_API_TOKEN}
-    volumes:
-      # Persistent patches - survive image updates until fixed upstream
-      # Fix #189: removes track.stop() + transceiver renegotiation that caused bot to leave mid-meeting
-      # Fix #190: replaces poll-based participant counting with MutationObserver registry
-      - ./vexa-patches/screen-content.js:/app/vexa-bot/dist/services/screen-content.js:ro
-      - ./vexa-patches/recording.js:/app/vexa-bot/dist/platforms/googlemeet/recording.js:ro
+      DB_SSL_MODE: disable
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
+      API_KEYS: ${VEXA_API_KEY}
+      ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
+      RUNTIME_API_URL: http://vexa-runtime-api:8090
+      MEETING_API_URL: http://vexa-meeting-api:8080
+      BOT_IMAGE_NAME: vexaai/vexa-bot:v20260315-2220
+      TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
+      TRANSCRIPTION_SERVICE_TOKEN: internal
+      STORAGE_BACKEND: local
+      RECORDING_ENABLED: "false"
+      POST_MEETING_HOOKS: http://portal-api:8010/api/bots/internal/webhook
+      TRANSCRIPTION_COLLECTOR_URL: http://vexa-meeting-api:8080
     depends_on:
       postgres:
         condition: service_healthy
+      vexa-redis:
+        condition: service_healthy
+      vexa-runtime-api:
+        condition: service_started
     deploy:
       resources:
         limits:
           cpus: '1'
-          memory: 1G
+          memory: 512M
     networks:
       - klai-net
-      - socket-proxy
-      - vexa-bots
       - net-postgres
-      - net-redis
+      - vexa-bots   # bots call back to meeting-api via this network; vexa-redis also on this network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8056/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # ─── Vexa runtime API (container orchestration via Docker socket) ───────
+  # Built from feature/agentic-runtime @ 600cba04b9575c44cb74ee384c63b3fd7df98fe7
+  # Build: docker build -t vexa-runtime-api:klai -f services/runtime-api/Dockerfile services/runtime-api/
+  vexa-runtime-api:
+    image: vexa-runtime-api:klai
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
+      ORCHESTRATOR_BACKEND: docker
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_NETWORK: vexa-bots
+      ALLOW_PRIVATE_CALLBACKS: "true"
+      PROFILES_PATH: /app/profiles.yaml
+      LOG_LEVEL: INFO
+    group_add:
+      - "988"   # docker GID on core-01 — required for socket access
+    volumes:
+      - ./vexa/profiles.yaml:/app/profiles.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      vexa-redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    networks:
+      - vexa-bots
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ─── Vexa Redis (bot state, pub/sub, transcription streams) ─────────────
+  vexa-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}"]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - vexa-bots   # isolated from klai-net-redis; bot containers resolve vexa-redis via this network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $VEXA_REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
@@ -878,7 +943,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
-      POSTGRES_PASSWORD: firecrawl_pass
+      POSTGRES_PASSWORD: ${FIRECRAWL_DB_PASSWORD}
       POSTGRES_DB: firecrawl
     networks:
       - klai-net
@@ -918,7 +983,7 @@ services:
       FIRECRAWL_API_KEY: "${FIRECRAWL_INTERNAL_KEY}"
       NUM_WORKERS_PER_QUEUE: "2"
       LOGGING_LEVEL: "INFO"
-      NUQ_DATABASE_URL: "postgresql://firecrawl:firecrawl_pass@firecrawl-postgres:5432/firecrawl"
+      NUQ_DATABASE_URL: "postgresql://firecrawl:${FIRECRAWL_DB_PASSWORD}@firecrawl-postgres:5432/firecrawl"
       NUQ_RABBITMQ_URL: "amqp://firecrawl-rabbitmq:5672"
     networks:
       - klai-net

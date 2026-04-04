@@ -1,6 +1,6 @@
 """
-Vexa bot-manager API client.
-Portal-api calls this to start/stop meeting bots.
+Vexa meeting-api client.
+Portal-api calls this to start/stop meeting bots and manage recordings.
 """
 
 import hashlib
@@ -8,8 +8,12 @@ import re
 from typing import NamedTuple
 
 import httpx
+import structlog
 
 from app.core.config import settings
+from app.trace import get_trace_headers
+
+logger = structlog.get_logger()
 
 
 class MeetingRef(NamedTuple):
@@ -43,9 +47,9 @@ def parse_meeting_url(url: str) -> MeetingRef | None:
 class VexaClient:
     def __init__(self) -> None:
         self._http = httpx.AsyncClient(
-            base_url=settings.vexa_bot_manager_url,
+            base_url=settings.vexa_meeting_api_url,
             headers={"X-API-Key": settings.vexa_api_key},
-            timeout=30.0,
+            timeout=60.0,
         )
 
     async def close(self) -> None:
@@ -55,11 +59,17 @@ class VexaClient:
         """Start a bot for the given meeting. Returns the bot response dict."""
         resp = await self._http.post(
             "/bots",
+            headers={**get_trace_headers()},
             json={
                 "platform": platform,
                 "native_meeting_id": native_meeting_id,
-                "recording_enabled": True,
+                "recording_enabled": False,
                 "bot_name": "Klai",
+                "automatic_leave": {
+                    "max_time_left_alone": 30000,  # 30s after everyone leaves
+                    "no_one_joined_timeout": 120000,  # 2 min if no one joins
+                    "max_wait_for_admission": 120000,  # 2 min in waiting room
+                },
             },
         )
         resp.raise_for_status()
@@ -67,33 +77,19 @@ class VexaClient:
 
     async def stop_bot(self, platform: str, native_meeting_id: str) -> None:
         """Stop an active bot."""
-        resp = await self._http.delete(f"/bots/{platform}/{native_meeting_id}")
+        resp = await self._http.delete(f"/bots/{platform}/{native_meeting_id}", headers={**get_trace_headers()})
         resp.raise_for_status()
 
-    async def get_meeting_by_native_id(self, platform: str, native_meeting_id: str) -> dict | None:
-        """Find a Vexa meeting by platform + native_meeting_id.
+    async def get_running_bots(self) -> list[dict]:
+        """Return the list of currently running bot containers from Vexa.
 
-        Queries GET /meetings and returns the most recent matching entry, or None.
+        Uses GET /bots/status which returns {"running_bots": [...]}.
+        Each entry has: platform, native_meeting_id, status, normalized_status, container_id.
+        Returns an empty list if the call fails — treated as "unknown, assume still running".
         """
-        resp = await self._http.get("/meetings")
+        resp = await self._http.get("/bots/status", headers={**get_trace_headers()})
         resp.raise_for_status()
-        meetings = resp.json().get("meetings", [])
-        # Return the most recent matching meeting (highest id)
-        matches = [
-            m for m in meetings if m.get("platform") == platform and m.get("native_meeting_id") == native_meeting_id
-        ]
-        return max(matches, key=lambda m: m["id"]) if matches else None
-
-    async def get_bot_status(self, platform: str, native_meeting_id: str) -> dict:
-        """Get the current status of a bot via the /meetings endpoint."""
-        meeting = await self.get_meeting_by_native_id(platform, native_meeting_id)
-        if meeting is None:
-            raise httpx.HTTPStatusError(
-                "Meeting not found",
-                request=httpx.Request("GET", "/meetings"),
-                response=httpx.Response(404),
-            )
-        return meeting
+        return resp.json().get("running_bots", [])
 
     async def get_recording(self, vexa_meeting_id: int) -> tuple[bytes, str]:
         """Download the raw audio recording from Vexa.
@@ -103,7 +99,9 @@ class VexaClient:
 
         Returns (audio_bytes, format) where format is e.g. 'wav' or 'webm'.
         """
-        resp = await self._http.get("/recordings", params={"meeting_id": vexa_meeting_id})
+        resp = await self._http.get(
+            "/recordings", params={"meeting_id": vexa_meeting_id}, headers={**get_trace_headers()}
+        )
         resp.raise_for_status()
         recordings = resp.json().get("recordings", [])
         if not recordings:
@@ -120,6 +118,7 @@ class VexaClient:
                     fmt = mf.get("format", "wav")
                     raw_resp = await self._http.get(
                         f"/recordings/{rec_id}/media/{mf_id}/raw",
+                        headers={**get_trace_headers()},
                         timeout=120.0,
                     )
                     raw_resp.raise_for_status()
@@ -128,15 +127,32 @@ class VexaClient:
         raise ValueError(f"No completed audio recording found for vexa meeting {vexa_meeting_id}")
 
     async def get_transcript_segments(self, platform: str, native_meeting_id: str) -> list[dict]:
-        """Fetch transcript segments with speaker labels from vexa-bot-manager.
+        """Fetch transcript segments with speaker labels.
 
-        The /transcripts endpoint is served by the same bot-manager container (port 8056).
         Returns list of segment dicts: {start, end, text, speaker, language, absolute_start_time}
         Raises httpx.HTTPStatusError on HTTP error, httpx.RequestError on network error.
         """
-        resp = await self._http.get(f"/transcripts/{platform}/{native_meeting_id}")
+        resp = await self._http.get(f"/transcripts/{platform}/{native_meeting_id}", headers={**get_trace_headers()})
         resp.raise_for_status()
         return resp.json().get("segments", [])
+
+    async def delete_recording(self, recording_id: int) -> bool:
+        """Delete a recording by ID. Returns True on success, False on failure.
+
+        Never raises -- logs warnings on failure. This replaces the old
+        Docker exec approach in recording_cleanup.py.
+        """
+        try:
+            resp = await self._http.delete(f"/recordings/{recording_id}", headers={**get_trace_headers()})
+            resp.raise_for_status()
+            return True
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            logger.warning(
+                "Failed to delete recording",
+                recording_id=recording_id,
+                error=str(exc),
+            )
+            return False
 
 
 vexa = VexaClient()

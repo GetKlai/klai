@@ -194,11 +194,18 @@ async def create_group(
     await db.commit()
     await db.refresh(group)
 
+    prods_result = await db.execute(
+        select(PortalGroupProduct.product)
+        .where(PortalGroupProduct.group_id == group.id)
+        .order_by(PortalGroupProduct.product)
+    )
+    products = [row[0] for row in prods_result]
+
     return GroupOut(
         id=group.id,
         name=group.name,
         description=group.description,
-        products=[],
+        products=products,
         is_system=False,
         created_at=group.created_at,
         created_by=group.created_by,
@@ -246,11 +253,18 @@ async def update_group(
     await db.commit()
     await db.refresh(group)
 
+    prods_result = await db.execute(
+        select(PortalGroupProduct.product)
+        .where(PortalGroupProduct.group_id == group.id)
+        .order_by(PortalGroupProduct.product)
+    )
+    products = [row[0] for row in prods_result]
+
     return GroupOut(
         id=group.id,
         name=group.name,
         description=group.description,
-        products=[],
+        products=products,
         is_system=group.is_system,
         created_at=group.created_at,
         created_by=group.created_by,
@@ -381,7 +395,6 @@ async def add_member(
         ) from exc
 
     await log_event(
-        db,
         org_id=group.org_id,
         actor=caller_id,
         action="group.member_added",
@@ -427,7 +440,6 @@ async def remove_member(
 
     await db.delete(membership)
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_id,
         action="group.member_removed",
@@ -540,7 +552,6 @@ async def assign_group_product(
         ) from exc
 
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_user_id,
         action="group_product.assigned",
@@ -577,7 +588,6 @@ async def revoke_group_product(
 
     await db.delete(row)
     await log_event(
-        db,
         org_id=org.id,
         actor=caller_user_id,
         action="group_product.revoked",
