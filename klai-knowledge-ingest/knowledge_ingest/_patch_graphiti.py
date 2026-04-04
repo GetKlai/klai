@@ -170,9 +170,9 @@ def _patch_node_dedup() -> None:
         logger.debug("graphiti-core not installed, skipping node dedup patch")
         return
 
-    _original_escalate = node_operations._escalate_unresolved_nodes
+    _original_resolve_with_llm = node_operations._resolve_with_llm
 
-    async def _patched_escalate(
+    async def _patched_resolve_with_llm(
         llm_client,
         extracted_nodes,
         indexes,
@@ -188,7 +188,7 @@ def _patch_node_dedup() -> None:
         exact_names = {node.name for node in indexes.existing_nodes}
 
         # Run original (which may leave nodes unresolved due to case mismatch)
-        result = await _original_escalate(
+        result = await _original_resolve_with_llm(
             llm_client,
             extracted_nodes,
             indexes,
@@ -223,7 +223,7 @@ def _patch_node_dedup() -> None:
 
         return result
 
-    node_operations._escalate_unresolved_nodes = _patched_escalate
+    node_operations._resolve_with_llm = _patched_resolve_with_llm
     logger.info("graphiti_node_dedup_patched")
 
 
