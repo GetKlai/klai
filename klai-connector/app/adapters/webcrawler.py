@@ -109,6 +109,7 @@ class WebCrawlerAdapter(BaseAdapter):
             batch = urls[i : i + batch_size]
             payload: dict[str, Any] = {
                 "urls": batch,
+                "browser_config": {"type": "BrowserConfig", "params": {"text_mode": True}},
                 "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
             }
             try:
@@ -116,7 +117,7 @@ class WebCrawlerAdapter(BaseAdapter):
                     f"{self._api_url}/crawl",
                     json=payload,
                     headers=self._auth_headers(),
-                    timeout=120.0,
+                    timeout=300.0,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -314,40 +315,29 @@ class WebCrawlerAdapter(BaseAdapter):
     ) -> list[DocumentRef]:
         """List crawled pages from the target website.
 
-        If a previous run left a pending crawl job (stored in cursor_context),
-        checks its status first. Otherwise starts a new crawl.
+        Strategy:
+        1. Crawl base_url directly to get the homepage + any pages BFS finds.
+        2. Fetch sitemap.xml and supplement with any URLs not yet crawled.
+
+        The Crawl4AI /crawl endpoint applies MemoryAdaptiveDispatcher + RateLimiter
+        internally, so multi-URL batches are processed safely at server side.
 
         Uses a per-connector cache keyed by connector.connector_id to avoid
         cross-contamination during concurrent syncs.
-
-        Raises:
-            CrawlJobPendingError: If the crawl is still running (SyncEngine handles this).
         """
         connector_id = str(connector.connector_id)
         cache: dict[str, str] = {}
         self._crawl_cache[connector_id] = cache
         config: dict[str, Any] = connector.config
-
-        # Resume a pending job from a previous sync run.
-        pending_task_id = (cursor_context or {}).get("pending_task_id")
         base_url: str = config.get("base_url", "")
-
-        if pending_task_id:
-            logger.info("Resuming pending crawl job %s", pending_task_id)
-            data = await self._poll_task(pending_task_id)
-            refs = self._process_results(data, cache, base_url=base_url)
-            logger.info("Resumed crawl job %s: %d pages", pending_task_id, len(refs))
-            return refs  # No supplement on resume — job was already submitted with fixed max_pages.
-
-        # Start a new crawl job.
-        task_id = await self._start_crawl(config)
-        data = await self._poll_task(task_id)
-        refs = self._process_results(data, cache, base_url=base_url)
-        logger.info("Crawl BFS completed: %d pages from %s", len(refs), base_url)
-
-        # Phase 2: supplement with sitemap URLs that BFS did not reach.
-        # Pages can exist in the sitemap but not be reachable via internal links.
         max_pages: int = min(config.get("max_pages", 200), 2000)
+        page_params = self._build_page_crawl_params(config)
+
+        # Phase 1: crawl base_url (gets homepage; BFS may find more on non-JS sites).
+        logger.info("Starting crawl of %s (max_pages=%d)", base_url, max_pages)
+        refs = await self._crawl_pages_sync([base_url], page_params, cache, base_url=base_url)
+
+        # Phase 2: supplement with sitemap URLs not yet crawled.
         if len(refs) < max_pages:
             remaining = max_pages - len(refs)
             seen_urls = {ref.ref for ref in refs}
@@ -355,16 +345,15 @@ class WebCrawlerAdapter(BaseAdapter):
             supplement_urls = [u for u in sitemap_urls if u not in seen_urls][:remaining]
             if supplement_urls:
                 logger.info(
-                    "Supplementing %d BFS pages with %d sitemap URLs",
-                    len(refs), len(supplement_urls),
+                    "Supplementing with %d sitemap URLs (%d crawled so far)",
+                    len(supplement_urls), len(refs),
                 )
-                page_params = self._build_page_crawl_params(config)
                 supplement_refs = await self._crawl_pages_sync(
                     supplement_urls, page_params, cache, base_url=base_url,
                 )
                 refs.extend(supplement_refs)
-                logger.info("Crawl complete: %d pages from %s", len(refs), base_url)
 
+        logger.info("Crawl complete: %d pages from %s", len(refs), base_url)
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
