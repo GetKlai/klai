@@ -591,7 +591,6 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       RETRIEVAL_API_URL: http://retrieval-api:8040
-      PORTAL_EVENTS_DSN: postgresql://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       DOCLING_URL: http://docling-serve:5001
       TEI_URL: http://172.18.0.1:7997
       LITELLM_URL: http://litellm:4000
@@ -627,7 +626,8 @@ services:
       RERANKER_TIMEOUT: "60.0"
       OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
-      PORTAL_EVENTS_DSN: postgresql://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
+      PORTAL_EVENTS_HOST: postgres
+      PORTAL_EVENTS_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - klai-net
       - net-postgres

@@ -45,9 +45,13 @@ class Settings(BaseSettings):
     link_expand_candidates: int = 20
     link_authority_boost: float = 0.05
 
-    # Portal events — set to portal DB DSN to emit product_events
-    # Format: postgresql://user:pass@host:5432/portal
-    portal_events_dsn: str = ""
+    # Portal events — set to emit product_events to the portal database.
+    # Separate fields avoid URL-encoding issues with special chars in passwords.
+    portal_events_host: str = ""
+    portal_events_port: int = 5432
+    portal_events_user: str = "klai"
+    portal_events_password: str = ""
+    portal_events_db: str = "klai"
 
 
 settings = Settings()

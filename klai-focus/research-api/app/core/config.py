@@ -40,10 +40,6 @@ class Settings(BaseSettings):
 
     synthesis_model: str = "klai-primary"
 
-    # Portal events — set to portal DB DSN to emit product_events
-    # Format: postgresql://user:pass@host:5432/portal
-    portal_events_dsn: str = ""
-
     log_level: str = "INFO"
 
     @property

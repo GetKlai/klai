@@ -5,13 +5,13 @@ lightweight asyncpg connection pool.  The ``org_id`` foreign key is
 resolved automatically from the Zitadel ``tenant_id`` using a sub-query.
 
 Pool lifecycle is managed by the FastAPI lifespan (init_pool / close_pool).
+Connection params are taken from individual settings (no DSN parsing needed).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from urllib.parse import unquote, urlparse
 
 import asyncpg
 import structlog
@@ -37,18 +37,16 @@ _INSERT_SQL = """
 async def init_pool() -> None:
     """Create the portal events connection pool. Call from FastAPI lifespan."""
     global _pool
-    dsn = settings.portal_events_dsn
-    if not dsn:
-        logger.info("events: portal_events_dsn not set, event emission disabled")
+    if not settings.portal_events_host:
+        logger.info("events: portal_events_host not set, event emission disabled")
         return
     try:
-        parsed = urlparse(dsn)
         _pool = await asyncpg.create_pool(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            user=unquote(parsed.username or ""),
-            password=unquote(parsed.password or ""),
-            database=parsed.path.lstrip("/"),
+            host=settings.portal_events_host,
+            port=settings.portal_events_port,
+            user=settings.portal_events_user,
+            password=settings.portal_events_password,
+            database=settings.portal_events_db,
             min_size=1,
             max_size=2,
         )
