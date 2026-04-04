@@ -56,6 +56,8 @@ Read the user's entire message before taking any action. Summarize
 your understanding before starting work — acting on the first sentence
 means missing critical context. After asking a question, stop and wait.
 Do not continue with tool calls — the answer may change everything.
+Never instruct the user to "check in the browser" or "verify in the
+UI" — verify autonomously with Playwright, or trust them to check.
 
 ## ask-before-retry
 After two failed attempts at the same operation, stop and ask the
@@ -86,3 +88,9 @@ image tags, resource limits, excluded services. Then during work:
   memory, forbidden process) — STOP. Report the violation before
   debugging downstream symptoms.
 - If any constraint is unclear — ask before implementing.
+
+## read-before-delegate
+Before giving a subagent a "rewrite this file" task, Read the file
+yourself first. If the user edited it, extract their text and pass it
+verbatim in the prompt as content to preserve. Subagents have no
+context about prior user edits — they will overwrite silently.
