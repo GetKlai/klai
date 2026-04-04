@@ -35,6 +35,12 @@ interface WebCrawlerConfig {
   content_selector: string
 }
 
+interface NotionConfig {
+  access_token: string
+  database_ids: string
+  max_pages: string
+}
+
 const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
   { value: 'factual',     label: 'Fact',        description: 'Established fact, documentation, specs' },
   { value: 'procedural',  label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
@@ -48,7 +54,7 @@ const CONNECTOR_TYPES: { type: ConnectorType; label: () => string; available: bo
   { type: 'github', label: m.admin_connectors_type_github, available: true },
   { type: 'web_crawler', label: m.admin_connectors_type_website, available: true },
   { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: false },
-  { type: 'notion', label: m.admin_connectors_type_notion, available: false },
+  { type: 'notion', label: m.admin_connectors_type_notion, available: true },
   { type: 'ms_docs', label: m.admin_connectors_type_ms_docs, available: false },
 ]
 
@@ -78,6 +84,10 @@ function AddConnectorPage() {
   const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
     base_url: '', path_prefix: '', max_pages: '200', content_selector: '',
   })
+  const [notionConfig, setNotionConfig] = useState<NotionConfig>({
+    access_token: '', database_ids: '', max_pages: '500',
+  })
+  const [notionStep, setNotionStep] = useState<'credentials' | 'settings'>('credentials')
 
   // Webcrawler wizard state
   const [wcStep, setWcStep] = useState<WcStep>('details')
@@ -108,6 +118,15 @@ function AddConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
+      }
+      if (selectedType === 'notion') {
+        config.access_token = notionConfig.access_token
+        const ids = notionConfig.database_ids
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        if (ids.length > 0) config.database_ids = ids
+        if (notionConfig.max_pages && notionConfig.max_pages !== '500') config.max_pages = Number(notionConfig.max_pages)
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
         method: 'POST',
@@ -179,8 +198,12 @@ function AddConnectorPage() {
                 { key: 'type',      label: `1. ${m.admin_connectors_step_type()}`,      onClick: () => setSelectedType(null) },
                 { key: 'configure', label: `2. ${m.admin_connectors_step_configure()}` },
               ]
-              const steps = selectedType === 'github' ? ghSteps : wcSteps
-              const currentKey: StepKey = !selectedType ? 'type' : selectedType === 'github' ? 'configure' : wcStep
+              const notionSteps: { key: StepKey; label: string; onClick?: () => void }[] = [
+                { key: 'type',      label: `1. ${m.admin_connectors_step_type()}`,      onClick: () => setSelectedType(null) },
+                { key: 'configure', label: `2. ${m.admin_connectors_step_configure()}` },
+              ]
+              const steps = selectedType === 'github' ? ghSteps : selectedType === 'notion' ? notionSteps : wcSteps
+              const currentKey: StepKey = !selectedType ? 'type' : (selectedType === 'github' || selectedType === 'notion') ? 'configure' : wcStep
               const currentIdx = steps.findIndex((s) => s.key === currentKey)
               return (
                 <div className="flex items-center gap-1.5 text-xs flex-wrap">
@@ -218,6 +241,7 @@ function AddConnectorPage() {
                       if (available) {
                         setSelectedType(type)
                         setWcStep('details')
+                        setNotionStep('credentials')
                         setShowAdvancedSelector(false)
                         setPreviewResult(null)
                         setWcPreviewUrl('')
@@ -278,6 +302,70 @@ function AddConnectorPage() {
                   </Button>
                 </div>
               </form>
+            )}
+
+            {/* Notion form */}
+            {selectedType === 'notion' && (
+              <div className="space-y-4">
+                {/* Step 1: Credentials */}
+                {notionStep === 'credentials' && (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="notion-name">{m.admin_connectors_field_name()}</Label>
+                      <Input id="notion-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="notion-token">{m.admin_connectors_notion_access_token()}</Label>
+                      <Input id="notion-token" type="password" required placeholder={m.admin_connectors_notion_access_token_placeholder()} value={notionConfig.access_token} onChange={(e) => setNotionConfig((p) => ({ ...p, access_token: e.target.value }))} />
+                      <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help()}</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="notion-db-ids">{m.admin_connectors_notion_database_ids()}</Label>
+                      <textarea
+                        id="notion-db-ids"
+                        className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-sm placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        placeholder={m.admin_connectors_notion_database_ids_placeholder()}
+                        value={notionConfig.database_ids}
+                        onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
+                      />
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button type="button" size="sm" disabled={!name || !notionConfig.access_token} onClick={() => setNotionStep('settings')}>
+                        {m.admin_connectors_webcrawler_next()}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                        {m.admin_connectors_webcrawler_back()}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {/* Step 2: Settings */}
+                {notionStep === 'settings' && (
+                  <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                      <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="notion-max-pages">{m.admin_connectors_notion_max_pages()}</Label>
+                      <Input id="notion-max-pages" type="number" min="1" max="2000" value={notionConfig.max_pages} onChange={(e) => setNotionConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                    </div>
+                    {createMutation.error && (
+                      <p className="text-sm text-[var(--color-destructive)]">
+                        {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" disabled={createMutation.isPending}>
+                        {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setNotionStep('credentials')}>
+                        {m.admin_connectors_webcrawler_back()}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
             )}
 
             {/* Web crawler wizard */}
