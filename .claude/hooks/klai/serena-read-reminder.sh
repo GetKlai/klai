@@ -5,6 +5,8 @@
 # Does NOT block — injects a systemMessage reminder to use Serena first.
 # NOT triggered for: .md, .css, .yaml, .json, .env (Read is correct for those)
 
+set -euo pipefail
+
 CODE_EXT_PATTERN='\.(py|ts|tsx|js|jsx)$'
 CODE_GLOB_PATTERN='\*\.(py|ts|tsx|js|jsx)'
 
@@ -33,14 +35,15 @@ print(d.get('tool_input', {}).get('file_path', ''))
         is_code_file "$FILE_PATH" && MATCH=1
         ;;
     Grep)
-        # Check glob param (e.g. "*.py", "**/*.ts") or path ending in code ext
-        GREP_GLOB=$(echo "$INPUT" | python3 -c "
+        # Check glob param (e.g. "*.py", "**/*.ts"), type param ("py", "ts"), or path ending in code ext
+        GREP_INFO=$(echo "$INPUT" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 ti = d.get('tool_input', {})
-print(ti.get('glob', '') + ' ' + ti.get('path', ''))
+parts = [ti.get('glob', ''), ti.get('path', ''), ti.get('type', '')]
+print(' '.join(p for p in parts if p))
 " 2>/dev/null || echo "")
-        echo "$GREP_GLOB" | grep -qE "$CODE_EXT_PATTERN|$CODE_GLOB_PATTERN" && MATCH=1
+        echo "$GREP_INFO" | grep -qE "$CODE_EXT_PATTERN|$CODE_GLOB_PATTERN|\b(py|ts|js)\b" && MATCH=1
         ;;
 esac
 
