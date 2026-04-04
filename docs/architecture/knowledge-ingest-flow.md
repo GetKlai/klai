@@ -145,11 +145,11 @@ This means a large repo with no changes costs almost nothing. Supported files: `
 parser.py`. The parsed plain text is then forwarded to `knowledge-ingest` via
 `POST /ingest/v1/document`. Maximum file size: 50 MB.
 
-**Web crawls (live):** the crawl wizard uses Crawl4AI (Playwright-backed) with two endpoints:
+**Web crawls (live):** the crawl wizard uses the shared Crawl4AI container via REST API (`http://crawl4ai:11235`) with two endpoints:
 
 - `POST /ingest/v1/crawl/preview` — crawl wizard preview; returns `fit_markdown`, `word_count`,
   and any `warnings` (e.g. `navigation_detected`, `low_word_count`) without ingesting.
-- `POST /ingest/v1/crawl` — full ingest; fetches URL via crawl4ai (Playwright, JS rendering),
+- `POST /ingest/v1/crawl` — full ingest; fetches URL via crawl4ai REST API (Playwright, JS rendering),
   deduplicates via dual-hash, and ingests via the standard pipeline.
 
 **Smart pipeline switching (SPEC-CRAWL-001):** the pipeline is chosen based on whether a
