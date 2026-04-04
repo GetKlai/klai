@@ -35,6 +35,10 @@ RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "5"))
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
 KLAI_GAP_DENSE_THRESHOLD = float(os.getenv("KLAI_GAP_DENSE_THRESHOLD", "0.35"))
+PORTAL_RETRIEVAL_LOG_URL = os.getenv(
+    "PORTAL_RETRIEVAL_LOG_URL", f"{PORTAL_API_URL}/internal/v1/retrieval-log"
+)
+EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
@@ -225,6 +229,53 @@ def _fire_gap_event(
         pass  # No running event loop (test context) — skip silently
 
 
+# @MX:NOTE: [AUTO] Fire-and-forget retrieval log -- mirrors _fire_gap_event pattern. SPEC-KB-015.
+# @MX:WARN: [AUTO] Uses create_task -- caller must be inside running event loop.
+# @MX:REASON: Silently discards on no-loop (test context) and any HTTP error (REQ-KB-015-03).
+def _fire_retrieval_log(
+    org_id: str,
+    user_id: str,
+    chunk_ids: list,
+    reranker_scores: list,
+    query_resolved: str,
+) -> None:
+    """Schedule an async retrieval log POST without blocking the pre-call hook."""
+    import asyncio
+    from datetime import datetime
+
+    try:
+        int(org_id)
+    except (ValueError, TypeError):
+        logger.warning("KlaiKnowledgeHook: non-numeric org_id '%s', skipping retrieval log", org_id)
+        return
+
+    payload = {
+        "org_id": str(org_id),
+        "user_id": user_id,
+        "chunk_ids": chunk_ids,
+        "reranker_scores": reranker_scores,
+        "query_resolved": query_resolved,
+        "embedding_model_version": EMBEDDING_MODEL_VERSION,
+        "retrieved_at": datetime.utcnow().isoformat(),
+    }
+
+    async def _post():
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(
+                    PORTAL_RETRIEVAL_LOG_URL,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
+                )
+        except Exception as exc:
+            logger.warning("KlaiKnowledgeHook: retrieval log POST failed (%s)", exc)
+
+    try:
+        asyncio.get_running_loop().create_task(_post())
+    except RuntimeError:
+        pass  # No running event loop (test context)
+
+
 class KlaiKnowledgeHook(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if call_type not in ("completion", "acompletion"):
@@ -313,6 +364,13 @@ class KlaiKnowledgeHook(CustomLogger):
                 chunks=chunks,
                 retrieval_ms=retrieval_ms,
             )
+
+        # --- Retrieval log (SPEC-KB-015-01) ---
+        chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
+        reranker_scores = [c.get("reranker_score") or 0.0 for c in chunks]
+        if chunk_ids and not result.get("retrieval_bypassed"):
+            _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
+
         if not chunks:
             return data
 
@@ -365,6 +423,7 @@ class KlaiKnowledgeHook(CustomLogger):
             "org_id": org_id,
             "user_id": user_id,
             "chunks_injected": len(chunks),
+            "chunk_ids": chunk_ids,
             "retrieval_ms": retrieval_ms,
             "gate_bypassed": False,
         }

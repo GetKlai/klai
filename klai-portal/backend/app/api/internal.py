@@ -13,13 +13,15 @@ and perform lazy LibreChat MongoDB ObjectId → Zitadel user ID mapping.
 
 import logging
 from datetime import datetime
+from typing import Literal
 
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -28,7 +30,11 @@ from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
+from app.services.events import emit_event
 from app.services.gap_rescorer import schedule_rescore
+from app.services.quality_scorer import schedule_quality_update
+from app.services.redis_client import get_redis_pool
+from app.services.retrieval_log import find_correlated_log
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
@@ -332,6 +338,161 @@ async def notify_page_saved(
         db_factory=get_db,
         delay_seconds=5.0,
     )
+
+
+class RetrievalLogIn(BaseModel):
+    org_id: str  # Zitadel org ID string
+    user_id: str  # LibreChat ObjectId
+    chunk_ids: list[str]
+    reranker_scores: list[float]
+    query_resolved: str
+    embedding_model_version: str
+    retrieved_at: datetime
+
+
+@router.post("/v1/retrieval-log", status_code=status.HTTP_201_CREATED)
+async def post_retrieval_log(
+    body: RetrievalLogIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Record a retrieval log from the LiteLLM knowledge hook (SPEC-KB-015).
+
+    Resolves zitadel org_id string to portal int org_id, then writes to Redis.
+    Silent discard on any error (REQ-KB-015-03).
+    """
+    _require_internal_token(request)
+
+    try:
+        org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == body.org_id))
+        org = org_result.scalar_one_or_none()
+        if org is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
+        from app.services.retrieval_log import write_retrieval_log
+
+        await write_retrieval_log(
+            org_id=org.id,
+            user_id=body.user_id,
+            chunk_ids=body.chunk_ids,
+            reranker_scores=body.reranker_scores,
+            query_resolved=body.query_resolved,
+            embedding_model_version=body.embedding_model_version,
+            retrieved_at=body.retrieved_at,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        # REQ-KB-015-03: silent discard on any error
+        logger.warning("retrieval_log_endpoint_failed", exc_info=True)
+
+    return {"ok": True}
+
+
+class KbFeedbackIn(BaseModel):
+    conversation_id: str
+    message_id: str
+    message_created_at: datetime
+    rating: Literal["thumbsUp", "thumbsDown"]
+    tag: str | None = None
+    text: str | None = None
+    librechat_user_id: str
+    librechat_tenant_id: str
+
+
+# @MX:ANCHOR: [AUTO] Public API boundary for KB feedback from LibreChat. SPEC-KB-015.
+# @MX:REASON: Called by LibreChat patch (feedback.cjs) + LiteLLM hook + tests. fan_in >= 3.
+@router.post("/v1/kb-feedback", status_code=status.HTTP_201_CREATED, response_model=None)
+async def post_kb_feedback(
+    body: KbFeedbackIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Process feedback from LibreChat (SPEC-KB-015).
+
+    1. Resolve librechat_tenant_id -> org_id
+    2. Check idempotency (Redis)
+    3. Correlate with retrieval log
+    4. Insert feedback event (raw SQL for RLS)
+    5. Schedule Qdrant update if correlated
+    6. Emit product event
+    """
+    _require_internal_token(request)
+
+    # 1. Resolve tenant
+    org_result = await db.execute(
+        select(PortalOrg).where(PortalOrg.librechat_container == body.librechat_tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown tenant")
+
+    await set_tenant(db, org.id)
+
+    # 2. Idempotency check (REQ-KB-015-12)
+    redis_pool = await get_redis_pool()
+    idem_key = f"fb:{body.message_id}:{body.conversation_id}"
+    if redis_pool:
+        existing = await redis_pool.get(idem_key)
+        if existing:
+            return Response(status_code=200)
+
+    # 3. Time-window correlation (REQ-KB-015-09)
+    correlated_log = await find_correlated_log(
+        org_id=org.id,
+        user_id=body.librechat_user_id,
+        message_created_at=body.message_created_at,
+    )
+
+    chunk_ids = correlated_log["chunk_ids"] if correlated_log else []
+    correlated = correlated_log is not None
+
+    # 4. Insert feedback event via raw SQL (RLS table -- split SELECT/INSERT policies)
+    await db.execute(
+        text("""
+            INSERT INTO portal_feedback_events
+            (org_id, conversation_id, message_id, rating, tag, feedback_text,
+             chunk_ids, correlated, model_alias, occurred_at)
+            VALUES (:org_id, :conversation_id, :message_id, :rating, :tag,
+                    :feedback_text, :chunk_ids, :correlated, :model_alias, NOW())
+        """),
+        {
+            "org_id": org.id,
+            "conversation_id": body.conversation_id,
+            "message_id": body.message_id,
+            "rating": body.rating,
+            "tag": body.tag,
+            "feedback_text": body.text,
+            "chunk_ids": chunk_ids or None,
+            "correlated": correlated,
+            "model_alias": None,
+        },
+    )
+    await db.commit()
+
+    # 5. Set idempotency key (REQ-KB-015-12)
+    if redis_pool:
+        try:
+            await redis_pool.set(idem_key, "1", ex=3600)
+        except Exception:
+            logger.warning("kb_feedback_idem_key_set_failed", exc_info=True)
+
+    # 6. Schedule Qdrant quality update if correlated (REQ-KB-015-14)
+    if correlated and chunk_ids:
+        schedule_quality_update(chunk_ids, body.rating, org.id)
+
+    # 7. Emit product event (REQ-KB-015-22)
+    emit_event(
+        "knowledge.feedback",
+        org_id=org.id,
+        properties={
+            "rating": body.rating,
+            "correlated": correlated,
+            "chunk_count": len(chunk_ids),
+        },
+    )
+
+    return {"ok": True}
 
 
 class GapEventIn(BaseModel):
