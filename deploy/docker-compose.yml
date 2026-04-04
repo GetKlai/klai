@@ -238,6 +238,7 @@ services:
     volumes:
       - ./librechat/librechat.yaml:/app/librechat.yaml:ro
       - librechat-klai-images:/app/client/public/images
+      - ./librechat/patches/feedback.cjs:/app/api/server/routes/messages.js:ro
     environment:
       MONGO_URI: mongodb://librechat-klai:${LIBRECHAT_KLAI_MONGO_PASSWORD}@mongodb:27017/librechat-klai?authSource=librechat-klai
       DOMAIN_CLIENT: https://chat.${DOMAIN}
@@ -265,6 +266,8 @@ services:
       JINA_API_URL: "http://172.18.0.1:7998/v1/rerank"
       JINA_API_KEY: "klai-internal"
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      PORTAL_INTERNAL_URL: http://portal-api:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -369,10 +372,13 @@ services:
       KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
       GITHUB_ADMIN_PAT: ${GITHUB_ADMIN_PAT}
       GITHUB_ORG: GetKlai
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QDRANT_URL: http://qdrant:6333
     networks:
       - klai-net
       - net-postgres
       - net-mongodb
+      - net-redis
       - socket-proxy
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────

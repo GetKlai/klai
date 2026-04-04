@@ -8,10 +8,11 @@ Single collection: klai_knowledge
 Tenant isolation via org_id payload filter.
 """
 import asyncio
-import structlog
 import time
 import uuid
 import warnings
+
+import structlog
 
 # Qdrant client warns about API key over HTTP; safe inside Docker network
 warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
@@ -96,7 +97,11 @@ async def ensure_collection() -> None:
         await client.create_payload_index(
             COLLECTION, field_name="incoming_link_count", field_schema="integer",
         )
-        logger.info("qdrant_payload_index_created", field="incoming_link_count", collection=COLLECTION)
+        logger.info(
+            "qdrant_payload_index_created",
+            field="incoming_link_count",
+            collection=COLLECTION,
+        )
 
 
 async def upsert_chunks(
@@ -133,6 +138,8 @@ async def upsert_chunks(
         "kb_slug": kb_slug,
         "path": path,
         "artifact_id": artifact_id,
+        "quality_score": 0.5,
+        "feedback_count": 0,
     }
     if user_id:
         base_payload["user_id"] = user_id
@@ -194,6 +201,8 @@ async def upsert_enriched_chunks(
         "artifact_id": artifact_id,
         "content_type": content_type,
         "ingested_at": int(time.time()),
+        "quality_score": 0.5,
+        "feedback_count": 0,
     }
     if belief_time_start is not None:
         base_payload["valid_from"] = belief_time_start
@@ -444,8 +453,10 @@ async def update_link_counts(
                     ),
                     timeout=5.0,
                 )
-            except asyncio.TimeoutError:
-                logger.warning("link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug)
+            except TimeoutError:
+                logger.warning(
+                    "link_count_update_timeout", url=url, org_id=org_id, kb_slug=kb_slug
+                )
 
     t0 = time.time()
     await asyncio.gather(*(_update_one(url, count) for url, count in url_to_count.items()))

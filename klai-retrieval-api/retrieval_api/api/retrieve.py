@@ -18,6 +18,7 @@ from retrieval_api.metrics import (
     step_latency_seconds,
 )
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
+from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.events import emit_event
 from retrieval_api.services.tei import embed_single, embed_sparse
@@ -90,7 +91,9 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
         t_qdrant = time.perf_counter()
-        qdrant_coro = search.hybrid_search(query_vector, req, settings.retrieval_candidates, sparse_vector)
+        qdrant_coro = search.hybrid_search(
+            query_vector, req, settings.retrieval_candidates, sparse_vector
+        )
 
         graph_task: asyncio.Task[list[dict]] | None = None
         t_graph: float | None = None
@@ -170,10 +173,16 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
 
-        # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every request but serves
-        # @MX:NOTE: flat results. Diffs logged as shadow_eval to VictoriaLogs for offline analysis.
-        # @MX:NOTE: Set EVIDENCE_SHADOW_MODE=false to activate evidence-tier scoring for users.
-        # @MX:SPEC: SPEC-EVIDENCE-001 R9. Disable shadow mode after RAGAS validation confirms improvement.
+        # 5b. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
+        reranked = quality_boost(reranked)
+
+        # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every
+        # request but serves flat results. Diffs logged as shadow_eval to
+        # VictoriaLogs for offline analysis.
+        # @MX:NOTE: Set EVIDENCE_SHADOW_MODE=false to activate evidence-tier
+        # scoring for users.
+        # @MX:SPEC: SPEC-EVIDENCE-001 R9. Disable shadow mode after RAGAS
+        # validation confirms improvement.
         # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
         shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "true").lower() in (
             "true", "1", "yes",
@@ -187,7 +196,11 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 flat_top_chunk_ids=[c["chunk_id"] for c in reranked[:5]],
                 evidence_top_chunk_ids=[c["chunk_id"] for c in scored[:5]],
                 score_deltas=[
-                    round(scored[i].get("final_score", 0) - (reranked[i].get("reranker_score") or reranked[i]["score"]), 4)
+                    round(
+                        scored[i].get("final_score", 0)
+                        - (reranked[i].get("reranker_score") or reranked[i]["score"]),
+                        4,
+                    )
                     for i in range(min(5, len(reranked)))
                 ],
             )

@@ -3,12 +3,15 @@
 GET  /api/app/account/kb-preference  — read current KB scope preference
 PATCH /api/app/account/kb-preference — update KB scope preference
 
-The PATCH endpoint validates that all submitted kb_slugs belong to the caller's org
-and increments kb_pref_version so the LiteLLM hook picks up the change within 30s.
+The PATCH endpoint validates that all submitted kb_slugs belong to the caller's org,
+increments kb_pref_version, and immediately invalidates the LiteLLM Redis cache key
+so the next LLM call picks up the new settings without delay.
 """
 
+import asyncio
 import logging
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -16,12 +19,32 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, bearer
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/app/account", tags=["app-account"])
+
+
+async def _invalidate_litellm_kb_cache(org_id: int, librechat_user_id: str) -> None:
+    """Delete the LiteLLM version pointer key so the next LLM call fetches fresh KB prefs.
+
+    Fire-and-forget — failures are logged but never bubble up to the caller.
+    Key format mirrors klai_knowledge.py: kb_ver:{org_id}:{user_id}.
+    """
+    try:
+        r = aioredis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password or None,
+            socket_connect_timeout=1.0,
+        )
+        async with r:
+            await r.delete(f"kb_ver:{org_id}:{librechat_user_id}")
+    except Exception as exc:
+        logger.warning("KB pref: Redis cache invalidation failed (%s) — hook picks up within 30s", exc)
 
 
 # -- Pydantic schemas ---------------------------------------------------------
@@ -111,6 +134,11 @@ async def patch_kb_preference(
 
     user.kb_pref_version += 1
     await db.commit()
+
+    if user.librechat_user_id:
+        asyncio.get_running_loop().create_task(
+            _invalidate_litellm_kb_cache(org.id, user.librechat_user_id)
+        )
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,

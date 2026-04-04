@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     meili_master_key: str = ""
     litellm_master_key: str = ""
     redis_password: str = ""
+    redis_host: str = "redis"
+    redis_port: int = 6379
     firecrawl_internal_key: str = ""  # FIRECRAWL_INTERNAL_KEY — shared web search API key
 
     # Provisioning paths (container-internal paths, mounted from host)
@@ -96,8 +98,12 @@ class Settings(BaseSettings):
     knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     knowledge_ingest_secret: str = ""  # PORTAL_API_KNOWLEDGE_INGEST_SECRET
 
+    # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
+    redis_url: str = ""
+
     # Knowledge / Qdrant
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_collection: str = "klai_knowledge"
     qdrant_api_key: str = ""
 
     # Vexa meeting API (agentic-runtime)
