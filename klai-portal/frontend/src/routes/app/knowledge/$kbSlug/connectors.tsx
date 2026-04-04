@@ -233,7 +233,7 @@ function ConnectorsTab() {
                   return (
                     <tr key={c.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
                       <td className="px-4 py-2.5 font-medium text-[var(--color-purple-deep)]">{c.name}</td>
-                      <td className="px-4 py-2.5"><SyncStatusBadge status={c.last_sync_status} /></td>
+                      <td className="px-4 py-2.5"><SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} /></td>
                       {isOwner && (
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1">
