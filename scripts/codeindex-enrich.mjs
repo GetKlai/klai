@@ -26,7 +26,8 @@ import { createRequire } from 'module';
 import { homedir } from 'os';
 
 // ── KuzuDB access via codeindex's installation ─────────────────────────
-const codeindexRequire = createRequire('/opt/homebrew/lib/node_modules/codeindex/node_modules/kuzu/');
+const _npmGlobalRoot = execSync('npm root -g').toString().trim();
+const codeindexRequire = createRequire(`${_npmGlobalRoot}/codeindex/node_modules/kuzu/`);
 const kuzu = codeindexRequire('./index.js');
 
 // ── Config ──────────────────────────────────────────────────────────────
