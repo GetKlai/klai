@@ -230,14 +230,23 @@ debugging. It runs via `uvx` (acceptable here since `mcp-grafana` is a small, fa
 
 **Prerequisites:**
 
-1. Create a service account token in Grafana → Admin → Service Accounts
-2. Set the token as environment variable `GRAFANA_SERVICE_ACCOUNT_TOKEN`
+Create a **per-developer** service account token in Grafana (one per machine, so tokens can be
+revoked individually):
 
-The token is **not** stored in `.mcp.json` — it is read from the environment. Add it to your
-shell profile:
+1. Go to Grafana → Admin → Service Accounts → Add service account
+2. Name: `claude-<yourname>`, Role: **Viewer**
+3. Click the account → Add service account token → name it `claude-code-<yourname>`
+4. Copy the token (`glsa_...`)
+
+Set the token as environment variable `GRAFANA_SERVICE_ACCOUNT_TOKEN`. Add it to your shell
+profile:
 
 ```bash
+# macOS / Linux — add to ~/.zshrc or ~/.bashrc
 export GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_..."
+
+# Windows (Git Bash) — create ~/.bashrc if it doesn't exist
+echo 'export GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_..."' >> ~/.bashrc
 ```
 
 **Verify:**
@@ -260,4 +269,4 @@ For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observabili
 5. **Playwright profile locked** — Browser didn't close cleanly. Fix: remove `SingletonLock` files (see above) or kill lingering browser processes.
 6. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 7. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
-8. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create service account in Grafana and export the token in your shell profile.
+8. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 8) and export the token in your shell profile. On Windows (Git Bash), `~/.bashrc` may not exist — create it manually.
