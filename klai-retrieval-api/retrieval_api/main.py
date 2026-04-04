@@ -12,7 +12,7 @@ from prometheus_client import make_asgi_app
 from retrieval_api.api.chat import router as chat_router
 from retrieval_api.api.retrieve import router as retrieve_router
 from retrieval_api.config import settings
-from retrieval_api.logging_setup import setup_logging
+from retrieval_api.logging_setup import RequestContextMiddleware, setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="retrieval-api", version="1.0.0", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 app.include_router(retrieve_router, prefix="")
 app.include_router(chat_router, prefix="")
 

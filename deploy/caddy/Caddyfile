@@ -14,11 +14,25 @@
     }
 
     log {
+        # JSON to stdout for Alloy → VictoriaLogs pipeline (queryable in Grafana)
+        output stdout
+        format json
+    }
+    log access-file {
+        # File backup for direct server access
         output file /var/log/caddy/access.log {
             roll_size 10mb
             roll_keep 5
         }
+        format json
     }
+
+    # Generate X-Request-ID for trace correlation across Caddy → backend services.
+    # request_header sets it on the upstream REQUEST (not response), so backends see it.
+    @no-request-id {
+        not header X-Request-ID *
+    }
+    request_header @no-request-id X-Request-ID "{http.request.uuid}"
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"

@@ -56,6 +56,12 @@ volumes:
   vexa-recordings-data:
   scribe-audio-data:
 
+# Default log rotation — prevents unbounded disk growth on json-file driver.
+# Alloy captures logs in real-time via Docker socket, so rotated logs are only
+# a local fallback. Configure Docker daemon default: /etc/docker/daemon.json
+#   { "log-driver": "json-file", "log-opts": { "max-size": "50m", "max-file": "3" } }
+# This applies to ALL containers without per-service config.
+
 services:
 
   # ─── Caddy (reverse proxy + wildcard TLS) ────────────────────────────────
