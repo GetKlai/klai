@@ -1,68 +1,33 @@
-"""Fire-and-forget product event emission to the portal database.
+"""Fire-and-forget product event emission via the existing database connection.
 
-Events are inserted into the portal's ``product_events`` table via a
-lightweight asyncpg connection pool.  The ``org_id`` foreign key is
-resolved automatically from the Zitadel ``tenant_id`` using a sub-query.
-
-Pool lifecycle is managed by the FastAPI lifespan (init_pool / close_pool).
+Events are inserted into the portal's ``product_events`` table (public schema)
+using the same SQLAlchemy engine the rest of research-api uses.  The ``org_id``
+foreign key is resolved automatically from the Zitadel ``tenant_id``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from urllib.parse import unquote, urlparse
 
-import asyncpg
 import structlog
+from sqlalchemy import text
 
-from app.core.config import settings
+from app.core.database import AsyncSessionLocal
 
 logger = structlog.get_logger()
 
-_pool: asyncpg.Pool | None = None
 _pending: set[asyncio.Task] = set()
 
-_INSERT_SQL = """
+_INSERT_SQL = text("""
     INSERT INTO product_events (event_type, org_id, user_id, properties)
     VALUES (
-        $1,
-        (SELECT id FROM portal_orgs WHERE zitadel_org_id = $2),
-        $3,
-        $4::jsonb
+        :event_type,
+        (SELECT id FROM portal_orgs WHERE zitadel_org_id = :tenant_id),
+        :user_id,
+        CAST(:properties AS jsonb)
     )
-"""
-
-
-async def init_pool() -> None:
-    """Create the portal events connection pool. Call from FastAPI lifespan."""
-    global _pool
-    dsn = settings.portal_events_dsn
-    if not dsn:
-        logger.info("events: portal_events_dsn not set, event emission disabled")
-        return
-    try:
-        parsed = urlparse(dsn)
-        _pool = await asyncpg.create_pool(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            user=unquote(parsed.username or ""),
-            password=unquote(parsed.password or ""),
-            database=parsed.path.lstrip("/"),
-            min_size=1,
-            max_size=2,
-        )
-        logger.info("events: portal DB pool created")
-    except Exception:
-        logger.warning("events: failed to create portal DB pool", exc_info=True)
-
-
-async def close_pool() -> None:
-    """Close the portal events connection pool. Call from FastAPI lifespan."""
-    global _pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
+""")
 
 
 def emit_event(
@@ -77,16 +42,18 @@ def emit_event(
     """
 
     async def _insert() -> None:
-        if _pool is None:
-            return
         try:
-            await _pool.execute(
-                _INSERT_SQL,
-                event_type,
-                tenant_id,
-                user_id,
-                json.dumps(properties or {}),
-            )
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    _INSERT_SQL,
+                    {
+                        "event_type": event_type,
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "properties": json.dumps(properties or {}),
+                    },
+                )
+                await session.commit()
         except Exception:
             logger.warning(
                 "emit_event failed",
