@@ -61,30 +61,32 @@ Always read the existing file before writing to understand:
 
 ### Step 3: Format the entry
 
+**[HARD] All entries MUST be written in English.** User communication is in Dutch, but knowledge base files are English-only.
+
 **Pattern format:**
 ```markdown
-## Korte naam
+## Short name
 
-**Wanneer:** [één zin: wanneer gebruik je dit]
+**When:** [one sentence: when to use this]
 
-[Uitleg waarom dit patroon bestaat]
+[Explanation of why this pattern exists]
 
 ```bash
-# copy-paste ready commando's
+# copy-paste ready commands
 ```
 
-**Regel:** [één-regel samenvatting]
+**Rule:** [one-line summary]
 ```
 
 **Pitfall format:**
 ```markdown
-## Korte naam (CRIT|HIGH|MED)
+## Short name (CRIT|HIGH|MED)
 
-[Wat er fout ging]
+[What went wrong]
 
-**Waarom:** [root cause]
+**Why:** [root cause]
 
-**Preventie:** Specifieke actie die dit voorkomt.
+**Prevention:** Specific action that prevents this.
 ```
 
 ### Step 4: Write to the domain file

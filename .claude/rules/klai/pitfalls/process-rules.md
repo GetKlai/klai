@@ -65,6 +65,13 @@ variants: kebab-case, snake_case, camelCase, PascalCase, SCREAMING_SNAKE.
 Defaults have unbounded blast radius: tests, configs, docs, scripts,
 other services. Missing one variant breaks silently.
 
+## follow-loaded-procedures
+When a rules file is in your context that documents a procedure (SOPS
+workflow, deploy steps, migration sequence), follow it step by step.
+Do not improvise shell commands for the same operation. If the rules
+say "decrypt → modify → encrypt-in-place → mv", do exactly that — not
+a creative alternative with redirects or pipes.
+
 ## spec-discipline
 Before implementing a SPEC, read the full document in `.moai/specs/`
 or `.workflow/specs/`. Write down each constraint and how to verify it:
