@@ -818,6 +818,7 @@
   "docs_kb_locked_tooltip": "You don't have access to this knowledge base",
   "docs_kb_request_access": "Request access",
   "docs_kb_locked_badge": "No access",
+  "docs_kb_view_public": "View public site",
   "app_tool_meetings_title": "Meetings",
   "app_tool_meetings_description": "Record and transcribe meetings",
   "app_meetings_empty_heading": "No meetings",
