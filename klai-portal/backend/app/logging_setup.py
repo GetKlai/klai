@@ -3,8 +3,26 @@
 import logging
 import os
 import sys
+from typing import Any
 
 import structlog
+from pydantic import SecretStr
+
+
+def mask_secret_str(
+    logger: Any,
+    method_name: Any,
+    event_dict: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace any top-level SecretStr values in the event dict with '***'.
+
+    This processor prevents accidental credential leakage in structured logs.
+    It only inspects top-level values (structlog convention).
+    """
+    for key, value in event_dict.items():
+        if isinstance(value, SecretStr):
+            event_dict[key] = "***"
+    return event_dict
 
 
 def setup_logging(service_name: str = "portal-api") -> None:
@@ -17,6 +35,7 @@ def setup_logging(service_name: str = "portal-api") -> None:
 
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
+        mask_secret_str,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),

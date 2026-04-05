@@ -65,10 +65,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             missing.append("SSO_COOKIE_KEY")
         if not settings.portal_secrets_key:
             missing.append("PORTAL_SECRETS_KEY")
+        if not settings.encryption_key:
+            missing.append("ENCRYPTION_KEY")
         if not settings.database_url:
             missing.append("DATABASE_URL")
         if missing:
             logger.critical("Missing required environment variables: %s", ", ".join(missing))
+            raise SystemExit(1)
+        # Validate ENCRYPTION_KEY format (REQ-CRYPTO-003)
+        enc_key = settings.encryption_key
+        if len(enc_key) != 64 or not all(c in "0123456789abcdefABCDEF" for c in enc_key):
+            logger.critical(
+                "ENCRYPTION_KEY is not a valid 64-character hex string. "
+                "Generate with: openssl rand -hex 32"
+            )
             raise SystemExit(1)
 
         # Validate the Zitadel PAT before accepting traffic.

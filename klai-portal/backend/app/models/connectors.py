@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,4 +39,5 @@ class PortalConnector(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     allowed_assertion_modes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    encrypted_credentials: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, default=None)
     created_by: Mapped[str] = mapped_column(Text, nullable=False)

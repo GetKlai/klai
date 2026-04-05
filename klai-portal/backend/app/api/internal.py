@@ -29,6 +29,7 @@ from app.core.database import get_db, set_tenant
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
+from app.services.connector_credentials import credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_rescorer import schedule_rescore
@@ -149,13 +150,26 @@ async def get_connector_config(
             detail="Connector not found",
         )
     connector, kb, org = row
+
+    # Merge decrypted credentials into config for internal consumers
+    # @MX:NOTE: [AUTO] Fallback: encrypted_credentials IS NULL => read plaintext config (legacy).
+    # Remove after cleanup migration.
+    merged_config = dict(connector.config) if connector.config else {}
+    if connector.encrypted_credentials is not None and credential_store is not None:
+        decrypted = await credential_store.decrypt_credentials(
+            org_id=connector.org_id,
+            encrypted_credentials=connector.encrypted_credentials,
+            db=db,
+        )
+        merged_config.update(decrypted)
+
     return ConnectorConfigResponse(
         connector_id=str(connector.id),
         kb_id=connector.kb_id,
         kb_slug=kb.slug,
         zitadel_org_id=org.zitadel_org_id,
         connector_type=connector.connector_type,
-        config=connector.config,
+        config=merged_config,
         schedule=connector.schedule,
         is_enabled=connector.is_enabled,
         allowed_assertion_modes=connector.allowed_assertion_modes,
