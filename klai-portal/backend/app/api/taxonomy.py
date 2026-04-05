@@ -17,6 +17,7 @@ from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode, PortalTaxonomyProposal
 from app.services.access import get_user_role_for_kb
@@ -394,25 +395,38 @@ def _require_internal_token(request: Request) -> None:
 )
 async def list_taxonomy_nodes_internal(
     kb_slug: str,
+    zitadel_org_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodesResponse:
     """List taxonomy nodes for a KB. Internal endpoint for knowledge-ingest service.
 
-    Uses X-Internal-Token auth (Authorization: Bearer <internal_secret>).
-    Lookup by kb_slug only — Zitadel org_id (bigint) cannot be compared to
-    portal's internal org_id (postgres integer).
+    Requires ?zitadel_org_id=<bigint> so we can set RLS tenant before querying.
+    portal_knowledge_bases and portal_taxonomy_nodes both have strict RLS.
     """
     _require_internal_token(request)
 
-    # KB lookup is not RLS-scoped (no tenant set yet), so query by slug only
-    result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug))
+    # portal_orgs has no RLS — safe to query without tenant
+    org_result = await db.execute(
+        select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id)
+    )
+    org = org_result.scalar_one_or_none()
+    if not org:
+        return TaxonomyNodesResponse(nodes=[])
+
+    # Set RLS tenant so subsequent queries on portal_knowledge_bases and
+    # portal_taxonomy_nodes are correctly scoped
+    await set_tenant(db, org.id)
+
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.slug == kb_slug,
+            PortalKnowledgeBase.org_id == org.id,
+        )
+    )
     kb = result.scalar_one_or_none()
     if not kb:
         return TaxonomyNodesResponse(nodes=[])
-
-    # Set tenant so RLS allows access to portal_taxonomy_nodes
-    await set_tenant(db, kb.org_id)
 
     nodes_result = await db.execute(
         select(PortalTaxonomyNode)
