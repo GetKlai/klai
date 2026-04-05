@@ -73,6 +73,24 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
         resp.raise_for_status()
 
 
+async def delete_connector(org_id: str, kb_slug: str, connector_id: str) -> None:
+    """Delete all knowledge-ingest data for a connector: FalkorDB episodes, Qdrant chunks, PG artifacts.
+
+    Intentionally raises on failure — portal must not delete its own connector record when
+    ingest cleanup fails, to keep both sides consistent.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=30.0,
+    ) as client:
+        resp = await client.delete(
+            "/ingest/v1/connector",
+            params={"org_id": org_id, "kb_slug": kb_slug, "connector_id": connector_id},
+        )
+        resp.raise_for_status()
+
+
 async def preview_crawl(
     url: str,
     content_selector: str | None = None,

@@ -15,6 +15,7 @@ from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.services import knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.events import emit_event
@@ -284,6 +285,13 @@ async def delete_connector(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Connector not found",
         )
+    # Clean up all ingested data before removing the DB record.
+    # Raises on failure — keeps portal and ingest consistent (no orphaned data).
+    await knowledge_ingest_client.delete_connector(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        connector_id=str(connector.id),
+    )
     await db.delete(connector)
     await db.commit()
 

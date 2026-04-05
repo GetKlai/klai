@@ -580,6 +580,31 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
     return {"status": "ok"}
 
 
+@router.delete("/ingest/v1/connector")
+async def delete_connector_route(
+    request: Request, org_id: str, kb_slug: str, connector_id: str
+) -> dict:
+    """Delete all data for a connector: FalkorDB graph nodes + Qdrant chunks + PostgreSQL records.
+
+    Scoped to (org_id, kb_slug, connector_id). Called by the portal on connector deletion
+    and by operators for manual cleanup. Only affects documents tagged with source_connector_id.
+    """
+    _verify_internal_secret(request)
+    episode_ids = await pg_store.get_connector_episode_ids(org_id, kb_slug, connector_id)
+    await graph_module.delete_kb_episodes(org_id, episode_ids)
+    await qdrant_store.delete_connector(org_id, kb_slug, connector_id)
+    artifacts_deleted = await pg_store.delete_connector_artifacts(org_id, kb_slug, connector_id)
+    logger.info(
+        "connector_deleted",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
+        episodes_deleted=len(episode_ids),
+        artifacts_deleted=artifacts_deleted,
+    )
+    return {"status": "ok", "episodes_deleted": len(episode_ids), "artifacts_deleted": artifacts_deleted}  # noqa: E501
+
+
 @router.patch("/ingest/v1/kb/visibility")
 async def update_kb_visibility_route(request: Request, req: UpdateKBVisibilityRequest) -> dict:
     """Update visibility for a KB: persists to kb_config table and backfills all Qdrant chunks."""
