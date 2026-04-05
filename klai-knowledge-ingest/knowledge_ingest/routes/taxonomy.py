@@ -88,8 +88,6 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
     3. Generate tags for all processed chunks
     Idempotent: chunks with existing taxonomy_node_ids are skipped.
     """
-    _verify_internal_token(request)
-
     taxonomy_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
     if not taxonomy_nodes:
         logger.info(
@@ -311,8 +309,6 @@ async def taxonomy_bootstrap_proposals(
     Use this to bootstrap a KB taxonomy from scratch when no nodes exist yet.
     After accepting proposals in the portal, run /backfill to tag all chunks.
     """
-    _verify_internal_token(request)
-
     client = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
@@ -407,7 +403,6 @@ async def taxonomy_coverage_stats(
     Called by the portal to build the coverage dashboard.
     Returns per-node chunk counts + total and untagged counts.
     """
-    _verify_internal_token(request)
 
     client = AsyncQdrantClient(
         url=settings.qdrant_url,
