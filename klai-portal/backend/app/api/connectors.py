@@ -239,7 +239,8 @@ async def update_connector(
                 db=db,
             )
             connector.config = stripped_config
-            connector.encrypted_credentials = encrypted_blob
+            if encrypted_blob is not None:
+                connector.encrypted_credentials = encrypted_blob
         else:
             connector.config = body.config
     if body.schedule is not None:
