@@ -235,10 +235,11 @@ services:
   librechat-klai:
     image: ghcr.io/danny-avila/librechat:latest
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "/klai-patches/entrypoint.sh"]
     volumes:
       - ./librechat/librechat.yaml:/app/librechat.yaml:ro
       - librechat-klai-images:/app/client/public/images
-      - ./librechat/patches/feedback.cjs:/app/api/server/routes/messages.js:ro
+      - ./librechat/patches:/klai-patches:ro
     environment:
       MONGO_URI: mongodb://librechat-klai:${LIBRECHAT_KLAI_MONGO_PASSWORD}@mongodb:27017/librechat-klai?authSource=librechat-klai
       DOMAIN_CLIENT: https://chat.${DOMAIN}
