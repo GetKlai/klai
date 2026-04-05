@@ -23,6 +23,7 @@ class DocumentRef:
     size: int
     content_type: str
     source_ref: str = ""
+    source_url: str = ""
 
 
 class BaseAdapter(ABC):

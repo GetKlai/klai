@@ -30,6 +30,7 @@ class KnowledgeIngestClient:
         content: str,
         source_connector_id: str,
         source_ref: str,
+        source_url: str = "",
         content_type: str = "unknown",
         allowed_assertion_modes: list[str] | None = None,
     ) -> None:
@@ -62,6 +63,8 @@ class KnowledgeIngestClient:
             "source_ref": source_ref,
             "content_type": content_type,
         }
+        if source_url:
+            payload["extra"] = {"source_url": source_url}
         if allowed_assertion_modes is not None:
             payload["allowed_assertion_modes"] = allowed_assertion_modes
 
