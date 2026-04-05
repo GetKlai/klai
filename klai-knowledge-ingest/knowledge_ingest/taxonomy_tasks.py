@@ -1,0 +1,258 @@
+"""
+Procrastinate task for async taxonomy backfill.
+
+Queue: taxonomy-backfill (separate from enrichment queues; can take minutes for large KBs).
+Deduplication: queueing_lock = 'taxonomy-backfill:{org_id}:{kb_slug}' ensures at most
+one pending/running backfill per KB.
+
+The actual 3-phase logic (migrate, classify, tag) lives in _run_backfill() and is
+identical to the previous synchronous endpoint implementation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import warnings
+from typing import Any
+
+import structlog
+
+logger = structlog.get_logger()
+
+
+def register_taxonomy_tasks(procrastinate_app: Any) -> None:
+    """Register taxonomy tasks on the Procrastinate app. Called from enrichment_tasks.init_app()."""
+    import procrastinate
+
+    @procrastinate_app.task(
+        queue="taxonomy-backfill",
+        retry=procrastinate.RetryStrategy(max_attempts=1),
+    )
+    async def run_taxonomy_backfill(
+        org_id: str,
+        kb_slug: str,
+        batch_size: int = 100,
+    ) -> dict:
+        """Run the 3-phase taxonomy backfill as a background job."""
+        result = await _run_backfill(org_id=org_id, kb_slug=kb_slug, batch_size=batch_size)
+        return result
+
+    procrastinate_app.run_taxonomy_backfill = run_taxonomy_backfill  # type: ignore[attr-defined]
+
+
+async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
+    """Core 3-phase backfill logic, extracted from the old synchronous endpoint.
+
+    Returns a dict with migrated/classified/tagged/skipped counts.
+    """
+    warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
+
+    from qdrant_client import AsyncQdrantClient
+    from qdrant_client.models import (
+        FieldCondition,
+        Filter,
+        IsEmptyCondition,
+        MatchValue,
+        PayloadField,
+    )
+
+    from knowledge_ingest.config import settings
+    from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+    from knowledge_ingest.taxonomy_classifier import classify_document
+
+    COLLECTION = "klai_knowledge"
+
+    taxonomy_nodes = await fetch_taxonomy_nodes(kb_slug, org_id)
+    if not taxonomy_nodes:
+        logger.info("taxonomy_backfill_no_nodes", kb_slug=kb_slug, org_id=org_id)
+        return {"migrated": 0, "classified": 0, "tagged": 0, "skipped": 0}
+
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
+
+    migrated = 0
+    classified = 0
+    tagged = 0
+    skipped = 0
+
+    # Phase 1: Migrate old taxonomy_node_id -> taxonomy_node_ids
+    offset = None
+    while True:
+        phase1_filter = Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
+            ],
+            must_not=[
+                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_id")),
+            ],
+        )
+
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=phase1_filter,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=30.0,
+        )
+
+        if not points:
+            break
+
+        for point in points:
+            payload = point.payload or {}
+            old_id = payload.get("taxonomy_node_id")
+            new_ids = [old_id] if old_id is not None else []
+            await client.set_payload(
+                COLLECTION,
+                payload={"taxonomy_node_ids": new_ids},
+                points=[point.id],
+            )
+            migrated += 1
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    # Phase 2: Re-classify unclassified chunks
+    offset = None
+    while True:
+        phase2_filter = Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_id")),
+                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
+            ]
+        )
+
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=phase2_filter,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=30.0,
+        )
+
+        if not points:
+            break
+
+        doc_groups: dict[str, list] = {}
+        for point in points:
+            payload = point.payload or {}
+            doc_key = payload.get("artifact_id") or payload.get("path") or str(point.id)
+            if doc_key not in doc_groups:
+                doc_groups[doc_key] = []
+            doc_groups[doc_key].append(point)
+
+        for doc_key, doc_points in doc_groups.items():
+            first_payload = doc_points[0].payload or {}
+            title = first_payload.get("title") or first_payload.get("path") or doc_key
+            content_preview = first_payload.get("text", "")[:500]
+
+            matched_nodes, suggested_tags = await classify_document(
+                title=title,
+                content_preview=content_preview,
+                taxonomy_nodes=taxonomy_nodes,
+            )
+            node_ids = [nid for nid, _conf in matched_nodes]
+
+            point_ids = [p.id for p in doc_points]
+            update_payload: dict = {"taxonomy_node_ids": node_ids}
+            if suggested_tags:
+                update_payload["tags"] = suggested_tags
+                tagged += len(point_ids)
+
+            await client.set_payload(
+                COLLECTION,
+                payload=update_payload,
+                points=point_ids,
+            )
+            classified += len(point_ids)
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    # Phase 3: Generate tags for chunks with taxonomy_node_ids but no tags
+    offset = None
+    while True:
+        phase3_filter = Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                IsEmptyCondition(is_empty=PayloadField(key="tags")),
+            ],
+            must_not=[
+                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
+            ],
+        )
+
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=phase3_filter,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=30.0,
+        )
+
+        if not points:
+            break
+
+        doc_groups_tag: dict[str, list] = {}
+        for point in points:
+            payload = point.payload or {}
+            doc_key = payload.get("artifact_id") or payload.get("path") or str(point.id)
+            if doc_key not in doc_groups_tag:
+                doc_groups_tag[doc_key] = []
+            doc_groups_tag[doc_key].append(point)
+
+        for doc_key, doc_points in doc_groups_tag.items():
+            first_payload = doc_points[0].payload or {}
+            title = first_payload.get("title") or first_payload.get("path") or doc_key
+            content_preview = first_payload.get("text", "")[:500]
+
+            _, suggested_tags = await classify_document(
+                title=title,
+                content_preview=content_preview,
+                taxonomy_nodes=taxonomy_nodes,
+            )
+
+            if suggested_tags:
+                point_ids = [p.id for p in doc_points]
+                await client.set_payload(
+                    COLLECTION,
+                    payload={"tags": suggested_tags},
+                    points=point_ids,
+                )
+                tagged += len(point_ids)
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    logger.info(
+        "taxonomy_backfill_complete",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        migrated=migrated,
+        classified=classified,
+        tagged=tagged,
+        skipped=skipped,
+    )
+    return {"migrated": migrated, "classified": classified, "tagged": tagged, "skipped": skipped}

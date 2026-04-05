@@ -2,8 +2,12 @@
 Taxonomy endpoints -- SPEC-KB-022 R9, bootstrap, coverage stats.
 
 POST /ingest/v1/taxonomy/backfill
-- Three phases: (1) migrate taxonomy_node_id -> taxonomy_node_ids, (2) re-classify, (3) tag
-- Idempotent: chunks with existing taxonomy_node_ids are skipped
+- Enqueues a Procrastinate background job for 3-phase backfill
+- Returns immediately with job_id and status "queued"
+- Deduplicates: same (org_id, kb_slug) returns existing job_id
+
+GET /ingest/v1/taxonomy/backfill/{job_id}
+- Returns job status (queued/doing/succeeded/failed) and result when done
 
 POST /ingest/v1/taxonomy/bootstrap-proposals
 - Scan existing chunks, generate bootstrap proposals with descriptions
@@ -11,6 +15,7 @@ POST /ingest/v1/taxonomy/bootstrap-proposals
 GET /ingest/v1/taxonomy/coverage-stats
 - Query Qdrant counts per taxonomy node for the coverage dashboard
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,7 +42,6 @@ from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
     generate_bootstrap_proposals,
 )
-from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -51,11 +55,15 @@ class BackfillRequest(BaseModel):
     batch_size: int = 100
 
 
-class BackfillResponse(BaseModel):
-    migrated: int
-    classified: int
-    tagged: int
-    skipped: int
+class BackfillEnqueueResponse(BaseModel):
+    job_id: int
+    status: str
+
+
+class BackfillStatusResponse(BaseModel):
+    job_id: int
+    status: str
+    result: dict | None = None
 
 
 class BootstrapRequest(BaseModel):
@@ -75,226 +83,139 @@ def _verify_internal_token(request: Request) -> None:
         return
     token = request.headers.get("x-internal-token", "")
     import hmac
+
     if not token or not hmac.compare_digest(token, settings.portal_internal_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-@router.post("/ingest/v1/taxonomy/backfill", response_model=BackfillResponse)
-async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillResponse:
-    """Backfill multi-label taxonomy for existing chunks.
+# ---------------------------------------------------------------------------
+# Procrastinate job status mapping
+# ---------------------------------------------------------------------------
+# Procrastinate stores status as text in procrastinate_jobs.status.
+# Possible values: todo, doing, succeeded, failed, cancelled, aborting.
+# We map to a simpler vocabulary for the API consumer.
+_STATUS_MAP = {
+    "todo": "queued",
+    "doing": "running",
+    "succeeded": "succeeded",
+    "failed": "failed",
+    "cancelled": "failed",
+    "aborting": "running",
+}
 
-    Three phases:
-    1. Migrate old taxonomy_node_id (int) -> taxonomy_node_ids: [old_value]
-    2. Re-classify unclassified chunks with multi-label classifier
-    3. Generate tags for all processed chunks
-    Idempotent: chunks with existing taxonomy_node_ids are skipped.
+
+@router.post("/ingest/v1/taxonomy/backfill", response_model=BackfillEnqueueResponse)
+async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillEnqueueResponse:
+    """Enqueue a taxonomy backfill job for the given KB.
+
+    The 3-phase backfill (migrate, classify, tag) runs as a Procrastinate
+    background task. Returns immediately with the job_id.
+
+    Deduplication: if a backfill for the same (org_id, kb_slug) is already
+    queued or running, the existing job_id is returned instead of enqueuing
+    a duplicate.
     """
-    taxonomy_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
-    if not taxonomy_nodes:
-        logger.info(
-            "taxonomy_backfill_no_nodes",
-            kb_slug=req.kb_slug,
-            org_id=req.org_id,
-        )
-        return BackfillResponse(migrated=0, classified=0, tagged=0, skipped=0)
+    from knowledge_ingest.enrichment_tasks import get_app
 
-    client = AsyncQdrantClient(
-        url=settings.qdrant_url,
-        api_key=settings.qdrant_api_key or None,
+    proc_app = get_app()
+    lock = f"taxonomy-backfill:{req.org_id}:{req.kb_slug}"
+
+    # Check for an existing queued/running job with the same queueing_lock.
+    # Procrastinate prevents duplicate queueing_lock values for todo/doing jobs,
+    # but we query first to return the existing job_id to the caller.
+    from knowledge_ingest.db import get_pool
+
+    pool = await get_pool()
+    existing = await pool.fetchrow(
+        """
+        SELECT id, status
+        FROM procrastinate_jobs
+        WHERE queueing_lock = $1
+          AND status IN ('todo', 'doing')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        lock,
     )
-
-    migrated = 0
-    classified = 0
-    tagged = 0
-    skipped = 0
-
-    # Phase 1: Migrate old taxonomy_node_id -> taxonomy_node_ids
-    # Find chunks with old field that don't have new field
-    offset = None
-    while True:
-        # Find chunks that have taxonomy_node_id but NOT taxonomy_node_ids
-        # We scroll for chunks with taxonomy_node_id set (not null)
-        # and taxonomy_node_ids absent (is_null)
-        phase1_filter = Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
-            ],
-            must_not=[
-                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_id")),
-            ],
+    if existing:
+        logger.info(
+            "taxonomy_backfill_dedup",
+            org_id=req.org_id,
+            kb_slug=req.kb_slug,
+            existing_job_id=existing["id"],
+            existing_status=existing["status"],
+        )
+        return BackfillEnqueueResponse(
+            job_id=existing["id"],
+            status=_STATUS_MAP.get(existing["status"], existing["status"]),
         )
 
-        points, next_offset = await asyncio.wait_for(
-            client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=phase1_filter,
-                limit=req.batch_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            ),
-            timeout=30.0,
-        )
-
-        if not points:
-            break
-
-        for point in points:
-            payload = point.payload or {}
-            old_id = payload.get("taxonomy_node_id")
-            new_ids = [old_id] if old_id is not None else []
-            await client.set_payload(
-                COLLECTION,
-                payload={"taxonomy_node_ids": new_ids},
-                points=[point.id],
-            )
-            migrated += 1
-
-        if next_offset is None:
-            break
-        offset = next_offset
-
-    # Phase 2: Re-classify unclassified chunks (no taxonomy_node_id AND no taxonomy_node_ids)
-    offset = None
-    while True:
-        phase2_filter = Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_id")),
-                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
-            ]
-        )
-
-        points, next_offset = await asyncio.wait_for(
-            client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=phase2_filter,
-                limit=req.batch_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            ),
-            timeout=30.0,
-        )
-
-        if not points:
-            break
-
-        # Group by document
-        doc_groups: dict[str, list] = {}
-        for point in points:
-            payload = point.payload or {}
-            doc_key = payload.get("artifact_id") or payload.get("path") or str(point.id)
-            if doc_key not in doc_groups:
-                doc_groups[doc_key] = []
-            doc_groups[doc_key].append(point)
-
-        for doc_key, doc_points in doc_groups.items():
-            first_payload = doc_points[0].payload or {}
-            title = first_payload.get("title") or first_payload.get("path") or doc_key
-            content_preview = first_payload.get("text", "")[:500]
-
-            matched_nodes, suggested_tags = await classify_document(
-                title=title,
-                content_preview=content_preview,
-                taxonomy_nodes=taxonomy_nodes,
-            )
-            node_ids = [nid for nid, _conf in matched_nodes]
-
-            point_ids = [p.id for p in doc_points]
-            update_payload: dict = {"taxonomy_node_ids": node_ids}
-            if suggested_tags:
-                update_payload["tags"] = suggested_tags
-                tagged += len(point_ids)
-
-            await client.set_payload(
-                COLLECTION,
-                payload=update_payload,
-                points=point_ids,
-            )
-            classified += len(point_ids)
-
-        if next_offset is None:
-            break
-        offset = next_offset
-
-    # Phase 3: Generate tags for chunks that have taxonomy_node_ids but no tags
-    offset = None
-    while True:
-        phase3_filter = Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-                IsEmptyCondition(is_empty=PayloadField(key="tags")),
-            ],
-            must_not=[
-                IsEmptyCondition(is_empty=PayloadField(key="taxonomy_node_ids")),
-            ],
-        )
-
-        points, next_offset = await asyncio.wait_for(
-            client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=phase3_filter,
-                limit=req.batch_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            ),
-            timeout=30.0,
-        )
-
-        if not points:
-            break
-
-        # Group by document for tag generation
-        doc_groups_tag: dict[str, list] = {}
-        for point in points:
-            payload = point.payload or {}
-            doc_key = payload.get("artifact_id") or payload.get("path") or str(point.id)
-            if doc_key not in doc_groups_tag:
-                doc_groups_tag[doc_key] = []
-            doc_groups_tag[doc_key].append(point)
-
-        for doc_key, doc_points in doc_groups_tag.items():
-            first_payload = doc_points[0].payload or {}
-            title = first_payload.get("title") or first_payload.get("path") or doc_key
-            content_preview = first_payload.get("text", "")[:500]
-
-            _, suggested_tags = await classify_document(
-                title=title,
-                content_preview=content_preview,
-                taxonomy_nodes=taxonomy_nodes,
-            )
-
-            if suggested_tags:
-                point_ids = [p.id for p in doc_points]
-                await client.set_payload(
-                    COLLECTION,
-                    payload={"tags": suggested_tags},
-                    points=point_ids,
-                )
-                tagged += len(point_ids)
-
-        if next_offset is None:
-            break
-        offset = next_offset
-
-    logger.info(
-        "taxonomy_backfill_complete",
+    # Enqueue a new backfill job
+    job_id = await proc_app.run_taxonomy_backfill.configure(
+        queueing_lock=lock,
+    ).defer_async(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
-        migrated=migrated,
-        classified=classified,
-        tagged=tagged,
-        skipped=skipped,
+        batch_size=req.batch_size,
     )
-    return BackfillResponse(
-        migrated=migrated, classified=classified, tagged=tagged, skipped=skipped,
+
+    logger.info(
+        "taxonomy_backfill_enqueued",
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        job_id=job_id,
     )
+    return BackfillEnqueueResponse(job_id=job_id, status="queued")
+
+
+@router.get("/ingest/v1/taxonomy/backfill/{job_id}", response_model=BackfillStatusResponse)
+async def taxonomy_backfill_status(request: Request, job_id: int) -> BackfillStatusResponse:
+    """Check the status of a taxonomy backfill job.
+
+    Returns the Procrastinate job status and, when the job has succeeded,
+    the result dict with migrated/classified/tagged/skipped counts.
+    """
+    from knowledge_ingest.db import get_pool
+
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT id, status, task_name
+        FROM procrastinate_jobs
+        WHERE id = $1
+        """,
+        job_id,
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if row["task_name"] != "run_taxonomy_backfill":
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    status = _STATUS_MAP.get(row["status"], row["status"])
+
+    # Procrastinate stores task return values in procrastinate_events
+    result = None
+    if row["status"] == "succeeded":
+        event_row = await pool.fetchrow(
+            """
+            SELECT result
+            FROM procrastinate_events
+            WHERE job_id = $1
+              AND type = 'succeeded'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            job_id,
+        )
+        if event_row and event_row["result"]:
+            import json
+
+            raw = event_row["result"]
+            result = json.loads(raw) if isinstance(raw, str) else raw
+
+    return BackfillStatusResponse(job_id=job_id, status=status, result=result)
 
 
 @router.post("/ingest/v1/taxonomy/bootstrap-proposals", response_model=BootstrapResponse)
@@ -393,6 +314,88 @@ class CoverageStatsResponse(BaseModel):
     untagged_count: int
 
 
+class TagEntry(BaseModel):
+    tag: str
+    count: int
+
+
+class TopTagsResponse(BaseModel):
+    tags: list[TagEntry]
+    total_chunks_sampled: int
+
+
+@router.get("/ingest/v1/taxonomy/top-tags", response_model=TopTagsResponse)
+async def taxonomy_top_tags(
+    request: Request,
+    kb_slug: str,
+    org_id: str,
+    limit: int = 20,
+    taxonomy_node_id: int | None = None,
+) -> TopTagsResponse:
+    """Return top N tags by frequency across KB chunks.
+
+    Scrolls up to 2000 chunks (sampled) to count tag occurrences.
+    Optionally filters by taxonomy_node_id to get tags within a category.
+    """
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
+
+    must_conditions = [
+        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+        FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+    ]
+    if taxonomy_node_id is not None:
+        from qdrant_client.models import MatchAny  # noqa: PLC0415
+        must_conditions.append(
+            FieldCondition(
+                key="taxonomy_node_ids",
+                match=MatchAny(any=[taxonomy_node_id]),
+            )
+        )
+
+    scroll_filter = Filter(must=must_conditions)
+
+    tag_counts: dict[str, int] = {}
+    total_sampled = 0
+    offset = None
+    max_scroll = 2000
+
+    while total_sampled < max_scroll:
+        batch_size = min(100, max_scroll - total_sampled)
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=batch_size,
+                offset=offset,
+                with_payload=["tags"],
+                with_vectors=False,
+            ),
+            timeout=20.0,
+        )
+        if not points:
+            break
+
+        for point in points:
+            payload = point.payload or {}
+            for tag in payload.get("tags") or []:
+                if isinstance(tag, str) and tag:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            total_sampled += 1
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    return TopTagsResponse(
+        tags=[TagEntry(tag=t, count=c) for t, c in sorted_tags],
+        total_chunks_sampled=total_sampled,
+    )
+
+
 @router.get("/ingest/v1/taxonomy/coverage-stats", response_model=CoverageStatsResponse)
 async def taxonomy_coverage_stats(
     request: Request,
@@ -445,10 +448,12 @@ async def taxonomy_coverage_stats(
             client.count(collection_name=COLLECTION, count_filter=node_filter, exact=True),
             timeout=10.0,
         )
-        node_stats.append(CoverageNodeStats(
-            taxonomy_node_id=node.id,
-            chunk_count=count_result.count,
-        ))
+        node_stats.append(
+            CoverageNodeStats(
+                taxonomy_node_id=node.id,
+                chunk_count=count_result.count,
+            )
+        )
 
     # Count untagged chunks (no taxonomy_node_ids field or empty)
     untagged_filter = Filter(
