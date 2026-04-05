@@ -3,8 +3,6 @@
 SPEC-KB-015 REQ-KB-015-10/12/13: feedback events table with RLS, idempotency, no user_id.
 """
 
-import pytest
-from datetime import datetime, timezone
 
 
 def test_feedback_event_model_construction():

@@ -8,9 +8,10 @@ SPEC-KB-015 REQ-KB-015-08 through REQ-KB-015-14, REQ-KB-015-22:
 - Product event emission
 """
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch, MagicMock
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def _mock_result(value):
 @pytest.mark.asyncio
 async def test_unknown_tenant_returns_404():
     """REQ-KB-015-11: Unknown librechat_tenant_id -> 404."""
-    from app.api.internal import post_kb_feedback, KbFeedbackIn
+    from app.api.internal import KbFeedbackIn, post_kb_feedback
 
     mock_request = MagicMock()
     mock_request.headers = {"Authorization": "Bearer test-secret"}
@@ -53,7 +54,7 @@ async def test_unknown_tenant_returns_404():
     body = KbFeedbackIn(
         conversation_id="conv-1",
         message_id="msg-1",
-        message_created_at=datetime.now(timezone.utc),
+        message_created_at=datetime.now(UTC),
         rating="thumbsUp",
         librechat_user_id="user-abc",
         librechat_tenant_id="unknown-tenant",
@@ -70,7 +71,7 @@ async def test_unknown_tenant_returns_404():
 @pytest.mark.asyncio
 async def test_idempotent_duplicate_returns_200(mock_org):
     """REQ-KB-015-12: Duplicate (message_id, conversation_id) -> 200."""
-    from app.api.internal import post_kb_feedback, KbFeedbackIn
+    from app.api.internal import KbFeedbackIn, post_kb_feedback
 
     mock_request = MagicMock()
     mock_redis = AsyncMock()
@@ -82,7 +83,7 @@ async def test_idempotent_duplicate_returns_200(mock_org):
     body = KbFeedbackIn(
         conversation_id="conv-1",
         message_id="msg-1",
-        message_created_at=datetime.now(timezone.utc),
+        message_created_at=datetime.now(UTC),
         rating="thumbsUp",
         librechat_user_id="user-abc",
         librechat_tenant_id="tenant-abc",
@@ -103,7 +104,7 @@ async def test_idempotent_duplicate_returns_200(mock_org):
 @pytest.mark.asyncio
 async def test_successful_correlated_feedback(mock_org):
     """Correlated feedback: retrieval log found, Qdrant update scheduled, event emitted."""
-    from app.api.internal import post_kb_feedback, KbFeedbackIn
+    from app.api.internal import KbFeedbackIn, post_kb_feedback
 
     mock_request = MagicMock()
     mock_redis = AsyncMock()
@@ -124,7 +125,7 @@ async def test_successful_correlated_feedback(mock_org):
     body = KbFeedbackIn(
         conversation_id="conv-1",
         message_id="msg-1",
-        message_created_at=datetime.now(timezone.utc),
+        message_created_at=datetime.now(UTC),
         rating="thumbsUp",
         librechat_user_id="user-abc",
         librechat_tenant_id="tenant-abc",
@@ -138,7 +139,7 @@ async def test_successful_correlated_feedback(mock_org):
         patch("app.api.internal.emit_event") as mock_emit,
         patch("app.api.internal.schedule_quality_update") as mock_schedule,
     ):
-        result = await post_kb_feedback(body=body, request=mock_request, db=mock_db)
+        await post_kb_feedback(body=body, request=mock_request, db=mock_db)
 
         # DB insert happened (raw SQL)
         mock_db.execute.assert_called()
@@ -160,7 +161,7 @@ async def test_successful_correlated_feedback(mock_org):
 @pytest.mark.asyncio
 async def test_uncorrelated_feedback(mock_org):
     """Uncorrelated: no retrieval log found, stored with correlated=False, no Qdrant update."""
-    from app.api.internal import post_kb_feedback, KbFeedbackIn
+    from app.api.internal import KbFeedbackIn, post_kb_feedback
 
     mock_request = MagicMock()
     mock_redis = AsyncMock()
@@ -174,7 +175,7 @@ async def test_uncorrelated_feedback(mock_org):
     body = KbFeedbackIn(
         conversation_id="conv-2",
         message_id="msg-2",
-        message_created_at=datetime.now(timezone.utc),
+        message_created_at=datetime.now(UTC),
         rating="thumbsDown",
         librechat_user_id="user-abc",
         librechat_tenant_id="tenant-abc",
@@ -188,7 +189,7 @@ async def test_uncorrelated_feedback(mock_org):
         patch("app.api.internal.emit_event") as mock_emit,
         patch("app.api.internal.schedule_quality_update") as mock_schedule,
     ):
-        result = await post_kb_feedback(body=body, request=mock_request, db=mock_db)
+        await post_kb_feedback(body=body, request=mock_request, db=mock_db)
 
         # Quality update NOT scheduled (uncorrelated)
         mock_schedule.assert_not_called()
