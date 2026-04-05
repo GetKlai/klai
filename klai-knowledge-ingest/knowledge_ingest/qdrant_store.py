@@ -306,7 +306,7 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
 
 _ALLOWED_METADATA_FIELDS = frozenset({
     "title", "kb_slug", "chunk_index", "created_at",
-    "source_type", "visibility", "tags", "provenance_type", "confidence",
+    "source_type", "source_connector_id", "source_ref", "visibility", "tags", "provenance_type", "confidence",
     "artifact_id", "content_type", "valid_from", "valid_until", "ingested_at",
     "assertion_mode",
 })

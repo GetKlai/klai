@@ -18,6 +18,7 @@ class IngestRequest(BaseModel):
     extra: dict = {}  # Adapter-specific metadata (participants, source_url, etc.)
     chunks: list[str] | None = None  # Pre-computed chunks (used with skip_chunking=True)
     source_connector_id: str | None = None  # ID of the connector that produced this document
+    source_ref: str | None = None  # Source reference (e.g. URL, Notion page ID, repo path)
     synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
     allowed_assertion_modes: list[str] | None = None  # Connector-level hint: expected modes for this source
 
