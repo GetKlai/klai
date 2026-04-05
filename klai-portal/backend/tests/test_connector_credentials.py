@@ -50,7 +50,7 @@ class TestSensitiveFieldsMapping:
         assert "app_private_key" in SENSITIVE_FIELDS["github"]
 
     def test_notion_fields(self) -> None:
-        assert "api_token" in SENSITIVE_FIELDS["notion"]
+        assert "access_token" in SENSITIVE_FIELDS["notion"]
 
     def test_google_drive_fields(self) -> None:
         fields = SENSITIVE_FIELDS["google_drive"]
@@ -113,15 +113,15 @@ class TestEncryptDecryptRoundTrip:
 
     @pytest.mark.asyncio()
     async def test_notion_roundtrip(self, store: ConnectorCredentialStore, db: AsyncMock) -> None:
-        config = {"workspace_id": "ws-123", "api_token": FAKE_TOKEN_A}
+        config = {"workspace_id": "ws-123", "access_token": FAKE_TOKEN_A}
         with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
             encrypted_blob, stripped = await store.encrypt_credentials(
                 org_id=1, connector_type="notion", config=config, db=db
             )
-            assert "api_token" not in stripped
+            assert "access_token" not in stripped
             assert stripped["workspace_id"] == "ws-123"
             decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=encrypted_blob, db=db)
-            assert decrypted["api_token"] == FAKE_TOKEN_A
+            assert decrypted["access_token"] == FAKE_TOKEN_A
 
     @pytest.mark.asyncio()
     async def test_web_crawler_roundtrip(self, store: ConnectorCredentialStore, db: AsyncMock) -> None:
