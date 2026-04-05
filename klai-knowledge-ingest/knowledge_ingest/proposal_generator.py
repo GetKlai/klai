@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.description_generator import generate_node_description
 from knowledge_ingest.portal_client import TaxonomyProposal, submit_taxonomy_proposal
 from knowledge_ingest.taxonomy_classifier import TaxonomyNode
 
@@ -67,7 +68,7 @@ async def maybe_generate_proposal(
             _suggest_category_name(unmatched_documents),
             timeout=settings.taxonomy_classification_timeout,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.warning(
             "taxonomy_proposal_generation_failed",
             kb_slug=kb_slug,
@@ -142,7 +143,7 @@ async def generate_bootstrap_proposals(
             _suggest_multiple_categories(documents[:50]),
             timeout=30.0,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.warning(
             "bootstrap_proposals_generation_failed",
             kb_slug=kb_slug,
@@ -153,15 +154,24 @@ async def generate_bootstrap_proposals(
     if not categories:
         return 0
 
+    # Generate descriptions for each proposed category in parallel
+    sample_titles = [doc.title for doc in documents[:10]]
+    desc_tasks = [
+        generate_node_description(name, None, sample_titles)
+        for name in categories if name
+    ]
+    descriptions = await asyncio.gather(*desc_tasks, return_exceptions=True)
+
     submitted = 0
-    for name in categories:
-        if not name:
-            continue
+    valid_categories = [name for name in categories if name]
+    for i, name in enumerate(valid_categories):
+        desc = descriptions[i] if i < len(descriptions) and isinstance(descriptions[i], str) else ""
         proposal = TaxonomyProposal(
             proposal_type="new_node",
             suggested_name=name,
             document_count=len(documents),
             sample_titles=[doc.title for doc in documents[:5]],
+            description=desc,
         )
         await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
         submitted += 1
@@ -169,6 +179,7 @@ async def generate_bootstrap_proposals(
             "bootstrap_proposal_submitted",
             kb_slug=kb_slug,
             suggested_name=name,
+            description=desc,
         )
 
     logger.info(

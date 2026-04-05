@@ -31,6 +31,7 @@ class TaxonomyProposal:
     suggested_name: str
     document_count: int
     sample_titles: list[str]
+    description: str = ""
 
 
 async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
@@ -55,7 +56,7 @@ async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
             _fetch_from_portal(kb_slug, org_id),
             timeout=3.0,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.warning(
             "taxonomy_nodes_fetch_failed",
             kb_slug=kb_slug,
@@ -82,7 +83,7 @@ async def _fetch_from_portal(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
         resp.raise_for_status()
         data = resp.json()
         return [
-            TaxonomyNode(id=item["id"], name=item["name"])
+            TaxonomyNode(id=item["id"], name=item["name"], description=item.get("description"))
             for item in data
             if isinstance(item.get("id"), int) and item.get("name")
         ]
@@ -119,6 +120,7 @@ async def submit_taxonomy_proposal(
                         "suggested_name": proposal.suggested_name,
                         "document_count": proposal.document_count,
                         "sample_titles": proposal.sample_titles[:5],
+                        "description": proposal.description,
                     },
                 },
             )

@@ -2,8 +2,10 @@
 
 import logging
 import re
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -11,12 +13,14 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _get_caller_org, bearer
+from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode, PortalTaxonomyProposal
 from app.services.access import get_user_role_for_kb
+from app.trace import get_trace_headers
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +36,7 @@ class TaxonomyNodeOut(BaseModel):
     parent_id: int | None
     name: str
     slug: str
+    description: str | None = None
     doc_count: int
     sort_order: int
     created_at: datetime
@@ -50,6 +55,7 @@ class CreateNodeRequest(BaseModel):
 class UpdateNodeRequest(BaseModel):
     name: str | None = None
     parent_id: int | None = None
+    description: str | None = None
 
 
 class ProposalOut(BaseModel):
@@ -98,6 +104,7 @@ def _node_out(node: PortalTaxonomyNode) -> TaxonomyNodeOut:
         parent_id=node.parent_id,
         name=node.name,
         slug=node.slug,
+        description=node.description,
         doc_count=node.doc_count,
         sort_order=node.sort_order,
         created_at=node.created_at,
@@ -267,6 +274,14 @@ async def update_taxonomy_node(
         node.name = body.name.strip()
         node.slug = _slugify(body.name)
 
+    if body.description is not None:
+        if len(body.description) > 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Description must be at most 500 characters",
+            )
+        node.description = body.description
+
     if body.parent_id is not None:
         if body.parent_id == node.id:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Node cannot be its own parent")
@@ -418,7 +433,7 @@ async def create_proposal(
     """Submit a taxonomy proposal. Internal endpoint for knowledge-ingest service."""
     _require_internal_token(request)
 
-    valid_types = {"new_node", "merge", "split", "rename"}
+    valid_types = {"new_node", "merge", "split", "rename", "tag"}
     if body.proposal_type not in valid_types:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -489,11 +504,13 @@ async def approve_proposal(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Referenced parent node does not exist",
                 )
+        description = payload.get("description")
         node = PortalTaxonomyNode(
             kb_id=kb.id,
             parent_id=parent_id,
             name=name,
             slug=_slugify(name),
+            description=description[:200] if description else None,
             created_by=caller_id,
         )
         db.add(node)
@@ -628,3 +645,160 @@ async def reject_proposal(
     await db.commit()
     await db.refresh(proposal)
     return _proposal_out(proposal)
+
+
+# -- Coverage stats -----------------------------------------------------------
+
+# 5-minute in-memory cache: key = (org_id_str, kb_slug), value = (monotonic_ts, data_dict)
+_coverage_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+_COVERAGE_CACHE_TTL = 300.0  # 5 minutes
+
+
+class CoverageNodeOut(BaseModel):
+    taxonomy_node_id: int
+    taxonomy_node_name: str
+    chunk_count: int
+    gap_count: int
+    health: str  # "healthy", "attention_needed", "empty"
+
+
+class CoverageResponse(BaseModel):
+    nodes: list[CoverageNodeOut]
+    total_chunks: int
+    untagged_count: int
+    untagged_percentage: float
+
+
+async def _fetch_ingest_coverage(org_id: str, kb_slug: str) -> dict | None:
+    """Fetch coverage stats from knowledge-ingest service.
+
+    Returns parsed JSON dict on success, None on any failure.
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                **get_trace_headers(),
+            },
+            timeout=10.0,
+        ) as client:
+            resp = await client.get(
+                "/ingest/v1/taxonomy/coverage-stats",
+                params={"org_id": org_id, "kb_slug": kb_slug},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        log.warning(
+            "coverage_stats_ingest_fetch_failed",
+            extra={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        return None
+
+
+def _make_coverage_response(
+    ingest_data: dict,
+    gap_counts: dict[int, int],
+    node_names: dict[int, str],
+) -> CoverageResponse:
+    """Merge ingest chunk data with gap counts to build coverage response."""
+    total_chunks = ingest_data.get("total_chunks", 0)
+    untagged_count = ingest_data.get("untagged_count", 0)
+    untagged_pct = round((untagged_count / total_chunks * 100), 2) if total_chunks > 0 else 0.0
+
+    nodes: list[CoverageNodeOut] = []
+    for node_data in ingest_data.get("nodes", []):
+        nid = node_data["taxonomy_node_id"]
+        chunk_count = node_data["chunk_count"]
+        gap_count = gap_counts.get(nid, 0)
+
+        if chunk_count == 0:
+            health = "empty"
+        elif chunk_count < 10 or gap_count >= 5:
+            health = "attention_needed"
+        else:
+            health = "healthy"
+
+        nodes.append(CoverageNodeOut(
+            taxonomy_node_id=nid,
+            taxonomy_node_name=node_names.get(nid, f"Node {nid}"),
+            chunk_count=chunk_count,
+            gap_count=gap_count,
+            health=health,
+        ))
+
+    return CoverageResponse(
+        nodes=nodes,
+        total_chunks=total_chunks,
+        untagged_count=untagged_count,
+        untagged_percentage=untagged_pct,
+    )
+
+
+@router.get("/{kb_slug}/taxonomy/coverage", response_model=CoverageResponse)
+async def taxonomy_coverage(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> CoverageResponse:
+    """Coverage dashboard: per-node chunk counts, gap counts, health status.
+
+    Combines data from knowledge-ingest (Qdrant chunk counts) with portal DB
+    (gap counts per taxonomy node). Results cached for 5 minutes.
+    """
+    _, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+
+    # Resolve Zitadel org_id for the ingest service call
+    from app.models.portal import PortalOrg
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
+    portal_org = org_result.scalar_one_or_none()
+    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+
+    # Check cache
+    cache_key = (zitadel_org_id, kb_slug)
+    cached = _coverage_cache.get(cache_key)
+    if cached is not None:
+        ts, cached_response = cached
+        if time.monotonic() - ts < _COVERAGE_CACHE_TTL:
+            return CoverageResponse(**cached_response)
+
+    # Fetch chunk counts from knowledge-ingest
+    ingest_data = await _fetch_ingest_coverage(zitadel_org_id, kb_slug)
+    if ingest_data is None:
+        ingest_data = {"nodes": [], "total_chunks": 0, "untagged_count": 0}
+
+    # Get taxonomy node names from DB
+    nodes_result = await db.execute(
+        select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb.id)
+    )
+    nodes = nodes_result.scalars().all()
+    node_names = {n.id: n.name for n in nodes}
+
+    # Count open gaps per taxonomy node (last 30 days)
+    cutoff = datetime.now(tz=UTC) - timedelta(days=30)
+    gaps_result = await db.execute(
+        select(PortalRetrievalGap)
+        .where(
+            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.occurred_at >= cutoff,
+            PortalRetrievalGap.resolved_at.is_(None),
+            PortalRetrievalGap.taxonomy_node_ids.isnot(None),
+        )
+    )
+    gaps = gaps_result.scalars().all()
+    gap_counts: dict[int, int] = {}
+    for gap in gaps:
+        if gap.taxonomy_node_ids:
+            for nid in gap.taxonomy_node_ids:
+                gap_counts[nid] = gap_counts.get(nid, 0) + 1
+
+    response = _make_coverage_response(ingest_data, gap_counts, node_names)
+
+    # Cache the response
+    _coverage_cache[cache_key] = (time.monotonic(), response.model_dump())
+
+    return response

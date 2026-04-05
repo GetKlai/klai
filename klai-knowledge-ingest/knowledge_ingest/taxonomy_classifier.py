@@ -1,9 +1,12 @@
 """
-Taxonomy classifier — classifies a document into the best matching taxonomy node.
+Taxonomy classifier -- multi-label classification + tag suggestion for documents.
 
 Uses klai-fast with structured JSON output. One LLM call per document (not per chunk).
-Returns (node_id, confidence): node_id=None when confidence < 0.5 or no nodes exist.
-5-second timeout; falls back to (None, 0.0) on error without failing the ingest.
+Returns (matched_nodes, suggested_tags):
+  - matched_nodes: list of (node_id, confidence) tuples, sorted by confidence desc
+  - suggested_tags: list of free-form tag strings
+Threshold: confidence >= 0.5, max 5 nodes, max 5 tags.
+5-second timeout; falls back to ([], []) on error without failing the ingest.
 """
 from __future__ import annotations
 
@@ -20,19 +23,25 @@ logger = structlog.get_logger()
 
 class TaxonomyNode:
     """Lightweight DTO for taxonomy nodes from the portal."""
-    __slots__ = ("id", "name")
+    __slots__ = ("description", "id", "name")
 
-    def __init__(self, id: int, name: str) -> None:
+    def __init__(self, id: int, name: str, description: str | None = None) -> None:
         self.id = id
         self.name = name
+        self.description = description
 
 
 _SYSTEM_PROMPT = (
     "You are a document taxonomy classifier. "
     "Given a document title, a content preview, and a list of taxonomy categories, "
-    "return the best matching category. "
-    "Respond with JSON only: {\"node_id\": <int or null>, \"confidence\": <float 0-1>, \"reasoning\": <string>}. "
-    "Use null for node_id if no category matches with confidence >= 0.5."
+    "return ALL matching categories (multi-label) and suggest free-form tags. "
+    "Respond with JSON only: "
+    '{"nodes": [{"node_id": <int>, "confidence": <float 0-1>}], '
+    '"tags": [<string>], "reasoning": <string>}. '
+    "Return nodes sorted by confidence descending. "
+    "Only include nodes with confidence >= 0.5. Maximum 5 nodes and 5 tags. "
+    "Return empty nodes list if no category matches with confidence >= 0.5. "
+    "Tags should be lowercase, concise keywords describing the document content."
 )
 
 
@@ -40,19 +49,23 @@ async def classify_document(
     title: str,
     content_preview: str,
     taxonomy_nodes: list[TaxonomyNode],
-) -> tuple[int | None, float]:
-    """Classify a document into the best matching taxonomy node.
+) -> tuple[list[tuple[int, float]], list[str]]:
+    """Classify a document into matching taxonomy nodes and suggest tags.
 
-    Returns (node_id, confidence). node_id=None when:
-    - confidence < 0.5
-    - taxonomy_nodes is empty
+    Returns (matched_nodes, suggested_tags):
+    - matched_nodes: list of (node_id, confidence) with confidence >= 0.5, max 5
+    - suggested_tags: list of tag strings, max 5
+
+    Returns ([], []) when:
+    - taxonomy_nodes is empty (skips LLM call entirely)
     - LLM call fails or times out
     """
     if not taxonomy_nodes:
-        return None, 0.0
+        return [], []
 
     categories = "\n".join(
-        f"- id={node.id}: {node.name}" for node in taxonomy_nodes
+        f"- id={node.id}: {node.name}" + (f" -- {node.description}" if node.description else "")
+        for node in taxonomy_nodes
     )
     user_message = (
         f"Document title: {title}\n"
@@ -65,32 +78,42 @@ async def classify_document(
             _call_litellm(user_message),
             timeout=settings.taxonomy_classification_timeout,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.warning(
             "taxonomy_classification_failed",
             title=title,
             error=str(exc),
         )
-        return None, 0.0
+        return [], []
 
-    node_id = result.get("node_id")
-    confidence = float(result.get("confidence", 0.0))
+    valid_ids = {node.id for node in taxonomy_nodes}
 
-    # Validate that node_id is actually in our taxonomy
-    if node_id is not None:
-        valid_ids = {node.id for node in taxonomy_nodes}
-        if node_id not in valid_ids:
-            logger.warning(
-                "taxonomy_invalid_node_id",
-                title=title,
-                returned_id=node_id,
-            )
-            return None, 0.0
+    # Parse nodes
+    raw_nodes = result.get("nodes", [])
+    matched_nodes: list[tuple[int, float]] = []
+    for entry in raw_nodes:
+        if not isinstance(entry, dict):
+            continue
+        node_id = entry.get("node_id")
+        confidence = float(entry.get("confidence", 0.0))
+        if node_id is not None and node_id in valid_ids and confidence >= 0.5:
+            matched_nodes.append((node_id, confidence))
 
-    if confidence < 0.5:
-        return None, confidence
+    # Sort by confidence desc, limit to 5
+    matched_nodes.sort(key=lambda x: x[1], reverse=True)
+    matched_nodes = matched_nodes[:5]
 
-    return node_id, confidence
+    # Parse tags
+    raw_tags = result.get("tags", [])
+    suggested_tags: list[str] = []
+    for tag in raw_tags:
+        if isinstance(tag, str):
+            cleaned = tag.strip().lower()
+            if cleaned and cleaned not in suggested_tags:
+                suggested_tags.append(cleaned)
+    suggested_tags = suggested_tags[:5]
+
+    return matched_nodes, suggested_tags
 
 
 async def _call_litellm(user_message: str) -> dict:
@@ -109,7 +132,7 @@ async def _call_litellm(user_message: str) -> dict:
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.0,
-                "max_tokens": 200,
+                "max_tokens": 300,
                 "response_format": {"type": "json_object"},
             },
         )

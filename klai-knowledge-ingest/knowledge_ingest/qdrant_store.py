@@ -81,6 +81,7 @@ async def ensure_collection() -> None:
     for field in (
         "org_id", "kb_slug", "artifact_id", "content_type",
         "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
+        "taxonomy_node_ids", "tags",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
@@ -116,14 +117,16 @@ async def upsert_chunks(
     artifact_id: str,
     extra_payload: dict | None = None,
     user_id: str | None = None,
-    taxonomy_node_id: int | None = None,
+    taxonomy_node_ids: list[int] | None = None,
+    tags: list[str] | None = None,
     has_taxonomy: bool = False,
 ) -> None:
     """Upsert raw chunks (before enrichment). Uses vector_chunk named vector.
     Backward compatible: called by the ingest pipeline before enrichment runs.
 
-    taxonomy_node_id: matched node id (int), None = no match, absent field = no taxonomy on KB.
-    has_taxonomy: True when the KB has taxonomy nodes (field is stored even when node_id=None).
+    taxonomy_node_ids: list of matched node ids, [] = no match, absent field = no taxonomy on KB.
+    tags: list of free-form tags to store on chunks.
+    has_taxonomy: True when the KB has taxonomy nodes (field is stored even when empty).
     """
     client = get_client()
 
@@ -152,9 +155,13 @@ async def upsert_chunks(
     }
     if user_id:
         base_payload["user_id"] = user_id
-    # Store taxonomy_node_id only when the KB has taxonomy nodes (R1: absent = no taxonomy on KB)
+    # Store taxonomy_node_ids only when the KB has taxonomy nodes (R1: absent = no taxonomy on KB)
     if has_taxonomy:
-        base_payload["taxonomy_node_id"] = taxonomy_node_id
+        base_payload["taxonomy_node_ids"] = (
+            taxonomy_node_ids if taxonomy_node_ids is not None else []
+        )
+    if tags:
+        base_payload["tags"] = tags
     if extra_payload:
         base_payload.update(extra_payload)
 
@@ -183,7 +190,8 @@ async def upsert_enriched_chunks(
     content_type: str = "unknown",
     belief_time_start: int | None = None,
     belief_time_end: int | None = None,
-    taxonomy_node_id: int | None = None,
+    taxonomy_node_ids: list[int] | None = None,
+    tags: list[str] | None = None,
     has_taxonomy: bool = False,
 ) -> None:
     """
@@ -224,9 +232,13 @@ async def upsert_enriched_chunks(
         base_payload["valid_until"] = belief_time_end
     if user_id:
         base_payload["user_id"] = user_id
-    # Store taxonomy_node_id only when the KB has taxonomy nodes (R1: absent = no taxonomy on KB)
+    # Store taxonomy_node_ids only when the KB has taxonomy nodes (R1: absent = no taxonomy on KB)
     if has_taxonomy:
-        base_payload["taxonomy_node_id"] = taxonomy_node_id
+        base_payload["taxonomy_node_ids"] = (
+            taxonomy_node_ids if taxonomy_node_ids is not None else []
+        )
+    if tags:
+        base_payload["tags"] = tags
     if extra_payload:
         base_payload.update(extra_payload)
 

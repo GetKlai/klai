@@ -248,17 +248,37 @@ async def ingest_document(req: IngestRequest) -> dict:
     if req.synthesis_depth is not None:
         kf["synthesis_depth"] = req.synthesis_depth
 
-    # Taxonomy classification (SPEC-KB-021 R1) — one call per document, not per chunk.
+    # Taxonomy classification (SPEC-KB-022 R1) — multi-label, one call per document.
     # Fetch taxonomy nodes for this KB; if none exist, skip classification entirely.
     taxonomy_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
     has_taxonomy = len(taxonomy_nodes) > 0
-    taxonomy_node_id: int | None = None
+    taxonomy_node_ids: list[int] = []
+    llm_tags: list[str] = []
     if has_taxonomy:
-        taxonomy_node_id, _confidence = await classify_document(
+        matched_nodes, llm_tags = await classify_document(
             title=title,
             content_preview=req.content,
             taxonomy_nodes=taxonomy_nodes,
         )
+        taxonomy_node_ids = [node_id for node_id, _conf in matched_nodes]
+
+    # Merge frontmatter tags + LLM-suggested tags (frontmatter has priority, dedup)
+    frontmatter_meta = _extract_frontmatter_metadata(req.content)
+    frontmatter_tags: list[str] = frontmatter_meta.get("tags", [])
+    if isinstance(frontmatter_tags, list):
+        seen: set[str] = set()
+        merged_tags: list[str] = []
+        for tag in frontmatter_tags:
+            t = str(tag).strip().lower()
+            if t and t not in seen:
+                merged_tags.append(t)
+                seen.add(t)
+        for tag in llm_tags:
+            if tag not in seen:
+                merged_tags.append(tag)
+                seen.add(tag)
+    else:
+        merged_tags = llm_tags
 
     # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
     await pg_store.soft_delete_artifact(req.org_id, req.kb_slug, req.path)
@@ -309,7 +329,15 @@ async def ingest_document(req: IngestRequest) -> dict:
     # Merge temporal fields for Qdrant payload
     extra_payload["belief_time_start"] = kf["belief_time_start"]
     extra_payload["belief_time_end"] = kf["belief_time_end"]
-    extra_payload.update(_extract_frontmatter_metadata(req.content))
+    # Reuse frontmatter_meta extracted earlier for tag merging; strip tags to avoid
+    # overwriting the merged_tags parameter passed separately to upsert_chunks.
+    fm_meta_for_payload = {k: v for k, v in frontmatter_meta.items() if k != "tags"}
+    extra_payload.update(fm_meta_for_payload)
+    # Taxonomy data into extra_payload for enrichment pipeline passthrough
+    if has_taxonomy:
+        extra_payload["taxonomy_node_ids"] = taxonomy_node_ids
+    if merged_tags:
+        extra_payload["tags"] = merged_tags
     # Visibility is authoritative from kb_config — set last so req.extra cannot override it
     extra_payload["visibility"] = visibility
 
@@ -322,17 +350,18 @@ async def ingest_document(req: IngestRequest) -> dict:
         artifact_id=artifact_id,
         extra_payload=extra_payload,
         user_id=req.user_id,
-        taxonomy_node_id=taxonomy_node_id,
+        taxonomy_node_ids=taxonomy_node_ids if has_taxonomy else None,
+        tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
     )
 
-    # Taxonomy proposal generation (SPEC-KB-021 R4) — fire-and-forget, non-blocking.
-    # Self-bootstrapping: fires when taxonomy_node_id is None regardless of whether the KB
+    # Taxonomy proposal generation (SPEC-KB-022 R4) — fire-and-forget, non-blocking.
+    # Self-bootstrapping: fires when taxonomy_node_ids is empty regardless of whether the KB
     # already has nodes. This covers both:
-    #   - KB with 0 nodes: all documents are unmatched → proposals generated from scratch
+    #   - KB with 0 nodes: all documents are unmatched -> proposals generated from scratch
     #   - KB with nodes: only truly unmatched documents (confidence < 0.5) trigger proposals
     # The >= 3 threshold in maybe_generate_proposal prevents noise from single documents.
-    if taxonomy_node_id is None:
+    if has_taxonomy and not taxonomy_node_ids:
         import asyncio as _asyncio
         _t = _asyncio.create_task(
             maybe_generate_proposal(
