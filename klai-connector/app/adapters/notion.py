@@ -71,7 +71,9 @@ class NotionAdapter(BaseAdapter):
     @staticmethod
     def _build_sync_client(access_token: str) -> RateLimitedNotionClient:
         """Create a rate-limited notion-sync-lib client with a 30s timeout."""
-        return RateLimitedNotionClient(Client(auth=access_token, timeout=httpx.Timeout(30.0)))
+        return RateLimitedNotionClient(
+            Client(auth=access_token, client=httpx.Client(timeout=httpx.Timeout(30.0)))
+        )
 
     # -- Search helper (sync, runs in thread pool) ----------------------------
 
