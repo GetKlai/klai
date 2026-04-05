@@ -161,8 +161,10 @@ class TestDEKLifecycle:
         store = _make_store()
         org = _make_org_mock(connector_dek_enc=None)
         db = AsyncMock()
-        # Mock the DB to return the org
-        db.get = AsyncMock(return_value=org)
+        # Mock db.execute().scalar_one_or_none() chain (SELECT ... FOR UPDATE)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = org
+        db.execute = AsyncMock(return_value=mock_result)
         dek = await store.get_or_create_dek(org_id=1, db=db)
         assert isinstance(dek, bytes)
         assert len(dek) == 32
@@ -177,7 +179,10 @@ class TestDEKLifecycle:
         encrypted_dek = store._kek_cipher.encrypt(raw_dek.hex())
         org = _make_org_mock(connector_dek_enc=encrypted_dek)
         db = AsyncMock()
-        db.get = AsyncMock(return_value=org)
+        # Mock db.execute().scalar_one_or_none() chain (SELECT ... FOR UPDATE)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = org
+        db.execute = AsyncMock(return_value=mock_result)
         dek = await store.get_or_create_dek(org_id=1, db=db)
         assert dek == raw_dek
 
