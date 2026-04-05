@@ -34,6 +34,7 @@ class PortalOrg(Base):
     mfa_policy: Mapped[Literal["optional", "recommended", "required"]] = mapped_column(
         String(16), nullable=False, default="optional", server_default="optional"
     )
+    connector_dek_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     mcp_servers: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")

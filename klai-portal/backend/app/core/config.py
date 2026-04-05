@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # 64-char hex string = 32 bytes; generate with: openssl rand -hex 32
     portal_secrets_key: str = ""  # PORTAL_API_PORTAL_SECRETS_KEY
 
+    # Connector credential encryption (KEK for two-tier key hierarchy -- SPEC-KB-020)
+    # 64-char hex string = 32 bytes; generate with: openssl rand -hex 32
+    encryption_key: str = ""  # PORTAL_API_ENCRYPTION_KEY
+
     # Domain
     domain: str = "getklai.com"
 

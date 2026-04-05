@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.services.access import get_user_role_for_kb
+from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.events import emit_event
 from app.services.klai_connector_client import SyncRunData, klai_connector_client
 
@@ -120,12 +121,17 @@ async def _get_kb_for_org(
 
 
 def _connector_out(c: PortalConnector) -> ConnectorOut:
+    # Mask sensitive fields so they never appear in public API responses
+    masked_config = dict(c.config) if c.config else {}
+    for field in SENSITIVE_FIELDS.get(c.connector_type, []):
+        if field in masked_config:
+            masked_config[field] = "***"
     return ConnectorOut(
         id=str(c.id),
         kb_id=c.kb_id,
         name=c.name,
         connector_type=c.connector_type,
-        config=c.config,
+        config=masked_config,
         schedule=c.schedule,
         is_enabled=c.is_enabled,
         last_sync_at=c.last_sync_at,
@@ -171,15 +177,26 @@ async def create_connector(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
             )
+    # Encrypt sensitive fields if credential store is configured
+    config_to_store = body.config
+    encrypted_blob = None
+    if credential_store is not None:
+        encrypted_blob, config_to_store = await credential_store.encrypt_credentials(
+            org_id=org.id,
+            connector_type=body.connector_type,
+            config=body.config,
+            db=db,
+        )
     connector = PortalConnector(
         kb_id=kb.id,
         org_id=org.id,
         name=body.name,
         connector_type=body.connector_type,
-        config=body.config,
+        config=config_to_store,
         schedule=body.schedule,
         content_type=resolved_content_type,
         allowed_assertion_modes=body.allowed_assertion_modes,
+        encrypted_credentials=encrypted_blob,
         created_by=caller_id,
     )
     db.add(connector)
@@ -214,7 +231,17 @@ async def update_connector(
     if body.name is not None:
         connector.name = body.name
     if body.config is not None:
-        connector.config = body.config
+        if credential_store is not None:
+            encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
+                org_id=org.id,
+                connector_type=connector.connector_type,
+                config=body.config,
+                db=db,
+            )
+            connector.config = stripped_config
+            connector.encrypted_credentials = encrypted_blob
+        else:
+            connector.config = body.config
     if body.schedule is not None:
         connector.schedule = body.schedule
     if body.is_enabled is not None:
