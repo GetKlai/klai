@@ -4,7 +4,6 @@ SPEC-KB-015 REQ-KB-015-10/12/13: feedback events table with RLS, idempotency, no
 """
 
 
-
 def test_feedback_event_model_construction():
     """PortalFeedbackEvent can be instantiated with required fields."""
     from app.models.feedback_events import PortalFeedbackEvent
