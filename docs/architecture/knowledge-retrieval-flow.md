@@ -1,7 +1,7 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
-> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — March 2026.
+> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — March 2026 (updated 2026-04-05).
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
@@ -41,7 +41,10 @@ User types a message in LibreChat
         │         ├── Retrieval gate (is KB retrieval even needed?)
         │         ├── Hybrid vector search in Qdrant (+ optional graph search)
         │         ├── Reranking (cross-encoder scores each chunk against the query)
+        │         ├── Quality score boost (feedback signals from Qdrant payload)
         │         └── Return top-K chunks
+        │
+        ├──▶ Write retrieval log to Redis (fire-and-forget, for feedback correlation)
         │
         ├──▶ Build context block from chunks + inject into system message
         │
@@ -325,7 +328,42 @@ full 60, to stay within latency budget.
 
 Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 
-The final `top_k` chunks (default: 5) are returned to the LiteLLM hook.
+---
+
+### Step 5b: Quality score boost (SPEC-KB-015)
+
+**Simple:** Chunks that users have previously rated helpful get a small ranking boost.
+Chunks rated unhelpful get a small penalty. This makes the knowledge base self-improving
+over time — popular, useful answers rise; outdated or irrelevant ones sink.
+
+**Technical:** After reranking, `quality_boost()` reads two payload fields from each Qdrant
+result:
+
+- `quality_score` — running average of thumbs up/down signals, initialized at `0.5` (neutral)
+- `feedback_count` — total number of feedback events on this chunk
+
+```python
+boosted_score = rrf_score * (1 + 0.2 * (quality_score - 0.5))
+```
+
+The boost is only applied when `feedback_count >= 3` (cold-start guard). Below this
+threshold, chunks rank purely on retrieval score. The threshold is 3 rather than the
+statistically ideal 5–10 because Klai's per-org user pool is small; see SPEC-KB-015
+§Design notes for full rationale.
+
+At maximum signal (quality_score = 1.0 or 0.0), the adjustment is ±10% of the RRF score
+— intentionally conservative to avoid letting feedback dominate over semantic relevance.
+
+Results are re-sorted by the boosted score. The final `top_k` chunks (default: 5) are
+returned to the LiteLLM hook.
+
+**Feedback loop:** After the retrieval-api responds, the LiteLLM hook fires a retrieval
+log to `portal-api /internal/v1/retrieval-log` (fire-and-forget). This log is stored in
+Redis (1-hour TTL). When the user later clicks 👍 or 👎 on the AI response, LibreChat
+forwards the feedback to `portal-api /internal/v1/kb-feedback`, which correlates it with
+the retrieval log and updates the Qdrant payload. See
+[knowledge-ingest-flow.md — Self-learning feedback loop](knowledge-ingest-flow.md#self-learning-feedback-loop-spec-kb-015)
+for the full picture.
 
 ---
 

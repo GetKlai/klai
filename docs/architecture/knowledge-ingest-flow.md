@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-03-31).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-04-05).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -364,6 +364,11 @@ The enriched point is upserted with up to three named vectors:
 Payload per point includes: `org_id`, `kb_slug`, `path`, `artifact_id`, `content_type`,
 `visibility`, `valid_from`, `valid_until`, `text` (original), `text_enriched`,
 `context_prefix`, `questions`, `chunk_index`, `user_id`.
+
+**Feedback quality fields (SPEC-KB-015):** Every newly ingested chunk also receives
+`quality_score: 0.5` (neutral) and `feedback_count: 0`. These are updated at query time
+when users give thumbs up/down feedback — see [Self-learning feedback loop](#self-learning-feedback-loop-spec-kb-015)
+below. Chunks ingested before SPEC-KB-015 were backfilled with these defaults.
 
 For crawled content, additional link-graph fields are populated (SPEC-CRAWLER-003):
 `source_url` (keyword index — the crawled URL), `links_to` (outbound URLs, capped at 20),
@@ -738,6 +743,75 @@ historical confusion in code comments — but they serve completely different pu
 
 ---
 
+## Self-learning feedback loop (SPEC-KB-015)
+
+As of April 2026, Klai learns which chunks are helpful from thumbs up/down feedback given
+by users in LibreChat.
+
+### How the loop works
+
+```
+User clicks 👍 or 👎 on an AI response
+        │
+        ▼
+  LibreChat fires fire-and-forget POST to portal-api /internal/v1/kb-feedback
+  (non-blocking — LibreChat returns to user immediately)
+        │
+        ▼
+  portal-api correlates feedback with the retrieval log:
+  - Looks up the Redis sorted-set key rl:{org_id}:{user_id}
+  - Finds the retrieval event closest-before message_created_at (within 60s window)
+  - Extracts chunk_ids + reranker_scores from that entry
+        │
+        ├── Not found → stored as correlated=false, no Qdrant update
+        │
+        └── Found → stored as correlated=true
+                │
+                ▼
+          Fire-and-forget: update Qdrant payload on each correlated chunk
+          quality_score_new = (quality_score_old × feedback_count + signal) / (feedback_count + 1)
+          signal = 1.0 (thumbsUp) or 0.0 (thumbsDown)
+          feedback_count_new = feedback_count + 1
+```
+
+### Where feedback is stored
+
+| Store | What | TTL |
+|---|---|---|
+| Redis sorted-set `rl:{org_id}:{user_id}` | Retrieval log (chunk_ids, scores, query) | 1 hour |
+| Redis key `fb:{message_id}:{conv_id}` | Idempotency guard | 1 hour |
+| `portal_feedback_events` (PostgreSQL) | Permanent feedback record (no user_id stored) | Forever |
+| `portal_orgs.product_events` | `knowledge.feedback` product analytics event | Forever |
+| Qdrant chunk payload | `quality_score`, `feedback_count` | Permanent (until re-ingest) |
+
+### How the retrieval log is populated
+
+The LiteLLM hook (`deploy/litellm/klai_knowledge.py`) writes to `/internal/v1/retrieval-log`
+after each successful retrieval. It passes the Zitadel `org_id`, LibreChat `user_id`,
+retrieved `chunk_ids`, `reranker_scores`, `query_resolved`, and `retrieved_at` timestamp.
+portal-api resolves `org_id` string → integer, then writes a JSON entry into the Redis
+sorted-set scored by the retrieval Unix epoch.
+
+### Quality score boost in retrieval
+
+The `quality_score` and `feedback_count` payload fields are read from Qdrant search
+results by `retrieval_api/quality_boost.py` after reranking (Step 5b in the pipeline):
+
+```
+boosted_score = rrf_score × (1 + 0.2 × (quality_score − 0.5))
+```
+
+- `quality_score = 0.5` (neutral default) → no change
+- `quality_score > 0.5` (net thumbsUp) → positive boost, max +10%
+- `quality_score < 0.5` (net thumbsDown) → penalty, max −10%
+
+The boost only activates when `feedback_count >= 3` (cold-start guard). At fewer votes,
+chunks rank purely on retrieval score. The threshold is intentionally low because Klai's
+per-org user pool is small; the industry-standard Wilson lower-bound (5–10 votes) would
+rarely be reached in practice. See SPEC-KB-015 §Design notes for full rationale.
+
+---
+
 ## What is not yet built
 
 | Feature | Why it's deferred |
@@ -747,6 +821,7 @@ historical confusion in code comments — but they serve completely different pu
 | Assertion mode active in retrieval | See research below |
 | ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
 | Docling migration voor binary parsing in klai-connector | Unstructured.io huidig; Docling sneller en nauwkeuriger voor digitale PDFs. Usecase verschilt: Unstructured beter voor gescande/handgeschreven docs. Tracked voor evaluatie. |
+| Bayesian averaging for quality_score | Running average currently used. Bayesian prior (Wilson / Evan Miller) is more principled for sparse feedback but deferred to Phase 2 when feedback volume data is available (SPEC-KB-015 §Design notes). |
 
 ---
 
