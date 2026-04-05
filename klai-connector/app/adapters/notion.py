@@ -1,7 +1,11 @@
-"""Notion connector adapter using the official notion-client SDK.
+"""Notion connector adapter using notion-sync-lib.
 
 Syncs Notion pages as knowledge documents. Supports full and incremental
 sync via cursor_context with last_synced_at timestamp.
+
+Block fetching uses notion-sync-lib's fetch_blocks_recursive, which handles
+all nested block types (toggles, callouts, columns, tables, synced blocks)
+and has built-in rate limiting with exponential backoff.
 """
 
 # @MX:ANCHOR: BaseAdapter implementation -- SPEC-KB-019
@@ -12,7 +16,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from notion_client import APIResponseError, AsyncClient
+from notion_client import Client
+from notion_sync import fetch_blocks_recursive
+from notion_sync.client import RateLimitedNotionClient
+from notion_sync.extract import extract_block_text
 
 from app.adapters.base import BaseAdapter, DocumentRef
 from app.core.config import Settings
@@ -20,27 +27,18 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Notion API rate limit: 3 req/s -- use semaphore to stay within budget.
-_RATE_LIMIT_CONCURRENCY = 3
-
-# Maximum retry attempts for rate-limited (429) requests.
-_MAX_RETRIES = 5
-
-# Base delay (seconds) for exponential backoff on 429.
-_BACKOFF_BASE = 1.0
-
 
 class NotionAdapter(BaseAdapter):
     """Notion connector adapter.
 
     Authenticates via an integration access_token stored in connector.config.
-    Uses the Notion Search API to discover pages and the Blocks API to
-    retrieve page content as plain text.
+    Uses the Notion Search API to discover pages and notion-sync-lib's
+    fetch_blocks_recursive to retrieve full page content as plain text,
+    including all nested blocks (toggles, columns, tables, callouts).
     """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._semaphore = asyncio.Semaphore(_RATE_LIMIT_CONCURRENCY)
 
     async def aclose(self) -> None:
         """No persistent resources to close."""
@@ -69,74 +67,101 @@ class NotionAdapter(BaseAdapter):
             "max_pages": config.get("max_pages", 500),
         }
 
-    def _build_client(self, access_token: str) -> AsyncClient:
-        """Create a Notion AsyncClient without logging the token."""
-        return AsyncClient(auth=access_token)
+    @staticmethod
+    def _build_sync_client(access_token: str) -> RateLimitedNotionClient:
+        """Create a rate-limited notion-sync-lib client."""
+        return RateLimitedNotionClient(Client(auth=access_token))
 
-    # -- Notion API wrappers (mockable seams) ---------------------------------
+    # -- Search helper (sync, runs in thread pool) ----------------------------
 
-    async def _search_pages(
-        self,
-        client: AsyncClient,
-        start_cursor: str | None = None,
-        page_size: int = 100,
-    ) -> dict[str, Any]:
-        """Search all accessible pages via the Notion Search API.
+    @staticmethod
+    def _search_all_pages(
+        client: RateLimitedNotionClient,
+        last_synced_at: str | None,
+        max_pages: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch all accessible Notion pages via the Search API.
 
-        This is the primary seam for testing -- callers patch this method.
+        Runs synchronously — call via asyncio.to_thread.
+
+        Args:
+            client: Rate-limited Notion client.
+            last_synced_at: ISO 8601 timestamp; skip pages last edited before this.
+            max_pages: Maximum number of pages to return.
+
+        Returns:
+            List of Notion page objects.
         """
-        async with self._semaphore:
+        pages: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+
+        while True:
             kwargs: dict[str, Any] = {
                 "filter": {"value": "page", "property": "object"},
-                "page_size": page_size,
+                "page_size": 100,
             }
-            if start_cursor:
-                kwargs["start_cursor"] = start_cursor
-            return await client.search(**kwargs)  # type: ignore[no-any-return]
+            if next_cursor:
+                kwargs["start_cursor"] = next_cursor
 
-    async def _get_page_blocks(
-        self,
-        client: AsyncClient,
-        page_id: str,
-        start_cursor: str | None = None,
-    ) -> dict[str, Any]:
-        """Retrieve child blocks of a page.
-
-        This is the primary seam for testing -- callers patch this method.
-        """
-        async with self._semaphore:
-            kwargs: dict[str, Any] = {}
-            if start_cursor:
-                kwargs["start_cursor"] = start_cursor
-            return await client.blocks.children.list(  # type: ignore[no-any-return]
-                block_id=page_id,
+            response = client._execute_with_retry(  # noqa: SLF001
+                "search pages",
+                client.notion.search,
                 **kwargs,
             )
 
-    # -- Retry wrapper --------------------------------------------------------
-
-    async def _with_retry(
-        self,
-        fn: Any,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
-        """Call *fn* with exponential backoff on 429 rate-limit errors."""
-        for attempt in range(_MAX_RETRIES):
-            try:
-                return await fn(*args, **kwargs)
-            except APIResponseError as exc:
-                if exc.code == "rate_limited" and attempt < _MAX_RETRIES - 1:
-                    delay = _BACKOFF_BASE * (2**attempt)
-                    logger.warning(
-                        "Notion rate limited, retrying (attempt=%d, delay=%.1fs)",
-                        attempt + 1, delay,
-                    )
-                    await asyncio.sleep(delay)
+            for page in response.get("results", []):
+                if page.get("object") != "page":
                     continue
-                raise
-        # Unreachable, but keeps type checkers happy.
-        raise RuntimeError("Retry loop exited unexpectedly")  # pragma: no cover
+                if page.get("archived", False):
+                    continue
+                last_edited: str = page.get("last_edited_time", "")
+                if last_synced_at and last_edited <= last_synced_at:
+                    continue
+                pages.append(page)
+                if len(pages) >= max_pages:
+                    break
+
+            if len(pages) >= max_pages or not response.get("has_more"):
+                break
+            next_cursor = response.get("next_cursor")
+
+        return pages
+
+    @staticmethod
+    def _get_max_edited(client: RateLimitedNotionClient) -> str:
+        """Return the maximum last_edited_time across all accessible pages.
+
+        Runs synchronously — call via asyncio.to_thread.
+        """
+        max_edited = ""
+        next_cursor: str | None = None
+
+        while True:
+            kwargs: dict[str, Any] = {
+                "filter": {"value": "page", "property": "object"},
+                "page_size": 100,
+            }
+            if next_cursor:
+                kwargs["start_cursor"] = next_cursor
+
+            response = client._execute_with_retry(  # noqa: SLF001
+                "search pages for cursor",
+                client.notion.search,
+                **kwargs,
+            )
+
+            for page in response.get("results", []):
+                if page.get("object") != "page":
+                    continue
+                edited = page.get("last_edited_time", "")
+                if edited > max_edited:
+                    max_edited = edited
+
+            if not response.get("has_more"):
+                break
+            next_cursor = response.get("next_cursor")
+
+        return max_edited
 
     # -- BaseAdapter interface ------------------------------------------------
 
@@ -155,96 +180,59 @@ class NotionAdapter(BaseAdapter):
             List of DocumentRef, one per Notion page.
         """
         cfg = self._extract_config(connector)
-        client = self._build_client(cfg["access_token"])
+        client = self._build_sync_client(cfg["access_token"])
         max_pages: int = cfg["max_pages"]
         last_synced_at: str | None = (cursor_context or {}).get("last_synced_at")
 
-        connector_id = str(getattr(connector, "id", ""))
-        org_id = str(getattr(connector, "org_id", ""))
+        connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
         logger.info(
-            "Listing Notion pages (connector=%s, org=%s, incremental=%s)",
-            connector_id, org_id, last_synced_at is not None,
+            "Listing Notion pages",
+            connector_id=connector_id,
+            incremental=last_synced_at is not None,
         )
 
-        try:
-            refs: list[DocumentRef] = []
-            next_cursor: str | None = None
+        pages = await asyncio.to_thread(
+            self._search_all_pages, client, last_synced_at, max_pages
+        )
 
-            while True:
-                response = await self._with_retry(
-                    self._search_pages,
-                    client,
-                    start_cursor=next_cursor,
-                )
-
-                for page in response.get("results", []):
-                    if page.get("object") != "page":
-                        continue
-                    if page.get("archived", False):
-                        continue
-
-                    page_id: str = page["id"]
-                    last_edited: str = page.get("last_edited_time", "")
-
-                    # Incremental filter: skip pages not edited since last sync.
-                    if last_synced_at and last_edited <= last_synced_at:
-                        continue
-
-                    title = self._extract_title(page)
-                    refs.append(
-                        DocumentRef(
-                            path=title or page_id,
-                            ref=page_id,
-                            size=0,
-                            content_type="notion_page",
-                            source_ref=page_id,
-                        )
-                    )
-
-                    if len(refs) >= max_pages:
-                        break
-
-                if len(refs) >= max_pages:
-                    break
-                if not response.get("has_more"):
-                    break
-                next_cursor = response.get("next_cursor")
-
-            logger.info(
-                "Listed %d Notion pages (connector=%s)",
-                len(refs), connector_id,
+        refs = [
+            DocumentRef(
+                path=self._extract_title(page) or page["id"],
+                ref=page["id"],
+                size=0,
+                content_type="notion_page",
+                source_ref=page["id"],
             )
-            return refs
+            for page in pages
+        ]
 
-        finally:
-            await client.aclose()
+        logger.info("Listed Notion pages", count=len(refs), connector_id=connector_id)
+        return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
-        """Fetch page content as plain-text bytes via the Blocks API.
+        """Fetch page content as plain-text bytes using notion-sync-lib.
+
+        Uses fetch_blocks_recursive to get all nested content (toggles,
+        callouts, columns, tables, synced blocks) then extracts plain text
+        using extract_block_text (30+ block types supported).
 
         Args:
-            ref: DocumentRef with page ID in ref field.
+            ref: DocumentRef with Notion page ID in ref field.
             connector: Connector model instance.
 
         Returns:
-            UTF-8 encoded plain text of the page blocks.
+            UTF-8 encoded plain text of the full page content.
         """
         cfg = self._extract_config(connector)
-        client = self._build_client(cfg["access_token"])
+        client = self._build_sync_client(cfg["access_token"])
 
         connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
-        logger.info(
-            "Fetching Notion page %s (connector=%s)",
-            ref.ref, connector_id,
-        )
+        logger.info("Fetching Notion page", page_id=ref.ref, connector_id=connector_id)
 
-        try:
-            blocks_text = await self._fetch_all_block_text(client, ref.ref)
-            content = "\n".join(blocks_text)
-            return content.encode("utf-8")
-
-        finally:
-            await client.aclose()
+        blocks = await asyncio.to_thread(fetch_blocks_recursive, client, ref.ref)
+        texts = _flatten_block_texts(blocks)
+        content = "\n".join(texts)
+        return content.encode("utf-8")
 
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return cursor state based on max(last_edited_time) of accessible pages.
@@ -256,90 +244,9 @@ class NotionAdapter(BaseAdapter):
             Dict with last_synced_at as ISO 8601 string.
         """
         cfg = self._extract_config(connector)
-        client = self._build_client(cfg["access_token"])
-
-        try:
-            max_edited: str = ""
-            next_cursor: str | None = None
-
-            while True:
-                response = await self._with_retry(
-                    self._search_pages,
-                    client,
-                    start_cursor=next_cursor,
-                )
-
-                for page in response.get("results", []):
-                    if page.get("object") != "page":
-                        continue
-                    edited = page.get("last_edited_time", "")
-                    if edited > max_edited:
-                        max_edited = edited
-
-                if not response.get("has_more"):
-                    break
-                next_cursor = response.get("next_cursor")
-
-            return {"last_synced_at": max_edited}
-
-        finally:
-            await client.aclose()
-
-    # -- Recursive block fetching ---------------------------------------------
-
-    # Block types that have children rendered as separate pages — don't recurse into them.
-    _SKIP_CHILD_TYPES: frozenset[str] = frozenset({"child_page", "child_database"})
-
-    async def _fetch_all_block_text(
-        self,
-        client: AsyncClient,
-        block_id: str,
-        depth: int = 0,
-    ) -> list[str]:
-        """Recursively fetch plain text from all blocks under *block_id*.
-
-        Recurses into blocks with has_children=True up to depth 4. Skips
-        child_page and child_database blocks (they are separate Notion pages).
-
-        Args:
-            client: Notion AsyncClient.
-            block_id: Page or block UUID.
-            depth: Current recursion depth (guards against pathological nesting).
-
-        Returns:
-            List of non-empty text strings extracted from all nested blocks.
-        """
-        if depth > 4:
-            return []
-
-        texts: list[str] = []
-        next_cursor: str | None = None
-
-        while True:
-            response = await self._with_retry(
-                self._get_page_blocks,
-                client,
-                block_id,
-                start_cursor=next_cursor,
-            )
-
-            for block in response.get("results", []):
-                text = self._extract_block_text(block)
-                if text:
-                    texts.append(text)
-
-                block_type = block.get("type", "")
-                if block.get("has_children") and block_type not in self._SKIP_CHILD_TYPES:
-                    child_texts = await self._fetch_all_block_text(
-                        client, block["id"], depth + 1
-                    )
-                    texts.extend(child_texts)
-
-            if not response.get("has_more"):
-                break
-            next_cursor = response.get("next_cursor")
-
-        return texts
+        client = self._build_sync_client(cfg["access_token"])
+        max_edited = await asyncio.to_thread(self._get_max_edited, client)
+        return {"last_synced_at": max_edited}
 
     # -- Text extraction helpers ----------------------------------------------
 
@@ -351,16 +258,29 @@ class NotionAdapter(BaseAdapter):
             if prop.get("type") == "title":
                 title_parts = prop.get("title", [])
                 return "".join(
-                    part.get("text", {}).get("content", "") for part in title_parts
+                    part.get("plain_text", part.get("text", {}).get("content", ""))
+                    for part in title_parts
                 )
         return ""
 
-    @staticmethod
-    def _extract_block_text(block: dict[str, Any]) -> str:
-        """Extract plain text from a single Notion block."""
-        block_type = block.get("type", "")
-        block_data = block.get(block_type, {})
-        rich_text = block_data.get("rich_text", [])
-        return "".join(
-            part.get("text", {}).get("content", "") for part in rich_text
-        )
+
+def _flatten_block_texts(blocks: list[dict[str, Any]]) -> list[str]:
+    """Recursively extract plain text from blocks and their _children.
+
+    notion-sync-lib stores nested blocks under the '_children' key.
+
+    Args:
+        blocks: List of block dicts from fetch_blocks_recursive.
+
+    Returns:
+        Flat list of non-empty text strings.
+    """
+    texts: list[str] = []
+    for block in blocks:
+        text = extract_block_text(block)
+        if text:
+            texts.append(text)
+        children = block.get("_children", [])
+        if children:
+            texts.extend(_flatten_block_texts(children))
+    return texts
