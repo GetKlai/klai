@@ -136,9 +136,7 @@ async def patch_kb_preference(
     await db.commit()
 
     if user.librechat_user_id:
-        asyncio.get_running_loop().create_task(
-            _invalidate_litellm_kb_cache(org.id, user.librechat_user_id)
-        )
+        asyncio.get_running_loop().create_task(_invalidate_litellm_kb_cache(org.id, user.librechat_user_id))
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,
