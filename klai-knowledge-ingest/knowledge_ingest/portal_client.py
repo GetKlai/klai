@@ -82,9 +82,10 @@ async def _fetch_from_portal(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
             return []
         resp.raise_for_status()
         data = resp.json()
+        items = data["nodes"] if isinstance(data, dict) else data
         return [
             TaxonomyNode(id=item["id"], name=item["name"], description=item.get("description"))
-            for item in data
+            for item in items
             if isinstance(item.get("id"), int) and item.get("name")
         ]
 
