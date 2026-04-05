@@ -192,14 +192,10 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
                 doc_groups[doc_key] = []
             doc_groups[doc_key].append(point)
 
-        for i, (doc_key, doc_points) in enumerate(doc_groups.items()):
+        for doc_key, doc_points in doc_groups.items():
             first_payload = doc_points[0].payload or {}
             title = first_payload.get("title") or first_payload.get("path") or doc_key
             content_preview = first_payload.get("text", "")[:500]
-
-            # Throttle: 1s between calls to avoid LiteLLM 429 rate limits
-            if i > 0:
-                await asyncio.sleep(1.0)
 
             matched_nodes, suggested_tags = await classify_document(
                 title=title,
@@ -263,14 +259,10 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
                 doc_groups_tag[doc_key] = []
             doc_groups_tag[doc_key].append(point)
 
-        for i, (doc_key, doc_points) in enumerate(doc_groups_tag.items()):
+        for doc_key, doc_points in doc_groups_tag.items():
             first_payload = doc_points[0].payload or {}
             title = first_payload.get("title") or first_payload.get("path") or doc_key
             content_preview = first_payload.get("text", "")[:500]
-
-            # Throttle: 1s between calls to avoid LiteLLM 429 rate limits
-            if i > 0:
-                await asyncio.sleep(1.0)
 
             _, suggested_tags = await classify_document(
                 title=title,
