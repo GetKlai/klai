@@ -305,13 +305,12 @@ async def ingest_document(req: IngestRequest) -> dict:
     )
 
     # Taxonomy proposal generation (SPEC-KB-021 R4) — fire-and-forget, non-blocking.
-    # Only triggered when this document was unmatched (taxonomy_node_id = null) and the KB
-    # has taxonomy nodes. Proposal submission requires a batch of >= 3; single-doc ingest
-    # adds to in-memory state. For simplicity, we fire per-document and let maybe_generate_proposal
-    # handle the >= 3 threshold (passes a single-item list; will be a no-op for < 3 batches).
-    # Batch tracking happens at the call site (e.g. bulk_sync_kb_route) via accumulated lists.
-    # For single-document ingest we still attempt — the threshold guards against submission.
-    if has_taxonomy and taxonomy_node_id is None:
+    # Self-bootstrapping: fires when taxonomy_node_id is None regardless of whether the KB
+    # already has nodes. This covers both:
+    #   - KB with 0 nodes: all documents are unmatched → proposals generated from scratch
+    #   - KB with nodes: only truly unmatched documents (confidence < 0.5) trigger proposals
+    # The >= 3 threshold in maybe_generate_proposal prevents noise from single documents.
+    if taxonomy_node_id is None:
         import asyncio as _asyncio  # noqa: PLC0415
         _asyncio.create_task(
             maybe_generate_proposal(

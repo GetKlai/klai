@@ -24,6 +24,7 @@ from qdrant_client.models import FieldCondition, Filter, IsNullCondition, MatchV
 
 from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes  # noqa: E402
+from knowledge_ingest.proposal_generator import DocumentSummary, generate_bootstrap_proposals  # noqa: E402
 from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
 
 logger = structlog.get_logger()
@@ -42,6 +43,17 @@ class BackfillResponse(BaseModel):
     processed: int
     tagged: int
     skipped: int
+
+
+class BootstrapRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    batch_size: int = 500  # how many chunks to scan for document summaries
+
+
+class BootstrapResponse(BaseModel):
+    documents_scanned: int
+    proposals_submitted: int
 
 
 def _verify_internal_token(request: Request) -> None:
@@ -150,3 +162,90 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
         skipped=skipped,
     )
     return BackfillResponse(processed=processed, tagged=tagged, skipped=skipped)
+
+
+@router.post("/ingest/v1/taxonomy/bootstrap-proposals", response_model=BootstrapResponse)
+async def taxonomy_bootstrap_proposals(
+    request: Request, req: BootstrapRequest
+) -> BootstrapResponse:
+    """Scan existing Qdrant chunks and generate bootstrap taxonomy proposals.
+
+    Reads existing chunks for this KB, groups by document, sends up to 50 document
+    summaries to klai-fast which identifies 3-8 logical top-level categories,
+    then submits one proposal per category to the portal review queue.
+
+    Use this to bootstrap a KB taxonomy from scratch when no nodes exist yet.
+    After accepting proposals in the portal, run /backfill to tag all chunks.
+    """
+    _verify_internal_token(request)
+
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
+
+    scroll_filter = Filter(
+        must=[
+            FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
+            FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
+        ]
+    )
+
+    # Scroll chunks, one per artifact_id (we only need the first chunk per document)
+    seen_artifacts: set[str] = set()
+    documents: list[DocumentSummary] = []
+    offset = None
+
+    while len(documents) < 50:
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=req.batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=30.0,
+        )
+
+        if not points:
+            break
+
+        for point in points:
+            payload = point.payload or {}
+            artifact_id = payload.get("artifact_id") or str(point.id)
+            if artifact_id in seen_artifacts:
+                continue
+            seen_artifacts.add(artifact_id)
+            title = payload.get("title") or payload.get("path") or artifact_id
+            preview = payload.get("text", "")[:300]
+            documents.append(DocumentSummary(title=title, content_preview=preview))
+            if len(documents) >= 50:
+                break
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    if not documents:
+        logger.info("bootstrap_proposals_no_documents", kb_slug=req.kb_slug, org_id=req.org_id)
+        return BootstrapResponse(documents_scanned=0, proposals_submitted=0)
+
+    proposals_submitted = await generate_bootstrap_proposals(
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        documents=documents,
+    )
+
+    logger.info(
+        "taxonomy_bootstrap_complete",
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        documents_scanned=len(documents),
+        proposals_submitted=proposals_submitted,
+    )
+    return BootstrapResponse(
+        documents_scanned=len(documents),
+        proposals_submitted=proposals_submitted,
+    )
