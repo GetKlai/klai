@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   RefreshCw, Trash2, Loader2, Plus, Pencil,
-  Globe, Github, NotepadText, HardDrive, FileText,
+  Globe, GitBranch, NotepadText, HardDrive, FileText,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -31,7 +31,7 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
 type ConnectorTypeInfo = { label: string; IconComponent: React.ComponentType<{ className?: string }> }
 
 const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
-  github:       { label: 'GitHub',       IconComponent: Github },
+  github:       { label: 'GitHub',       IconComponent: GitBranch },
   web_crawler:  { label: 'Web',          IconComponent: Globe },
   notion:       { label: 'Notion',       IconComponent: NotepadText },
   google_drive: { label: 'Google Drive', IconComponent: HardDrive },
