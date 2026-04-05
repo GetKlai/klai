@@ -16,7 +16,8 @@ _PLAIN_TEXT_SUFFIXES = {".md", ".txt", ".rst", ".csv"}
 def parse_document(content: bytes, filename: str) -> str:
     """Parse a document and return extracted text.
 
-    Text-based formats (.md, .txt, .rst, .csv) are decoded directly.
+    Text-based formats (.md, .txt, .rst, .csv) and files with no extension
+    are decoded directly as UTF-8.
     Binary formats (.pdf, .docx, .html) use Unstructured.io.
 
     Args:
@@ -34,7 +35,8 @@ def parse_document(content: bytes, filename: str) -> str:
 
     suffix = Path(filename).suffix.lower()
 
-    if suffix in _PLAIN_TEXT_SUFFIXES:
+    # Files with no extension (e.g. Notion pages returned as plain text) are decoded directly.
+    if not suffix or suffix in _PLAIN_TEXT_SUFFIXES:
         text = content.decode("utf-8", errors="replace")
         logger.info("Parsed text document %s: %d characters", filename, len(text))
         return text
