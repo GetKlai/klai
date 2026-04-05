@@ -78,7 +78,10 @@ async def ensure_collection() -> None:
     # This handles newly added fields (e.g. user_id) on pre-existing collections.
     collection_info = await client.get_collection(COLLECTION)
     indexed_fields = set((collection_info.payload_schema or {}).keys())
-    for field in ("org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id"):
+    for field in (
+        "org_id", "kb_slug", "artifact_id", "content_type",
+        "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
+    ):
         if field not in indexed_fields:
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema="keyword",
@@ -325,7 +328,8 @@ async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> No
 
 _ALLOWED_METADATA_FIELDS = frozenset({
     "title", "kb_slug", "chunk_index", "created_at",
-    "source_type", "source_connector_id", "source_ref", "visibility", "tags", "provenance_type", "confidence",
+    "source_type", "source_connector_id", "source_ref", "visibility",
+    "tags", "provenance_type", "confidence",
     "artifact_id", "content_type", "valid_from", "valid_until", "ingested_at",
     "assertion_mode",
 })
