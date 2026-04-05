@@ -77,6 +77,7 @@ async def _fetch_from_portal(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
         resp = await client.get(
             f"{settings.portal_url}/api/app/knowledge-bases/{kb_slug}/taxonomy/nodes/internal",
             headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+            params={"zitadel_org_id": org_id},
         )
         if resp.status_code == 404:
             return []
