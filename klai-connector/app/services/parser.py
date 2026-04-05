@@ -35,8 +35,10 @@ def parse_document(content: bytes, filename: str) -> str:
 
     suffix = Path(filename).suffix.lower()
 
-    # Files with no extension (e.g. Notion pages returned as plain text) are decoded directly.
-    if not suffix or suffix in _PLAIN_TEXT_SUFFIXES:
+    # Files with no extension, invalid extensions (containing spaces or longer than 10 chars,
+    # e.g. Notion page titles like "3.011 Opzeggingen..."), or known text formats are decoded
+    # directly as UTF-8 without going to Unstructured.
+    if not suffix or " " in suffix or len(suffix) > 10 or suffix in _PLAIN_TEXT_SUFFIXES:
         text = content.decode("utf-8", errors="replace")
         logger.info("Parsed text document %s: %d characters", filename, len(text))
         return text

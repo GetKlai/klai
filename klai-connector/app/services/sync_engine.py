@@ -199,7 +199,7 @@ class SyncEngine:
                         bytes_processed += len(content_bytes)
                         text = parse_document(content_bytes, ref.path.split("/")[-1])
                         if not text.strip():
-                            logger.info("Skipping empty document", path=ref.path)
+                            logger.info("Skipping empty document (path=%s)", ref.path)
                             documents_ok += 1
                             resume_ingested_refs.add(ref_key)
                             continue
