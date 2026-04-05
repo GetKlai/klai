@@ -42,9 +42,7 @@ class ConnectorCredentialStore:
 
     def __init__(self, encryption_key_hex: str) -> None:
         if len(encryption_key_hex) != 64:
-            raise ValueError(
-                f"ENCRYPTION_KEY must be a 64-character hex string, got {len(encryption_key_hex)} chars"
-            )
+            raise ValueError(f"ENCRYPTION_KEY must be a 64-character hex string, got {len(encryption_key_hex)} chars")
         try:
             kek_bytes = bytes.fromhex(encryption_key_hex)
         except ValueError as exc:
@@ -159,9 +157,7 @@ class ConnectorCredentialStore:
         old_cipher = AESGCMCipher(bytes.fromhex(old_kek_hex))
         new_cipher = AESGCMCipher(bytes.fromhex(new_kek_hex))
 
-        result = await db.execute(
-            select(PortalOrg).where(PortalOrg.connector_dek_enc.isnot(None))
-        )
+        result = await db.execute(select(PortalOrg).where(PortalOrg.connector_dek_enc.isnot(None)))
         orgs = result.scalars().all()
         count = 0
         for org in orgs:

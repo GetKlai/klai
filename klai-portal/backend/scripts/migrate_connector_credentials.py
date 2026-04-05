@@ -45,9 +45,7 @@ async def main() -> None:
 
     async with async_session() as db:
         # Step 1: Generate DEKs for orgs that don't have one yet
-        result = await db.execute(
-            select(PortalOrg).where(PortalOrg.connector_dek_enc.is_(None))
-        )
+        result = await db.execute(select(PortalOrg).where(PortalOrg.connector_dek_enc.is_(None)))
         orgs_without_dek = result.scalars().all()
         dek_count = 0
         dek_cache: dict[int, bytes] = {}
@@ -63,18 +61,14 @@ async def main() -> None:
             await db.flush()
 
         # Pre-load existing DEKs
-        result = await db.execute(
-            select(PortalOrg).where(PortalOrg.connector_dek_enc.isnot(None))
-        )
+        result = await db.execute(select(PortalOrg).where(PortalOrg.connector_dek_enc.isnot(None)))
         for org in result.scalars().all():
             if org.id not in dek_cache:
                 dek_hex = kek.decrypt(org.connector_dek_enc)
                 dek_cache[org.id] = bytes.fromhex(dek_hex)
 
         # Step 2: Encrypt connector credentials
-        result = await db.execute(
-            select(PortalConnector).where(PortalConnector.encrypted_credentials.is_(None))
-        )
+        result = await db.execute(select(PortalConnector).where(PortalConnector.encrypted_credentials.is_(None)))
         connectors = result.scalars().all()
         encrypted_count = 0
         skipped_count = 0

@@ -76,8 +76,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         enc_key = settings.encryption_key
         if len(enc_key) != 64 or not all(c in "0123456789abcdefABCDEF" for c in enc_key):
             logger.critical(
-                "ENCRYPTION_KEY is not a valid 64-character hex string. "
-                "Generate with: openssl rand -hex 32"
+                "ENCRYPTION_KEY is not a valid 64-character hex string. Generate with: openssl rand -hex 32"
             )
             raise SystemExit(1)
 
