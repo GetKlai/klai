@@ -892,6 +892,8 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
+      PORTAL_URL: http://portal-api:8000
+      PORTAL_INTERNAL_TOKEN: ${INTERNAL_SECRET}
     networks:
       - klai-net
       - net-postgres
