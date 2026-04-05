@@ -994,6 +994,7 @@
   "admin_connectors_subtitle": "Sync external sources to your organisation knowledge base.",
   "admin_connectors_add_button": "Add connector",
   "admin_connectors_add_title": "Add connector",
+  "admin_connectors_edit_title": "Edit connector",
   "admin_connectors_step_type": "Connector type",
   "admin_connectors_step_configure": "Configure",
   "admin_connectors_loading": "Loading...",
