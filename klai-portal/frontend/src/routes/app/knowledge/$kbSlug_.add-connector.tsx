@@ -309,7 +309,7 @@ function AddConnectorPage() {
               <div className="space-y-4">
                 {/* Step 1: Credentials */}
                 {notionStep === 'credentials' && (
-                  <div className="space-y-3">
+                  <form onSubmit={(e) => { e.preventDefault(); setNotionStep('settings') }} className="space-y-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="notion-name">{m.admin_connectors_field_name()}</Label>
                       <Input id="notion-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
@@ -330,14 +330,14 @@ function AddConnectorPage() {
                       />
                     </div>
                     <div className="flex gap-2 pt-1">
-                      <Button type="button" size="sm" disabled={!name || !notionConfig.access_token} onClick={() => setNotionStep('settings')}>
+                      <Button type="submit" size="sm" disabled={!name || !notionConfig.access_token}>
                         {m.admin_connectors_webcrawler_next()}
                       </Button>
                       <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
                         {m.admin_connectors_webcrawler_back()}
                       </Button>
                     </div>
-                  </div>
+                  </form>
                 )}
                 {/* Step 2: Settings */}
                 {notionStep === 'settings' && (
