@@ -186,9 +186,8 @@ class NotionAdapter(BaseAdapter):
 
         connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
         logger.info(
-            "Listing Notion pages",
-            connector_id=connector_id,
-            incremental=last_synced_at is not None,
+            "Listing Notion pages (connector=%s, incremental=%s)",
+            connector_id, last_synced_at is not None,
         )
 
         pages = await asyncio.to_thread(
@@ -206,7 +205,7 @@ class NotionAdapter(BaseAdapter):
             for page in pages
         ]
 
-        logger.info("Listed Notion pages", count=len(refs), connector_id=connector_id)
+        logger.info("Listed %d Notion pages (connector=%s)", len(refs), connector_id)
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
@@ -227,7 +226,7 @@ class NotionAdapter(BaseAdapter):
         client = self._build_sync_client(cfg["access_token"])
 
         connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
-        logger.info("Fetching Notion page", page_id=ref.ref, connector_id=connector_id)
+        logger.info("Fetching Notion page %s (connector=%s)", ref.ref, connector_id)
 
         blocks = await asyncio.to_thread(fetch_blocks_recursive, client, ref.ref)
         texts = _flatten_block_texts(blocks)
