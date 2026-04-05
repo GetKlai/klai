@@ -1,15 +1,15 @@
 """Add portal_feedback_events table.
 
-Revision ID: a1b2c3d4e5f6
-Revises: z2a3b4c5d6e7
-Create Date: 2026-04-04
+Revision ID: b6c7d8e9f0a1
+Revises: aa7531c292e4
+Create Date: 2026-04-05
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z2a3b4c5d6e7"
+revision = "b6c7d8e9f0a1"
+down_revision = "aa7531c292e4"
 branch_labels = None
 depends_on = None
 
