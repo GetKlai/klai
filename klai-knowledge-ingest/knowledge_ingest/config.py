@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     # exceed the upstream API limit regardless of LLM response time.
     # Mistral org limit = 1 req/s → default 1.0. Raise for providers with higher limits.
     graphiti_llm_rps: float = 1.0
+    # Portal integration for taxonomy (SPEC-KB-021)
+    portal_url: str = "http://portal-api:8000"
+    portal_internal_token: str = ""  # X-Internal-Token for portal internal endpoints
+    taxonomy_classification_model: str = "klai-fast"
+    taxonomy_classification_timeout: float = 5.0
 
     model_config = {"env_file": ".env"}
 
