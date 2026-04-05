@@ -994,6 +994,7 @@
   "admin_connectors_subtitle": "Synchroniseer externe bronnen naar de kennisbank van je organisatie.",
   "admin_connectors_add_button": "Connector toevoegen",
   "admin_connectors_add_title": "Connector toevoegen",
+  "admin_connectors_edit_title": "Connector bewerken",
   "admin_connectors_step_type": "Connector type",
   "admin_connectors_step_configure": "Configureren",
   "admin_connectors_loading": "Laden...",

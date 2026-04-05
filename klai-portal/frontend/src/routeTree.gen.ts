@@ -55,6 +55,7 @@ import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowle
 import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
+import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
 import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
 import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
 import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/knowledge/$kbSlug/overview'
@@ -304,6 +305,12 @@ const AppKnowledgeKbSlugAddConnectorRoute =
     path: '/knowledge/$kbSlug/add-connector',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
+  AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport.update({
+    id: '/knowledge/$kbSlug_/edit-connector/$connectorId',
+    path: '/knowledge/$kbSlug/edit-connector/$connectorId',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppKnowledgeKbSlugTaxonomyRoute =
   AppKnowledgeKbSlugTaxonomyRouteImport.update({
     id: '/taxonomy',
@@ -429,6 +436,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
 }
@@ -486,6 +494,7 @@ export interface FileRoutesByTo {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
 }
@@ -547,6 +556,7 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
 }
@@ -609,6 +619,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
+    | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
     | '/admin/groups/$groupId/'
     | '/app/knowledge/$kbSlug/'
   fileRoutesByTo: FileRoutesByTo
@@ -666,6 +677,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
+    | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
     | '/admin/groups/$groupId'
     | '/app/knowledge/$kbSlug'
   id:
@@ -726,6 +738,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
+    | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
     | '/admin/groups/$groupId/'
     | '/app/knowledge/$kbSlug/'
   fileRoutesById: FileRoutesById
@@ -1071,6 +1084,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugAddConnectorRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/knowledge/$kbSlug_/edit-connector/$connectorId': {
+      id: '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
+      path: '/knowledge/$kbSlug/edit-connector/$connectorId'
+      fullPath: '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+      preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/knowledge/$kbSlug/taxonomy': {
       id: '/app/knowledge/$kbSlug/taxonomy'
       path: '/taxonomy'
@@ -1256,6 +1276,7 @@ interface AppRouteRouteChildren {
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
   AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
   AppKnowledgeKbSlugAddConnectorRoute: typeof AppKnowledgeKbSlugAddConnectorRoute
+  AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -1282,6 +1303,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,
   AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
   AppKnowledgeKbSlugAddConnectorRoute: AppKnowledgeKbSlugAddConnectorRoute,
+  AppKnowledgeKbSlugEditConnectorConnectorIdRoute: AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
