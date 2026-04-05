@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
 from notion_client import Client
 from notion_sync import fetch_blocks_recursive
 from notion_sync.client import RateLimitedNotionClient
@@ -69,8 +70,8 @@ class NotionAdapter(BaseAdapter):
 
     @staticmethod
     def _build_sync_client(access_token: str) -> RateLimitedNotionClient:
-        """Create a rate-limited notion-sync-lib client."""
-        return RateLimitedNotionClient(Client(auth=access_token))
+        """Create a rate-limited notion-sync-lib client with a 30s timeout."""
+        return RateLimitedNotionClient(Client(auth=access_token, timeout=httpx.Timeout(30.0)))
 
     # -- Search helper (sync, runs in thread pool) ----------------------------
 
