@@ -273,6 +273,8 @@ async def ingest_document(req: IngestRequest) -> dict:
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
     if req.source_type:
         extra_payload["source_type"] = req.source_type
+    if req.source_connector_id:
+        extra_payload["source_connector_id"] = req.source_connector_id
     if req.content_type != "unknown":
         extra_payload["content_type"] = req.content_type
     # Evidence tier metadata (SPEC-EVIDENCE-001, R4)
