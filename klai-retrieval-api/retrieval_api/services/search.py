@@ -258,6 +258,9 @@ async def _search_knowledge(
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
             "source_url": r.payload.get("source_url"),
+            "source_ref": r.payload.get("source_ref"),
+            "source_connector_id": r.payload.get("source_connector_id"),
+            "title": r.payload.get("title"),
             "links_to": r.payload.get("links_to", []),
             "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }
@@ -320,6 +323,9 @@ async def fetch_chunks_by_urls(
             "assertion_mode": r.payload.get("assertion_mode"),
             "entity_pagerank_max": r.payload.get("entity_pagerank_max"),
             "source_url": r.payload.get("source_url"),
+            "source_ref": r.payload.get("source_ref"),
+            "source_connector_id": r.payload.get("source_connector_id"),
+            "title": r.payload.get("title"),
             "links_to": r.payload.get("links_to", []),
             "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }

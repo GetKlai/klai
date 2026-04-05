@@ -69,6 +69,7 @@ interface Citation {
   source_id: string
   source_name: string
   page: number | null
+  url?: string | null
 }
 
 interface ChatMessage {
@@ -554,7 +555,18 @@ function NotebookDetailPage() {
                         <div className="mt-1 space-y-0.5 border-l-2 border-[var(--color-border)] pl-2">
                           {msg.citations.map((c, j) => (
                             <p key={j} className="text-xs text-[var(--color-muted-foreground)]">
-                              {c.source_name}
+                              {c.url ? (
+                                <a
+                                  href={c.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[var(--color-purple-muted)] hover:text-[var(--color-purple-primary)] underline"
+                                >
+                                  {c.source_name}
+                                </a>
+                              ) : (
+                                c.source_name
+                              )}
                               {c.page ? `, p. ${c.page}` : ''}
                             </p>
                           ))}

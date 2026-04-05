@@ -225,6 +225,9 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 assertion_mode=r.get("assertion_mode"),
                 final_score=r.get("final_score"),
                 evidence_tier_metadata=r.get("evidence_tier_metadata"),
+                source_ref=r.get("source_ref"),
+                source_connector_id=r.get("source_connector_id"),
+                title=r.get("title"),
             )
             for r in serving
         ]

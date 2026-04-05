@@ -33,6 +33,9 @@ class ChunkResult(BaseModel):
     assertion_mode: str | None = None
     final_score: float | None = None
     evidence_tier_metadata: dict | None = None
+    source_ref: str | None = None          # Source reference (e.g. Notion page UUID, URL, repo path)
+    source_connector_id: str | None = None  # Connector that produced this chunk
+    title: str | None = None               # Document title from Qdrant payload
 
 
 class RetrieveMetadata(BaseModel):
