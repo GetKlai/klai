@@ -161,6 +161,7 @@ class ConnectorCredentialStore:
         orgs = result.scalars().all()
         count = 0
         for org in orgs:
+            assert org.connector_dek_enc is not None  # guaranteed by isnot(None) filter
             dek_hex = old_cipher.decrypt(org.connector_dek_enc)
             org.connector_dek_enc = new_cipher.encrypt(dek_hex)
             count += 1
