@@ -1265,7 +1265,7 @@
   "chat_kb_bar_select_all": "Select all",
   "chat_kb_bar_deselect_all": "Deselect all",
   "chat_kb_bar_narrow_label": "Only knowledge base",
-  "chat_kb_bar_narrow_tooltip": "Answer only using the knowledge base. Changes take 30s to take effect.",
+  "chat_kb_bar_narrow_tooltip": "Answer only using the knowledge base.",
   "admin_nav_integrations": "Integrations",
   "admin_integrations_title": "Integrations",
   "admin_integrations_subtitle": "Connect external services to your AI workspace.",
