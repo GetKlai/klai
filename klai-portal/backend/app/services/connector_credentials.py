@@ -52,6 +52,10 @@ class ConnectorCredentialStore:
     async def get_or_create_dek(self, org_id: int, db: AsyncSession) -> bytes:
         """Return the plaintext DEK for an org, creating one if needed.
 
+        Uses SELECT ... FOR UPDATE to prevent a race condition where two concurrent
+        requests both see connector_dek_enc IS NULL, generate different DEKs, and one
+        overwrites the other (making the first connector's credentials unreadable).
+
         Args:
             org_id: The portal org ID.
             db: Async database session.
@@ -59,7 +63,8 @@ class ConnectorCredentialStore:
         Returns:
             32-byte plaintext DEK.
         """
-        org = await db.get(PortalOrg, org_id)
+        result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id).with_for_update())
+        org = result.scalar_one_or_none()
         if org is None:
             raise ValueError(f"PortalOrg {org_id} not found")
 
@@ -68,7 +73,7 @@ class ConnectorCredentialStore:
             dek_hex = self._kek_cipher.decrypt(org.connector_dek_enc)
             return bytes.fromhex(dek_hex)
 
-        # Generate new DEK
+        # Generate new DEK — row is locked so no concurrent writer can overwrite it
         raw_dek = os.urandom(32)
         org.connector_dek_enc = self._kek_cipher.encrypt(raw_dek.hex())
         await db.flush()
