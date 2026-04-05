@@ -379,22 +379,19 @@ def _require_internal_token(request: Request) -> None:
 )
 async def list_taxonomy_nodes_internal(
     kb_slug: str,
-    org_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyNodesResponse:
     """List taxonomy nodes for a KB. Internal endpoint for knowledge-ingest service.
 
     Uses X-Internal-Token auth (Authorization: Bearer <internal_secret>).
-    org_id is passed as a query parameter for tenant scoping.
+    Lookup by kb_slug only — Zitadel org_id (bigint) cannot be compared to
+    portal's internal org_id (postgres integer).
     """
     _require_internal_token(request)
 
     result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.slug == kb_slug,
-            PortalKnowledgeBase.org_id == org_id,
-        )
+        select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug)
     )
     kb = result.scalar_one_or_none()
     if not kb:
