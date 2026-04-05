@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased] — 2026-04-05
+
+### Added — SPEC-KB-020: Secure Connector Credential Storage
+
+- **AES-256-GCM cipher** (`app/core/security.py`): `AESGCMCipher` class with nonce||ciphertext envelope, random nonce per encryption, authenticated decryption.
+- **KEK-DEK hierarchy** (`app/services/connector_credentials.py`): `ConnectorCredentialStore` with per-tenant DEK encrypted by KEK derived from `ENCRYPTION_KEY` env var. `get_or_create_dek` uses `SELECT ... FOR UPDATE` to prevent race conditions.
+- **SENSITIVE_FIELDS mapping**: github (`access_token`, `installation_token`, `app_private_key`), notion (`access_token`), google_drive/ms_docs (`oauth_token`, `refresh_token`, `access_token`), web_crawler (`auth_headers`).
+- **Schema migration**: `encrypted_credentials BYTEA` on `portal_connectors`, `connector_dek_enc BYTEA` on `portal_orgs` (migration `172c9ab5f151`).
+- **API integration**: encrypt on connector create/update, mask sensitive fields in API responses (`app/api/connectors.py`). Internal endpoint (`/internal/connectors/{id}`) decrypts and merges before returning to connector service.
+- **Startup guard** (`app/main.py`): hard-fails at startup if `ENCRYPTION_KEY` is missing or not a valid 64-char hex string (REQ-CRYPTO-003).
+- **Structlog masking** (`app/logging_setup.py`): `mask_secret_str` processor prevents `SecretStr` values from leaking into log output.
+- **Data migration script** (`scripts/migrate_connector_credentials.py`): backfills encrypted credentials for existing connectors.
+- **Deploy**: `ENCRYPTION_KEY: ${PORTAL_API_ENCRYPTION_KEY}` added to `deploy/docker-compose.yml` portal-api environment.
+- **41 tests** across `test_security.py` (12), `test_log_masking.py` (7), `test_connector_credentials.py` (16), `test_connector_encryption_api.py` (6).
+- **New env var required**: `PORTAL_API_ENCRYPTION_KEY` (64-char hex, generate with `openssl rand -hex 32`).
+
 ## [Unreleased] — 2026-04-01
 
 ### Added — SPEC-AUTH-002: Product Entitlements
