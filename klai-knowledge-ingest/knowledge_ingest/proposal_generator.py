@@ -105,6 +105,114 @@ async def maybe_generate_proposal(
     )
 
 
+_BOOTSTRAP_SYSTEM_PROMPT = (
+    "You are a knowledge taxonomy assistant. "
+    "Given a list of documents from a knowledge base, identify the 3-8 most logical, "
+    "non-overlapping top-level categories that together cover all documents. "
+    "Each category name should be concise (2-5 words) and distinct. "
+    "Respond with JSON only: {\"categories\": [<string>, ...]}"
+)
+
+
+async def generate_bootstrap_proposals(
+    org_id: str,
+    kb_slug: str,
+    documents: list[DocumentSummary],
+) -> int:
+    """Scan existing documents and generate bootstrap taxonomy proposals.
+
+    Sends up to 50 document summaries to klai-fast, asks it to identify
+    3-8 top-level categories, then submits one proposal per category.
+    Returns number of proposals submitted.
+
+    Skips silently when PORTAL_INTERNAL_TOKEN is not configured.
+    """
+    if not documents:
+        return 0
+    if not settings.portal_internal_token:
+        logger.warning(
+            "bootstrap_proposals_skipped",
+            reason="missing PORTAL_INTERNAL_TOKEN",
+            kb_slug=kb_slug,
+        )
+        return 0
+
+    try:
+        categories = await asyncio.wait_for(
+            _suggest_multiple_categories(documents[:50]),
+            timeout=30.0,
+        )
+    except (asyncio.TimeoutError, Exception) as exc:
+        logger.warning(
+            "bootstrap_proposals_generation_failed",
+            kb_slug=kb_slug,
+            error=str(exc),
+        )
+        return 0
+
+    if not categories:
+        return 0
+
+    submitted = 0
+    for name in categories:
+        if not name:
+            continue
+        proposal = TaxonomyProposal(
+            proposal_type="new_node",
+            suggested_name=name,
+            document_count=len(documents),
+            sample_titles=[doc.title for doc in documents[:5]],
+        )
+        await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
+        submitted += 1
+        logger.info(
+            "bootstrap_proposal_submitted",
+            kb_slug=kb_slug,
+            suggested_name=name,
+        )
+
+    logger.info(
+        "bootstrap_proposals_complete",
+        kb_slug=kb_slug,
+        document_count=len(documents),
+        proposals_submitted=submitted,
+    )
+    return submitted
+
+
+async def _suggest_multiple_categories(documents: list[DocumentSummary]) -> list[str]:
+    """Use klai-fast to suggest multiple category names for a set of documents."""
+    doc_summaries = "\n".join(
+        f"- {doc.title}: {doc.content_preview[:150]}"
+        for doc in documents
+    )
+    user_message = f"Documents in this knowledge base:\n{doc_summaries}"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{settings.litellm_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.litellm_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.taxonomy_classification_model,
+                "messages": [
+                    {"role": "system", "content": _BOOTSTRAP_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 200,
+                "response_format": {"type": "json_object"},
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+        return [c for c in parsed.get("categories", []) if isinstance(c, str) and c.strip()]
+
+
 async def _suggest_category_name(documents: list[DocumentSummary]) -> str | None:
     """Use klai-fast to suggest a category name for a cluster of unmatched documents."""
     doc_summaries = "\n".join(
