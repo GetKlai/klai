@@ -390,9 +390,7 @@ async def list_taxonomy_nodes_internal(
     """
     _require_internal_token(request)
 
-    result = await db.execute(
-        select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug)
-    )
+    result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug))
     kb = result.scalar_one_or_none()
     if not kb:
         return TaxonomyNodesResponse(nodes=[])
