@@ -28,6 +28,7 @@ from qdrant_client.models import (  # noqa: E402
     Filter,
     IsNullCondition,
     MatchValue,
+    PayloadField,
 )
 
 from knowledge_ingest.config import settings  # noqa: E402
@@ -118,10 +119,10 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
             must=[
                 FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
                 FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-                IsNullCondition(key="taxonomy_node_ids", is_null=True),
+                IsNullCondition(is_null=PayloadField(key="taxonomy_node_ids")),
             ],
             must_not=[
-                IsNullCondition(key="taxonomy_node_id", is_null=True),
+                IsNullCondition(is_null=PayloadField(key="taxonomy_node_id")),
             ],
         )
 
@@ -162,8 +163,8 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
             must=[
                 FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
                 FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-                IsNullCondition(key="taxonomy_node_id", is_null=True),
-                IsNullCondition(key="taxonomy_node_ids", is_null=True),
+                IsNullCondition(is_null=PayloadField(key="taxonomy_node_id")),
+                IsNullCondition(is_null=PayloadField(key="taxonomy_node_ids")),
             ]
         )
 
@@ -227,10 +228,10 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillR
             must=[
                 FieldCondition(key="org_id", match=MatchValue(value=req.org_id)),
                 FieldCondition(key="kb_slug", match=MatchValue(value=req.kb_slug)),
-                IsNullCondition(key="tags", is_null=True),
+                IsNullCondition(is_null=PayloadField(key="tags")),
             ],
             must_not=[
-                IsNullCondition(key="taxonomy_node_ids", is_null=True),
+                IsNullCondition(is_null=PayloadField(key="taxonomy_node_ids")),
             ],
         )
 
@@ -454,7 +455,7 @@ async def taxonomy_coverage_stats(
         must=[
             FieldCondition(key="org_id", match=MatchValue(value=org_id)),
             FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-            IsNullCondition(key="taxonomy_node_ids", is_null=True),
+            IsNullCondition(is_null=PayloadField(key="taxonomy_node_ids")),
         ]
     )
     untagged_count_result = await asyncio.wait_for(
