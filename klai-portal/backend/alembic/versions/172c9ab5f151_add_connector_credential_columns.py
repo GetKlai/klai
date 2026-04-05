@@ -1,15 +1,15 @@
 """add encrypted_credentials and connector_dek_enc columns
 
-Revision ID: a1b2c3d4e5f6
-Revises: z2a3b4c5d6e7
+Revision ID: 172c9ab5f151
+Revises: b6c7d8e9f0a1
 Create Date: 2026-04-05
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z2a3b4c5d6e7"
+revision = "172c9ab5f151"
+down_revision = "b6c7d8e9f0a1"
 branch_labels = None
 depends_on = None
 
