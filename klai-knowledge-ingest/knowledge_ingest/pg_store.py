@@ -175,7 +175,8 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
         async with conn.transaction():
             # Nullify self-references first to avoid FK violations when deleting artifacts
             await conn.execute(
-                "UPDATE knowledge.artifacts SET superseded_by = NULL WHERE org_id = $1 AND kb_slug = $2",
+                "UPDATE knowledge.artifacts SET superseded_by = NULL"
+                " WHERE org_id = $1 AND kb_slug = $2",
                 org_id, kb_slug,
             )
             await conn.execute(

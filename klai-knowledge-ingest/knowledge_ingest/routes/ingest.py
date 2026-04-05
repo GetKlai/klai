@@ -6,19 +6,28 @@ Ingest routes:
   DELETE /ingest/v1/kb/webhook    — de-register Gitea webhook for a KB
   POST /ingest/v1/kb/sync         — bulk re-index all pages of a KB
 """
-import asyncio
 import hashlib
 import hmac
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import structlog
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from knowledge_ingest import chunker, embedder, graph as graph_module, kb_config, org_config, pg_store, qdrant_store
+from knowledge_ingest import (
+    chunker,
+    embedder,
+    kb_config,
+    org_config,
+    pg_store,
+    qdrant_store,
+)
+from knowledge_ingest import (
+    graph as graph_module,
+)
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
@@ -30,10 +39,11 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
-from knowledge_ingest.taxonomy_classifier import classify_document
 from knowledge_ingest.proposal_generator import DocumentSummary, maybe_generate_proposal
+from knowledge_ingest.taxonomy_classifier import classify_document
 
 _SENTINEL = 253402300800  # 9999-12-31
+_background_tasks: set = set()  # Prevents fire-and-forget tasks from being GC'd
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -58,7 +68,7 @@ def _extract_title(content: str, path: str) -> str:
                 if isinstance(fm, dict) and fm.get("title"):
                     return str(fm["title"])
             except Exception:
-                pass
+                logger.debug("frontmatter_yaml_parse_error")
     for line in content.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
@@ -92,7 +102,9 @@ _ASSERTION_MODE_MIGRATION: dict[str, str] = {
     "note": "unknown",
 }
 
-_VALID_ASSERTION_MODES = frozenset({"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"})
+_VALID_ASSERTION_MODES = frozenset(
+    {"factual", "belief", "hypothesis", "procedural", "quoted", "unknown"}
+)
 
 
 def _parse_knowledge_fields(
@@ -155,11 +167,11 @@ def _parse_knowledge_fields(
         try:
             result["belief_time_start"] = int(
                 datetime.fromisoformat(fm["belief_time_start"])
-                .replace(tzinfo=timezone.utc)
+                .replace(tzinfo=UTC)
                 .timestamp()
             )
         except Exception:
-            pass
+            logger.debug("belief_time_parse_error", value=fm.get("belief_time_start"))
     return result
 
 
@@ -311,19 +323,23 @@ async def ingest_document(req: IngestRequest) -> dict:
     #   - KB with nodes: only truly unmatched documents (confidence < 0.5) trigger proposals
     # The >= 3 threshold in maybe_generate_proposal prevents noise from single documents.
     if taxonomy_node_id is None:
-        import asyncio as _asyncio  # noqa: PLC0415
-        _asyncio.create_task(
+        import asyncio as _asyncio
+        _t = _asyncio.create_task(
             maybe_generate_proposal(
                 org_id=req.org_id,
                 kb_slug=req.kb_slug,
-                unmatched_documents=[DocumentSummary(title=title, content_preview=req.content[:500])],
+                unmatched_documents=[
+                    DocumentSummary(title=title, content_preview=req.content[:500])
+                ],
                 existing_nodes=taxonomy_nodes,
             )
         )
+        _background_tasks.add(_t)
+        _t.add_done_callback(_background_tasks.discard)
 
     # Enqueue enrichment as async Procrastinate task (non-blocking)
     if await org_config.is_enrichment_enabled(req.org_id, pool):
-        from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+        from knowledge_ingest import enrichment_tasks
         proc_app = enrichment_tasks.get_app()
         task_fn = (
             proc_app.enrich_document_interactive  # type: ignore[attr-defined]
@@ -331,7 +347,7 @@ async def ingest_document(req: IngestRequest) -> dict:
             else proc_app.enrich_document_bulk  # type: ignore[attr-defined]
         )
         try:
-            from procrastinate.exceptions import AlreadyEnqueued  # noqa: PLC0415
+            from procrastinate.exceptions import AlreadyEnqueued
             await task_fn.configure(
                 queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}",
             ).defer_async(
@@ -360,7 +376,7 @@ async def ingest_document(req: IngestRequest) -> dict:
     # This ensures enrichment LLM calls finish before Graphiti starts, so they never
     # compete on the same 1 req/s upstream rate limit simultaneously.
     if settings.graphiti_enabled:
-        from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+        from knowledge_ingest import enrichment_tasks
         proc_app = enrichment_tasks.get_app()
         await proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
             queueing_lock=f"graphiti:{artifact_id}",
@@ -415,8 +431,8 @@ async def gitea_webhook(request: Request) -> dict:
 
     try:
         body = json.loads(raw_body)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from exc
 
     event = GiteaPushEvent.model_validate(body)
 
@@ -474,9 +490,11 @@ async def gitea_webhook(request: Request) -> dict:
 
         if settings.enrichment_enabled:
             try:
-                import datetime as _dt  # noqa: PLC0415
-                from procrastinate.exceptions import AlreadyEnqueued  # noqa: PLC0415
-                from knowledge_ingest import enrichment_tasks  # noqa: PLC0415
+                import datetime as _dt
+
+                from procrastinate.exceptions import AlreadyEnqueued
+
+                from knowledge_ingest import enrichment_tasks
                 proc_app = enrichment_tasks.get_app()
                 await proc_app.ingest_from_gitea.configure(  # type: ignore[attr-defined]
                     queueing_lock=f"gitea:{org_id}:{kb_slug}:{path}",
@@ -518,7 +536,10 @@ async def gitea_webhook(request: Request) -> dict:
         try:
             await qdrant_store.delete_document(org_id, kb_slug, path)
         except Exception as exc:
-            logger.warning("page_qdrant_delete_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+            logger.warning(
+                "page_qdrant_delete_failed",
+                org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+            )
 
         # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
         if settings.graphiti_enabled:
@@ -527,19 +548,28 @@ async def gitea_webhook(request: Request) -> dict:
                 if episode_ids:
                     await graph_module.delete_kb_episodes(org_id, episode_ids)
             except Exception as exc:
-                logger.warning("page_graph_cleanup_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+                logger.warning(
+                    "page_graph_cleanup_failed",
+                    org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+                )
 
         # Metadata cleanup: derivations, artifact_entities, embedding_queue
         try:
             await pg_store.cleanup_page_metadata(org_id, kb_slug, path)
         except Exception as exc:
-            logger.warning("page_metadata_cleanup_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+            logger.warning(
+                "page_metadata_cleanup_failed",
+                org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+            )
 
         try:
             await pg_store.soft_delete_artifact(org_id, kb_slug, path)
             deleted += 1
         except Exception as exc:
-            logger.warning("page_soft_delete_failed", org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc))
+            logger.warning(
+                "page_soft_delete_failed",
+                org_id=org_id, kb_slug=kb_slug, path=path, error=str(exc),
+            )
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 
@@ -567,7 +597,7 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
 
 @router.delete("/ingest/v1/kb")
 async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
-    """Delete all data for a knowledge base: FalkorDB graph nodes + Qdrant chunks + PostgreSQL records.
+    """Delete all data for a knowledge base: graph nodes + Qdrant chunks + PostgreSQL records.
     Called by the portal on KB deletion. Scoped to (org_id, kb_slug).
     """
     _verify_internal_secret(request)
