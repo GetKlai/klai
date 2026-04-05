@@ -1,9 +1,9 @@
 ---
 id: SPEC-KB-019
 version: "1.0.0"
-status: draft
+status: implemented
 created: 2026-04-04
-updated: 2026-04-04
+updated: 2026-04-05
 author: MoAI
 priority: medium
 tags: [connector, notion, knowledge-base, ingestion]
