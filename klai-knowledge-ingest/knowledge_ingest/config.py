@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     portal_url: str = "http://portal-api:8000"
     portal_internal_token: str = ""  # X-Internal-Token for portal internal endpoints
     taxonomy_classification_model: str = "klai-fast"
-    taxonomy_classification_timeout: float = 5.0
+    taxonomy_classification_timeout: float = 30.0
 
     model_config = {"env_file": ".env"}
 
