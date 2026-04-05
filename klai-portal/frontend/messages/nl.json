@@ -1024,7 +1024,8 @@
   "admin_connectors_notion_database_ids": "Database-ID's (optioneel)",
   "admin_connectors_notion_database_ids_placeholder": "Eén database-UUID per regel",
   "admin_connectors_notion_max_pages": "Max pagina's per synchronisatie",
-  "admin_connectors_notion_token_help": "Maak een interne integratie aan via notion.so/my-integrations en plak het token hier.",
+  "admin_connectors_notion_token_help_prefix": "Maak een interne integratie aan via",
+  "admin_connectors_notion_token_help_suffix": "en plak het token hier.",
   "admin_connectors_type_ms_docs": "SharePoint",
 
   "admin_connectors_action_view": "Details bekijken",
