@@ -24,7 +24,7 @@ logger = structlog.get_logger()
 # @MX:REASON: [AUTO] Adding/removing fields changes what gets encrypted for every connector
 SENSITIVE_FIELDS: dict[str, list[str]] = {
     "github": ["access_token", "installation_token", "app_private_key"],
-    "notion": ["api_token"],
+    "notion": ["access_token"],
     "google_drive": ["oauth_token", "refresh_token", "access_token"],
     "ms_docs": ["oauth_token", "refresh_token", "access_token"],
     "web_crawler": ["auth_headers"],
