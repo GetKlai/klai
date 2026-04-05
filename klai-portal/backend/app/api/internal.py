@@ -580,15 +580,14 @@ async def create_gap_event(
                     # A full LLM classification would require calling the ingest service;
                     # for now, leave taxonomy_node_ids as None if not provided by the hook
                     logger.info(
-                        "gap_classification_skipped",
-                        gap_id=gap_id,
-                        reason="async classification not yet connected to ingest service",
+                        "gap_classification_skipped: gap_id=%s, reason=async classification not yet connected to ingest service",
+                        gap_id,
                     )
             except Exception as exc:
                 logger.warning(
-                    "gap_classification_failed",
-                    gap_id=gap_id,
-                    error=str(exc),
+                    "gap_classification_failed: gap_id=%s, error=%s",
+                    gap_id,
+                    str(exc),
                 )
 
         _task = _asyncio.create_task(  # noqa: RUF006

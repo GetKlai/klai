@@ -94,7 +94,7 @@ async def list_gaps(
         stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
     # SPEC-KB-022 R7: filter by taxonomy node
     if taxonomy_node_id is not None:
-        stmt = stmt.where(PortalRetrievalGap.taxonomy_node_ids.any(taxonomy_node_id))
+        stmt = stmt.where(PortalRetrievalGap.taxonomy_node_ids.contains([taxonomy_node_id]))
 
     result = await db.execute(stmt)
     rows = result.all()
