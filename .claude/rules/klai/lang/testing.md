@@ -33,6 +33,10 @@ After ANY Playwright testing, close all tabs then `browser_close()`. Brave locks
 - Use `pytest` with `asyncio` mode for async tests.
 - Fixtures in `conftest.py` — keep test files focused on assertions.
 - For Prometheus tests: use `REGISTRY` from fixture, not global `REGISTRY`.
+- When writing async tests in a Python service for the first time, verify
+  `pytest-asyncio` is actually installed — not just listed in `pyproject.toml`.
+  `asyncio_mode = "auto"` in config with no package installed produces
+  confusing failures. Fix: `uv sync --extra dev`.
 - MagicMock is truthy for `.headers.get()` — set `request.headers = {}` explicitly when
   testing middleware that reads optional headers. Otherwise the mock returns a MagicMock
   object that passes truthiness checks.

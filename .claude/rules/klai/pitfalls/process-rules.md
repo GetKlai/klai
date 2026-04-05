@@ -94,3 +94,10 @@ Before giving a subagent a "rewrite this file" task, Read the file
 yourself first. If the user edited it, extract their text and pass it
 verbatim in the prompt as content to preserve. Subagents have no
 context about prior user edits — they will overwrite silently.
+
+## worktree-agent-isolation
+When a subagent runs inside a git worktree (`.claude/worktrees/<id>/`),
+its file writes land in that worktree, not the main working tree. After the
+agent completes, manually verify that changes exist in the main directory,
+copy them if needed, and prune with `git worktree prune`. Skipping this
+means reviewing and committing an empty diff.
