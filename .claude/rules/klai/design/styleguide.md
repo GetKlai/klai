@@ -7,8 +7,8 @@ paths:
 # Klai Styleguide
 
 > Shared brand DNA for all Klai products (portal, website, future apps).
-> Portal-specific patterns (tokens, sidebar, forms): `projects/portal-frontend.md`
-> Website-specific patterns (spacing, animations, buttons): `projects/website.md`
+> Portal-specific patterns (tokens, sidebar, forms): `portal-patterns.md`
+> Website-specific patterns (spacing, animations, buttons): `website-patterns.md`
 > Source of truth: `klai-website/src/styles/global.css` and `klai-portal/frontend/src/index.css`.
 
 ---
@@ -17,83 +17,93 @@ paths:
 
 Klai should feel calm, confident, and warm. Not a startup shouting for attention. Not an enterprise wall.
 
-- **Calm over chaos.** Lots of sand/off-white space. Few elements per screen. One point per section.
-- **Typography does the work.** Serif headings + sans-serif body = well-written magazine, not SaaS template.
-- **Movement with restraint.** No animations for their own sake. Subtle fades and hover responses only.
-- **Show the product.** Screenshots, code blocks, real interfaces. No stock photos of people behind laptops.
-- **Two contexts.** USE side (warmer, more sand, human language) vs. BUILD side (darker, more purple, technical).
+- **Calm over chaos.** Warm ivory space. Few elements per screen. One point per section.
+- **One font family does everything.** Parabole in three weights handles headings, body, and UI. Decima Mono for labels only.
+- **Movement with restraint.** No animations for their own sake. Scroll-triggered opacity and subtle hover responses only.
+- **Show the product.** Screenshots, real interfaces, painting backgrounds. No stock photos of people behind laptops.
+- **Two contexts.** USE side (warmer, more cream, human language) vs. BUILD side (darker, technical details).
 
 ---
 
 ## Colors
 
-### CSS variables
+### CSS variables (defined in `@theme` in global.css)
 
 | Variable | Hex | Usage |
 |---|---|---|
-| `--color-purple-primary` | `#2D1B69` | Brand color. Borders, sidebar accents, logo tint. |
-| `--color-purple-deep` | `#1A0F40` | Dark backgrounds. Hero, sidebar, prose headings. |
-| `--color-purple-accent` | `#7C6AFF` | Buttons, highlights, active nav, large UI elements. |
-| `--color-purple-muted` | `#4A3A8A` | Hover states, secondary buttons, text links on light backgrounds. |
-| `--color-sand-light` | `#F5F0E8` | Warm, paper-like background for sections and cards. |
-| `--color-sand-mid` | `#EAE3D5` | Slightly darker sand for section contrast. |
-| `--color-off-white` | `#FAFAF8` | Default body background. Cooler than sand, warmer than pure white. |
+| `--color-rl-bg` | `#fffef2` | Body background. Warm ivory. |
+| `--color-rl-dark` | `#191918` | Primary text, headings, dark overlays. |
+| `--color-rl-dark-60` | `#19191899` | Body/paragraph text (60% opacity dark). |
+| `--color-rl-dark-30` | `#1919184d` | Muted text, placeholders (30% opacity). |
+| `--color-rl-dark-10` | `#1919181a` | Subtle borders, ghost button borders (10% opacity). |
+| `--color-rl-accent` | `#fcaa2d` | Primary CTA buttons, section dots, badges, list markers. |
+| `--color-rl-accent-dark` | `#a36404` | Dark amber for text links that need contrast. |
+| `--color-rl-cream` | `#f3f2e7` | Card backgrounds, sidebar, input fields. |
+| `--color-rl-border` | `#e3e2d8` | Card borders, dividers, table rules. |
+| `--color-rl-border-light` | `#d1d0c666` | Subtle borders with transparency. |
+| `--color-rl-muted` | `#bab9b0` | Label text, mono tags, FAQ icons. |
 
-### Text colors
+### Text colors (Tailwind usage)
 
-| Token | Hex | Usage |
+| Token | Class | Usage |
 |---|---|---|
-| Body text | `#1A1A1A` | Near-black. Default `color` on `body`. |
-| Prose headings | `#1A0F40` | Same as `--color-purple-deep`. H1/H2 in articles, docs, company pages. |
-| Muted text | `#1A1A1A` at 50% opacity | Taglines, secondary info, captions. |
+| Primary text | `text-rl-dark` | Headings, card titles, strong emphasis. |
+| Body text | `text-rl-dark-60` or `text-rl-dark/60` | Paragraphs, descriptions. |
+| Muted text | `text-rl-dark/40` | Section labels, trusted-by logos, nav links. |
+| Disabled/placeholder | `text-rl-dark/30` or `text-rl-dark/20` | Sidebar metadata, inactive items. |
+| On dark bg | `text-white`, `text-white/60`, `text-white/40` | CTA sections with painting overlay. |
+
+### Semantic colors (in components)
+
+| Color | Hex | Usage |
+|---|---|---|
+| Active green | `#3D6B35` | Knowledge base dots, status indicators. |
+| Browser red | `#FF5F57` at 50% | Traffic light close button. |
+| Browser yellow | `#FFBD2E` at 50% | Traffic light minimize button. |
+| Browser green | `#28C840` at 50% | Traffic light maximize button. |
 
 ### Accessibility (WCAG)
 
 | Combination | Result |
 |---|---|
-| `#1A1A1A` on `#F5F0E8` | Excellent contrast |
-| `#F5F0E8` on `#1A0F40` | Excellent contrast |
-| `#7C6AFF` on `#1A0F40` | Fine for UI use |
-| `#7C6AFF` on `#F5F0E8` (small text) | **Fails AA - use `#4A3A8A` instead** |
+| `#191918` on `#fffef2` | Excellent contrast |
+| `#191918` on `#f3f2e7` | Excellent contrast |
+| `#fcaa2d` on `#191918` (button text on accent bg) | Good contrast |
+| `#fcaa2d` as text on `#fffef2` | **Fails AA - use as background only, or use `#a36404` for text** |
 
 ---
 
 ## Typography
 
-Three fonts. Each has a strict role. Do not mix roles.
+One font family (Parabole) in multiple weights, plus Decima Mono for labels.
 
 ### Font stack
 
-| Variable | Font | Tailwind class | Fallback |
-|---|---|---|---|
-| `--font-serif` | Libre Baskerville | `font-serif` | Georgia, serif |
-| `--font-display` | Manrope | `font-display` | system-ui, sans-serif |
-| `--font-sans` | Inter | `font-sans` | system-ui, sans-serif |
+| Variable | Font | Tailwind class | Weight | Usage |
+|---|---|---|---|---|
+| `--font-display` | Parabole Trial Regular Text | `font-display` | 400 | Body, headings, nav, buttons - default for everything. |
+| `--font-display-medium` | Parabole Trial Medium Text | `font-display-medium` | 500 | Card titles, section labels, FAQ questions, comparison headers, prices. |
+| `--font-display-bold` | Parabole Trial Bold Text | `font-display-bold` | 700 | Trusted-by names, user names in chat. Rarely used. |
+| `--font-mono` | Decima Mono Pro Regular | `font-mono` | 400 | Card category labels (e.g., "Apps", "No. 1"), URL bar text. |
 
-### Libre Baskerville (serif) - editorial weight
+### Parabole accent variant (display/italic emphasis)
 
-Used for: H1/H2 in prose (blog, docs, company pages), hero H1, blockquotes, italic emphasis (`<em>`).
+The `font-accent` class applies a display variant of Parabole used exclusively for emphasis words in headings:
 
-**Never use for:** nav labels, buttons, form inputs, or any functional UI chrome.
+```html
+<h2>European AI infrastructure built for <em class="font-accent not-italic">trust</em></h2>
+```
 
-### Manrope (display) - numbers and CTA labels
+This creates the calligraphic emphasis on key words. Always used with `not-italic` to prevent browser italic rendering.
 
-Used for: prices and billing numbers, CTA button labels, large stats (NumberTicker), comparison table column headers.
-
-**Never use for:** body paragraphs or prose.
-
-### Inter (sans) - everything else
-
-Used for: body paragraphs, nav labels, sidebar links, secondary text, captions, metadata, form inputs.
-
-Safe default: if in doubt, use Inter.
+**Never use for:** buttons, nav, body text, or standalone text.
 
 ---
 
 ## Inline text links
 
-Light background: `#4A3A8A` (not `#7C6AFF` - fails contrast), hover `#2D1B69`.
-Dark background: `white/70` or `white/50`, hover `white/80` or `white`.
+Light background: `text-rl-dark`, underline `decoration-rl-accent/60`, hover `text-rl-accent`.
+Dark background: `text-white/70`, hover `text-white`.
 
 ---
 
@@ -101,10 +111,10 @@ Dark background: `white/70` or `white/50`, hover `white/80` or `white`.
 
 | Token | Value | Tailwind | Used for |
 |---|---|---|---|
-| `--radius-sm` | 0.375rem (6px) | `rounded` | Small chips, tags |
-| `--radius-md` | 0.5rem (8px) | `rounded-md` | Toggle items, small elements |
-| `--radius-lg` | 0.75rem (12px) | `rounded-lg` | Buttons, input fields |
-| `--radius-xl` | 1rem (16px) | `rounded-xl` | Cards, modals, panels |
+| Small | 0.5rem (8px) | `rounded-lg` | URL bars, sidebar items, input fields. |
+| Card | 0.75rem (12px) | `rounded-xl` | Content cards, FAQ containers. |
+| Section frame | 1rem (16px) | `rounded-2xl` | Painting backgrounds, comparison tables, CTA sections. |
+| Pill | 999px | `rounded-full` | Buttons, badges, status dots, model pills. |
 
 ---
 
@@ -112,22 +122,21 @@ Dark background: `white/70` or `white/50`, hover `white/80` or `white`.
 
 | Variant | File | Usage |
 |---|---|---|
-| White | `/klai-logo-white.svg` | Dark backgrounds (nav on hero, sidebar, dark sections) |
-| Default (color) | `/klai-logo.svg` | Light backgrounds |
+| Black | `/logo-black.svg` | Nav bar, light backgrounds (default). |
+| White | `/klai-logo-white.svg` | Dark overlays, painting CTA sections. |
 
-Height: `28px` in nav, proportional in sidebar. Never distort or tint.
+Height: `h-5` (20px) in nav. Never distort or tint.
 
 ---
 
 ## Rules and constraints
 
-1. **Never** put `font-serif` (Baskerville) on nav labels, buttons, or UI chrome.
-2. **Never** use `#7C6AFF` for small text on sand backgrounds - use `#4A3A8A` instead.
-3. **Never** add new colors without updating `global.css`/`index.css` and this file.
-4. **Never** use `font-display` (Manrope) for body text.
-5. **Never** use animations for decoration. Every animation must serve a purpose.
-6. **USE side** (user-facing tools): lean warm, more sand, larger type, human language.
-7. **BUILD side** (API/developer): lean dark, more purple, technical details, code snippets.
+1. **Never** use Parabole Bold for body text. It is reserved for emphasis (names, trust logos).
+2. **Never** use `#fcaa2d` as text color on light backgrounds - it fails contrast. Use as background or use `#a36404` for text.
+3. **Never** add new colors without updating `global.css` and this file.
+4. **Never** use animations for decoration. Scroll-triggered opacity and hover responses only.
+5. **Never** use stock photos. Product screenshots or painting backgrounds only.
+6. **Never** use em dashes (--) in content. House rule: use regular dashes or rewrite.
 
 ---
 
@@ -135,18 +144,20 @@ Height: `28px` in nav, proportional in sidebar. Never distort or tint.
 
 | What | Why not |
 |---|---|
-| Neon glow gradients | Not Klai - that's Jasper/Copy.ai energy |
-| Cold enterprise gray | Loses warmth |
-| Stock photos of people | Says nothing about the product |
-| Auto-playing video | Breaks calm |
-| Over-designed Framer animations | Substance over style |
-| Many elements per screen | Dilutes the message |
-| Em dashes (--) in content | House rule: use regular dashes or rewrite |
+| Neon glow gradients | Not Klai. Calm, not flashy. |
+| Cold enterprise gray | Loses warmth. Use cream/ivory tones instead. |
+| Stock photos of people | Says nothing about the product. |
+| Auto-playing video | Breaks calm. |
+| Multiple font families | Parabole handles everything. Do not introduce Inter/Manrope/etc. |
+| Purple accent colors | Old brand. The new accent is amber `#fcaa2d`. |
+| Many elements per screen | Dilutes the message. One point per section. |
+| `rounded-lg` on cards | Cards use `rounded-xl`. Buttons use `rounded-full`. |
 
 ---
 
 ## See Also
 
-- Portal patterns (tokens, sidebar, forms, cards, tables): `projects/portal-frontend.md`
-- Website patterns (buttons, spacing, animations, shadows): `projects/website.md`
-- [rules/gtm/klai-brand-voice.md](../../gtm/klai-brand-voice.md) - tone and writing style
+- Portal patterns (tokens, sidebar, forms, cards, tables): `portal-patterns.md`
+- Website patterns (buttons, spacing, animations, shadows): `website-patterns.md`
+- [rules/gtm/klai-brand-voice.md](../gtm/klai-brand-voice.md) - tone and writing style
+- [patterns/frontend.md](patterns/frontend.md) - technical frontend patterns (i18n, UI components)
