@@ -17,6 +17,7 @@ logger = structlog.get_logger()
 # See: https://github.com/getzep/graphiti/issues/1272
 # Remove once graphiti-core >= 0.29 includes the fix.
 from knowledge_ingest._patch_graphiti import apply as _apply_graphiti_patch
+
 _apply_graphiti_patch()
 
 
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI):
         # '/', '+', '=' that break stdlib urlparse), then build a libpq key=value string.
         from sqlalchemy.engine import make_url  # noqa: PLC0415
         from knowledge_ingest.config import settings as _s  # noqa: PLC0415
+
         _u = make_url(_s.postgres_dsn)
         # Wrap password in single quotes: base64 passwords end with '=' which
         # libpq key=value format interprets as a new separator without quoting.
@@ -59,7 +61,13 @@ async def lifespan(app: FastAPI):
         async with proc_app.open_async():
             worker_task = asyncio.create_task(
                 proc_app.run_worker_async(
-                    queues=["ingest-kb", "enrich-interactive", "enrich-bulk", "graphiti-bulk"],
+                    queues=[
+                        "ingest-kb",
+                        "enrich-interactive",
+                        "enrich-bulk",
+                        "graphiti-bulk",
+                        "taxonomy-backfill",
+                    ],
                     install_signal_handlers=False,
                 )
             )
@@ -73,7 +81,9 @@ async def lifespan(app: FastAPI):
             worker_task.cancel()
             listener_task.cancel()
             kb_config_listener_task.cancel()
-            await asyncio.gather(worker_task, listener_task, kb_config_listener_task, return_exceptions=True)
+            await asyncio.gather(
+                worker_task, listener_task, kb_config_listener_task, return_exceptions=True
+            )
     else:
         logger.info("Enrichment disabled — skipping Procrastinate worker.")
         yield
@@ -131,7 +141,9 @@ async def health():
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(f"{settings.sparse_sidecar_url}/health")
-            checks["bge_m3_sparse"] = "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+            checks["bge_m3_sparse"] = (
+                "ok" if resp.status_code == 200 else f"status={resp.status_code}"
+            )
     except Exception as exc:
         checks["bge_m3_sparse"] = f"error: {exc}"
 
@@ -141,7 +153,9 @@ async def health():
         try:
             import socket  # noqa: PLC0415
 
-            s = socket.create_connection((settings.falkordb_host, settings.falkordb_port), timeout=3.0)
+            s = socket.create_connection(
+                (settings.falkordb_host, settings.falkordb_port), timeout=3.0
+            )
             s.close()
             checks["falkordb"] = "ok"
         except Exception as exc:

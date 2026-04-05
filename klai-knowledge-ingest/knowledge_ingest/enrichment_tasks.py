@@ -16,6 +16,7 @@ Both tasks call _enrich_document() which:
 Procrastinate is imported lazily (inside init_app) so this module can be imported
 in test environments where psycopg/libpq is not available.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,10 +53,16 @@ def init_app(connector: Any) -> Any:
     _register_tasks(_procrastinate_app)
 
     from knowledge_ingest.crawl_tasks import register_crawl_tasks  # noqa: PLC0415
+
     register_crawl_tasks(_procrastinate_app)
 
     from knowledge_ingest.ingest_tasks import register_ingest_tasks  # noqa: PLC0415
+
     register_ingest_tasks(_procrastinate_app)
+
+    from knowledge_ingest.taxonomy_tasks import register_taxonomy_tasks  # noqa: PLC0415
+
+    register_taxonomy_tasks(_procrastinate_app)
 
     return _procrastinate_app
 
@@ -64,7 +71,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate  # noqa: PLC0415 — intentional lazy import
 
-    @procrastinate_app.task(queue="enrich-interactive", retry=procrastinate.RetryStrategy(max_attempts=2))
+    @procrastinate_app.task(
+        queue="enrich-interactive", retry=procrastinate.RetryStrategy(max_attempts=2)
+    )
     async def enrich_document_interactive(
         org_id: str,
         kb_slug: str,
@@ -80,8 +89,16 @@ def _register_tasks(procrastinate_app: Any) -> None:
     ) -> None:
         """Enrich chunks for a single-doc upload (high priority)."""
         await _enrich_document(
-            org_id, kb_slug, path, document_text, chunks, title,
-            artifact_id, user_id, extra_payload, synthesis_depth,
+            org_id,
+            kb_slug,
+            path,
+            document_text,
+            chunks,
+            title,
+            artifact_id,
+            user_id,
+            extra_payload,
+            synthesis_depth,
             content_type=content_type,
         )
 
@@ -101,8 +118,16 @@ def _register_tasks(procrastinate_app: Any) -> None:
     ) -> None:
         """Enrich chunks for crawl/import jobs (lower priority)."""
         await _enrich_document(
-            org_id, kb_slug, path, document_text, chunks, title,
-            artifact_id, user_id, extra_payload, synthesis_depth,
+            org_id,
+            kb_slug,
+            path,
+            document_text,
+            chunks,
+            title,
+            artifact_id,
+            user_id,
+            extra_payload,
+            synthesis_depth,
             content_type=content_type,
         )
 
@@ -110,7 +135,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
 
-    @procrastinate_app.task(queue="graphiti-bulk", retry=procrastinate.RetryStrategy(max_attempts=3))
+    @procrastinate_app.task(
+        queue="graphiti-bulk", retry=procrastinate.RetryStrategy(max_attempts=3)
+    )
     async def ingest_graphiti_episode(
         artifact_id: str,
         document_text: str,
@@ -132,6 +159,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         )
         from knowledge_ingest import graph as graph_module  # noqa: PLC0415
         from knowledge_ingest import pg_store  # noqa: PLC0415
+
         episode_id = await graph_module.ingest_episode(
             artifact_id=artifact_id,
             document_text=document_text,
@@ -182,9 +210,7 @@ async def _enrich_document(
         participant_context_str = ""
         if participants:
             names = ", ".join(
-                f"{p.get('name', '?')} ({p.get('role', '')})"
-                for p in participants
-                if p.get("name")
+                f"{p.get('name', '?')} ({p.get('role', '')})" for p in participants if p.get("name")
             )
             if names:
                 participant_context_str = (
