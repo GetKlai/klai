@@ -18,6 +18,12 @@ Notion adapter used `"access_token"` as the config key. Fixed in commit `ed642f9
 **Prevention:** When adding a connector to `SENSITIVE_FIELDS`, grep the adapter source for
 every key it writes to the config dict and verify exact name parity before merging.
 
+**After any SENSITIVE_FIELDS key rename:** grep test files for the old key before committing —
+tests that use the old key name will silently set up the wrong fixture and fail on assertion.
+```bash
+grep -r "old_key_name" klai-portal/backend/tests/
+```
+
 **[HARD] Every database query on a tenant-scoped model MUST be scoped to org_id.**
 
 ## The pattern

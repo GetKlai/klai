@@ -31,6 +31,7 @@ docker ps --filter name=[service] --format '{{.Names}}\t{{.Status}}'
 - Atomic writes only: write to `.env.new`, validate, then `mv` — never `cat >` or `echo >` directly.
 - SOPS is the single source of truth. Never manually edit `/opt/klai/.env` for permanent changes.
 - Repo is source of truth for compose files. Never edit `docker-compose.yml` on the server.
+- **portal-api uses explicit `environment:` block** — env vars are NOT auto-forwarded from `.env`. Adding a key to `.env` alone has no effect. Always add `NEW_VAR: ${NEW_VAR}` to the portal-api `environment:` block in `deploy/docker-compose.yml`. Verify: `docker compose config portal-api | grep -A 60 'environment:'`
 
 ## URL-encoded passwords
 - Special chars (`/`, `+`, `=`) in passwords break `redis://` and `postgres://` URL parsing.

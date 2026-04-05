@@ -44,6 +44,14 @@ chmod 600 /opt/klai/.env.new && mv /opt/klai/.env.new /opt/klai/.env
 `docker pull` fails silently without `set -e` → old image runs. Store `GHCR_READ_PAT` in SOPS.
 Alternative: build on server from public repo (sparse checkout + `docker build`).
 
+## Alembic revision IDs — never hand-typed (CRIT)
+Hand-typed placeholder IDs (e.g. `a1b2c3d4e5f6`) collide with existing migrations. SPEC-KB-020: identical ID already existed in production → `alembic upgrade head` failed with "Revision a1b2c3d4e5f6 is present more than once".
+Local `alembic/versions/` may be missing migrations that only exist in production — local file listing is not authoritative.
+**Prevention:**
+- Always generate via `alembic revision -m "description"` or `--autogenerate` — never write a revision ID by hand.
+- Before setting `down_revision`, confirm actual DB head: `SELECT version_num FROM alembic_version;`
+- If in doubt: `docker exec portal-api alembic heads` to see what the container sees.
+
 ## Alembic heads after merge
 Two branches with migrations → multiple heads → `alembic upgrade head` fails.
 Fix: `alembic merge heads -m "merge heads"`. Use `IF NOT EXISTS` in all DDL.
