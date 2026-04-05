@@ -94,9 +94,7 @@ async def list_gaps(
         stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
     # SPEC-KB-022 R7: filter by taxonomy node
     if taxonomy_node_id is not None:
-        stmt = stmt.where(
-            PortalRetrievalGap.taxonomy_node_ids.any(taxonomy_node_id)
-        )
+        stmt = stmt.where(PortalRetrievalGap.taxonomy_node_ids.any(taxonomy_node_id))
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -164,8 +162,7 @@ async def get_gaps_by_taxonomy(
 
     # Get all open gaps with taxonomy_node_ids in the time window
     gaps_result = await db.execute(
-        select(PortalRetrievalGap)
-        .where(
+        select(PortalRetrievalGap).where(
             PortalRetrievalGap.org_id == org.id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.resolved_at.is_(None),
@@ -186,9 +183,7 @@ async def get_gaps_by_taxonomy(
 
     # Fetch node names
     node_ids = list(node_counts.keys())
-    nodes_result = await db.execute(
-        select(PortalTaxonomyNode).where(PortalTaxonomyNode.id.in_(node_ids))
-    )
+    nodes_result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.id.in_(node_ids)))
     nodes_by_id = {n.id: n for n in nodes_result.scalars().all()}
 
     # Build response
@@ -210,13 +205,15 @@ async def get_gaps_by_taxonomy(
         else:
             priority = "low"
 
-        items.append(GapByTaxonomyOut(
-            taxonomy_node_id=nid,
-            taxonomy_node_name=name,
-            open_gaps=count,
-            frequency_per_day=round(freq, 2),
-            priority=priority,
-        ))
+        items.append(
+            GapByTaxonomyOut(
+                taxonomy_node_id=nid,
+                taxonomy_node_name=name,
+                open_gaps=count,
+                frequency_per_day=round(freq, 2),
+                priority=priority,
+            )
+        )
 
     # Sort by open_gaps descending
     items.sort(key=lambda x: x.open_gaps, reverse=True)

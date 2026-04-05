@@ -720,13 +720,15 @@ def _make_coverage_response(
         else:
             health = "healthy"
 
-        nodes.append(CoverageNodeOut(
-            taxonomy_node_id=nid,
-            taxonomy_node_name=node_names.get(nid, f"Node {nid}"),
-            chunk_count=chunk_count,
-            gap_count=gap_count,
-            health=health,
-        ))
+        nodes.append(
+            CoverageNodeOut(
+                taxonomy_node_id=nid,
+                taxonomy_node_name=node_names.get(nid, f"Node {nid}"),
+                chunk_count=chunk_count,
+                gap_count=gap_count,
+                health=health,
+            )
+        )
 
     return CoverageResponse(
         nodes=nodes,
@@ -772,17 +774,14 @@ async def taxonomy_coverage(
         ingest_data = {"nodes": [], "total_chunks": 0, "untagged_count": 0}
 
     # Get taxonomy node names from DB
-    nodes_result = await db.execute(
-        select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb.id)
-    )
+    nodes_result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb.id))
     nodes = nodes_result.scalars().all()
     node_names = {n.id: n.name for n in nodes}
 
     # Count open gaps per taxonomy node (last 30 days)
     cutoff = datetime.now(tz=UTC) - timedelta(days=30)
     gaps_result = await db.execute(
-        select(PortalRetrievalGap)
-        .where(
+        select(PortalRetrievalGap).where(
             PortalRetrievalGap.org_id == org.id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.resolved_at.is_(None),
