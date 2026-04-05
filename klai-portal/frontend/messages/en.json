@@ -1024,7 +1024,8 @@
   "admin_connectors_notion_database_ids": "Database IDs (optional)",
   "admin_connectors_notion_database_ids_placeholder": "One database UUID per line",
   "admin_connectors_notion_max_pages": "Max pages per sync",
-  "admin_connectors_notion_token_help": "Create an internal integration at notion.so/my-integrations and paste the token here.",
+  "admin_connectors_notion_token_help_prefix": "Create an internal integration at",
+  "admin_connectors_notion_token_help_suffix": "and paste the token here.",
   "admin_connectors_type_ms_docs": "SharePoint",
 
   "admin_connectors_action_view": "View details",

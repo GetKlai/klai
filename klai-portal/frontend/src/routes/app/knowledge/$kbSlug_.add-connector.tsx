@@ -317,7 +317,21 @@ function AddConnectorPage() {
                     <div className="space-y-1.5">
                       <Label htmlFor="notion-token">{m.admin_connectors_notion_access_token()}</Label>
                       <Input id="notion-token" type="password" required placeholder={m.admin_connectors_notion_access_token_placeholder()} value={notionConfig.access_token} onChange={(e) => setNotionConfig((p) => ({ ...p, access_token: e.target.value }))} />
-                      <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help()}</p>
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        {m.admin_connectors_notion_token_help_prefix()}{' '}
+                        <a
+                          href="https://www.notion.so/my-integrations"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 text-[var(--color-purple-muted)] hover:text-[var(--color-purple-primary)] underline underline-offset-2"
+                        >
+                          notion.so/my-integrations
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="none" className="size-3 shrink-0" aria-hidden="true">
+                            <path d="M3.5 3H2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V8.5M7 1h4m0 0v4m0-4L5 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </a>{' '}
+                        {m.admin_connectors_notion_token_help_suffix()}
+                      </p>
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="notion-db-ids">{m.admin_connectors_notion_database_ids()}</Label>
