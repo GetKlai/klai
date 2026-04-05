@@ -18,6 +18,12 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$co
   component: EditConnectorPage,
 })
 
+interface NotionEditConfig {
+  database_ids: string
+  max_pages: string
+  new_access_token: string
+}
+
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
 
 function EditConnectorPage() {
@@ -47,6 +53,9 @@ function EditConnectorPage() {
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
   })
+  const [notionConfig, setNotionConfig] = useState<NotionEditConfig>({
+    database_ids: '', max_pages: '500', new_access_token: '',
+  })
   const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
 
   useEffect(() => {
@@ -72,6 +81,14 @@ function EditConnectorPage() {
         path_filter: String(cfg.path_filter ?? ''),
       })
     }
+    if (connector.connector_type === 'notion') {
+      const cfg = connector.config as { database_ids?: string[]; max_pages?: number }
+      setNotionConfig({
+        database_ids: (cfg.database_ids ?? []).join('\n'),
+        max_pages: String(cfg.max_pages ?? '500'),
+        new_access_token: '',
+      })
+    }
   }, [connector?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
@@ -90,6 +107,14 @@ function EditConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages) config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
+      }
+      if (connector.connector_type === 'notion') {
+        if (notionConfig.new_access_token.trim()) {
+          config.access_token = notionConfig.new_access_token.trim()
+        }
+        const ids = notionConfig.database_ids.split('\n').map((s) => s.trim()).filter(Boolean)
+        if (ids.length > 0) config.database_ids = ids
+        if (notionConfig.max_pages) config.max_pages = Number(notionConfig.max_pages)
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, token, {
         method: 'PATCH',
@@ -122,6 +147,15 @@ function EditConnectorPage() {
     onError: () => setPreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
   })
 
+  function renderError() {
+    if (!updateMutation.error) return null
+    return (
+      <p className="text-sm text-[var(--color-destructive)]">
+        {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
+      </p>
+    )
+  }
+
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
@@ -136,6 +170,8 @@ function EditConnectorPage() {
 
       <Card>
         <CardContent className="pt-6">
+
+          {/* Web crawler */}
           {connector?.connector_type === 'web_crawler' && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
@@ -194,17 +230,14 @@ function EditConnectorPage() {
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>
                 <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
               </div>
-              {updateMutation.error && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
-                </p>
-              )}
+              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
             </form>
           )}
 
+          {/* GitHub */}
           {connector?.connector_type === 'github' && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
@@ -233,18 +266,66 @@ function EditConnectorPage() {
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>
                 <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
               </div>
-              {updateMutation.error && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
-                </p>
-              )}
+              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
             </form>
           )}
 
-          {connector && connector.connector_type !== 'web_crawler' && connector.connector_type !== 'github' && (
+          {/* Notion */}
+          {connector?.connector_type === 'notion' && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-notion-token">{m.admin_connectors_notion_access_token()}</Label>
+                <Input
+                  id="edit-conn-notion-token"
+                  type="password"
+                  placeholder={m.admin_connectors_notion_access_token_placeholder()}
+                  value={notionConfig.new_access_token}
+                  onChange={(e) => setNotionConfig((p) => ({ ...p, new_access_token: e.target.value }))}
+                />
+                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help_update()}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-notion-dbs">{m.admin_connectors_notion_database_ids()}</Label>
+                <textarea
+                  id="edit-conn-notion-dbs"
+                  rows={3}
+                  placeholder={m.admin_connectors_notion_database_ids_placeholder()}
+                  value={notionConfig.database_ids}
+                  onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-sm text-[var(--color-purple-deep)] placeholder:text-[var(--color-muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] resize-none"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-notion-max-pages">{m.admin_connectors_notion_max_pages()}</Label>
+                <Input
+                  id="edit-conn-notion-max-pages"
+                  type="number"
+                  min="1"
+                  max="5000"
+                  value={notionConfig.max_pages}
+                  onChange={(e) => setNotionConfig((p) => ({ ...p, max_pages: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+              </div>
+              {renderError()}
+              <div className="pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+              </div>
+            </form>
+          )}
+
+          {/* Generic fallback for unsupported connector types */}
+          {connector && !['web_crawler', 'github', 'notion'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
@@ -254,11 +335,7 @@ function EditConnectorPage() {
                 <Label>{m.admin_connectors_assertion_modes_label()}</Label>
                 <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
               </div>
-              {updateMutation.error && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {updateMutation.error instanceof Error ? updateMutation.error.message : m.admin_connectors_error_create_generic()}
-                </p>
-              )}
+              {renderError()}
               <div className="pt-2">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
