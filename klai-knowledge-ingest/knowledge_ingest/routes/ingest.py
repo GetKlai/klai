@@ -263,6 +263,16 @@ async def ingest_document(req: IngestRequest) -> dict:
     # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
     await pg_store.soft_delete_artifact(req.org_id, req.kb_slug, req.path)
 
+    # Merge connector provenance fields into extra so PG tracks the same metadata as Qdrant.
+    # This enables delete_connector_artifacts() to find and remove PG records by connector.
+    pg_extra: dict = dict(req.extra or {})
+    if req.source_connector_id:
+        pg_extra["source_connector_id"] = req.source_connector_id
+    if req.source_type:
+        pg_extra["source_type"] = req.source_type
+    if req.source_ref:
+        pg_extra["source_ref"] = req.source_ref
+
     artifact_id = await pg_store.create_artifact(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
@@ -275,7 +285,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         belief_time_end=kf["belief_time_end"],
         user_id=req.user_id,
         content_type=req.content_type,
-        extra=req.extra or None,
+        extra=pg_extra or None,
         content_hash=content_hash,
     )
 
