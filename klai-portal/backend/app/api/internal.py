@@ -412,6 +412,7 @@ class KbFeedbackIn(BaseModel):
     text: str | None = None
     librechat_user_id: str
     librechat_tenant_id: str
+    model_alias: str | None = None
 
 
 # @MX:ANCHOR: [AUTO] Public API boundary for KB feedback from LibreChat. SPEC-KB-015.
@@ -477,7 +478,7 @@ async def post_kb_feedback(
             "feedback_text": body.text,
             "chunk_ids": chunk_ids or None,
             "correlated": correlated,
-            "model_alias": None,
+            "model_alias": body.model_alias,
         },
     )
     await db.commit()

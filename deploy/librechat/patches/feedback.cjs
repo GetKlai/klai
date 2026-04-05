@@ -418,10 +418,14 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
           rating: feedback.rating,
           tag: feedback.tag ?? null,
           text: feedback.text ?? null,
+          model_alias: updatedMessage?.model ?? null,
           librechat_user_id: req.user?.id ?? '',
           librechat_tenant_id: req.user?.tenantId ?? null,
         }),
-      }).catch(() => {}); // REQ-KB-015-07: silent discard on portal-api unreachable
+      }).catch((err) => {
+        // REQ-KB-015-07: never surface to user, but log so failures are visible in VictoriaLogs
+        logger.warn('SPEC-KB-015: kb-feedback forward failed', { error: err?.message });
+      });
     }
 
     res.json({
