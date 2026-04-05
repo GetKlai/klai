@@ -111,6 +111,24 @@ Scrolled border: 1px solid rgba(255,255,255,0.06)
 
 ---
 
+## Content card (compact)
+
+Cream card for listing items (products, features, steps). No painting background.
+
+```
+Container:    rounded-xl p-5 sm:p-6
+Background:   style="background:#f3f2e7"  (inline — bg-rl-cream doesn't render opaque)
+Label:        text-[11px] font-mono text-rl-muted uppercase tracking-[0.06em]
+Title:        text-[17px] tracking-[-0.02em] font-display-medium mt-1.5
+Description:  text-[14px] text-rl-dark/60 leading-[1.6] mt-2
+Stack gap:    space-y-4
+```
+
+Use for: product feature cards, enumerated feature tiles, step-by-step items.
+Do not use for: pricing cards (those need CTAs), comparison tables (those sit inside painting frames).
+
+---
+
 ## Shadows and elevation
 
 | Context | Value |
