@@ -52,6 +52,16 @@ class NotionAdapter(BaseAdapter):
 
         Returns a normalised config dict with defaults applied.
 
+        Config fields:
+            access_token (required): Notion integration token.
+            page_ids (optional): List of specific Notion page IDs to sync.
+                When set, only these pages are synced — search is skipped entirely.
+            database_ids (optional): List of Notion database IDs. When set,
+                only pages whose parent is one of these databases are synced.
+                Applied as a post-fetch filter (notion_client v2 has no server-side
+                database query — see knowledge rule notion_client-v2).
+            max_pages (optional): Safety limit on total pages synced. Default 500.
+
         Raises:
             ValueError: If access_token is missing.
         """
@@ -64,6 +74,7 @@ class NotionAdapter(BaseAdapter):
             )
         return {
             "access_token": access_token,
+            "page_ids": config.get("page_ids", []),
             "database_ids": config.get("database_ids", []),
             "max_pages": config.get("max_pages", 500),
         }
@@ -78,23 +89,59 @@ class NotionAdapter(BaseAdapter):
     # -- Search helper (sync, runs in thread pool) ----------------------------
 
     @staticmethod
+    def _fetch_specific_pages(
+        client: RateLimitedNotionClient,
+        page_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """Fetch specific Notion pages by ID directly (no search).
+
+        Runs synchronously — call via asyncio.to_thread.
+
+        Args:
+            client: Rate-limited Notion client.
+            page_ids: List of Notion page UUIDs to fetch.
+
+        Returns:
+            List of Notion page objects (skips archived or missing pages).
+        """
+        pages: list[dict[str, Any]] = []
+        for page_id in page_ids:
+            try:
+                page = client._execute_with_retry(  # noqa: SLF001
+                    f"retrieve page {page_id}",
+                    client.notion.pages.retrieve,
+                    page_id=page_id,
+                )
+                if page.get("archived", False):
+                    continue
+                pages.append(page)
+            except Exception:
+                logger.warning("Failed to retrieve Notion page %s — skipping", page_id)
+        return pages
+
+    @staticmethod
     def _search_all_pages(
         client: RateLimitedNotionClient,
         last_synced_at: str | None,
         max_pages: int,
+        database_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch all accessible Notion pages via the Search API.
+        """Fetch Notion pages via the Search API with optional database filter.
 
         Runs synchronously — call via asyncio.to_thread.
 
         Args:
             client: Rate-limited Notion client.
             last_synced_at: ISO 8601 timestamp; skip pages last edited before this.
-            max_pages: Maximum number of pages to return.
+            max_pages: Safety limit on total pages returned.
+            database_ids: When set, only include pages whose parent is one of
+                these database IDs (post-fetch filter — notion_client v2 has no
+                server-side database query endpoint).
 
         Returns:
             List of Notion page objects.
         """
+        db_filter: set[str] = set(database_ids) if database_ids else set()
         pages: list[dict[str, Any]] = []
         next_cursor: str | None = None
 
@@ -117,6 +164,10 @@ class NotionAdapter(BaseAdapter):
                     continue
                 if page.get("archived", False):
                     continue
+                if db_filter:
+                    parent = page.get("parent", {})
+                    if parent.get("type") != "database_id" or parent.get("database_id") not in db_filter:
+                        continue
                 last_edited: str = page.get("last_edited_time", "")
                 if last_synced_at and last_edited <= last_synced_at:
                     continue
@@ -184,18 +235,27 @@ class NotionAdapter(BaseAdapter):
         """
         cfg = self._extract_config(connector)
         client = self._build_sync_client(cfg["access_token"])
+        page_ids: list[str] = cfg["page_ids"]
+        database_ids: list[str] = cfg["database_ids"]
         max_pages: int = cfg["max_pages"]
         last_synced_at: str | None = (cursor_context or {}).get("last_synced_at")
 
         connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
-        logger.info(
-            "Listing Notion pages (connector=%s, incremental=%s)",
-            connector_id, last_synced_at is not None,
-        )
 
-        pages = await asyncio.to_thread(
-            self._search_all_pages, client, last_synced_at, max_pages
-        )
+        if page_ids:
+            logger.info(
+                "Fetching %d specific Notion pages (connector=%s)",
+                len(page_ids), connector_id,
+            )
+            pages = await asyncio.to_thread(self._fetch_specific_pages, client, page_ids)
+        else:
+            logger.info(
+                "Listing Notion pages (connector=%s, incremental=%s, database_filter=%s)",
+                connector_id, last_synced_at is not None, bool(database_ids),
+            )
+            pages = await asyncio.to_thread(
+                self._search_all_pages, client, last_synced_at, max_pages, database_ids or None
+            )
 
         refs = [
             DocumentRef(
