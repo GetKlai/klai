@@ -266,10 +266,19 @@ def extract_citations(chunks: list[dict]) -> list[dict]:
                 "excerpt": chunk["content"][:200],
             })
             continue
+        meta = chunk.get("metadata", {})
+        source_ref = meta.get("source_ref")
+        source_connector_id = meta.get("source_connector_id")
+        # Build a clickable URL when source_ref is a Notion page UUID
+        # Notion UUIDs are 32-char hex with dashes; connector_id presence confirms KB connector origin
+        url = None
+        if source_ref and source_connector_id:
+            url = f"https://notion.so/{source_ref.replace('-', '')}"
         citations.append({
             "source_id": chunk["source_id"],
             "source_name": chunk.get("source_name", ""),
-            "page": chunk.get("metadata", {}).get("page"),
+            "page": meta.get("page"),
+            "url": url,
             "excerpt": chunk["content"][:200],
         })
     return citations

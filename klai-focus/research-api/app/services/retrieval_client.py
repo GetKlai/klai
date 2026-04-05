@@ -94,8 +94,11 @@ def _to_chunk(c: dict, origin: str) -> dict:
         "chunk_id": c.get("chunk_id", ""),
         "source_id": c.get("artifact_id") or "unknown",
         "content": content,
-        "metadata": {},
+        "metadata": {
+            "source_ref": c.get("source_ref"),
+            "source_connector_id": c.get("source_connector_id"),
+        },
         "score": float(c.get("reranker_score") or c.get("score") or 0.0),
-        "source_name": c.get("artifact_id") or "Knowledge Base",
+        "source_name": c.get("title") or c.get("artifact_id") or "Knowledge Base",
         "origin": origin,
     }
