@@ -51,6 +51,4 @@ class PortalFeedbackEvent(Base):
     chunk_ids: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True, default=None)
     correlated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     model_alias: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
