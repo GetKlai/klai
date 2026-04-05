@@ -420,9 +420,7 @@ async def post_kb_feedback(
     _require_internal_token(request)
 
     # 1. Resolve tenant
-    org_result = await db.execute(
-        select(PortalOrg).where(PortalOrg.librechat_container == body.librechat_tenant_id)
-    )
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.librechat_container == body.librechat_tenant_id))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown tenant")

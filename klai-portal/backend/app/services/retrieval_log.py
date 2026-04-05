@@ -46,13 +46,15 @@ async def write_retrieval_log(
         key = f"rl:{org_id}:{user_id}"
         epoch = retrieved_at.timestamp()
 
-        entry = json.dumps({
-            "chunk_ids": chunk_ids,
-            "reranker_scores": reranker_scores,
-            "query_resolved": query_resolved,
-            "embedding_model_version": embedding_model_version,
-            "retrieved_at": epoch,
-        })
+        entry = json.dumps(
+            {
+                "chunk_ids": chunk_ids,
+                "reranker_scores": reranker_scores,
+                "query_resolved": query_resolved,
+                "embedding_model_version": embedding_model_version,
+                "retrieved_at": epoch,
+            }
+        )
 
         await pool.zadd(key, {entry: epoch})
         await pool.expire(key, _TTL_SECONDS)
