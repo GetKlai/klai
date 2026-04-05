@@ -49,9 +49,9 @@ class TestConnectorOutMasking:
         assert out.config["repo"] == "GetKlai/klai"
 
     def test_notion_sensitive_fields_masked(self) -> None:
-        config = {"workspace_id": "ws-123", "api_token": FAKE_TOKEN}
+        config = {"workspace_id": "ws-123", "access_token": FAKE_TOKEN}
         out = _connector_out(self._make_connector("notion", config))
-        assert out.config["api_token"] == "***"
+        assert out.config["access_token"] == "***"
         assert out.config["workspace_id"] == "ws-123"
 
     def test_web_crawler_sensitive_fields_masked(self) -> None:
