@@ -407,9 +407,7 @@ async def list_taxonomy_nodes_internal(
     _require_internal_token(request)
 
     # portal_orgs has no RLS — safe to query without tenant
-    org_result = await db.execute(
-        select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id)
-    )
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
     org = org_result.scalar_one_or_none()
     if not org:
         return TaxonomyNodesResponse(nodes=[])
