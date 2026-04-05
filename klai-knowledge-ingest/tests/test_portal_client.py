@@ -127,7 +127,8 @@ class TestSubmitTaxonomyProposal:
         mock_client.post.assert_called_once()
         call_json = mock_client.post.call_args.kwargs["json"]
         assert call_json["proposal_type"] == "new_node"
-        assert call_json["suggested_name"] == "API Documentation"
+        assert call_json["title"] == "API Documentation"
+        assert call_json["payload"]["suggested_name"] == "API Documentation"
 
     @pytest.mark.asyncio
     async def test_skips_when_no_token(self):

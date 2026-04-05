@@ -74,11 +74,9 @@ async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
 async def _fetch_from_portal(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
     async with httpx.AsyncClient(timeout=3.0) as client:
         resp = await client.get(
-            f"{settings.portal_url}/api/app/knowledge-bases/{kb_slug}/taxonomy/nodes",
-            headers={
-                "X-Internal-Token": settings.portal_internal_token,
-                "X-Org-ID": org_id,
-            },
+            f"{settings.portal_url}/api/app/knowledge-bases/{kb_slug}/taxonomy/nodes/internal",
+            headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+            params={"org_id": org_id},
         )
         if resp.status_code == 404:
             return []
@@ -113,15 +111,16 @@ async def submit_taxonomy_proposal(
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 f"{settings.portal_url}/api/app/knowledge-bases/{kb_slug}/taxonomy/proposals",
-                headers={
-                    "X-Internal-Token": settings.portal_internal_token,
-                    "X-Org-ID": org_id,
-                },
+                headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
+                params={"org_id": org_id},
                 json={
                     "proposal_type": proposal.proposal_type,
-                    "suggested_name": proposal.suggested_name,
-                    "document_count": proposal.document_count,
-                    "sample_titles": proposal.sample_titles[:5],
+                    "title": proposal.suggested_name,
+                    "payload": {
+                        "suggested_name": proposal.suggested_name,
+                        "document_count": proposal.document_count,
+                        "sample_titles": proposal.sample_titles[:5],
+                    },
                 },
             )
             if resp.status_code not in (200, 201):

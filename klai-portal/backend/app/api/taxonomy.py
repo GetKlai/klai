@@ -373,6 +373,42 @@ def _require_internal_token(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
+@router.get(
+    "/{kb_slug}/taxonomy/nodes/internal",
+    response_model=TaxonomyNodesResponse,
+)
+async def list_taxonomy_nodes_internal(
+    kb_slug: str,
+    org_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> TaxonomyNodesResponse:
+    """List taxonomy nodes for a KB. Internal endpoint for knowledge-ingest service.
+
+    Uses X-Internal-Token auth (Authorization: Bearer <internal_secret>).
+    org_id is passed as a query parameter for tenant scoping.
+    """
+    _require_internal_token(request)
+
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.slug == kb_slug,
+            PortalKnowledgeBase.org_id == org_id,
+        )
+    )
+    kb = result.scalar_one_or_none()
+    if not kb:
+        return TaxonomyNodesResponse(nodes=[])
+
+    nodes_result = await db.execute(
+        select(PortalTaxonomyNode)
+        .where(PortalTaxonomyNode.kb_id == kb.id)
+        .order_by(PortalTaxonomyNode.sort_order, PortalTaxonomyNode.name)
+    )
+    nodes = nodes_result.scalars().all()
+    return TaxonomyNodesResponse(nodes=[_node_out(n) for n in nodes])
+
+
 @router.post(
     "/{kb_slug}/taxonomy/proposals",
     response_model=ProposalOut,
