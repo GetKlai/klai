@@ -6,7 +6,10 @@ Returns (matched_nodes, suggested_tags):
   - matched_nodes: list of (node_id, confidence) tuples, sorted by confidence desc
   - suggested_tags: list of free-form tag strings
 Threshold: confidence >= 0.5, max 5 nodes, max 5 tags.
-5-second timeout; falls back to ([], []) on error without failing the ingest.
+30-second timeout; falls back to ([], []) on error without failing the ingest.
+
+Rate limiting: uses the same _TokenBucketLimiter/_RateLimitedTransport from graph.py,
+throttled to settings.graphiti_llm_rps (default 1 req/s) to avoid 429s on LiteLLM.
 """
 from __future__ import annotations
 
@@ -17,8 +20,19 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.graph import _RateLimitedTransport, _TokenBucketLimiter
 
 logger = structlog.get_logger()
+
+# Module-level rate limiter shared across all classify_document calls
+_llm_limiter: _TokenBucketLimiter | None = None
+
+
+def _get_llm_limiter() -> _TokenBucketLimiter:
+    global _llm_limiter
+    if _llm_limiter is None:
+        _llm_limiter = _TokenBucketLimiter(rate=settings.graphiti_llm_rps)
+    return _llm_limiter
 
 
 class TaxonomyNode:
@@ -117,8 +131,18 @@ async def classify_document(
 
 
 async def _call_litellm(user_message: str) -> dict:
-    """Call LiteLLM proxy for taxonomy classification."""
-    async with httpx.AsyncClient(timeout=settings.taxonomy_classification_timeout) as client:
+    """Call LiteLLM proxy for taxonomy classification.
+
+    Uses _RateLimitedTransport to throttle calls to graphiti_llm_rps (default 1/s).
+    """
+    transport = _RateLimitedTransport(
+        wrapped=httpx.AsyncHTTPTransport(),
+        limiter=_get_llm_limiter(),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        timeout=settings.taxonomy_classification_timeout,
+    ) as client:
         resp = await client.post(
             f"{settings.litellm_url}/chat/completions",
             headers={
