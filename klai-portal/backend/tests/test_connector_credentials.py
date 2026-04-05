@@ -106,9 +106,7 @@ class TestEncryptDecryptRoundTrip:
             assert stripped["repo"] == "GetKlai/klai"
 
             # Decrypt round-trip
-            decrypted = await store.decrypt_credentials(
-                org_id=1, encrypted_credentials=encrypted_blob, db=db
-            )
+            decrypted = await store.decrypt_credentials(org_id=1, encrypted_credentials=encrypted_blob, db=db)
             assert decrypted["access_token"] == FAKE_TOKEN_A
             assert decrypted["installation_token"] == FAKE_TOKEN_B
             assert decrypted["app_private_key"] == FAKE_TOKEN_C
@@ -216,9 +214,7 @@ class TestTamperedCiphertextDetection:
         config = {"access_token": FAKE_TOKEN_A}
         dek = os.urandom(32)
         with patch.object(store, "get_or_create_dek", return_value=dek):
-            encrypted_blob, _ = await store.encrypt_credentials(
-                org_id=1, connector_type="github", config=config, db=db
-            )
+            encrypted_blob, _ = await store.encrypt_credentials(org_id=1, connector_type="github", config=config, db=db)
             # Tamper with the blob
             tampered = bytearray(encrypted_blob)
             tampered[-1] ^= 0xFF
