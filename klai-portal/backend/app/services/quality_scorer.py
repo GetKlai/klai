@@ -34,8 +34,10 @@ async def apply_quality_score(
     collection = settings.qdrant_collection
     base_url = settings.qdrant_url
 
+    headers = {"api-key": settings.qdrant_api_key} if settings.qdrant_api_key else {}
+
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             # Batch fetch current payloads
             resp = await client.post(
                 f"{base_url}/collections/{collection}/points",
