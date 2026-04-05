@@ -264,6 +264,7 @@ class NotionAdapter(BaseAdapter):
                 size=0,
                 content_type="notion_page",
                 source_ref=page["id"],
+                source_url=f"https://notion.so/{page['id'].replace('-', '')}",
             )
             for page in pages
         ]

@@ -35,6 +35,7 @@ class ChunkResult(BaseModel):
     evidence_tier_metadata: dict | None = None
     source_ref: str | None = None          # Notion page UUID, URL, or repo path
     source_connector_id: str | None = None  # Connector that produced this chunk
+    source_url: str | None = None           # Canonical URL for this source
     title: str | None = None               # Document title from Qdrant payload
 
 

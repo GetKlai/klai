@@ -227,6 +227,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 evidence_tier_metadata=r.get("evidence_tier_metadata"),
                 source_ref=r.get("source_ref"),
                 source_connector_id=r.get("source_connector_id"),
+                source_url=r.get("source_url"),
                 title=r.get("title"),
             )
             for r in serving
