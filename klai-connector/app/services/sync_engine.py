@@ -198,6 +198,11 @@ class SyncEngine:
                         content_bytes = await adapter.fetch_document(ref, portal_config)
                         bytes_processed += len(content_bytes)
                         text = parse_document(content_bytes, ref.path.split("/")[-1])
+                        if not text.strip():
+                            logger.info("Skipping empty document", path=ref.path)
+                            documents_ok += 1
+                            resume_ingested_refs.add(ref_key)
+                            continue
                         await self._ingest_client.ingest_document(
                             org_id=portal_config.zitadel_org_id,
                             kb_slug=portal_config.kb_slug,

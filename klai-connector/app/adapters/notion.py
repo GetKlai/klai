@@ -232,32 +232,14 @@ class NotionAdapter(BaseAdapter):
         cfg = self._extract_config(connector)
         client = self._build_client(cfg["access_token"])
 
+        connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
         logger.info(
             "Fetching Notion page %s (connector=%s)",
-            ref.ref, str(getattr(connector, "id", "")),
+            ref.ref, connector_id,
         )
 
         try:
-            blocks_text: list[str] = []
-            next_cursor: str | None = None
-
-            while True:
-                response = await self._with_retry(
-                    self._get_page_blocks,
-                    client,
-                    ref.ref,
-                    start_cursor=next_cursor,
-                )
-
-                for block in response.get("results", []):
-                    text = self._extract_block_text(block)
-                    if text:
-                        blocks_text.append(text)
-
-                if not response.get("has_more"):
-                    break
-                next_cursor = response.get("next_cursor")
-
+            blocks_text = await self._fetch_all_block_text(client, ref.ref)
             content = "\n".join(blocks_text)
             return content.encode("utf-8")
 
@@ -302,6 +284,62 @@ class NotionAdapter(BaseAdapter):
 
         finally:
             await client.aclose()
+
+    # -- Recursive block fetching ---------------------------------------------
+
+    # Block types that have children rendered as separate pages — don't recurse into them.
+    _SKIP_CHILD_TYPES: frozenset[str] = frozenset({"child_page", "child_database"})
+
+    async def _fetch_all_block_text(
+        self,
+        client: AsyncClient,
+        block_id: str,
+        depth: int = 0,
+    ) -> list[str]:
+        """Recursively fetch plain text from all blocks under *block_id*.
+
+        Recurses into blocks with has_children=True up to depth 4. Skips
+        child_page and child_database blocks (they are separate Notion pages).
+
+        Args:
+            client: Notion AsyncClient.
+            block_id: Page or block UUID.
+            depth: Current recursion depth (guards against pathological nesting).
+
+        Returns:
+            List of non-empty text strings extracted from all nested blocks.
+        """
+        if depth > 4:
+            return []
+
+        texts: list[str] = []
+        next_cursor: str | None = None
+
+        while True:
+            response = await self._with_retry(
+                self._get_page_blocks,
+                client,
+                block_id,
+                start_cursor=next_cursor,
+            )
+
+            for block in response.get("results", []):
+                text = self._extract_block_text(block)
+                if text:
+                    texts.append(text)
+
+                block_type = block.get("type", "")
+                if block.get("has_children") and block_type not in self._SKIP_CHILD_TYPES:
+                    child_texts = await self._fetch_all_block_text(
+                        client, block["id"], depth + 1
+                    )
+                    texts.extend(child_texts)
+
+            if not response.get("has_more"):
+                break
+            next_cursor = response.get("next_cursor")
+
+        return texts
 
     # -- Text extraction helpers ----------------------------------------------
 
