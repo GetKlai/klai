@@ -29,6 +29,9 @@ from knowledge_ingest.models import (
     KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
+from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+from knowledge_ingest.taxonomy_classifier import classify_document
+from knowledge_ingest.proposal_generator import DocumentSummary, maybe_generate_proposal
 
 _SENTINEL = 253402300800  # 9999-12-31
 
@@ -233,6 +236,18 @@ async def ingest_document(req: IngestRequest) -> dict:
     if req.synthesis_depth is not None:
         kf["synthesis_depth"] = req.synthesis_depth
 
+    # Taxonomy classification (SPEC-KB-021 R1) — one call per document, not per chunk.
+    # Fetch taxonomy nodes for this KB; if none exist, skip classification entirely.
+    taxonomy_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
+    has_taxonomy = len(taxonomy_nodes) > 0
+    taxonomy_node_id: int | None = None
+    if has_taxonomy:
+        taxonomy_node_id, _confidence = await classify_document(
+            title=title,
+            content_preview=req.content,
+            taxonomy_nodes=taxonomy_nodes,
+        )
+
     # Soft-delete previous artifact for this path (AC-5: re-ingest creates new row)
     await pg_store.soft_delete_artifact(req.org_id, req.kb_slug, req.path)
 
@@ -281,7 +296,27 @@ async def ingest_document(req: IngestRequest) -> dict:
         artifact_id=artifact_id,
         extra_payload=extra_payload,
         user_id=req.user_id,
+        taxonomy_node_id=taxonomy_node_id,
+        has_taxonomy=has_taxonomy,
     )
+
+    # Taxonomy proposal generation (SPEC-KB-021 R4) — fire-and-forget, non-blocking.
+    # Only triggered when this document was unmatched (taxonomy_node_id = null) and the KB
+    # has taxonomy nodes. Proposal submission requires a batch of >= 3; single-doc ingest
+    # adds to in-memory state. For simplicity, we fire per-document and let maybe_generate_proposal
+    # handle the >= 3 threshold (passes a single-item list; will be a no-op for < 3 batches).
+    # Batch tracking happens at the call site (e.g. bulk_sync_kb_route) via accumulated lists.
+    # For single-document ingest we still attempt — the threshold guards against submission.
+    if has_taxonomy and taxonomy_node_id is None:
+        import asyncio as _asyncio  # noqa: PLC0415
+        _asyncio.create_task(
+            maybe_generate_proposal(
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+                unmatched_documents=[DocumentSummary(title=title, content_preview=req.content[:500])],
+                existing_nodes=taxonomy_nodes,
+            )
+        )
 
     # Enqueue enrichment as async Procrastinate task (non-blocking)
     if await org_config.is_enrichment_enabled(req.org_id, pool):

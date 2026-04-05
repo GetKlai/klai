@@ -175,6 +175,7 @@ def _fire_gap_event(
     gap_type: str,
     chunks: list[dict],
     retrieval_ms: int,
+    taxonomy_node_ids: list[int] | None = None,
 ) -> None:
     """Schedule an async gap event POST without blocking the pre-call hook."""
     import asyncio
@@ -211,6 +212,9 @@ def _fire_gap_event(
         "chunks_retrieved": len(chunks),
         "retrieval_ms": retrieval_ms,
     }
+    # SPEC-KB-021 R6: include taxonomy filter when it was part of the retrieve request
+    if taxonomy_node_ids:
+        payload["taxonomy_node_ids"] = taxonomy_node_ids
 
     async def _post():
         try:
@@ -363,6 +367,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 gap_type=gap_type,
                 chunks=chunks,
                 retrieval_ms=retrieval_ms,
+                taxonomy_node_ids=retrieve_body.get("taxonomy_node_ids") or None,
             )
 
         # --- Retrieval log (SPEC-KB-015-01) ---

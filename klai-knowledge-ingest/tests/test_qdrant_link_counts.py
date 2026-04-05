@@ -89,7 +89,7 @@ async def test_ensure_collection_skips_indexes_when_already_present():
     """When source_url and incoming_link_count are already indexed, skip creation."""
     all_fields = {
         "org_id", "kb_slug", "artifact_id", "content_type", "user_id", "entity_uuids",
-        "source_url", "incoming_link_count",
+        "source_url", "incoming_link_count", "taxonomy_node_id",
     }
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_get_client:

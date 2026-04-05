@@ -175,7 +175,18 @@ async def _search_knowledge(
     client = _get_client()
 
     scope_conditions = _scope_filter(request)
-    query_filter = Filter(must=[*scope_conditions, _invalid_at_filter()])
+    must_conditions = [*scope_conditions, _invalid_at_filter()]
+
+    # SPEC-KB-021 R3: optional taxonomy filter — only applied when non-empty list is provided
+    if request.taxonomy_node_ids:
+        must_conditions.append(
+            FieldCondition(
+                key="taxonomy_node_id",
+                match=MatchAny(any=request.taxonomy_node_ids),
+            )
+        )
+
+    query_filter = Filter(must=must_conditions)
 
     prefetch_limit = max(candidates * 4, 20)
     prefetch = [
