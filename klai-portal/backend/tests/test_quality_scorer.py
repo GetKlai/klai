@@ -6,9 +6,10 @@ SPEC-KB-015 REQ-KB-015-14/15/17/18:
 - Silent discard on Qdrant errors
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
+
 import httpx
+import pytest
 
 
 def _make_response(status_code: int, json_data: dict) -> httpx.Response:

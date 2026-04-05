@@ -7,10 +7,10 @@ SPEC-KB-015 REQ-KB-015-01/02/03/04/09:
 """
 
 import json
-import time
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch, MagicMock
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ async def test_write_retrieval_log_stores_in_redis(mock_redis):
     with patch("app.services.retrieval_log.get_redis_pool", return_value=mock_redis):
         from app.services.retrieval_log import write_retrieval_log
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await write_retrieval_log(
             org_id=1,
             user_id="user123",
@@ -68,7 +68,7 @@ async def test_write_retrieval_log_silent_on_failure(mock_redis):
             reranker_scores=[0.9],
             query_resolved="test",
             embedding_model_version="bge-m3-v1",
-            retrieved_at=datetime.now(timezone.utc),
+            retrieved_at=datetime.now(UTC),
         )
 
 
@@ -86,14 +86,14 @@ async def test_write_retrieval_log_silent_when_no_redis():
             reranker_scores=[0.9],
             query_resolved="test",
             embedding_model_version="bge-m3-v1",
-            retrieved_at=datetime.now(timezone.utc),
+            retrieved_at=datetime.now(UTC),
         )
 
 
 @pytest.mark.asyncio
 async def test_find_correlated_log_selects_closest_before(mock_redis):
     """REQ-KB-015-09: Select entry closest-to-and-before message_created_at."""
-    msg_time = datetime(2026, 4, 4, 12, 0, 30, tzinfo=timezone.utc)
+    msg_time = datetime(2026, 4, 4, 12, 0, 30, tzinfo=UTC)
     msg_epoch = msg_time.timestamp()
 
     # Two entries in the window: one 10s before, one 5s before message time
@@ -138,7 +138,7 @@ async def test_find_correlated_log_returns_none_on_empty(mock_redis):
         result = await find_correlated_log(
             org_id=1,
             user_id="user123",
-            message_created_at=datetime.now(timezone.utc),
+            message_created_at=datetime.now(UTC),
         )
         assert result is None
 
@@ -154,6 +154,6 @@ async def test_find_correlated_log_silent_on_failure(mock_redis):
         result = await find_correlated_log(
             org_id=1,
             user_id="user123",
-            message_created_at=datetime.now(timezone.utc),
+            message_created_at=datetime.now(UTC),
         )
         assert result is None

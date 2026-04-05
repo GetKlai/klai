@@ -3,8 +3,9 @@
 SPEC-KB-015: portal-api needs async Redis client for retrieval logs and idempotency.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -18,7 +19,7 @@ async def test_get_redis_pool_returns_client_when_configured():
         mock_settings.redis_url = "redis://localhost:6379"
         mock_redis_mod.from_url.return_value = mock_redis
 
-        from app.services.redis_client import get_redis_pool, _pool_holder
+        from app.services.redis_client import _pool_holder, get_redis_pool
 
         _pool_holder["pool"] = None
 
@@ -36,7 +37,7 @@ async def test_get_redis_pool_returns_none_when_unconfigured():
     with patch("app.services.redis_client.settings") as mock_settings:
         mock_settings.redis_url = ""
 
-        from app.services.redis_client import get_redis_pool, _pool_holder
+        from app.services.redis_client import _pool_holder, get_redis_pool
 
         _pool_holder["pool"] = None
 
@@ -55,7 +56,7 @@ async def test_get_redis_pool_singleton():
         mock_settings.redis_url = "redis://localhost:6379"
         mock_redis_mod.from_url.return_value = mock_redis
 
-        from app.services.redis_client import get_redis_pool, _pool_holder
+        from app.services.redis_client import _pool_holder, get_redis_pool
 
         _pool_holder["pool"] = None
 
