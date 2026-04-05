@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _get_caller_org, _require_admin, bearer
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode, PortalTaxonomyProposal
@@ -405,10 +405,14 @@ async def list_taxonomy_nodes_internal(
     """
     _require_internal_token(request)
 
+    # KB lookup is not RLS-scoped (no tenant set yet), so query by slug only
     result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug))
     kb = result.scalar_one_or_none()
     if not kb:
         return TaxonomyNodesResponse(nodes=[])
+
+    # Set tenant so RLS allows access to portal_taxonomy_nodes
+    await set_tenant(db, kb.org_id)
 
     nodes_result = await db.execute(
         select(PortalTaxonomyNode)
