@@ -177,12 +177,27 @@ async def _search_knowledge(
     scope_conditions = _scope_filter(request)
     must_conditions = [*scope_conditions, _invalid_at_filter()]
 
-    # SPEC-KB-021 R3: optional taxonomy filter — only applied when non-empty list is provided
+    # SPEC-KB-022 R3: taxonomy filter with backward-compatible fallback.
+    # OR: match on new taxonomy_node_ids (array) OR old taxonomy_node_id (int).
     if request.taxonomy_node_ids:
-        must_conditions.append(
+        taxonomy_should = [
+            FieldCondition(
+                key="taxonomy_node_ids",
+                match=MatchAny(any=request.taxonomy_node_ids),
+            ),
             FieldCondition(
                 key="taxonomy_node_id",
                 match=MatchAny(any=request.taxonomy_node_ids),
+            ),
+        ]
+        must_conditions.append(Filter(should=taxonomy_should))
+
+    # SPEC-KB-022 R3: optional tag filter
+    if request.tags:
+        must_conditions.append(
+            FieldCondition(
+                key="tags",
+                match=MatchAny(any=request.tags),
             )
         )
 

@@ -14,7 +14,8 @@ class RetrieveRequest(BaseModel):
     top_k: int = 8
     conversation_history: list[dict] = Field(default_factory=list)
     kb_slugs: list[str] | None = None
-    taxonomy_node_ids: list[int] | None = None  # SPEC-KB-021 R3: optional taxonomy filter
+    taxonomy_node_ids: list[int] | None = None  # SPEC-KB-022 R3: optional taxonomy filter
+    tags: list[str] | None = None  # SPEC-KB-022 R3: optional tag filter
 
 
 class ChunkResult(BaseModel):
