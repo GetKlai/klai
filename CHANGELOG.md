@@ -2,6 +2,19 @@
 
 ## [Unreleased] — 2026-04-05
 
+### Added — SPEC-KB-019: Notion Connector
+
+- **NotionAdapter** (`klai-connector/app/adapters/notion.py`): `BaseAdapter` implementation using `notion_client.AsyncClient`. Supports `list_documents`, `fetch_document`, `get_cursor_state`, and `post_sync`.
+- **Incremental sync**: `last_synced_at` cursor state filters pages by `last_edited_time` for efficient delta syncs.
+- **Rate limiting**: `asyncio.Semaphore(3)` for 3 req/s Notion API limit with exponential backoff on 429 responses.
+- **Config**: `access_token` (required), `database_ids` (optional, newline-separated list for UI), `max_pages` (default 500).
+- **AdapterRegistry**: Notion registered as `"notion"` in `klai-connector/app/main.py`.
+- **Frontend form** (`$kbSlug_.add-connector.tsx`): 2-step form — credentials (token + database IDs) + settings (assertion modes + max pages). Notion enabled in connector grid.
+- **i18n**: 6 new `admin_connectors_notion_*` keys in EN and NL.
+- **Credential encryption**: `SENSITIVE_FIELDS["notion"] = ["access_token"]` in `connector_credentials.py` — Notion tokens encrypted at rest via SPEC-KB-020 DEK/KEK hierarchy.
+- **9 unit tests** in `klai-connector/tests/adapters/test_notion.py` covering adapter methods, config validation, rate limiting, and access_token security.
+- **Note**: `database_ids` is stored and parsed but does not filter Notion API results (notion_client v2 removed `databases.query()`). All workspace-accessible pages sync. Filtering will be added in a future SPEC.
+
 ### Added — SPEC-KB-020: Secure Connector Credential Storage
 
 - **AES-256-GCM cipher** (`app/core/security.py`): `AESGCMCipher` class with nonce||ciphertext envelope, random nonce per encryption, authenticated decryption.
