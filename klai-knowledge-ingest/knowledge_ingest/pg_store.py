@@ -220,6 +220,88 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
             )
 
 
+async def get_connector_episode_ids(org_id: str, kb_slug: str, connector_id: str) -> list[str]:
+    """Return Graphiti episode UUIDs for artifacts ingested by a specific connector."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT extra::jsonb->>'graphiti_episode_id' AS episode_id
+               FROM knowledge.artifacts
+               WHERE org_id = $1 AND kb_slug = $2
+                 AND extra IS NOT NULL
+                 AND extra::jsonb->>'source_connector_id' = $3
+                 AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
+            org_id, kb_slug, connector_id,
+        )
+    return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
+
+
+async def delete_connector_artifacts(org_id: str, kb_slug: str, connector_id: str) -> int:
+    """Hard-delete all PostgreSQL artifact records for a specific connector.
+
+    Follows the same cascade order as delete_kb():
+    nullify self-references → embedding_queue → artifact_entities → derivations → artifacts.
+
+    Returns the number of artifacts deleted.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """UPDATE knowledge.artifacts SET superseded_by = NULL
+                   WHERE superseded_by IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                   )""",
+                org_id, kb_slug, connector_id,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                   )""",
+                org_id, kb_slug, connector_id,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                   )""",
+                org_id, kb_slug, connector_id,
+            )
+            await conn.execute(
+                """DELETE FROM knowledge.derivations WHERE child_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                   ) OR parent_id IN (
+                     SELECT id FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                   )""",
+                org_id, kb_slug, connector_id,
+            )
+            result = await conn.fetchval(
+                """WITH deleted AS (
+                     DELETE FROM knowledge.artifacts
+                     WHERE org_id = $1 AND kb_slug = $2
+                       AND extra IS NOT NULL
+                       AND extra::jsonb->>'source_connector_id' = $3
+                     RETURNING id
+                   ) SELECT COUNT(*) FROM deleted""",
+                org_id, kb_slug, connector_id,
+            )
+    return int(result or 0)
+
+
 async def upsert_crawled_page(
     org_id: str,
     kb_slug: str,

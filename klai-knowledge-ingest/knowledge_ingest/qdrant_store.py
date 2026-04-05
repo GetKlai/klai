@@ -288,6 +288,25 @@ async def delete_kb(org_id: str, kb_slug: str) -> None:
     logger.info("kb_chunks_deleted", org_id=org_id, kb_slug=kb_slug)
 
 
+async def delete_connector(org_id: str, kb_slug: str, connector_id: str) -> None:
+    """Delete all Qdrant chunks for a specific connector (by source_connector_id payload field)."""
+    client = get_client()
+    await client.delete(
+        COLLECTION,
+        points_selector=Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                FieldCondition(key="source_connector_id", match=MatchValue(value=connector_id)),
+            ]
+        ),
+    )
+    logger.info(
+        "connector_chunks_deleted",
+        org_id=org_id, kb_slug=kb_slug, connector_id=connector_id,
+    )
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Update the visibility payload field for all chunks in a knowledge base."""
     client = get_client()
