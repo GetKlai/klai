@@ -8,6 +8,18 @@ paths:
 ## crawl4ai DOM selectors
 - Never use `[class*="sidebar"]` or other substring CSS selectors in JS removal scripts.
 - Use only semantic element selectors (`nav`, `header`, `aside`) and ARIA roles.
+
+## notion_client v2 — databases.query() removed (MED)
+
+`notion_client` v2 removed `databases.query()`. The only available search API is
+`client.search()`, which returns all pages the integration can access — it cannot
+be filtered by `database_ids` at the client level.
+
+The `database_ids` config field is stored and surfaced in the UI (SPEC-KB-019) but
+does not filter API results. Future filtering must be applied post-fetch (compare
+`parent.database_id` against the stored list), not via an SDK call.
+
+**Rule:** Never assume `notion_client` has a database-scoped query method. Filter by `database_id` in Python after fetching all search results.
 - Spot-check `raw_words` on a known-good page after any crawl config change.
 
 ## crawl4ai usage

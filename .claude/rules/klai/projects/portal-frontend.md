@@ -116,6 +116,23 @@ Field pattern:
 
 ---
 
+## Multi-step wizard password fields (MED)
+
+Any wizard step containing a `type="password"` or secret input must be wrapped in a
+`<form>` element, even if the step has no traditional submit button. Without it,
+browsers emit a warning and autofill/password managers behave incorrectly.
+
+```tsx
+<form onSubmit={(e) => { e.preventDefault(); setStep('next') }}>
+  <Input type="password" ... />
+  <Button type="submit">Continue</Button>
+</form>
+```
+
+**Rule:** Every wizard step with a secret field needs a `<form>` wrapper with `onSubmit` advancing to the next step.
+
+---
+
 ## See Also
 
 - Shared brand DNA: `design/styleguide.md` (auto-loads for portal files)

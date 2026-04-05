@@ -5,6 +5,19 @@ paths:
 
 # Multi-Tenant Security Pattern
 
+## SENSITIVE_FIELDS key mismatch (CRIT)
+
+When adding a new connector, `SENSITIVE_FIELDS` in `app/services/connector_credentials.py`
+maps connector type → list of config dict keys to encrypt. If a key name in this mapping
+doesn't exactly match what the adapter writes to `connector.config`, encryption is silently
+skipped — the token stays in plaintext JSONB with no error.
+
+**Why this happened (SPEC-KB-019/020):** KB-020 had `"notion": ["api_token"]` but the
+Notion adapter used `"access_token"` as the config key. Fixed in commit `ed642f9`.
+
+**Prevention:** When adding a connector to `SENSITIVE_FIELDS`, grep the adapter source for
+every key it writes to the config dict and verify exact name parity before merging.
+
 **[HARD] Every database query on a tenant-scoped model MUST be scoped to org_id.**
 
 ## The pattern
