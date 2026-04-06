@@ -903,9 +903,9 @@ function TaxonomyTab() {
                           )}
                         </div>
                         <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
-                        {proposal.payload?.description && (
+                        {typeof proposal.payload?.description === 'string' && (
                           <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                            {String(proposal.payload.description)}
+                            {proposal.payload.description}
                           </p>
                         )}
                         <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
