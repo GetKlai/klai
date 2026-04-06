@@ -22,7 +22,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { SyncStatusBadge } from './-kb-helpers'
-import type { ConnectorSummary, MembersResponse } from './-kb-types'
+import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-types'
 
 // Notion brand icon (Simple Icons path — no background, uses currentColor)
 function NotionIcon({ className }: { className?: string }) {
@@ -67,13 +67,19 @@ function ConnectorsTab() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
 
+  const { data: kb } = useQuery<KnowledgeBase>({
+    queryKey: ['app-knowledge-base', kbSlug],
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
+    enabled: !!token,
+  })
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
     enabled: !!token,
   })
   const myUserId = auth.user?.profile?.sub
-  const isOwner = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isCreator = !!(myUserId && kb?.created_by === myUserId)
+  const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
