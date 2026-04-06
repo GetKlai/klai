@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     portal_internal_token: str = ""  # X-Internal-Token for portal internal endpoints
     taxonomy_classification_model: str = "klai-fast"
     taxonomy_classification_timeout: float = 30.0
+    content_label_timeout: float = 15.0
 
     model_config = {"env_file": ".env"}
 
