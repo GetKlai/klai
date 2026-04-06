@@ -28,7 +28,9 @@ from knowledge_ingest import (
 from knowledge_ingest import (
     graph as graph_module,
 )
+from knowledge_ingest.clustering import classify_by_centroid, load_centroids
 from knowledge_ingest.config import settings
+from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import get_pool
 from knowledge_ingest.models import (
@@ -38,7 +40,6 @@ from knowledge_ingest.models import (
     KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
-from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
 from knowledge_ingest.proposal_generator import DocumentSummary, maybe_generate_proposal
 from knowledge_ingest.taxonomy_classifier import classify_document
@@ -263,12 +264,35 @@ async def ingest_document(req: IngestRequest) -> dict:
     taxonomy_node_ids: list[int] = []
     llm_tags: list[str] = []
     if has_taxonomy:
-        matched_nodes, llm_tags = await classify_document(
-            title=title,
-            content_preview=req.content,
-            taxonomy_nodes=taxonomy_nodes,
-        )
-        taxonomy_node_ids = [node_id for node_id, _conf in matched_nodes]
+        # R2: try centroid-based classification first (SPEC-KB-024)
+        centroid_matched = False
+        try:
+            centroids = load_centroids(req.org_id, req.kb_slug)
+            if centroids:
+                from knowledge_ingest import embedder as _embedder
+
+                doc_vectors = await _embedder.embed([req.content[:512]])
+                doc_vec = doc_vectors[0] if doc_vectors else None
+                if doc_vec is not None:
+                    centroid_result = classify_by_centroid(
+                        embedding=doc_vec,
+                        centroids=centroids,
+                        threshold=settings.taxonomy_centroid_match_threshold,
+                        taxonomy_node_ids={n.id for n in taxonomy_nodes},
+                    )
+                    if centroid_result is not None:
+                        taxonomy_node_ids = centroid_result
+                        centroid_matched = True
+        except Exception:
+            logger.debug("centroid_lookup_failed", exc_info=True)
+
+        if not centroid_matched:
+            matched_nodes, llm_tags = await classify_document(
+                title=title,
+                content_preview=req.content,
+                taxonomy_nodes=taxonomy_nodes,
+            )
+            taxonomy_node_ids = [node_id for node_id, _conf in matched_nodes]
 
     # Merge frontmatter tags + LLM-suggested tags (frontmatter has priority, dedup)
     frontmatter_meta = _extract_frontmatter_metadata(req.content)
@@ -346,7 +370,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         extra_payload["taxonomy_node_ids"] = taxonomy_node_ids
     if merged_tags:
         extra_payload["tags"] = merged_tags
-    # content_label into extra_payload so enrichment upsert_enriched_chunks preserves it (SPEC-KB-023)
+    # content_label into extra_payload so enrichment pipeline preserves it (SPEC-KB-023)
     extra_payload["content_label"] = content_label
     # Visibility is authoritative from kb_config — set last so req.extra cannot override it
     extra_payload["visibility"] = visibility
