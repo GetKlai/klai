@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     taxonomy_classification_model: str = "klai-fast"
     taxonomy_classification_timeout: float = 30.0
     content_label_timeout: float = 15.0
+    # Taxonomy clustering thresholds (SPEC-KB-024 R7)
+    taxonomy_centroids_dir: str = "~/.klai/taxonomy_centroids"
+    taxonomy_centroid_match_threshold: float = 0.85
+    taxonomy_auto_categorise_threshold: float = 0.82
+    taxonomy_cluster_min_size: int = 5
+    taxonomy_cluster_trigger_count: int = 20
 
     model_config = {"env_file": ".env"}
 

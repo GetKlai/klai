@@ -396,6 +396,180 @@ async def taxonomy_top_tags(
     )
 
 
+# ---------------------------------------------------------------------------
+# Auto-categorise endpoint (SPEC-KB-024 R4)
+# ---------------------------------------------------------------------------
+
+
+class AutoCategoriseRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    node_id: int
+    cluster_centroid: list[float]
+
+
+class AutoCategoriseResponse(BaseModel):
+    categorised: int
+
+
+async def _auto_categorise_impl(
+    org_id: str,
+    kb_slug: str,
+    node_id: int,
+    cluster_centroid: list[float],
+    threshold: float,
+) -> int:
+    """Bulk assign taxonomy_node_id to existing documents matching a cluster centroid.
+
+    Pure cosine similarity -- no LLM calls. Returns count of categorised documents.
+    Two-pass approach: first pass identifies matching artifact_ids via centroid similarity,
+    second pass tags ALL chunks of matching documents (not just the first chunk).
+    """
+    from knowledge_ingest.clustering import cosine_similarity
+
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
+
+    scroll_filter = Filter(
+        must=[
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+        ]
+    )
+
+    # Pass 1: identify matching artifact_ids via centroid similarity (dedup to first chunk)
+    matched_artifacts: set[str] = set()
+    seen_artifacts: set[str] = set()
+    offset = None
+
+    while True:
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=100,
+                offset=offset,
+                with_payload=["artifact_id", "taxonomy_node_ids"],
+                with_vectors=["vector_chunk"],
+            ),
+            timeout=60.0,
+        )
+
+        if not points:
+            break
+
+        for point in points:
+            payload = point.payload or {}
+            artifact_id = payload.get("artifact_id") or str(point.id)
+            if artifact_id in seen_artifacts:
+                continue
+            seen_artifacts.add(artifact_id)
+
+            vec = None
+            if hasattr(point, "vector") and point.vector:
+                if isinstance(point.vector, dict):
+                    vec = point.vector.get("vector_chunk")
+                elif isinstance(point.vector, list):
+                    vec = point.vector
+            if vec is None:
+                continue
+
+            sim = cosine_similarity(vec, cluster_centroid)
+            if sim >= threshold:
+                matched_artifacts.add(artifact_id)
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    if not matched_artifacts:
+        logger.info(
+            "auto_categorise_no_matches",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            node_id=node_id,
+        )
+        return 0
+
+    # Pass 2: tag ALL chunks of matching documents
+    categorised = 0
+    offset = None
+
+    while True:
+        points, next_offset = await asyncio.wait_for(
+            client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=100,
+                offset=offset,
+                with_payload=["artifact_id", "taxonomy_node_ids"],
+                with_vectors=False,
+            ),
+            timeout=60.0,
+        )
+
+        if not points:
+            break
+
+        points_to_update: list[tuple[str | int, list[int]]] = []
+        for point in points:
+            payload = point.payload or {}
+            artifact_id = payload.get("artifact_id") or str(point.id)
+            if artifact_id not in matched_artifacts:
+                continue
+            current_ids = payload.get("taxonomy_node_ids") or []
+            if node_id not in current_ids:
+                new_ids = list({*current_ids, node_id})
+                points_to_update.append((point.id, new_ids))
+
+        for point_id, new_ids in points_to_update:
+            await asyncio.wait_for(
+                client.set_payload(
+                    collection_name=COLLECTION,
+                    payload={"taxonomy_node_ids": new_ids},
+                    points=[point_id],
+                ),
+                timeout=10.0,
+            )
+            categorised += 1
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    logger.info(
+        "auto_categorise_complete",
+        org_id=org_id,
+        kb_slug=kb_slug,
+        node_id=node_id,
+        categorised_chunks=categorised,
+        matched_documents=len(matched_artifacts),
+    )
+    return len(matched_artifacts)
+
+
+@router.post("/ingest/v1/taxonomy/auto-categorise", response_model=AutoCategoriseResponse)
+async def taxonomy_auto_categorise(
+    request: Request, req: AutoCategoriseRequest,
+) -> AutoCategoriseResponse:
+    """Bulk assign taxonomy_node_id to existing documents matching a cluster centroid.
+
+    Called when a taxonomy proposal is approved in the portal.
+    No LLM calls -- pure cosine similarity against provided centroid (SPEC-KB-024 R4).
+    """
+    _verify_internal_token(request)
+    categorised = await _auto_categorise_impl(
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        cluster_centroid=req.cluster_centroid,
+        threshold=settings.taxonomy_auto_categorise_threshold,
+    )
+    return AutoCategoriseResponse(categorised=categorised)
+
+
 @router.get("/ingest/v1/taxonomy/coverage-stats", response_model=CoverageStatsResponse)
 async def taxonomy_coverage_stats(
     request: Request,

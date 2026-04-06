@@ -1,5 +1,6 @@
 """Taxonomy API for knowledge base categorisation and proposal review."""
 
+import asyncio
 import logging
 import re
 import time
@@ -26,6 +27,62 @@ from app.trace import get_trace_headers
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/app/knowledge-bases", tags=["taxonomy"])
+
+# Background task tracking for fire-and-forget operations (SPEC-KB-024)
+_background_tasks: set[asyncio.Task] = set()
+
+
+async def _trigger_auto_categorise(
+    org_id: str,
+    kb_slug: str,
+    node_id: int,
+    cluster_centroid: list[float],
+) -> None:
+    """Fire-and-forget POST to knowledge-ingest auto-categorise endpoint (SPEC-KB-024 R4)."""
+    url = f"{settings.knowledge_ingest_url}/ingest/v1/taxonomy/auto-categorise"
+    headers = {
+        **get_trace_headers(),
+    }
+    if settings.knowledge_ingest_secret:
+        headers["x-internal-token"] = settings.knowledge_ingest_secret
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                url,
+                json={
+                    "org_id": org_id,
+                    "kb_slug": kb_slug,
+                    "node_id": node_id,
+                    "cluster_centroid": cluster_centroid,
+                },
+                headers=headers,
+            )
+            if resp.status_code != 200:
+                log.warning(
+                    "auto_categorise_failed",
+                    extra={
+                        "status": resp.status_code,
+                        "body": resp.text[:200],
+                        "kb_slug": kb_slug,
+                        "node_id": node_id,
+                    },
+                )
+            else:
+                data = resp.json()
+                log.info(
+                    "auto_categorise_triggered",
+                    extra={
+                        "kb_slug": kb_slug,
+                        "node_id": node_id,
+                        "categorised": data.get("categorised"),
+                    },
+                )
+    except Exception:
+        log.exception(
+            "auto_categorise_error",
+            extra={"kb_slug": kb_slug, "node_id": node_id},
+        )
 
 
 # -- Pydantic schemas ---------------------------------------------------------
@@ -612,6 +669,15 @@ async def approve_proposal(
     proposal.reviewed_by = caller_id
     proposal.reviewed_at = datetime.now(tz=UTC)
 
+    # Capture data for post-commit auto-categorise (SPEC-KB-024 R4)
+    # 'node' is only defined in the new_node branch above; use locals() to avoid NameError
+    _new_node_for_autocategorise = None
+    if proposal.proposal_type == "new_node":
+        cluster_centroid = payload.get("cluster_centroid")
+        _created_node = locals().get("node")
+        if cluster_centroid and _created_node is not None:
+            _new_node_for_autocategorise = (_created_node, cluster_centroid)
+
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -622,6 +688,22 @@ async def approve_proposal(
         ) from exc
 
     await db.refresh(proposal)
+
+    # R4: trigger auto-categorise for documents matching this cluster centroid
+    if _new_node_for_autocategorise is not None:
+        new_node, cluster_centroid = _new_node_for_autocategorise
+        await db.refresh(new_node)  # ensure node.id is populated after commit
+        _t = asyncio.create_task(
+            _trigger_auto_categorise(
+                org_id=str(org.zitadel_org_id),
+                kb_slug=kb_slug,
+                node_id=new_node.id,
+                cluster_centroid=cluster_centroid,
+            )
+        )
+        _background_tasks.add(_t)
+        _t.add_done_callback(_background_tasks.discard)
+
     return _proposal_out(proposal)
 
 
