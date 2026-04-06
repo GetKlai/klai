@@ -55,7 +55,7 @@ It is **cross-platform** — all platform-specific settings live in local config
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--config", ".playwright-mcp/config.json"],
+      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
       "env": {}
     },
     "codeindex": {
@@ -88,22 +88,21 @@ It is **cross-platform** — all platform-specific settings live in local config
 
 ## 3. Set up Playwright (per machine)
 
-Playwright uses a **local config file** for platform-specific settings (browser path, profile
-directory). This file is gitignored — each developer creates their own from the example.
+Playwright uses a **local config file** for platform-specific settings. This file is gitignored —
+each developer creates their own from the example.
 
 ```bash
 cp .playwright-mcp/config.example.json .playwright-mcp/config.json
 ```
 
-Then edit `.playwright-mcp/config.json` and set `executablePath` for your platform:
+Then edit `.playwright-mcp/config.json` and set `executablePath` and `storageState` for your
+platform:
 
 | Platform | `executablePath` |
 |----------|------------------|
 | **macOS** | `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser` |
-| **Windows** | `C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe` |
+| **Windows** | `C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe` |
 | **Linux** | `/usr/bin/brave-browser` |
-
-The config also sets `userDataDir` for persistent login sessions. Default: `~/.claude/mcp-brave-profile`.
 
 **Example config (macOS):**
 
@@ -111,39 +110,83 @@ The config also sets `userDataDir` for persistent login sessions. Default: `~/.c
 {
   "browser": "chromium",
   "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-  "userDataDir": "/Users/yourname/.claude/mcp-brave-profile"
+  "isolated": true,
+  "launchOptions": {
+    "ignoreDefaultArgs": ["--no-sandbox"]
+  },
+  "contextOptions": {
+    "storageState": "/Users/yourname/.claude/mcp-brave-storageState.json"
+  }
 }
 ```
 
-> **Note:** `userDataDir` must be an absolute path (no `~` expansion in JSON).
-> On Windows, use forward slashes or escaped backslashes: `C:/Users/yourname/.claude/mcp-brave-profile`.
+**Example config (Windows):**
 
-### Persistent login sessions
-
-The `userDataDir` setting keeps cookies and login state across Claude Code sessions. This means
-you log in once (e.g., to `getklai.getklai.com`) and subsequent sessions reuse that session.
-
-If you want to start fresh, delete the profile directory:
-
-```bash
-rm -rf ~/.claude/mcp-brave-profile
+```json
+{
+  "browser": "chromium",
+  "executablePath": "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
+  "isolated": true,
+  "launchOptions": {
+    "ignoreDefaultArgs": ["--no-sandbox"]
+  },
+  "contextOptions": {
+    "storageState": "C:/Users/yourname/.claude/mcp-brave-storageState.json"
+  }
+}
 ```
 
-### Profile locking
+> **Note:** All paths must be absolute. Use forward slashes on all platforms (including Windows).
+> No `~` expansion in JSON — write the full path.
 
-If a previous browser process crashed or was not properly closed, the profile directory may be
-locked. Symptoms: MCP server fails to start, or error mentioning "already in use".
+### How it works: isolated mode + storageState
 
-Fix: close all Brave/Chromium processes, or delete the lock files:
+`"isolated": true` creates a fresh browser context per Claude Code session and **closes it
+automatically on disconnect**. This means:
+
+- Browser and tabs close when the Claude Code session ends — no lingering Brave windows.
+- Multiple Claude Code windows can run in parallel without profile locking.
+
+Login state persists across sessions via `storageState.json` — a JSON snapshot of cookies and
+localStorage that is loaded at context creation.
+
+### First-time setup: initialize the session file
+
+Run the setup script once to create the `storageState.json` file. If you have an existing
+persistent profile, it exports your current login cookies. If not, it creates an empty file.
 
 ```bash
-rm -f ~/.claude/mcp-brave-profile/SingletonLock
-rm -f ~/.claude/mcp-brave-profile/SingletonCookie
-rm -f ~/.claude/mcp-brave-profile/SingletonSocket
+node scripts/export-mcp-session.mjs
 ```
+
+Then restart Claude Code.
+
+### Refreshing the session (after login expiry)
+
+If your login expires (e.g., after 30 days), log in again during a test session, then re-run:
+
+```bash
+node scripts/export-mcp-session.mjs
+```
+
+This re-exports the updated cookies from the last active profile or prompts for a fresh login.
+
+### Starting from scratch
+
+Delete the storageState file to reset to a logged-out state:
+
+```bash
+# macOS / Linux
+rm ~/.claude/mcp-brave-storageState.json
+
+# Windows (Git Bash)
+rm ~/AppData/../.claude/mcp-brave-storageState.json
+```
+
+Then re-run `node scripts/export-mcp-session.mjs` (creates empty file) and log in on first use.
 
 For session management rules (when to open/close the browser), see
-`.claude/rules/klai/patterns/testing.md`.
+`.claude/rules/klai/lang/testing.md`.
 
 ## 4. Disable Serena web dashboard
 
@@ -266,7 +309,10 @@ For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observabili
 3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
    file patterns.
 4. **Playwright config missing** — `config.json` not found. Fix: `cp .playwright-mcp/config.example.json .playwright-mcp/config.json` and edit paths.
-5. **Playwright profile locked** — Browser didn't close cleanly. Fix: remove `SingletonLock` files (see above) or kill lingering browser processes.
-6. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
-7. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
-8. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 8) and export the token in your shell profile. On Windows (Git Bash), `~/.bashrc` may not exist — create it manually.
+5. **Playwright storageState missing** — `storageState.json` not found → MCP fails on startup. Fix: `node scripts/export-mcp-session.mjs` then restart Claude Code.
+6. **Playwright opens Chrome instead of Brave** — `"browser": "chromium"` missing from `config.json`. Fix: add that field.
+7. **Playwright browser not closing** — `"isolated": true` missing from `config.json`. Without it, the browser stays open across sessions.
+8. **Brave warns "unsupported command-line flag: --no-sandbox"** — Playwright injects `--no-sandbox` by default for all Chromium launches. Brave treats it as unsupported. Fix: add `"launchOptions": { "ignoreDefaultArgs": ["--no-sandbox"] }` to `config.json`.
+9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
+10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
+11. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 8) and export the token in your shell profile. On Windows (Git Bash), `~/.bashrc` may not exist — create it manually.

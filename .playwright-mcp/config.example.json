@@ -1,10 +1,22 @@
 {
   "browser": "chromium",
-  "userDataDir": "~/.claude/mcp-brave-profile",
+  "isolated": true,
 
-  "_comment_macOS": "executablePath: /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-  "_comment_windows": "executablePath: C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-  "_comment_linux": "executablePath: /usr/bin/brave-browser",
+  "_comment_executablePath": "Set to your platform's Brave Browser executable:",
+  "_comment_macOS":    "executablePath: /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "_comment_windows":  "executablePath: C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+  "_comment_linux":    "executablePath: /usr/bin/brave-browser",
+  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 
-  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+  "_comment_launchOptions": "ignoreDefaultArgs removes --no-sandbox which Brave warns about as unsupported",
+  "launchOptions": {
+    "ignoreDefaultArgs": ["--no-sandbox"]
+  },
+
+  "_comment_contextOptions": "storageState: absolute path to session file. Use forward slashes on all platforms.",
+  "_comment_storageState_macOS":   "/Users/yourname/.claude/mcp-brave-storageState.json",
+  "_comment_storageState_windows": "C:/Users/yourname/.claude/mcp-brave-storageState.json",
+  "contextOptions": {
+    "storageState": "/Users/yourname/.claude/mcp-brave-storageState.json"
+  }
 }
