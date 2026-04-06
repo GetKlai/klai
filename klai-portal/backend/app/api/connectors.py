@@ -91,7 +91,7 @@ async def _get_kb_with_owner_check(
 ) -> PortalKnowledgeBase:
     """Look up KB by slug + org_id and verify caller has owner role."""
     kb = await _get_kb_for_org(kb_slug, org_id, db)
-    role = await get_user_role_for_kb(kb.id, caller_id, db)
+    role = await get_user_role_for_kb(kb.id, caller_id, db, kb_created_by=kb.created_by)
     if role != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -258,7 +258,9 @@ async def _get_or_create_personal_kb(caller_id: str, org_id: int, db: AsyncSessi
 
 
 async def _require_owner(kb: PortalKnowledgeBase, caller_id: str, db: AsyncSession) -> None:
-    role = await get_user_role_for_kb(kb.id, caller_id, db, default_org_role=kb.default_org_role, kb_org_id=kb.org_id)
+    role = await get_user_role_for_kb(
+        kb.id, caller_id, db, default_org_role=kb.default_org_role, kb_org_id=kb.org_id, kb_created_by=kb.created_by
+    )
     if role != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

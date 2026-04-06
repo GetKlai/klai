@@ -200,13 +200,13 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> PortalK
 
 
 async def _require_role(
-    kb_id: int,
+    kb: PortalKnowledgeBase,
     caller_id: str,
     db: AsyncSession,
     min_role: str,
 ) -> str:
     """Require at least min_role. Returns the actual role."""
-    role = await get_user_role_for_kb(kb_id, caller_id, db)
+    role = await get_user_role_for_kb(kb.id, caller_id, db, kb_created_by=kb.created_by)
     rank = {"viewer": 1, "contributor": 2, "owner": 3}
     if role is None or rank.get(role, 0) < rank.get(min_role, 0):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"{min_role} access required")
@@ -270,7 +270,7 @@ async def create_taxonomy_node(
     """Create a taxonomy node. Requires contributor role."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "contributor")
+    await _require_role(kb, caller_id, db, "contributor")
 
     # Validate parent exists if specified
     if body.parent_id is not None:
@@ -316,7 +316,7 @@ async def update_taxonomy_node(
     """Rename or reparent a taxonomy node. Requires contributor role."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "contributor")
+    await _require_role(kb, caller_id, db, "contributor")
 
     result = await db.execute(
         select(PortalTaxonomyNode).where(
@@ -378,7 +378,7 @@ async def delete_taxonomy_node(
     """Delete a taxonomy node. Reassigns children and docs to parent. Requires owner role."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "owner")
+    await _require_role(kb, caller_id, db, "owner")
 
     result = await db.execute(
         select(PortalTaxonomyNode).where(
@@ -663,7 +663,7 @@ async def approve_proposal(
     """Approve a pending proposal and execute the corresponding action. Requires contributor role."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "contributor")
+    await _require_role(kb, caller_id, db, "contributor")
 
     result = await db.execute(
         select(PortalTaxonomyProposal).where(
@@ -730,7 +730,7 @@ async def reject_proposal(
     """Reject a pending proposal. Requires contributor role."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "contributor")
+    await _require_role(kb, caller_id, db, "contributor")
 
     result = await db.execute(
         select(PortalTaxonomyProposal).where(
@@ -770,7 +770,7 @@ async def trigger_bootstrap(
     """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "contributor")
+    await _require_role(kb, caller_id, db, "contributor")
 
     # Resolve Zitadel org_id for the ingest service call
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
@@ -807,7 +807,7 @@ async def trigger_backfill(
     """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
-    await _require_role(kb.id, caller_id, db, "contributor")
+    await _require_role(kb, caller_id, db, "contributor")
 
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
     portal_org = org_result.scalar_one_or_none()
