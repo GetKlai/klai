@@ -399,8 +399,9 @@ function TaxonomyTab() {
   })
 
   const myUserId = auth.user?.profile?.sub
-  const isOwner = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
-  const isContributor = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
+  const isCreator = !!(myUserId && kb?.created_by === myUserId)
+  const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isContributor = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
   const isAdmin = user?.isAdmin === true
 
   const [showAddRoot, setShowAddRoot] = useState(false)
