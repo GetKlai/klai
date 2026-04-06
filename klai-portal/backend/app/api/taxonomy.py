@@ -588,15 +588,11 @@ async def _execute_merge(
     source_id = payload.get("source_node_id")
     target_id = payload.get("target_node_id")
     source_result = await db.execute(
-        select(PortalTaxonomyNode).where(
-            PortalTaxonomyNode.id == source_id, PortalTaxonomyNode.kb_id == kb.id
-        )
+        select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == source_id, PortalTaxonomyNode.kb_id == kb.id)
     )
     source_node = source_result.scalar_one_or_none()
     target_result = await db.execute(
-        select(PortalTaxonomyNode).where(
-            PortalTaxonomyNode.id == target_id, PortalTaxonomyNode.kb_id == kb.id
-        )
+        select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == target_id, PortalTaxonomyNode.kb_id == kb.id)
     )
     target_node = target_result.scalar_one_or_none()
     if not source_node or not target_node:
@@ -617,9 +613,7 @@ async def _execute_split(
     source_id = payload.get("source_node_id")
     new_children = payload.get("new_children", [])
     source_result = await db.execute(
-        select(PortalTaxonomyNode).where(
-            PortalTaxonomyNode.id == source_id, PortalTaxonomyNode.kb_id == kb.id
-        )
+        select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == source_id, PortalTaxonomyNode.kb_id == kb.id)
     )
     source_node = source_result.scalar_one_or_none()
     if not source_node:
@@ -628,10 +622,15 @@ async def _execute_split(
     for child_spec in new_children:
         child_name = child_spec if isinstance(child_spec, str) else child_spec.get("name", "")
         if child_name:
-            db.add(PortalTaxonomyNode(
-                kb_id=kb.id, parent_id=parent_id, name=child_name,
-                slug=_slugify(child_name), created_by=caller_id,
-            ))
+            db.add(
+                PortalTaxonomyNode(
+                    kb_id=kb.id,
+                    parent_id=parent_id,
+                    name=child_name,
+                    slug=_slugify(child_name),
+                    created_by=caller_id,
+                )
+            )
 
 
 async def _execute_rename(
@@ -642,9 +641,7 @@ async def _execute_rename(
     target_node_id = payload.get("node_id")
     new_name = payload.get("new_name", "")
     node_result = await db.execute(
-        select(PortalTaxonomyNode).where(
-            PortalTaxonomyNode.id == target_node_id, PortalTaxonomyNode.kb_id == kb.id
-        )
+        select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == target_node_id, PortalTaxonomyNode.kb_id == kb.id)
     )
     node = node_result.scalar_one_or_none()
     if not node:
