@@ -7,6 +7,7 @@ export interface KnowledgeBase {
   name: string
   slug: string
   description: string | null
+  created_by: string
   visibility: string
   docs_enabled: boolean
   gitea_repo_slug: string | null
