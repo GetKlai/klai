@@ -12,6 +12,16 @@ from app.trace import get_trace_headers
 logger = logging.getLogger(__name__)
 
 
+def _docs_headers() -> dict[str, str]:
+    """Return internal service headers for docs-app calls.
+
+    Strips X-Org-ID from trace headers: portal sends the numeric DB org_id,
+    but docs-app compares it against zitadel_org_id → always 403.
+    X-Internal-Secret already authenticates the caller; the org check is redundant.
+    """
+    return {k: v for k, v in get_trace_headers().items() if k != "X-Org-ID"}
+
+
 async def provision_gitea_repo(
     org_slug: str,
     kb_name: str,
@@ -23,17 +33,13 @@ async def provision_gitea_repo(
     Returns gitea_repo_slug.
     Raises httpx.HTTPStatusError on failure.
     """
-    # X-Org-ID in trace headers is the portal numeric org_id, not the Zitadel UUID.
-    # docs-app compares X-Org-ID against zitadel_org_id and returns 403 on mismatch.
-    # Internal service calls are already trusted via X-Internal-Secret — skip the org check.
-    trace = {k: v for k, v in get_trace_headers().items() if k != "X-Org-ID"}
     async with httpx.AsyncClient(
         base_url="http://docs-app:3010/docs",
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
             "Content-Type": "application/json",
-            **trace,
+            **_docs_headers(),
         },
         timeout=10.0,
     ) as client:
@@ -55,7 +61,7 @@ async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
-            **get_trace_headers(),
+            **_docs_headers(),
         },
         timeout=5.0,
     ) as client:
@@ -76,7 +82,7 @@ async def deprovision_kb(org_slug: str, kb_slug: str) -> None:
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
-            **get_trace_headers(),
+            **_docs_headers(),
         },
         timeout=30.0,  # longer timeout: Gitea + Qdrant cleanup
     ) as client:
