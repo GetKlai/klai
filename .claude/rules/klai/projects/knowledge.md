@@ -131,3 +131,21 @@ A function grows explicit keyword parameters that are only used by one call path
 **Why:** When a function is called both directly (tests, simple cases) and via a pipeline (Procrastinate enrichment), two data channels emerge. Over time the explicit params diverge from what the pipeline actually uses.
 
 **Prevention:** Use `extra_payload` as the single channel for pipeline-specific metadata. Explicit params are only appropriate for direct/test callers where `extra_payload` is not in use. When a function accumulates params that are unused in one call path, remove them and consolidate to one channel. Review API boundaries when adding parameters that are only reachable from one code path.
+
+## Portal→ingest auth header: always X-Internal-Secret (HIGH)
+
+When portal calls a knowledge-ingest endpoint, the correct header is `X-Internal-Secret` (checked by `InternalSecretMiddleware` on every request). Using `x-internal-token` instead results in a silent 401 — especially dangerous in fire-and-forget calls where there is no error propagation.
+
+**Why:** knowledge-ingest has two separate auth mechanisms that look similar:
+1. `InternalSecretMiddleware` (app-level) — checks `X-Internal-Secret` on every request. Used for portal→ingest calls.
+2. `_verify_internal_token()` (per-route helper) — checks `x-internal-token`. Used for ingest→portal calls.
+
+The agent saw `_verify_internal_token` in the taxonomy routes and copied that header name for the outbound portal call — wrong direction, wrong header.
+
+**Prevention:** Before wiring any portal→ingest HTTP call, check `InternalSecretMiddleware` in `knowledge_ingest/middleware.py` to confirm the exact header name. Never infer it from per-route helpers.
+
+## locals() for if/elif branch variable capture (MED)
+
+Using `locals().get("node")` after an if/elif chain to retrieve a variable set in only one branch bypasses type checking (pyright cannot track it), hides control flow, and breaks on rename.
+
+**Prevention:** Declare `_result: SomeType | None = None` before the if/elif chain, assign inside each branch, and read `_result` after. Never use `locals()` for cross-branch variable access.
