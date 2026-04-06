@@ -1256,6 +1256,7 @@
   "knowledge_taxonomy_suggest_generating": "Analysing knowledge base...",
   "knowledge_taxonomy_suggest_ready": "{count} category suggestions ready - review and apply below",
   "knowledge_taxonomy_suggest_apply_all": "Apply to knowledge base",
+  "knowledge_taxonomy_retag": "Re-tag documents",
   "knowledge_taxonomy_suggest_applying": "Tagging existing documents...",
   "knowledge_taxonomy_suggest_done": "Done! All documents have been categorised.",
   "knowledge_taxonomy_suggest_error": "Could not generate suggestions",
