@@ -21,6 +21,7 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource/libre-baskerville": "^5.2.10",
+    "@icons-pack/react-simple-icons": "^13.11.1",
     "@inlang/paraglide-js": "^2.15.1",
     "@mantine/core": "^8.0.0",
     "@mantine/hooks": "^8.0.0",
