@@ -387,7 +387,6 @@ async def ingest_document(req: IngestRequest) -> dict:
         taxonomy_node_ids=taxonomy_node_ids if has_taxonomy else None,
         tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
-        content_label=content_label,
     )
 
     # Taxonomy proposal generation (SPEC-KB-022 R4) — fire-and-forget, non-blocking.

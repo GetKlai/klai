@@ -197,16 +197,15 @@ async def upsert_enriched_chunks(
     content_type: str = "unknown",
     belief_time_start: int | None = None,
     belief_time_end: int | None = None,
-    taxonomy_node_ids: list[int] | None = None,
-    tags: list[str] | None = None,
-    has_taxonomy: bool = False,
-    content_label: list[str] | None = None,
 ) -> None:
     """
     Upsert enriched chunks with named + sparse vectors.
     Deletes existing points for this path first.
     vector_chunk is always populated; vector_questions is profile-dependent;
     vector_sparse is populated when the sparse sidecar is available.
+
+    Metadata fields (taxonomy_node_ids, tags, content_label, visibility, etc.)
+    are passed entirely via extra_payload — no separate parameters needed here.
     """
     client = get_client()
 
@@ -240,16 +239,6 @@ async def upsert_enriched_chunks(
         base_payload["valid_until"] = belief_time_end
     if user_id:
         base_payload["user_id"] = user_id
-    # Store taxonomy_node_ids only when the KB has taxonomy nodes (R1: absent = no taxonomy on KB)
-    if has_taxonomy:
-        base_payload["taxonomy_node_ids"] = (
-            taxonomy_node_ids if taxonomy_node_ids is not None else []
-        )
-    if tags:
-        base_payload["tags"] = tags
-    # Store content_label when not None — includes [] (labeler ran but failed)
-    if content_label is not None:
-        base_payload["content_label"] = content_label
     if extra_payload:
         base_payload.update(extra_payload)
 
