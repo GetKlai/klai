@@ -142,3 +142,77 @@ class TestUpsertChunksTaxonomyMultiLabel:
 
         points = mock_qdrant_client.upsert.call_args.kwargs["points"]
         assert points[0].payload["taxonomy_node_ids"] == []
+
+
+class TestUpsertChunksContentLabel:
+    """Tests for content_label payload field (SPEC-KB-023 R2)."""
+
+    @pytest.mark.asyncio
+    async def test_content_label_stored_when_provided(self, mock_qdrant_client):
+        """content_label is stored in payload when provided."""
+        with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_qdrant_client):
+            await upsert_chunks(
+                org_id="org1",
+                kb_slug="kb1",
+                path="doc.md",
+                chunks=["chunk text"],
+                vectors=[[0.1, 0.2]],
+                artifact_id="art1",
+                content_label=["sip-trunk", "voip", "telefonie"],
+            )
+
+        points = mock_qdrant_client.upsert.call_args.kwargs["points"]
+        assert points[0].payload["content_label"] == ["sip-trunk", "voip", "telefonie"]
+
+    @pytest.mark.asyncio
+    async def test_content_label_empty_list_stored(self, mock_qdrant_client):
+        """content_label=[] (labeler failed) is stored as empty list, not omitted."""
+        with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_qdrant_client):
+            await upsert_chunks(
+                org_id="org1",
+                kb_slug="kb1",
+                path="doc.md",
+                chunks=["chunk text"],
+                vectors=[[0.1, 0.2]],
+                artifact_id="art1",
+                content_label=[],
+            )
+
+        points = mock_qdrant_client.upsert.call_args.kwargs["points"]
+        assert "content_label" in points[0].payload
+        assert points[0].payload["content_label"] == []
+
+    @pytest.mark.asyncio
+    async def test_content_label_absent_when_none(self, mock_qdrant_client):
+        """content_label=None (old callers) means field is NOT in payload."""
+        with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_qdrant_client):
+            await upsert_chunks(
+                org_id="org1",
+                kb_slug="kb1",
+                path="doc.md",
+                chunks=["chunk text"],
+                vectors=[[0.1, 0.2]],
+                artifact_id="art1",
+            )
+
+        points = mock_qdrant_client.upsert.call_args.kwargs["points"]
+        assert "content_label" not in points[0].payload
+
+    @pytest.mark.asyncio
+    async def test_content_label_on_all_chunks(self, mock_qdrant_client):
+        """content_label is applied to ALL chunks of the document."""
+        with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_qdrant_client):
+            await upsert_chunks(
+                org_id="org1",
+                kb_slug="kb1",
+                path="doc.md",
+                chunks=["chunk 1", "chunk 2", "chunk 3"],
+                vectors=[[0.1] * 2, [0.2] * 2, [0.3] * 2],
+                artifact_id="art1",
+                content_label=["voip", "sip"],
+            )
+
+        points = mock_qdrant_client.upsert.call_args.kwargs["points"]
+        assert len(points) == 3
+        for point in points:
+            assert point.payload["content_label"] == ["voip", "sip"]
