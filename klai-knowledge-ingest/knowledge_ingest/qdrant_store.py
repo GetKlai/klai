@@ -81,7 +81,7 @@ async def ensure_collection() -> None:
     for field in (
         "org_id", "kb_slug", "artifact_id", "content_type",
         "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags",
+        "taxonomy_node_ids", "tags", "content_label",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
@@ -120,6 +120,7 @@ async def upsert_chunks(
     taxonomy_node_ids: list[int] | None = None,
     tags: list[str] | None = None,
     has_taxonomy: bool = False,
+    content_label: list[str] | None = None,
 ) -> None:
     """Upsert raw chunks (before enrichment). Uses vector_chunk named vector.
     Backward compatible: called by the ingest pipeline before enrichment runs.
@@ -127,6 +128,9 @@ async def upsert_chunks(
     taxonomy_node_ids: list of matched node ids, [] = no match, absent field = no taxonomy on KB.
     tags: list of free-form tags to store on chunks.
     has_taxonomy: True when the KB has taxonomy nodes (field is stored even when empty).
+    content_label: blind keyword list generated before taxonomy (SPEC-KB-023).
+        None = labeler not called (old callers); [] = labeler ran but failed/returned empty.
+        Both [] and non-empty lists are stored when not None.
     """
     client = get_client()
 
@@ -162,6 +166,9 @@ async def upsert_chunks(
         )
     if tags:
         base_payload["tags"] = tags
+    # Store content_label when not None — includes [] (labeler ran but failed)
+    if content_label is not None:
+        base_payload["content_label"] = content_label
     if extra_payload:
         base_payload.update(extra_payload)
 
@@ -193,6 +200,7 @@ async def upsert_enriched_chunks(
     taxonomy_node_ids: list[int] | None = None,
     tags: list[str] | None = None,
     has_taxonomy: bool = False,
+    content_label: list[str] | None = None,
 ) -> None:
     """
     Upsert enriched chunks with named + sparse vectors.
@@ -239,6 +247,9 @@ async def upsert_enriched_chunks(
         )
     if tags:
         base_payload["tags"] = tags
+    # Store content_label when not None — includes [] (labeler ran but failed)
+    if content_label is not None:
+        base_payload["content_label"] = content_label
     if extra_payload:
         base_payload.update(extra_payload)
 

@@ -38,6 +38,7 @@ from knowledge_ingest.models import (
     KBWebhookRequest,
     UpdateKBVisibilityRequest,
 )
+from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
 from knowledge_ingest.proposal_generator import DocumentSummary, maybe_generate_proposal
 from knowledge_ingest.taxonomy_classifier import classify_document
@@ -248,6 +249,13 @@ async def ingest_document(req: IngestRequest) -> dict:
     if req.synthesis_depth is not None:
         kf["synthesis_depth"] = req.synthesis_depth
 
+    # Blind label generation (SPEC-KB-023 R1) — BEFORE taxonomy to avoid confirmation bias.
+    # Uses klai-fast, 15s timeout, returns [] on failure (non-fatal).
+    content_label = await generate_content_label(
+        title=title,
+        content_preview=req.content,
+    )
+
     # Taxonomy classification (SPEC-KB-022 R1) — multi-label, one call per document.
     # Fetch taxonomy nodes for this KB; if none exist, skip classification entirely.
     taxonomy_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
@@ -353,6 +361,7 @@ async def ingest_document(req: IngestRequest) -> dict:
         taxonomy_node_ids=taxonomy_node_ids if has_taxonomy else None,
         tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
+        content_label=content_label,
     )
 
     # Taxonomy proposal generation (SPEC-KB-022 R4) — fire-and-forget, non-blocking.
