@@ -164,6 +164,66 @@ async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
         return resp.json()  # type: ignore[no-any-return]
 
 
+async def enqueue_auto_categorise(
+    org_id: str,
+    kb_slug: str,
+    node_id: int,
+    cluster_centroid: list[float] | None,
+) -> None:
+    """Enqueue an auto-categorise job in knowledge-ingest via Procrastinate.
+
+    Best-effort: logs warning on failure but never raises.
+    Replaces the old fire-and-forget asyncio.create_task pattern (SPEC-KB-026 R5).
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            timeout=10.0,
+        ) as client:
+            resp = await client.post(
+                "/ingest/v1/taxonomy/auto-categorise-job",
+                json={
+                    "org_id": org_id,
+                    "kb_slug": kb_slug,
+                    "node_id": node_id,
+                    "cluster_centroid": cluster_centroid,
+                },
+            )
+            resp.raise_for_status()
+    except Exception:
+        logger.exception(
+            "enqueue_auto_categorise_failed",
+            extra={"org_id": org_id, "kb_slug": kb_slug, "node_id": node_id},
+        )
+
+
+async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[int]:
+    """Classify a gap query against a KB's taxonomy via knowledge-ingest.
+
+    Calls POST /ingest/v1/taxonomy/classify. Returns list of taxonomy node IDs.
+    Best-effort: returns empty list on any error (timeout, connection, HTTP error).
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+            timeout=10.0,
+        ) as client:
+            resp = await client.post(
+                "/ingest/v1/taxonomy/classify",
+                json={"org_id": org_id, "kb_slug": kb_slug, "text": text},
+            )
+            resp.raise_for_status()
+            return resp.json().get("taxonomy_node_ids", [])  # type: ignore[no-any-return]
+    except Exception:
+        logger.warning(
+            "classify_gap_taxonomy_failed",
+            extra={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        return []
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 

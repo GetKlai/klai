@@ -210,7 +210,7 @@ def test_save_and_load_centroids_roundtrip():
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        mock_settings = type("S", (), {"taxonomy_centroids_dir": tmpdir})()
+        mock_settings = type("S", (), {"taxonomy_centroids_dir": tmpdir, "taxonomy_centroid_max_age_hours": 48})()
 
         store = CentroidStore(
             version=1,

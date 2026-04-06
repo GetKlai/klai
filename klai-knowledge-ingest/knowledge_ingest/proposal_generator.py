@@ -90,12 +90,25 @@ async def maybe_generate_proposal(
         )
         return
 
+    # Generate description (same pattern as generate_bootstrap_proposals)
+    sample_titles = [doc.title for doc in unmatched_documents[:5]]
+    try:
+        description = await generate_node_description(suggested_name, None, sample_titles)
+    except Exception:
+        logger.warning(
+            "taxonomy_proposal_description_failed",
+            kb_slug=kb_slug,
+            suggested_name=suggested_name,
+        )
+        description = ""
+
     # Submit proposal via portal_client
     proposal = TaxonomyProposal(
         proposal_type="new_node",
         suggested_name=suggested_name,
         document_count=len(unmatched_documents),
-        sample_titles=[doc.title for doc in unmatched_documents[:5]],
+        sample_titles=sample_titles,
+        description=description,
     )
     await submit_taxonomy_proposal(kb_slug=kb_slug, org_id=org_id, proposal=proposal)
     logger.info(

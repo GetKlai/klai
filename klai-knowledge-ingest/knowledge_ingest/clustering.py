@@ -105,7 +105,7 @@ def classify_by_centroid(
 
 
 def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
-    """Load centroid store from JSON sidecar. Returns None if not found."""
+    """Load centroid store from JSON sidecar. Returns None if not found or stale."""
     path = os.path.expanduser(
         f"{settings.taxonomy_centroids_dir}/{org_id}_{kb_slug}.json"
     )
@@ -117,6 +117,24 @@ def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
     except (json.JSONDecodeError, OSError):
         logger.warning("centroid_store_load_failed", path=path)
         return None
+
+    # SPEC-KB-026 R6: reject stale centroid files
+    computed_at_str = data.get("computed_at", "")
+    if computed_at_str and settings.taxonomy_centroid_max_age_hours > 0:
+        from datetime import UTC, datetime
+
+        try:
+            computed_at = datetime.fromisoformat(computed_at_str)
+            age_hours = (datetime.now(tz=UTC) - computed_at).total_seconds() / 3600
+            if age_hours > settings.taxonomy_centroid_max_age_hours:
+                logger.warning(
+                    "centroid_store_stale",
+                    age_hours=round(age_hours, 1),
+                    path=path,
+                )
+                return None
+        except (ValueError, TypeError):
+            pass  # unparseable date — proceed with loading
 
     clusters = [ClusterEntry(**c) for c in data.get("clusters", [])]
     return CentroidStore(
