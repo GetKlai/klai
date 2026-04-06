@@ -23,13 +23,17 @@ async def provision_gitea_repo(
     Returns gitea_repo_slug.
     Raises httpx.HTTPStatusError on failure.
     """
+    # X-Org-ID in trace headers is the portal numeric org_id, not the Zitadel UUID.
+    # docs-app compares X-Org-ID against zitadel_org_id and returns 403 on mismatch.
+    # Internal service calls are already trusted via X-Internal-Secret — skip the org check.
+    trace = {k: v for k, v in get_trace_headers().items() if k != "X-Org-ID"}
     async with httpx.AsyncClient(
         base_url="http://docs-app:3010/docs",
         headers={
             "X-Internal-Secret": settings.docs_internal_secret,
             "X-User-ID": "system",
             "Content-Type": "application/json",
-            **get_trace_headers(),
+            **trace,
         },
         timeout=10.0,
     ) as client:
