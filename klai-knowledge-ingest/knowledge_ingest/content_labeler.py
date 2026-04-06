@@ -38,6 +38,9 @@ _SYSTEM_PROMPT = (
 )
 
 
+# @MX:NOTE: [AUTO] Blind labeling — runs BEFORE taxonomy fetch to prevent confirmation bias.
+# @MX:SPEC: SPEC-KB-023 R1, R5
+# @MX:NOTE: Total LLM budget per document is 2 calls: this (blind) + classify_document (anchored).
 async def generate_content_label(
     title: str,
     content_preview: str,

@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] — 2026-04-06
+
+### Added — SPEC-KB-023: Taxonomy Discovery — Blind Labeling at Ingest
+
+- **`content_labeler.py`** (new module): `generate_content_label(title, content_preview)` generates 3–5 lowercase keywords describing a document BEFORE any taxonomy context is shown. Uses `klai-fast`, 15 s timeout, returns `[]` on failure (non-fatal).
+- **Bias prevention**: label generation runs before `classify_document` so the LLM cannot be anchored by existing taxonomy node names. Enables unbiased category discovery for SPEC-KB-024 clustering.
+- **Rate limiting**: shares the existing `_TokenBucketLimiter` / `_RateLimitedTransport` singleton from `taxonomy_classifier.py` (1 req/s). Sequential execution (label first, then classify) means no additional rate-limit config needed.
+- **Qdrant storage**: `content_label` stored as keyword array payload on ALL chunks of a document, via both `upsert_chunks` and `upsert_enriched_chunks`. Survives the enrichment pipeline via `extra_payload` passthrough.
+- **Qdrant index**: keyword payload index on `content_label` added to `ensure_collection()` alongside existing indexes. Enables scroll filters in SPEC-KB-024 clustering.
+- **LLM budget**: 2 calls per document total — `content_label` (blind) + `taxonomy_node_ids`/`tags` classification (anchored). No additional LLM calls introduced.
+- **Config**: `content_label_timeout: float = 15.0` in `config.py`.
+- **11 unit tests** in `tests/test_content_labeler.py` covering: happy path, timeout/error → `[]`, lowercase, dedup, clamp to 5, 500-char truncation, empty LLM response, non-string filter, `klai-fast` model check, system prompt guard (no taxonomy terms).
+- **4 unit tests** in `tests/test_taxonomy_qdrant.py` (`TestUpsertChunksContentLabel`) covering: stored when provided, empty list stored (not omitted), None means absent, all chunks get same label.
+
 ## [Unreleased] — 2026-04-05
 
 ### Added — SPEC-KB-019: Notion Connector
