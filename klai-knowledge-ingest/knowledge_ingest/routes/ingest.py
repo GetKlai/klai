@@ -346,6 +346,8 @@ async def ingest_document(req: IngestRequest) -> dict:
         extra_payload["taxonomy_node_ids"] = taxonomy_node_ids
     if merged_tags:
         extra_payload["tags"] = merged_tags
+    # content_label into extra_payload so enrichment upsert_enriched_chunks preserves it (SPEC-KB-023)
+    extra_payload["content_label"] = content_label
     # Visibility is authoritative from kb_config — set last so req.extra cannot override it
     extra_payload["visibility"] = visibility
 
