@@ -153,17 +153,23 @@ async def get_user_role_for_kb(
     *,
     default_org_role: str | None = None,
     kb_org_id: int | None = None,
+    kb_created_by: str | None = None,
 ) -> str | None:
     """Return the effective role for user_id on kb_id, or None if no access.
 
     Checks both portal_user_kb_access (direct) and portal_group_kb_access (via groups).
     If no explicit access is found and default_org_role is set, falls back to the
     org-wide default role for users in the same org.
+    The KB creator always has owner role.
     Returns the highest role found: owner > contributor > viewer.
     """
     role_rank = {"viewer": 1, "contributor": 2, "owner": 3}
 
     roles: list[str] = []
+
+    # KB creator always has owner role
+    if kb_created_by and user_id == kb_created_by:
+        roles.append("owner")
 
     # Direct user assignment
     direct = await db.execute(
