@@ -532,6 +532,127 @@ async def create_proposal(
     return _proposal_out(proposal)
 
 
+async def _execute_proposal_action(
+    proposal: PortalTaxonomyProposal,
+    kb: PortalKnowledgeBase,
+    caller_id: str,
+    db: AsyncSession,
+) -> PortalTaxonomyNode | None:
+    """Execute the DB mutations for a proposal. Returns the new node for new_node proposals."""
+    payload = proposal.payload
+    new_node: PortalTaxonomyNode | None = None
+
+    if proposal.proposal_type == "new_node":
+        parent_id = payload.get("parent_id")
+        name = payload.get("name", proposal.title)
+        if parent_id is not None:
+            parent_check = await db.execute(
+                select(PortalTaxonomyNode).where(
+                    PortalTaxonomyNode.id == parent_id,
+                    PortalTaxonomyNode.kb_id == kb.id,
+                )
+            )
+            if not parent_check.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Referenced parent node does not exist",
+                )
+        description = payload.get("description")
+        new_node = PortalTaxonomyNode(
+            kb_id=kb.id,
+            parent_id=parent_id,
+            name=name,
+            slug=_slugify(name),
+            description=description[:200] if description else None,
+            created_by=caller_id,
+        )
+        db.add(new_node)
+
+    elif proposal.proposal_type == "merge":
+        await _execute_merge(payload, kb, db)
+
+    elif proposal.proposal_type == "split":
+        await _execute_split(payload, kb, caller_id, db)
+
+    elif proposal.proposal_type == "rename":
+        await _execute_rename(payload, kb, db)
+
+    return new_node
+
+
+async def _execute_merge(
+    payload: dict,
+    kb: PortalKnowledgeBase,
+    db: AsyncSession,
+) -> None:
+    source_id = payload.get("source_node_id")
+    target_id = payload.get("target_node_id")
+    source_result = await db.execute(
+        select(PortalTaxonomyNode).where(
+            PortalTaxonomyNode.id == source_id, PortalTaxonomyNode.kb_id == kb.id
+        )
+    )
+    source_node = source_result.scalar_one_or_none()
+    target_result = await db.execute(
+        select(PortalTaxonomyNode).where(
+            PortalTaxonomyNode.id == target_id, PortalTaxonomyNode.kb_id == kb.id
+        )
+    )
+    target_node = target_result.scalar_one_or_none()
+    if not source_node or not target_node:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Referenced node does not exist")
+    await db.execute(
+        update(PortalTaxonomyNode).where(PortalTaxonomyNode.parent_id == source_id).values(parent_id=target_id)
+    )
+    target_node.doc_count += source_node.doc_count
+    await db.delete(source_node)
+
+
+async def _execute_split(
+    payload: dict,
+    kb: PortalKnowledgeBase,
+    caller_id: str,
+    db: AsyncSession,
+) -> None:
+    source_id = payload.get("source_node_id")
+    new_children = payload.get("new_children", [])
+    source_result = await db.execute(
+        select(PortalTaxonomyNode).where(
+            PortalTaxonomyNode.id == source_id, PortalTaxonomyNode.kb_id == kb.id
+        )
+    )
+    source_node = source_result.scalar_one_or_none()
+    if not source_node:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Referenced node does not exist")
+    parent_id = source_node.parent_id
+    for child_spec in new_children:
+        child_name = child_spec if isinstance(child_spec, str) else child_spec.get("name", "")
+        if child_name:
+            db.add(PortalTaxonomyNode(
+                kb_id=kb.id, parent_id=parent_id, name=child_name,
+                slug=_slugify(child_name), created_by=caller_id,
+            ))
+
+
+async def _execute_rename(
+    payload: dict,
+    kb: PortalKnowledgeBase,
+    db: AsyncSession,
+) -> None:
+    target_node_id = payload.get("node_id")
+    new_name = payload.get("new_name", "")
+    node_result = await db.execute(
+        select(PortalTaxonomyNode).where(
+            PortalTaxonomyNode.id == target_node_id, PortalTaxonomyNode.kb_id == kb.id
+        )
+    )
+    node = node_result.scalar_one_or_none()
+    if not node:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Referenced node does not exist")
+    node.name = new_name
+    node.slug = _slugify(new_name)
+
+
 @router.post(
     "/{kb_slug}/taxonomy/proposals/{proposal_id}/approve",
     response_model=ProposalOut,
@@ -559,112 +680,7 @@ async def approve_proposal(
     if proposal.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Proposal is not pending")
 
-    payload = proposal.payload
-
-    # Execute type-specific logic
-    _new_node: PortalTaxonomyNode | None = None  # set only for new_node proposals (SPEC-KB-024)
-    if proposal.proposal_type == "new_node":
-        parent_id = payload.get("parent_id")
-        name = payload.get("name", proposal.title)
-        if parent_id is not None:
-            parent_check = await db.execute(
-                select(PortalTaxonomyNode).where(
-                    PortalTaxonomyNode.id == parent_id,
-                    PortalTaxonomyNode.kb_id == kb.id,
-                )
-            )
-            if not parent_check.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Referenced parent node does not exist",
-                )
-        description = payload.get("description")
-        _new_node = PortalTaxonomyNode(
-            kb_id=kb.id,
-            parent_id=parent_id,
-            name=name,
-            slug=_slugify(name),
-            description=description[:200] if description else None,
-            created_by=caller_id,
-        )
-        db.add(_new_node)
-
-    elif proposal.proposal_type == "merge":
-        source_id = payload.get("source_node_id")
-        target_id = payload.get("target_node_id")
-        source_result = await db.execute(
-            select(PortalTaxonomyNode).where(
-                PortalTaxonomyNode.id == source_id,
-                PortalTaxonomyNode.kb_id == kb.id,
-            )
-        )
-        source_node = source_result.scalar_one_or_none()
-        target_result = await db.execute(
-            select(PortalTaxonomyNode).where(
-                PortalTaxonomyNode.id == target_id,
-                PortalTaxonomyNode.kb_id == kb.id,
-            )
-        )
-        target_node = target_result.scalar_one_or_none()
-        if not source_node or not target_node:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Referenced node does not exist",
-            )
-        # Move children from source to target
-        await db.execute(
-            update(PortalTaxonomyNode).where(PortalTaxonomyNode.parent_id == source_id).values(parent_id=target_id)
-        )
-        # Transfer doc_count
-        target_node.doc_count += source_node.doc_count
-        await db.delete(source_node)
-
-    elif proposal.proposal_type == "split":
-        source_id = payload.get("source_node_id")
-        new_children = payload.get("new_children", [])
-        source_result = await db.execute(
-            select(PortalTaxonomyNode).where(
-                PortalTaxonomyNode.id == source_id,
-                PortalTaxonomyNode.kb_id == kb.id,
-            )
-        )
-        source_node = source_result.scalar_one_or_none()
-        if not source_node:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Referenced node does not exist",
-            )
-        parent_id = source_node.parent_id
-        for child_spec in new_children:
-            child_name = child_spec if isinstance(child_spec, str) else child_spec.get("name", "")
-            if child_name:
-                db.add(
-                    PortalTaxonomyNode(
-                        kb_id=kb.id,
-                        parent_id=parent_id,
-                        name=child_name,
-                        slug=_slugify(child_name),
-                        created_by=caller_id,
-                    )
-                )
-
-    elif proposal.proposal_type == "rename":
-        target_node_id = payload.get("node_id")
-        new_name = payload.get("new_name", "")
-        node_result = await db.execute(
-            select(PortalTaxonomyNode).where(
-                PortalTaxonomyNode.id == target_node_id,
-                PortalTaxonomyNode.kb_id == kb.id,
-            )
-        )
-        node = node_result.scalar_one_or_none()
-        if not node:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Referenced node does not exist",
-            )
-        node.name = new_name
-        node.slug = _slugify(new_name)
+    _new_node = await _execute_proposal_action(proposal, kb, caller_id, db)
 
     proposal.status = "approved"
     proposal.reviewed_by = caller_id
@@ -673,7 +689,7 @@ async def approve_proposal(
     # Capture data for post-commit auto-categorise (SPEC-KB-024 R4)
     _cluster_centroid_for_autocategorise: list | None = None
     if _new_node is not None:
-        _cluster_centroid_for_autocategorise = payload.get("cluster_centroid")
+        _cluster_centroid_for_autocategorise = proposal.payload.get("cluster_centroid")
 
     try:
         await db.commit()
