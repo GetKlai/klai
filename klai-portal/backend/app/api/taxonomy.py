@@ -44,7 +44,7 @@ async def _trigger_auto_categorise(
         **get_trace_headers(),
     }
     if settings.knowledge_ingest_secret:
-        headers["x-internal-token"] = settings.knowledge_ingest_secret
+        headers["x-internal-secret"] = settings.knowledge_ingest_secret
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -562,6 +562,7 @@ async def approve_proposal(
     payload = proposal.payload
 
     # Execute type-specific logic
+    _new_node: PortalTaxonomyNode | None = None  # set only for new_node proposals (SPEC-KB-024)
     if proposal.proposal_type == "new_node":
         parent_id = payload.get("parent_id")
         name = payload.get("name", proposal.title)
@@ -578,7 +579,7 @@ async def approve_proposal(
                     detail="Referenced parent node does not exist",
                 )
         description = payload.get("description")
-        node = PortalTaxonomyNode(
+        _new_node = PortalTaxonomyNode(
             kb_id=kb.id,
             parent_id=parent_id,
             name=name,
@@ -586,7 +587,7 @@ async def approve_proposal(
             description=description[:200] if description else None,
             created_by=caller_id,
         )
-        db.add(node)
+        db.add(_new_node)
 
     elif proposal.proposal_type == "merge":
         source_id = payload.get("source_node_id")
@@ -670,13 +671,9 @@ async def approve_proposal(
     proposal.reviewed_at = datetime.now(tz=UTC)
 
     # Capture data for post-commit auto-categorise (SPEC-KB-024 R4)
-    # 'node' is only defined in the new_node branch above; use locals() to avoid NameError
-    _new_node_for_autocategorise = None
-    if proposal.proposal_type == "new_node":
-        cluster_centroid = payload.get("cluster_centroid")
-        _created_node = locals().get("node")
-        if cluster_centroid and _created_node is not None:
-            _new_node_for_autocategorise = (_created_node, cluster_centroid)
+    _cluster_centroid_for_autocategorise: list | None = None
+    if _new_node is not None:
+        _cluster_centroid_for_autocategorise = payload.get("cluster_centroid")
 
     try:
         await db.commit()
@@ -690,15 +687,14 @@ async def approve_proposal(
     await db.refresh(proposal)
 
     # R4: trigger auto-categorise for documents matching this cluster centroid
-    if _new_node_for_autocategorise is not None:
-        new_node, cluster_centroid = _new_node_for_autocategorise
-        await db.refresh(new_node)  # ensure node.id is populated after commit
+    if _new_node is not None and _cluster_centroid_for_autocategorise:
+        await db.refresh(_new_node)  # ensure _new_node.id is populated after commit
         _t = asyncio.create_task(
             _trigger_auto_categorise(
                 org_id=str(org.zitadel_org_id),
                 kb_slug=kb_slug,
-                node_id=new_node.id,
-                cluster_centroid=cluster_centroid,
+                node_id=_new_node.id,
+                cluster_centroid=_cluster_centroid_for_autocategorise,
             )
         )
         _background_tasks.add(_t)
