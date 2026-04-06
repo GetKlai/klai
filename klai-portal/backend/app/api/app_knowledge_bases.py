@@ -597,7 +597,7 @@ async def get_kb_stats(
     except Exception:
         logger.debug("Could not fetch KB usage stats for %s", kb_slug)
 
-    # Org-wide gap count (7 days)
+    # KB-scoped gap count (7 days) — filtered by nearest_kb_slug
     org_gap_count_7d: int | None = None
     try:
         from app.models.retrieval_gaps import PortalRetrievalGap
@@ -606,6 +606,7 @@ async def get_kb_stats(
         gap_result = await db.execute(
             select(func.count()).where(
                 PortalRetrievalGap.org_id == org.id,
+                PortalRetrievalGap.nearest_kb_slug == kb.slug,
                 PortalRetrievalGap.occurred_at >= gap_cutoff,
                 PortalRetrievalGap.resolved_at.is_(None),
             )

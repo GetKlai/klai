@@ -712,7 +712,7 @@
   "knowledge_detail_volume_sources_count": "{count} sources",
   "knowledge_detail_volume_search_chunks": "Search fragments",
   "knowledge_detail_volume_search_chunks_count": "{count} fragments",
-  "knowledge_detail_volume_graph": "Relations",
+  "knowledge_detail_volume_graph": "Relations (org-wide)",
   "knowledge_detail_volume_graph_count": "{entities} entities, {edges} links",
   "knowledge_detail_volume_unavailable": "Not available",
   "knowledge_detail_manage_connectors": "Manage connectors",
