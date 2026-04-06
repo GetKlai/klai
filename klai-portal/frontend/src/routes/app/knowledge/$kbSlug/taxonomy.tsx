@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   Plus, Pencil, Trash2, Loader2, FolderTree, BarChart2,
-  ChevronRight, ChevronDown, Check, X,
+  ChevronRight, ChevronDown, Check, X, Tag, Filter, Sparkles,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -13,11 +13,172 @@ import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { taxonomyLogger } from '@/lib/logger'
-import type { KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal } from './-kb-types'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import type {
+  KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal,
+  TaxonomyCoverage, TopTagsResponse,
+} from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/taxonomy')({
   component: TaxonomyTab,
 })
+
+// -- Coverage widget ----------------------------------------------------------
+
+function CoverageWidget({
+  coverage,
+  activeNodeId,
+  onNodeClick,
+}: {
+  coverage: TaxonomyCoverage
+  activeNodeId: number | null
+  onNodeClick: (nodeId: number) => void
+}) {
+  const total = coverage.total_chunks
+
+  const healthColor = (health: string) => {
+    if (health === 'healthy') return 'bg-[var(--color-success)]'
+    if (health === 'attention_needed') return 'bg-amber-400'
+    return 'bg-[var(--color-border)]'
+  }
+
+  const healthLabel = (health: string) => {
+    if (health === 'healthy') return m.knowledge_taxonomy_coverage_health_healthy()
+    if (health === 'attention_needed') return m.knowledge_taxonomy_coverage_health_attention()
+    return m.knowledge_taxonomy_coverage_health_empty()
+  }
+
+  if (coverage.nodes.length === 0) {
+    return (
+      <p className="text-sm text-[var(--color-muted-foreground)]">
+        {m.knowledge_taxonomy_coverage_empty()}
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {coverage.nodes.map((node) => {
+        const pct = total > 0 ? Math.round((node.chunk_count / total) * 100) : 0
+        const isActive = activeNodeId === node.taxonomy_node_id
+        return (
+          <button
+            key={node.taxonomy_node_id}
+            type="button"
+            onClick={() => onNodeClick(node.taxonomy_node_id)}
+            className={[
+              'w-full text-left rounded-lg border p-3 transition-colors',
+              isActive
+                ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
+                : 'border-[var(--color-border)] hover:bg-[var(--color-secondary)]',
+            ].join(' ')}
+          >
+            <div className="flex items-center justify-between mb-1.5 gap-2">
+              <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
+                {node.taxonomy_node_name}
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                  {pct}%
+                </span>
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                  style={{
+                    background: node.health === 'healthy' ? 'var(--color-success)' : node.health === 'attention_needed' ? '#F59E0B' : 'var(--color-border)',
+                    color: node.health === 'empty' ? 'var(--color-muted-foreground)' : '#fff',
+                  }}
+                >
+                  {healthLabel(node.health)}
+                </span>
+              </div>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${healthColor(node.health)}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-3 mt-1.5">
+              <span className="text-xs text-[var(--color-muted-foreground)]">
+                {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
+              </span>
+              {node.gap_count > 0 && (
+                <span className="text-xs text-amber-600">
+                  {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
+                </span>
+              )}
+            </div>
+          </button>
+        )
+      })}
+
+      {coverage.untagged_count > 0 && (
+        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm text-[var(--color-muted-foreground)]">
+              {m.knowledge_taxonomy_coverage_untagged()}
+            </span>
+            <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+              {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
+            </span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+            <div
+              className="h-full rounded-full bg-[var(--color-border)]"
+              style={{ width: `${total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%` }}
+            />
+          </div>
+          <span className="text-xs text-[var(--color-muted-foreground)] mt-1.5 block">
+            {m.knowledge_taxonomy_coverage_chunks({ count: String(coverage.untagged_count) })}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// -- Tag cloud ----------------------------------------------------------------
+
+function TagCloud({
+  tags,
+  activeTags,
+  onTagClick,
+}: {
+  tags: { tag: string; count: number }[]
+  activeTags: Set<string>
+  onTagClick: (tag: string) => void
+}) {
+  const maxCount = tags[0]?.count ?? 1
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {tags.map(({ tag, count }) => {
+        const isActive = activeTags.has(tag)
+        // Scale font size from 0.75rem (min count) to 1rem (max count)
+        const scale = maxCount > 1 ? (count - 1) / (maxCount - 1) : 0
+        const fontSize = 0.75 + scale * 0.25
+
+        return (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => onTagClick(tag)}
+            className={[
+              'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 transition-colors',
+              isActive
+                ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-white'
+                : 'border-[var(--color-border)] bg-[var(--color-secondary)] text-[var(--color-foreground)] hover:border-[var(--color-accent)]/50',
+            ].join(' ')}
+            style={{ fontSize: `${fontSize}rem` }}
+          >
+            <span>{tag}</span>
+            <span className="text-[10px] opacity-60 tabular-nums">{count}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 // -- Recursive tree component -------------------------------------------------
 
@@ -198,6 +359,31 @@ function TaxonomyTab() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
+  const { user } = useCurrentUser()
+
+  // Filter state
+  const [activeNodeId, setActiveNodeId] = useState<number | null>(null)
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
+
+  const hasFilter = activeNodeId !== null || activeTags.size > 0
+
+  function toggleNode(nodeId: number) {
+    setActiveNodeId((prev) => (prev === nodeId ? null : nodeId))
+  }
+
+  function toggleTag(tag: string) {
+    setActiveTags((prev) => {
+      const next = new Set(prev)
+      if (next.has(tag)) next.delete(tag)
+      else next.add(tag)
+      return next
+    })
+  }
+
+  function clearAllFilters() {
+    setActiveNodeId(null)
+    setActiveTags(new Set())
+  }
 
   // Derive permissions from cached queries
   const { data: kb } = useQuery<KnowledgeBase>({
@@ -215,6 +401,7 @@ function TaxonomyTab() {
   const myUserId = auth.user?.profile?.sub
   const isOwner = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isContributor = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && (u.role === 'owner' || u.role === 'contributor')))
+  const isAdmin = user?.isAdmin === true
 
   const [showAddRoot, setShowAddRoot] = useState(false)
   const [addParentId, setAddParentId] = useState<number | null>(null)
@@ -246,6 +433,31 @@ function TaxonomyTab() {
       }
     },
     enabled: !!token,
+  })
+
+  const coverageQuery = useQuery<TaxonomyCoverage>({
+    queryKey: ['taxonomy-coverage', kbSlug],
+    queryFn: async () => {
+      try {
+        return await apiFetch<TaxonomyCoverage>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/coverage`, token)
+      } catch (err) {
+        taxonomyLogger.warn('Taxonomy coverage fetch failed', { slug: kbSlug, error: err })
+        throw err
+      }
+    },
+    enabled: !!token && isAdmin,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const topTagsQuery = useQuery<TopTagsResponse>({
+    queryKey: ['taxonomy-top-tags', kbSlug, activeNodeId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: '20' })
+      if (activeNodeId !== null) params.set('taxonomy_node_id', String(activeNodeId))
+      return apiFetch<TopTagsResponse>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/top-tags?${params.toString()}`, token)
+    },
+    enabled: !!token,
+    staleTime: 5 * 60 * 1000,
   })
 
   const createNodeMutation = useMutation({
@@ -304,6 +516,78 @@ function TaxonomyTab() {
     },
   })
 
+  // -- Suggest categories flow --
+  const [suggestState, setSuggestState] = useState<'idle' | 'generating' | 'proposals_ready' | 'applying' | 'done'>('idle')
+
+  const bootstrapMutation = useMutation({
+    mutationFn: async () => {
+      return await apiFetch<{ documents_scanned: number; proposals_submitted: number }>(
+        `/api/app/knowledge-bases/${kbSlug}/taxonomy/bootstrap`,
+        token,
+        { method: 'POST' },
+      )
+    },
+    onMutate: () => setSuggestState('generating'),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+      if (data.proposals_submitted > 0) {
+        setSuggestState('proposals_ready')
+      } else {
+        setSuggestState('idle')
+      }
+    },
+    onError: (err) => {
+      taxonomyLogger.error('Bootstrap failed', { slug: kbSlug, error: err })
+      setSuggestState('idle')
+    },
+  })
+
+  const backfillMutation = useMutation({
+    mutationFn: async () => {
+      return await apiFetch<{ job_id: number; status: string }>(
+        `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`,
+        token,
+        { method: 'POST' },
+      )
+    },
+    onMutate: () => setSuggestState('applying'),
+    onSuccess: () => {
+      setSuggestState('done')
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-top-tags', kbSlug] })
+    },
+    onError: (err) => {
+      taxonomyLogger.error('Backfill trigger failed', { slug: kbSlug, error: err })
+      setSuggestState('proposals_ready')
+    },
+  })
+
+  async function handleApplyAll() {
+    const pendingProposals = proposals.filter((p) => p.status === 'pending')
+    // Approve all pending proposals sequentially
+    for (const proposal of pendingProposals) {
+      try {
+        await apiFetch(
+          `/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposal.id}/approve`,
+          token,
+          { method: 'POST' },
+        )
+      } catch (err) {
+        taxonomyLogger.warn('Failed to approve proposal during apply-all', { proposalId: proposal.id, error: err })
+      }
+    }
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+    void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+    // Then trigger backfill
+    backfillMutation.mutate()
+  }
+
+  const applyAllMutation = useMutation({
+    mutationFn: handleApplyAll,
+  })
+
   function handleAddChild(parentId: number) {
     setAddParentId(parentId)
     setShowAddRoot(false)
@@ -320,6 +604,9 @@ function TaxonomyTab() {
   const proposals = proposalsQuery.data?.proposals ?? []
   const isAddingChild = addParentId !== null
 
+  // Resolve active node name for filter chips
+  const activeNode = activeNodeId !== null ? nodes.find((n) => n.id === activeNodeId) : null
+
   const proposalTypeBadge: Record<string, { label: () => string; variant: 'accent' | 'success' | 'secondary' | 'destructive' }> = {
     new_node: { label: m.knowledge_taxonomy_proposals_type_new_node, variant: 'accent' },
     merge: { label: m.knowledge_taxonomy_proposals_type_merge, variant: 'secondary' },
@@ -329,6 +616,109 @@ function TaxonomyTab() {
 
   return (
     <div className="space-y-8">
+      {/* Active filters bar */}
+      {hasFilter && (
+        <div className="flex items-center flex-wrap gap-2">
+          <Filter className="h-3.5 w-3.5 text-[var(--color-muted-foreground)] shrink-0" />
+          <span className="text-xs text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_filter_heading()}:</span>
+          {activeNode && (
+            <button
+              type="button"
+              onClick={() => setActiveNodeId(null)}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-purple-deep)] hover:bg-[var(--color-accent)]/20 transition-colors"
+            >
+              {m.knowledge_taxonomy_filter_node({ name: activeNode.name })}
+              <X className="h-3 w-3" />
+            </button>
+          )}
+          {Array.from(activeTags).map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => toggleTag(tag)}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-purple-deep)] hover:bg-[var(--color-accent)]/20 transition-colors"
+            >
+              {m.knowledge_taxonomy_filter_tag({ name: tag })}
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-1"
+          >
+            {m.knowledge_taxonomy_filter_clear_all()}
+          </button>
+        </div>
+      )}
+
+      {/* Coverage widget — admin only */}
+      {isAdmin && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart2 className="h-4 w-4 text-[var(--color-purple-deep)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">
+              {m.knowledge_taxonomy_coverage_heading()}
+            </h2>
+            {activeNodeId !== null && (
+              <button
+                type="button"
+                onClick={() => setActiveNodeId(null)}
+                className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+              >
+                {m.knowledge_taxonomy_coverage_filter_clear()}
+              </button>
+            )}
+          </div>
+          {coverageQuery.isLoading && (
+            <p className="py-3 text-sm text-[var(--color-muted-foreground)]">
+              <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
+              {m.knowledge_taxonomy_coverage_loading()}
+            </p>
+          )}
+          {coverageQuery.data && (
+            <CoverageWidget
+              coverage={coverageQuery.data}
+              activeNodeId={activeNodeId}
+              onNodeClick={toggleNode}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Tag cloud */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <Tag className="h-4 w-4 text-[var(--color-purple-deep)]" />
+          <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">
+            {m.knowledge_taxonomy_tags_heading()}
+          </h2>
+          {activeNodeId !== null && activeNode && (
+            <span className="text-xs text-[var(--color-muted-foreground)]">
+              {m.knowledge_taxonomy_coverage_filter_active({ name: activeNode.name })}
+            </span>
+          )}
+        </div>
+        {topTagsQuery.isLoading && (
+          <p className="py-3 text-sm text-[var(--color-muted-foreground)]">
+            <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
+            {m.knowledge_taxonomy_tags_loading()}
+          </p>
+        )}
+        {topTagsQuery.data && topTagsQuery.data.tags.length === 0 && (
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.knowledge_taxonomy_tags_empty()}
+          </p>
+        )}
+        {topTagsQuery.data && topTagsQuery.data.tags.length > 0 && (
+          <TagCloud
+            tags={topTagsQuery.data.tags}
+            activeTags={activeTags}
+            onTagClick={toggleTag}
+          />
+        )}
+      </div>
+
       {/* Category tree */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -336,19 +726,58 @@ function TaxonomyTab() {
             <FolderTree className="h-4 w-4 text-[var(--color-purple-deep)]" />
             <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">{m.knowledge_taxonomy_tree_heading()}</h2>
           </div>
-          {canEdit && !showAddRoot && !isAddingChild && (
-            <Button size="sm" variant="outline" onClick={() => { setShowAddRoot(true); setAddParentId(null) }}>
-              <Plus className="h-3.5 w-3.5 mr-1" />
-              {m.knowledge_taxonomy_node_add_root()}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {canEdit && nodes.length === 0 && suggestState === 'idle' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => bootstrapMutation.mutate()}
+                disabled={bootstrapMutation.isPending}
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1" />
+                {m.knowledge_taxonomy_suggest_categories()}
+              </Button>
+            )}
+            {canEdit && !showAddRoot && !isAddingChild && (
+              <Button size="sm" variant="outline" onClick={() => { setShowAddRoot(true); setAddParentId(null) }}>
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {m.knowledge_taxonomy_node_add_root()}
+              </Button>
+            )}
+          </div>
         </div>
 
         {nodes.length === 0 && !nodesQuery.isLoading && (
           <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
-            <FolderTree className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-2" />
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_tree_empty()}</p>
-            <p className="text-xs text-[var(--color-muted-foreground)] mt-1">{m.knowledge_taxonomy_tree_empty_hint()}</p>
+            {suggestState === 'generating' ? (
+              <>
+                <Loader2 className="mx-auto h-8 w-8 text-[var(--color-accent)] mb-2 animate-spin" />
+                <p className="text-sm text-[var(--color-foreground)]">{m.knowledge_taxonomy_suggest_generating()}</p>
+              </>
+            ) : (
+              <>
+                <FolderTree className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-2" />
+                <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_tree_empty()}</p>
+                <p className="text-xs text-[var(--color-muted-foreground)] mt-1">{m.knowledge_taxonomy_tree_empty_hint()}</p>
+                {canEdit && suggestState === 'idle' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-3"
+                    onClick={() => bootstrapMutation.mutate()}
+                    disabled={bootstrapMutation.isPending}
+                  >
+                    <Sparkles className="h-3.5 w-3.5 mr-1" />
+                    {m.knowledge_taxonomy_suggest_categories()}
+                  </Button>
+                )}
+              </>
+            )}
+            {bootstrapMutation.isError && (
+              <p className="text-sm text-[var(--color-destructive)] mt-2">
+                {m.knowledge_taxonomy_suggest_error()}
+              </p>
+            )}
           </div>
         )}
 
@@ -410,6 +839,30 @@ function TaxonomyTab() {
         )}
       </div>
 
+      {/* Suggest flow banners */}
+      {suggestState === 'proposals_ready' && proposals.length > 0 && (
+        <div className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)]/5 p-4">
+          <p className="text-sm font-medium text-[var(--color-foreground)]">
+            {m.knowledge_taxonomy_suggest_ready({ count: String(proposals.length) })}
+          </p>
+        </div>
+      )}
+
+      {suggestState === 'applying' && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4 flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-[var(--color-accent)]" />
+          <p className="text-sm text-[var(--color-foreground)]">{m.knowledge_taxonomy_suggest_applying()}</p>
+        </div>
+      )}
+
+      {suggestState === 'done' && (
+        <div className="rounded-lg border border-[var(--color-success)] bg-[var(--color-success)]/5 p-4">
+          <p className="text-sm font-medium text-[var(--color-foreground)]">
+            {m.knowledge_taxonomy_suggest_done()}
+          </p>
+        </div>
+      )}
+
       {/* Review queue */}
       <div>
         <div className="flex items-center gap-2 mb-3">
@@ -449,6 +902,11 @@ function TaxonomyTab() {
                           )}
                         </div>
                         <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
+                        {proposal.payload?.description && (
+                          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                            {String(proposal.payload.description)}
+                          </p>
+                        )}
                         <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
                           {new Date(proposal.created_at).toLocaleDateString()}
                         </p>
@@ -505,6 +963,25 @@ function TaxonomyTab() {
                 </Card>
               )
             })}
+
+            {/* Apply all to knowledge base */}
+            {canEdit && proposals.length > 0 && suggestState !== 'applying' && suggestState !== 'done' && (
+              <div className="pt-3">
+                <Button
+                  size="sm"
+                  onClick={() => applyAllMutation.mutate()}
+                  disabled={applyAllMutation.isPending || backfillMutation.isPending}
+                  className="bg-[var(--color-accent)] text-white hover:opacity-90"
+                >
+                  {applyAllMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 mr-1" />
+                  )}
+                  {m.knowledge_taxonomy_suggest_apply_all()}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

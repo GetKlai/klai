@@ -347,7 +347,7 @@ async def taxonomy_top_tags(
         FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
     ]
     if taxonomy_node_id is not None:
-        from qdrant_client.models import MatchAny  # noqa: PLC0415
+        from qdrant_client.models import MatchAny
         must_conditions.append(
             FieldCondition(
                 key="taxonomy_node_ids",

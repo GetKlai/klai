@@ -663,6 +663,82 @@ async def reject_proposal(
     return _proposal_out(proposal)
 
 
+# -- Bootstrap & backfill triggers -------------------------------------------
+
+
+@router.post("/{kb_slug}/taxonomy/bootstrap")
+async def trigger_bootstrap(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Trigger taxonomy bootstrap proposal generation. Requires contributor role.
+
+    Calls knowledge-ingest to scan existing chunks and propose categories.
+    Proposals appear in the review queue once generated.
+    """
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_role(kb.id, caller_id, db, "contributor")
+
+    # Resolve Zitadel org_id for the ingest service call
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
+    portal_org = org_result.scalar_one_or_none()
+    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+
+    from app.services.knowledge_ingest_client import trigger_taxonomy_bootstrap
+
+    try:
+        result = await trigger_taxonomy_bootstrap(zitadel_org_id, kb_slug)
+    except Exception:
+        log.exception(
+            "taxonomy_bootstrap_failed",
+            extra={"org_id": zitadel_org_id, "kb_slug": kb_slug},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not generate taxonomy suggestions",
+        ) from None
+
+    return result
+
+
+@router.post("/{kb_slug}/taxonomy/backfill-trigger")
+async def trigger_backfill(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Trigger taxonomy backfill to tag all existing chunks. Requires contributor role.
+
+    Enqueues a background job in knowledge-ingest that classifies and tags
+    all existing chunks with the approved taxonomy nodes.
+    """
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_role(kb.id, caller_id, db, "contributor")
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
+    portal_org = org_result.scalar_one_or_none()
+    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+
+    from app.services.knowledge_ingest_client import trigger_taxonomy_backfill
+
+    try:
+        result = await trigger_taxonomy_backfill(zitadel_org_id, kb_slug)
+    except Exception:
+        log.exception(
+            "taxonomy_backfill_trigger_failed",
+            extra={"org_id": zitadel_org_id, "kb_slug": kb_slug},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not trigger taxonomy backfill",
+        ) from None
+
+    return result
+
+
 # -- Coverage stats -----------------------------------------------------------
 
 # 5-minute in-memory cache: key = (org_id_str, kb_slug), value = (monotonic_ts, data_dict)
@@ -816,4 +892,87 @@ async def taxonomy_coverage(
     # Cache the response
     _coverage_cache[cache_key] = (time.monotonic(), response.model_dump())
 
+    return response
+
+
+# -- Top tags -----------------------------------------------------------------
+
+_top_tags_cache: dict[tuple[str, str, int | None], tuple[float, dict]] = {}
+_TOP_TAGS_CACHE_TTL = 300.0  # 5 minutes
+
+
+class TopTagEntryOut(BaseModel):
+    tag: str
+    count: int
+
+
+class TopTagsResponse(BaseModel):
+    tags: list[TopTagEntryOut]
+    total_chunks_sampled: int
+
+
+async def _fetch_ingest_top_tags(org_id: str, kb_slug: str, limit: int, taxonomy_node_id: int | None) -> dict | None:
+    """Fetch top tags from knowledge-ingest service."""
+    try:
+        params: dict = {"org_id": org_id, "kb_slug": kb_slug, "limit": limit}
+        if taxonomy_node_id is not None:
+            params["taxonomy_node_id"] = taxonomy_node_id
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                **get_trace_headers(),
+            },
+            timeout=25.0,
+        ) as client:
+            resp = await client.get("/ingest/v1/taxonomy/top-tags", params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        log.warning(
+            "top_tags_ingest_fetch_failed",
+            extra={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        return None
+
+
+@router.get("/{kb_slug}/taxonomy/top-tags", response_model=TopTagsResponse)
+async def taxonomy_top_tags(
+    kb_slug: str,
+    limit: int = 20,
+    taxonomy_node_id: int | None = None,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> TopTagsResponse:
+    """Top tags by frequency across KB chunks. Cached for 5 minutes.
+
+    Optionally filter by taxonomy_node_id to get tags within a category.
+    Accessible to all KB members (viewer+).
+    """
+    _, org, _ = await _get_caller_org(credentials, db)
+    await _get_kb_or_404(kb_slug, org.id, db)
+
+    from app.models.portal import PortalOrg
+
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org.id))
+    portal_org = org_result.scalar_one_or_none()
+    zitadel_org_id = portal_org.zitadel_org_id if portal_org else str(org.id)
+
+    cache_key = (zitadel_org_id, kb_slug, taxonomy_node_id)
+    cached = _top_tags_cache.get(cache_key)
+    if cached is not None:
+        ts, cached_response = cached
+        if time.monotonic() - ts < _TOP_TAGS_CACHE_TTL:
+            return TopTagsResponse(**cached_response)
+
+    data = await _fetch_ingest_top_tags(zitadel_org_id, kb_slug, limit, taxonomy_node_id)
+    if data is None:
+        data = {"tags": [], "total_chunks_sampled": 0}
+
+    response = TopTagsResponse(
+        tags=[TopTagEntryOut(**t) for t in data.get("tags", [])],
+        total_chunks_sampled=data.get("total_chunks_sampled", 0),
+    )
+
+    _top_tags_cache[cache_key] = (time.monotonic(), response.model_dump())
     return response

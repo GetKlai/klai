@@ -105,6 +105,31 @@ export interface PersonalItemsResponse {
   offset: number
 }
 
+export interface TaxonomyCoverageNode {
+  taxonomy_node_id: number
+  taxonomy_node_name: string
+  chunk_count: number
+  gap_count: number
+  health: 'healthy' | 'attention_needed' | 'empty'
+}
+
+export interface TaxonomyCoverage {
+  nodes: TaxonomyCoverageNode[]
+  total_chunks: number
+  untagged_count: number
+  untagged_percentage: number
+}
+
+export interface TopTagEntry {
+  tag: string
+  count: number
+}
+
+export interface TopTagsResponse {
+  tags: TopTagEntry[]
+  total_chunks_sampled: number
+}
+
 export interface GitHubConfig {
   installation_id: string
   repo_owner: string

@@ -124,6 +124,46 @@ async def preview_crawl(
         return {"fit_markdown": "", "word_count": 0, "url": url}
 
 
+async def trigger_taxonomy_bootstrap(org_id: str, kb_slug: str) -> dict:
+    """Trigger bootstrap proposal generation for a KB.
+
+    Calls knowledge-ingest to scan existing chunks and generate taxonomy
+    category proposals. Returns {"documents_scanned": N, "proposals_submitted": N}.
+    Raises on failure so the portal endpoint returns a clear error.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=60.0,
+    ) as client:
+        resp = await client.post(
+            "/ingest/v1/taxonomy/bootstrap-proposals",
+            json={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+
+async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
+    """Trigger taxonomy backfill to tag all existing chunks.
+
+    Enqueues a Procrastinate background job in knowledge-ingest.
+    Returns {"job_id": N, "status": "queued"}.
+    Raises on failure so the portal endpoint returns a clear error.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=15.0,
+    ) as client:
+        resp = await client.post(
+            "/ingest/v1/taxonomy/backfill",
+            json={"org_id": org_id, "kb_slug": kb_slug},
+        )
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 
