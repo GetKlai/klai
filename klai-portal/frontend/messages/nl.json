@@ -712,7 +712,7 @@
   "knowledge_detail_volume_sources_count": "{count} bronnen",
   "knowledge_detail_volume_search_chunks": "Zoekfragmenten",
   "knowledge_detail_volume_search_chunks_count": "{count} fragmenten",
-  "knowledge_detail_volume_graph": "Relaties",
+  "knowledge_detail_volume_graph": "Relaties (org-breed)",
   "knowledge_detail_volume_graph_count": "{entities} entiteiten, {edges} links",
   "knowledge_detail_volume_unavailable": "Niet beschikbaar",
   "knowledge_detail_manage_connectors": "Bronnen beheren",
