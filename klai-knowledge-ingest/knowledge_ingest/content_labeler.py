@@ -59,7 +59,7 @@ async def generate_content_label(
             _call_litellm(user_message),
             timeout=settings.content_label_timeout,
         )
-    except (TimeoutError, Exception) as exc:
+    except Exception as exc:
         logger.warning(
             "content_label_generation_failed",
             title=title,
