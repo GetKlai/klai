@@ -598,8 +598,8 @@ function TaxonomyTab() {
     renameNodeMutation.mutate({ nodeId: node.id, name: newName })
   }
 
-  const canEdit = isContributor
-  const canDelete = isOwner
+  const canEdit = isContributor || isAdmin
+  const canDelete = isOwner || isAdmin
   const nodes = nodesQuery.data?.nodes ?? []
   const proposals = proposalsQuery.data?.proposals ?? []
   const isAddingChild = addParentId !== null
