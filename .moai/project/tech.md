@@ -196,6 +196,7 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | Job Queue | procrastinate[asyncpg] | ==2.15.0 |
 | HTML Parsing | html2text | ==2024.2.26 |
 | Caching | cachetools | ==5.5.2 |
+| Clustering | scikit-learn | >=1.3.0 |
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-024
 version: "1.0"
-status: draft
+status: implemented
 created: "2026-04-06"
 updated: "2026-04-06"
 author: Mark Vletter
