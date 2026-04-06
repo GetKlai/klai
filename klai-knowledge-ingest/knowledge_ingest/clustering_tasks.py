@@ -113,7 +113,7 @@ async def _generate_cluster_proposals(
     One LLM call per cluster to suggest a category name.
     Checks for duplicate pending proposals before submitting (AC8).
     """
-    from knowledge_ingest.portal_client import submit_taxonomy_proposal
+    from knowledge_ingest.portal_client import TaxonomyProposal, submit_taxonomy_proposal
 
     proposals_submitted = 0
 
@@ -138,20 +138,21 @@ async def _generate_cluster_proposals(
             continue
 
         try:
-            await submit_taxonomy_proposal(
-                org_id=org_id,
-                kb_slug=kb_slug,
+            proposal = TaxonomyProposal(
                 proposal_type="new_node",
-                title=category_name,
+                suggested_name=category_name,
+                document_count=cluster.size,
+                sample_titles=cluster.content_label_summary[:5],
                 description=(
                     f"Auto-discovered cluster with {cluster.size} documents. "
                     f"Keywords: {', '.join(cluster.content_label_summary)}"
                 ),
-                payload={
-                    "name": category_name,
-                    "parent_id": None,
-                    "cluster_centroid": cluster.centroid,
-                },
+                cluster_centroid=cluster.centroid,
+            )
+            await submit_taxonomy_proposal(
+                kb_slug=kb_slug,
+                org_id=org_id,
+                proposal=proposal,
             )
             proposals_submitted += 1
         except Exception:
@@ -196,6 +197,60 @@ def _has_similar_pending_proposal(
             if label.lower() in title:
                 return True
     return False
+
+
+def register_auto_categorise_task(procrastinate_app: Any) -> None:
+    """Register the auto-categorise Procrastinate task.
+
+    Called from enrichment_tasks.init_app() alongside other task registrations.
+    Retry: max 3 attempts at 30s, 5m, 30m (SPEC-KB-026 R5).
+    """
+    import procrastinate
+
+    @procrastinate_app.task(
+        queue="taxonomy-backfill",
+        retry=procrastinate.RetryStrategy(
+            max_attempts=3,
+            wait=30,
+        ),
+    )
+    async def run_auto_categorise(
+        org_id: str,
+        kb_slug: str,
+        node_id: int,
+        cluster_centroid: list[float] | None = None,
+    ) -> dict:
+        """Run auto-categorise as a background job with retries."""
+        if cluster_centroid is None:
+            logger.info(
+                "auto_categorise_skipped_no_centroid",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                node_id=node_id,
+            )
+            return {"status": "skipped", "reason": "no_centroid"}
+
+        try:
+            from knowledge_ingest.routes.taxonomy import _auto_categorise_impl
+
+            categorised = await _auto_categorise_impl(
+                org_id=org_id,
+                kb_slug=kb_slug,
+                node_id=node_id,
+                cluster_centroid=cluster_centroid,
+                threshold=settings.taxonomy_auto_categorise_threshold,
+            )
+            return {"status": "completed", "categorised": categorised}
+        except Exception:
+            logger.exception(
+                "auto_categorise_exhausted",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                node_id=node_id,
+            )
+            raise
+
+    procrastinate_app.run_auto_categorise = run_auto_categorise  # type: ignore[attr-defined]
 
 
 async def _suggest_category_name(labels: list[str]) -> str | None:

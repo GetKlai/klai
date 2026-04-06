@@ -42,6 +42,7 @@ from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
     generate_bootstrap_proposals,
 )
+from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -301,6 +302,92 @@ async def taxonomy_bootstrap_proposals(
         documents_scanned=len(documents),
         proposals_submitted=proposals_submitted,
     )
+
+
+# ---------------------------------------------------------------------------
+# Classify endpoint (SPEC-KB-026 R4 part 1)
+# ---------------------------------------------------------------------------
+
+
+class ClassifyRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    text: str
+
+
+class ClassifyResponse(BaseModel):
+    taxonomy_node_ids: list[int]
+
+
+@router.post("/ingest/v1/taxonomy/classify", response_model=ClassifyResponse)
+async def taxonomy_classify(request: Request, req: ClassifyRequest) -> ClassifyResponse:
+    """Classify a text query against a KB's taxonomy nodes.
+
+    Used by the portal to classify gap events. Returns empty list when
+    no taxonomy nodes exist or classification yields no matches.
+    """
+    nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
+    if not nodes:
+        return ClassifyResponse(taxonomy_node_ids=[])
+
+    matched_nodes, _tags = await classify_document(
+        title="",
+        content_preview=req.text,
+        taxonomy_nodes=nodes,
+    )
+    node_ids = [nid for nid, _conf in matched_nodes]
+    return ClassifyResponse(taxonomy_node_ids=node_ids)
+
+
+# ---------------------------------------------------------------------------
+# Auto-categorise job endpoint (SPEC-KB-026 R5)
+# ---------------------------------------------------------------------------
+
+
+class AutoCategoriseJobRequest(BaseModel):
+    org_id: str
+    kb_slug: str
+    node_id: int
+    cluster_centroid: list[float] | None = None
+
+
+class AutoCategoriseJobResponse(BaseModel):
+    job_id: int
+    status: str
+
+
+@router.post(
+    "/ingest/v1/taxonomy/auto-categorise-job",
+    response_model=AutoCategoriseJobResponse,
+    status_code=202,
+)
+async def taxonomy_auto_categorise_job(
+    request: Request, req: AutoCategoriseJobRequest,
+) -> AutoCategoriseJobResponse:
+    """Enqueue an auto-categorise background job via Procrastinate.
+
+    Called by the portal when a taxonomy proposal is approved.
+    Returns immediately with job_id; the actual work runs in the background
+    with retries (max 3, exponential backoff).
+    """
+    from knowledge_ingest.enrichment_tasks import get_app
+
+    proc_app = get_app()
+    job_id = await proc_app.run_auto_categorise.defer_async(
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        cluster_centroid=req.cluster_centroid,
+    )
+
+    logger.info(
+        "auto_categorise_job_enqueued",
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        job_id=job_id,
+    )
+    return AutoCategoriseJobResponse(job_id=job_id, status="queued")
 
 
 class CoverageNodeStats(BaseModel):

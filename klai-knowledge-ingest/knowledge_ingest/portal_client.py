@@ -32,6 +32,7 @@ class TaxonomyProposal:
     document_count: int
     sample_titles: list[str]
     description: str = ""
+    cluster_centroid: list[float] | None = None
 
 
 async def fetch_taxonomy_nodes(kb_slug: str, org_id: str) -> list[TaxonomyNode]:
@@ -123,6 +124,7 @@ async def submit_taxonomy_proposal(
                         "document_count": proposal.document_count,
                         "sample_titles": proposal.sample_titles[:5],
                         "description": proposal.description,
+                        "cluster_centroid": proposal.cluster_centroid,
                     },
                 },
             )

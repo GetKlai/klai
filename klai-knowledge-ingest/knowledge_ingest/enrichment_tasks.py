@@ -64,9 +64,10 @@ def init_app(connector: Any) -> Any:
 
     register_taxonomy_tasks(_procrastinate_app)
 
-    from knowledge_ingest.clustering_tasks import register_clustering_tasks
+    from knowledge_ingest.clustering_tasks import register_auto_categorise_task, register_clustering_tasks
 
     register_clustering_tasks(_procrastinate_app)
+    register_auto_categorise_task(_procrastinate_app)
 
     return _procrastinate_app
 

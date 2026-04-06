@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     taxonomy_auto_categorise_threshold: float = 0.82
     taxonomy_cluster_min_size: int = 5
     taxonomy_cluster_trigger_count: int = 20
+    taxonomy_centroid_max_age_hours: int = 48
 
     model_config = {"env_file": ".env"}
 

@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -550,39 +550,33 @@ async def create_gap_event(
     db.add(gap)
     await db.commit()
 
-    # SPEC-KB-022 R6: async fire-and-forget gap classification when taxonomy_node_ids absent
+    # SPEC-KB-022 R6 + SPEC-KB-026 R4: async gap classification via knowledge-ingest
     if payload.taxonomy_node_ids is None and payload.nearest_kb_slug:
         import asyncio as _asyncio
 
-        async def _classify_gap(gap_id: int, query_text: str, kb_slug: str) -> None:
-            """Classify gap query against KB taxonomy nodes. Best-effort, never blocks."""
+        async def _classify_gap(gap_id: int, org_zitadel_id: str, query_text: str, kb_slug: str) -> None:
+            """Classify gap query against KB taxonomy via knowledge-ingest. Best-effort."""
             try:
                 from app.core.database import AsyncSessionLocal
-                from app.models.taxonomy import PortalTaxonomyNode
+                from app.services.knowledge_ingest_client import classify_gap_taxonomy
 
-                # Find KB and its taxonomy nodes
+                node_ids = await classify_gap_taxonomy(org_zitadel_id, kb_slug, query_text)
+                if not node_ids:
+                    return
+
                 async with AsyncSessionLocal() as session:
-                    kb_result = await session.execute(
-                        select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug)
+                    await session.execute(
+                        update(PortalRetrievalGap)
+                        .where(PortalRetrievalGap.id == gap_id)
+                        .values(taxonomy_node_ids=node_ids)
                     )
-                    kb = kb_result.scalar_one_or_none()
-                    if not kb:
-                        return
+                    await session.commit()
 
-                    nodes_result = await session.execute(
-                        select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb.id)
-                    )
-                    nodes = nodes_result.scalars().all()
-                    if not nodes:
-                        return
-
-                    # Store the taxonomy node IDs from the KB on the gap (best-effort)
-                    # A full LLM classification would require calling the ingest service;
-                    # for now, leave taxonomy_node_ids as None if not provided by the hook
-                    logger.info(
-                        "gap_classification_skipped: gap_id=%s, reason=async classification not yet connected to ingest service",
-                        gap_id,
-                    )
+                logger.info(
+                    "gap_classification_complete: gap_id=%s, node_ids=%s",
+                    gap_id,
+                    node_ids,
+                )
             except Exception as exc:
                 logger.warning(
                     "gap_classification_failed: gap_id=%s, error=%s",
@@ -591,7 +585,7 @@ async def create_gap_event(
                 )
 
         _task = _asyncio.create_task(  # noqa: RUF006
-            _classify_gap(gap.id, payload.query_text, payload.nearest_kb_slug)
+            _classify_gap(gap.id, payload.org_id, payload.query_text, payload.nearest_kb_slug)
         )
 
     return {"ok": True}
