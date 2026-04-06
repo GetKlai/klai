@@ -5,7 +5,7 @@ import { useState } from 'react'
 import {
   RefreshCw, Trash2, Loader2, Plus, Pencil, Globe, FileText,
 } from 'lucide-react'
-import { SiGithub, SiNotion, SiGoogledrive, SiMicrosoftword } from '@icons-pack/react-simple-icons'
+import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,7 +35,7 @@ const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
   web_crawler:  { label: 'Web',          IconComponent: Globe },
   notion:       { label: 'Notion',       IconComponent: SiNotion },
   google_drive: { label: 'Google Drive', IconComponent: SiGoogledrive },
-  ms_docs:      { label: 'MS Docs',      IconComponent: SiMicrosoftword },
+  ms_docs:      { label: 'MS Docs',      IconComponent: FileText },
 }
 
 function ConnectorTypeBadge({ type }: { type: string }) {
