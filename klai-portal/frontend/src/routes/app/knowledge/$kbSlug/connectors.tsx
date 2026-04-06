@@ -4,8 +4,18 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   RefreshCw, Trash2, Loader2, Plus, Pencil,
-  Globe, GitBranch, NotepadText, HardDrive, FileText,
+  Globe, GitBranch, HardDrive, FileText,
 } from 'lucide-react'
+
+function NotionIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="100" height="100" rx="14" fill="white"/>
+      <path d="M14.5 17.3c2.4 1.9 3.3 1.8 7.8 1.5l42.4-2.5c.9 0 .1-.9-.3-1L57.3 12c-1.6-1.2-3.8-2.6-7.9-2.3L8.5 12.5C6.8 12.6 6.4 13.5 7 14.4l7.5 2.9z" fill="currentColor"/>
+      <path d="M17.1 26.5V80c0 2.9 1.4 4 4.7 3.8l52.5-3.1c3.3-.2 4.1-2.1 4.1-4.6V23.3c0-2.5-1-3.8-3.2-3.6L20.5 22.6c-2.4.2-3.4 1.4-3.4 3.9zm49.7 3.4c.3 1.4 0 2.8-1.4 3l-2.3.4v33.9c-2 1.1-3.8 1.7-5.4 1.7-2.4 0-3-0.8-4.8-3.1L35.6 43.2v22.1l5.4 1.2s0 2.8-3.9 2.8L27.2 70c-.3-0.7 0-2.4 1.1-2.8l2.8-.8V37.8L27.2 37.5c-.3-1.4.5-3.5 2.8-3.6l11.4-.7 18.2 27.9V34.5l-4.5-.5c-.3-1.7.8-3 2.3-3.1l12.4-.9z" fill="currentColor"/>
+    </svg>
+  )
+}
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,7 +43,7 @@ type ConnectorTypeInfo = { label: string; IconComponent: React.ComponentType<{ c
 const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
   github:       { label: 'GitHub',       IconComponent: GitBranch },
   web_crawler:  { label: 'Web',          IconComponent: Globe },
-  notion:       { label: 'Notion',       IconComponent: NotepadText },
+  notion:       { label: 'Notion',       IconComponent: NotionIcon },
   google_drive: { label: 'Google Drive', IconComponent: HardDrive },
   ms_docs:      { label: 'MS Docs',      IconComponent: FileText },
 }
