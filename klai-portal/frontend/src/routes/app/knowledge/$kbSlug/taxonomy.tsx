@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Plus, Pencil, Trash2, Loader2, FolderTree, BarChart2,
   ChevronRight, ChevronDown, Check, X, Tag, Filter, Sparkles,
@@ -520,6 +520,15 @@ function TaxonomyTab() {
   // -- Suggest categories flow --
   const [suggestState, setSuggestState] = useState<'idle' | 'generating' | 'proposals_ready' | 'applying' | 'done'>('idle')
 
+  // Sync suggestState with server data so the banner survives a page refresh.
+  useEffect(() => {
+    if (!proposalsQuery.isSuccess) return
+    const pending = (proposalsQuery.data?.proposals ?? []).filter((p) => p.status === 'pending').length
+    if (pending > 0) {
+      setSuggestState((prev) => (prev === 'idle' ? 'proposals_ready' : prev))
+    }
+  }, [proposalsQuery.isSuccess, proposalsQuery.data])
+
   const bootstrapMutation = useMutation({
     mutationFn: async () => {
       return await apiFetch<{ documents_scanned: number; proposals_submitted: number }>(
@@ -603,6 +612,7 @@ function TaxonomyTab() {
   const canDelete = isOwner || isAdmin
   const nodes = nodesQuery.data?.nodes ?? []
   const proposals = proposalsQuery.data?.proposals ?? []
+
   const isAddingChild = addParentId !== null
 
   // Resolve active node name for filter chips
@@ -966,7 +976,7 @@ function TaxonomyTab() {
             })}
 
             {/* Apply all to knowledge base */}
-            {canEdit && proposals.length > 0 && suggestState !== 'applying' && suggestState !== 'done' && (
+            {canEdit && suggestState === 'proposals_ready' && (
               <div className="pt-3">
                 <Button
                   size="sm"
