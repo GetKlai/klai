@@ -501,6 +501,7 @@ async def create_proposal(
     kb_slug: str,
     body: CreateProposalRequest,
     request: Request,
+    zitadel_org_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ProposalOut:
     """Submit a taxonomy proposal. Internal endpoint for knowledge-ingest service."""
@@ -513,8 +514,16 @@ async def create_proposal(
             detail=f"proposal_type must be one of {valid_types}",
         )
 
-    # Look up KB by slug across all orgs (internal endpoint, no org scoping)
-    result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug))
+    # Look up org without RLS (portal_orgs has no strict RLS), then set tenant
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
+    org = org_result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    await set_tenant(db, org.id)
+
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(PortalKnowledgeBase.slug == kb_slug, PortalKnowledgeBase.org_id == org.id)
+    )
     kb = result.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")

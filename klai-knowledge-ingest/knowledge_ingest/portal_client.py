@@ -114,7 +114,7 @@ async def submit_taxonomy_proposal(
             resp = await client.post(
                 f"{settings.portal_url}/api/app/knowledge-bases/{kb_slug}/taxonomy/proposals",
                 headers={"Authorization": f"Bearer {settings.portal_internal_token}"},
-                params={"org_id": org_id},
+                params={"zitadel_org_id": org_id},
                 json={
                     "proposal_type": proposal.proposal_type,
                     "title": proposal.suggested_name,
