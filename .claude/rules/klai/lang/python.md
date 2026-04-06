@@ -14,6 +14,7 @@ paths:
 - Before returning a generic error message, always `logger.error()` with: status code, response body (truncated), context vars.
 - For `ConnectError` (no `.response`), log exception message and target URL.
 - In except blocks, use `logger.exception()` (includes traceback) not `logger.error()`.
+- `except (TimeoutError, Exception)` is dead code — `TimeoutError` is a subclass of `Exception`. Use `except Exception` alone. Similarly, never list a more-specific exception before a broader one in a tuple catch.
 
 ## FastAPI
 - New fields on existing request models: always `Optional` with safe default. Required fields break existing callers with 422.
