@@ -164,6 +164,22 @@ async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
         return resp.json()  # type: ignore[no-any-return]
 
 
+async def get_taxonomy_backfill_status(job_id: int) -> dict:
+    """Proxy the backfill job status from knowledge-ingest.
+
+    Returns {"job_id": N, "status": "queued"|"doing"|"succeeded"|"failed"}.
+    Raises on failure.
+    """
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=10.0,
+    ) as client:
+        resp = await client.get(f"/ingest/v1/taxonomy/backfill/{job_id}")
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+
 async def enqueue_auto_categorise(
     org_id: str,
     kb_slug: str,
