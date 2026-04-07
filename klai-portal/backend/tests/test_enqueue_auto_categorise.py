@@ -1,4 +1,5 @@
 """Tests for SPEC-KB-026 R5: Portal enqueue_auto_categorise client function."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
