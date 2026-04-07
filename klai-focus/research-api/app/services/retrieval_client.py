@@ -3,16 +3,43 @@ HTTP client for retrieval-api service.
 Replaces direct Qdrant queries (narrow) and knowledge_client.py (broad).
 """
 import asyncio
-import logging
 
 import httpx
+import structlog
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _TIMEOUT = 10.0
 _TAXONOMY_TIMEOUT = 3.0
+
+
+async def _classify_query(base: str, query: str, kb_slug: str, org_id: str) -> list[int]:
+    """POST to knowledge-ingest classify endpoint; returns matched taxonomy node IDs."""
+    async with httpx.AsyncClient(timeout=_TAXONOMY_TIMEOUT) as client:
+        resp = await client.post(
+            f"{base}/ingest/v1/taxonomy/classify",
+            json={"org_id": org_id, "kb_slug": kb_slug, "text": query},
+        )
+        resp.raise_for_status()
+        return resp.json().get("taxonomy_node_ids", [])
+
+
+async def _get_coverage_ratio(base: str, kb_slug: str, org_id: str) -> float:
+    """GET coverage-stats from knowledge-ingest; returns fraction of tagged chunks."""
+    async with httpx.AsyncClient(timeout=_TAXONOMY_TIMEOUT) as client:
+        resp = await client.get(
+            f"{base}/ingest/v1/taxonomy/coverage-stats",
+            params={"kb_slug": kb_slug, "org_id": org_id},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        total = data.get("total_chunks", 0)
+        if total == 0:
+            return 0.0
+        untagged = data.get("untagged_count", total)
+        return (total - untagged) / total
 
 
 async def _get_taxonomy_filter(
@@ -32,43 +59,17 @@ async def _get_taxonomy_filter(
 
     base = settings.knowledge_ingest_url.rstrip("/")
 
-    async def _classify() -> list[int]:
-        async with httpx.AsyncClient(timeout=_TAXONOMY_TIMEOUT) as client:
-            resp = await client.post(
-                f"{base}/ingest/v1/taxonomy/classify",
-                json={"org_id": org_id, "kb_slug": kb_slug, "text": query},
-            )
-            resp.raise_for_status()
-            return resp.json().get("taxonomy_node_ids", [])
-
-    async def _coverage() -> float:
-        async with httpx.AsyncClient(timeout=_TAXONOMY_TIMEOUT) as client:
-            resp = await client.get(
-                f"{base}/ingest/v1/taxonomy/coverage-stats",
-                params={"kb_slug": kb_slug, "org_id": org_id},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            total = data.get("total_chunks", 0)
-            if total == 0:
-                return 0.0
-            untagged = data.get("untagged_count", total)
-            return (total - untagged) / total
-
     try:
         node_ids, coverage = await asyncio.gather(
-            asyncio.wait_for(_classify(), timeout=_TAXONOMY_TIMEOUT),
-            asyncio.wait_for(_coverage(), timeout=_TAXONOMY_TIMEOUT),
+            asyncio.wait_for(_classify_query(base, query, kb_slug, org_id), timeout=_TAXONOMY_TIMEOUT),
+            asyncio.wait_for(_get_coverage_ratio(base, kb_slug, org_id), timeout=_TAXONOMY_TIMEOUT),
         )
     except Exception:
-        logger.warning("taxonomy_filter_skipped", extra={"kb_slug": kb_slug, "org_id": org_id})
+        logger.warning("taxonomy_filter_skipped", kb_slug=kb_slug, org_id=org_id)
         return None
 
     if coverage < settings.taxonomy_retrieval_min_coverage:
-        logger.debug(
-            "taxonomy_filter_skipped_low_coverage",
-            extra={"kb_slug": kb_slug, "coverage": coverage},
-        )
+        logger.debug("taxonomy_filter_skipped_low_coverage", kb_slug=kb_slug, coverage=coverage)
         return None
 
     return node_ids if node_ids else None

@@ -278,13 +278,13 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
 
     # Phase 2 post-processing: generate taxonomy proposal if enough unmatched docs accumulated.
     if unmatched_summaries:
-        await maybe_generate_proposal(
+        submitted = await maybe_generate_proposal(
             org_id=org_id,
             kb_slug=kb_slug,
             unmatched_documents=unmatched_summaries,
             existing_nodes=taxonomy_nodes,
         )
-        proposals_submitted = 1
+        proposals_submitted = 1 if submitted else 0
 
     # Phase 3: Generate tags for chunks with taxonomy_node_ids but no tags
     offset = None
