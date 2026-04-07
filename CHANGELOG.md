@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] — 2026-04-06 — SPEC-KB-026: Taxonomy Integration Hardening
+
+### Fixed — SPEC-KB-026: Taxonomy Integration Hardening (6 bugs)
+
+- **R1+R2 (Critical) — `clustering_tasks.py`**: Fixed `submit_taxonomy_proposal` signature mismatch that caused a `TypeError` on every clustering run — no proposals were ever submitted. Added `cluster_centroid` field to `TaxonomyProposal` dataclass and payload so auto-categorise fires after proposal approval.
+- **R3 (Major) — `proposal_generator.py`**: `maybe_generate_proposal()` now calls `generate_node_description()` — node descriptions were always empty.
+- **R4 (Major) — portal gap classification**: New `POST /ingest/v1/taxonomy/classify` endpoint in `klai-knowledge-ingest`. Portal's gap classification wired to it in `app/api/internal.py` (was a skeleton that only logged "not yet connected").
+- **R5 (Major) — auto-categorise job**: Replaced `asyncio.create_task()` fire-and-forget in `app/api/taxonomy.py` with a Procrastinate background job via `POST /ingest/v1/taxonomy/auto-categorise-job` (stepwise retry: 30 s → 5 m → 30 m).
+- **R6 (Medium) — centroid staleness**: `load_centroids()` now rejects files older than 48 h (`taxonomy_centroid_max_age_hours` config). Timezone-safe; treats unparseable timestamps as stale.
+
+### Added — SPEC-KB-026: New endpoints and tests
+
+- `POST /ingest/v1/taxonomy/classify` — classify a gap against the active taxonomy
+- `POST /ingest/v1/taxonomy/auto-categorise-job` — enqueue Procrastinate auto-categorise task
+- `_StepwiseRetry` Procrastinate task with 30 s / 5 m / 30 m backoff
+- `classify_gap_taxonomy()` and `enqueue_auto_categorise()` on `KnowledgeIngestClient`
+- 7 new test files covering all fixed bugs
+
 ## [Unreleased] — 2026-04-06
 
 ### Added — SPEC-KB-023: Taxonomy Discovery — Blind Labeling at Ingest
