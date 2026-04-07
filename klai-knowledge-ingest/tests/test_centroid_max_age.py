@@ -119,6 +119,52 @@ class TestCentroidMaxAge:
         assert result is not None
 
 
+    def test_naive_datetime_treated_as_utc(self, tmp_path):
+        """Naive computed_at is treated as UTC and stale check works correctly."""
+        # Naive timestamp 49 hours ago (UTC, but without tzinfo)
+        naive_stale = (datetime.now(tz=UTC) - timedelta(hours=49)).replace(tzinfo=None)
+        centroid_data = {
+            "version": 1,
+            "computed_at": naive_stale.isoformat(),  # no timezone info
+            "kb_slug": "kb1",
+            "org_id": "org1",
+            "clusters": [],
+        }
+
+        centroid_path = tmp_path / "org1_kb1.json"
+        centroid_path.write_text(json.dumps(centroid_data))
+
+        with patch("knowledge_ingest.clustering.settings") as mock_settings:
+            mock_settings.taxonomy_centroids_dir = str(tmp_path)
+            mock_settings.taxonomy_centroid_max_age_hours = 48
+
+            result = load_centroids("org1", "kb1")
+
+        # Must not raise TypeError; must be rejected as stale
+        assert result is None
+
+    def test_invalid_computed_at_returns_none(self, tmp_path):
+        """Unparseable computed_at returns None (treat as stale) instead of crashing."""
+        centroid_data = {
+            "version": 1,
+            "computed_at": "not-a-valid-date",
+            "kb_slug": "kb1",
+            "org_id": "org1",
+            "clusters": [],
+        }
+
+        centroid_path = tmp_path / "org1_kb1.json"
+        centroid_path.write_text(json.dumps(centroid_data))
+
+        with patch("knowledge_ingest.clustering.settings") as mock_settings:
+            mock_settings.taxonomy_centroids_dir = str(tmp_path)
+            mock_settings.taxonomy_centroid_max_age_hours = 48
+
+            result = load_centroids("org1", "kb1")
+
+        assert result is None
+
+
 class TestCentroidMaxAgeConfig:
     """R6: taxonomy_centroid_max_age_hours config setting."""
 

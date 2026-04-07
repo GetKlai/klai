@@ -125,6 +125,9 @@ def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
 
         try:
             computed_at = datetime.fromisoformat(computed_at_str)
+            if computed_at.tzinfo is None:
+                # Naive datetime — assume UTC (all our timestamps are stored as UTC).
+                computed_at = computed_at.replace(tzinfo=UTC)
             age_hours = (datetime.now(tz=UTC) - computed_at).total_seconds() / 3600
             if age_hours > settings.taxonomy_centroid_max_age_hours:
                 logger.warning(
@@ -134,7 +137,9 @@ def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
                 )
                 return None
         except (ValueError, TypeError):
-            pass  # unparseable date — proceed with loading
+            # Unparseable timestamp — treat as stale rather than using potentially old data.
+            logger.warning("centroid_store_invalid_timestamp", path=path)
+            return None
 
     clusters = [ClusterEntry(**c) for c in data.get("clusters", [])]
     return CentroidStore(
