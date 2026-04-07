@@ -16,7 +16,7 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Browser automation for E2E spot-checks. Uses persistent Brave profile. Stop hook auto-enforces browser_close. Supports localhost (dev) and *.getklai.com (prod).",
+      "$comment": "Browser automation for E2E spot-checks. Uses Brave in isolated mode — browser closes automatically on session disconnect. Login state persists via storageState.json (~/.claude/mcp-brave-storageState.json). Multiple Claude Code sessions can run in parallel. Setup: node scripts/export-mcp-session.mjs",
       "type": "stdio",
       "command": "npx",
       "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],

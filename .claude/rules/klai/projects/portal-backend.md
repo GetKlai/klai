@@ -42,6 +42,14 @@ result = await db.execute(
 org = result.scalar_one_or_none()
 ```
 
+## FastAPI Depends() triggers ruff B008 (MED)
+
+`Depends(get_current_user)` in function default args is the correct FastAPI pattern, but ruff B008 ("do not perform function call in default arguments") flags it as an error.
+
+**Why:** ruff B008 fires on any function call in a default argument. FastAPI uses this pattern intentionally for dependency injection.
+
+**Prevention:** Add `"B008"` to the `[tool.ruff.lint] ignore` list in `pyproject.toml`. Do not suppress per-line — it appears across every route file.
+
 ## portal-api scripts/ not in Docker image (MED)
 `klai-portal/backend/scripts/` is NOT copied into the container (no `COPY scripts/` in Dockerfile).
 Data migration scripts in `scripts/` cannot be run via `docker exec portal-api python scripts/foo.py`.
