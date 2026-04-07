@@ -55,11 +55,10 @@ class TestClassifyGapTaxonomy:
         """On timeout, returns empty list."""
         from app.services.knowledge_ingest_client import classify_gap_taxonomy
 
-        import asyncio
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.post = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_client.post = AsyncMock(side_effect=TimeoutError())
 
         with patch("app.services.knowledge_ingest_client.httpx.AsyncClient", return_value=mock_client):
             result = await classify_gap_taxonomy("org1", "kb1", "test query")
