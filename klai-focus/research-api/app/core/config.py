@@ -26,10 +26,14 @@ class Settings(BaseSettings):
     # Internal service URLs
     docling_url: str = "http://docling-serve:5001"
     retrieval_api_url: str = ""
+    knowledge_ingest_url: str = "http://knowledge-ingest:8000"
     tei_url: str = "http://172.18.0.1:7997"
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
     searxng_url: str = "http://searxng:8080"
+
+    # Taxonomy-aware retrieval
+    taxonomy_retrieval_min_coverage: float = 0.3
 
     # YouTube — optional residential proxy, used as fallback when YouTube blocks server IP
     # Format: https://user:pass@host:port

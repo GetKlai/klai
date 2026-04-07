@@ -278,9 +278,6 @@ function TaxonomyTree({
               ) : (
                 <>
                   <span className="text-sm text-[var(--color-foreground)] truncate flex-1">{node.name}</span>
-                  <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums shrink-0">
-                    {node.doc_count > 0 && m.knowledge_taxonomy_node_doc_count({ count: String(node.doc_count) })}
-                  </span>
 
                   {canEdit && (
                     <div className="hidden group-hover:flex items-center gap-0.5 ml-1">

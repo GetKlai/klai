@@ -36,6 +36,7 @@ class ChatRequest(BaseModel):
     question: str
     mode: str | None = None
     history: list[dict] | None = None
+    kb_slug: str | None = None  # When set, enables taxonomy-aware retrieval in broad mode
 
 
 @router.post("/notebooks/{nb_id}/chat")
@@ -67,7 +68,7 @@ async def chat(
     history = body.history or []
 
     return StreamingResponse(
-        _generate(db, question, mode, nb_id, user.tenant_id, history, nb.save_history),
+        _generate(db, question, mode, nb_id, user.tenant_id, history, nb.save_history, body.kb_slug),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -84,13 +85,14 @@ async def _generate(
     tenant_id: str,
     history: list[dict],
     save_history: bool,
+    kb_slug: str | None = None,
 ):
     """Async generator that yields SSE lines."""
     full_response = ""
     try:
         # 1. Retrieve chunks based on mode
         if mode == "broad":
-            doc_chunks = await retrieve_broad(question, notebook_id, tenant_id)
+            doc_chunks = await retrieve_broad(question, notebook_id, tenant_id, kb_slug=kb_slug)
             web_chunks: list[dict] = []
         elif mode == "web":
             doc_chunks = await retrieve_narrow(question, notebook_id, tenant_id)
