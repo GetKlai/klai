@@ -36,6 +36,8 @@ function LoginPage() {
   const [tempToken, setTempToken] = useState<string | null>(null)
   const [totpCode, setTotpCode] = useState('')
 
+  const inIframe = window.self !== window.top
+
   useEffect(() => {
     if (!authRequestId) return
 
@@ -57,11 +59,21 @@ function LoginPage() {
       } catch (err) {
         authLogger.warn('Silent SSO completion failed', err)
       }
+
+      // SSO failed. If we're inside the LibreChat iframe, showing a login form is
+      // useless — the user can't interact with it. Notify the parent frame so it
+      // can show an error/retry UI instead of hanging forever on "Welcome back".
+      if (inIframe) {
+        authLogger.warn('SSO failed inside iframe — notifying parent frame')
+        window.parent.postMessage({ type: 'klai-sso-failed' }, window.location.origin)
+        return
+      }
+
       setCheckingSSO(false)
     }
 
     void trySSO()
-  }, [authRequestId])
+  }, [authRequestId, inIframe])
 
   // If Zitadel didn't supply an authRequestId, the user arrived here directly.
   // Send them back to / so signinRedirect() can start the OIDC flow properly.
