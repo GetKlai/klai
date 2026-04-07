@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+_MOD = "app.services.retrieval_client"
+
 
 def _mock_settings(
     knowledge_ingest_url: str = "http://knowledge-ingest:8000",
@@ -34,9 +36,9 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_returns_node_ids_when_coverage_sufficient(self):
         """Returns [5, 7] when classify returns those IDs and coverage = 60% (>= 30%)."""
-        with patch("app.services.retrieval_client.settings", _mock_settings()):
-            with patch("app.services.retrieval_client._classify_query", new=AsyncMock(return_value=[5, 7])):
-                with patch("app.services.retrieval_client._get_coverage_ratio", new=AsyncMock(return_value=0.6)):
+        with patch(f"{_MOD}.settings", _mock_settings()):
+            with patch(f"{_MOD}._classify_query", new=AsyncMock(return_value=[5, 7])):
+                with patch(f"{_MOD}._get_coverage_ratio", new=AsyncMock(return_value=0.6)):
                     from app.services.retrieval_client import _get_taxonomy_filter
                     result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 
@@ -45,9 +47,9 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_returns_none_when_coverage_too_low(self):
         """Returns None when coverage = 10% (< 30% threshold)."""
-        with patch("app.services.retrieval_client.settings", _mock_settings()):
-            with patch("app.services.retrieval_client._classify_query", new=AsyncMock(return_value=[5])):
-                with patch("app.services.retrieval_client._get_coverage_ratio", new=AsyncMock(return_value=0.1)):
+        with patch(f"{_MOD}.settings", _mock_settings()):
+            with patch(f"{_MOD}._classify_query", new=AsyncMock(return_value=[5])):
+                with patch(f"{_MOD}._get_coverage_ratio", new=AsyncMock(return_value=0.1)):
                     from app.services.retrieval_client import _get_taxonomy_filter
                     result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 
@@ -56,9 +58,9 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_returns_none_on_timeout(self):
         """Returns None when calls time out — retrieval continues without filter."""
-        with patch("app.services.retrieval_client.settings", _mock_settings()):
-            with patch("app.services.retrieval_client._classify_query", side_effect=asyncio.TimeoutError):
-                with patch("app.services.retrieval_client._get_coverage_ratio", new=AsyncMock(return_value=0.6)):
+        with patch(f"{_MOD}.settings", _mock_settings()):
+            with patch(f"{_MOD}._classify_query", side_effect=asyncio.TimeoutError):
+                with patch(f"{_MOD}._get_coverage_ratio", new=AsyncMock(return_value=0.6)):
                     from app.services.retrieval_client import _get_taxonomy_filter
                     result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 
@@ -67,9 +69,12 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_returns_none_on_exception(self):
         """Returns None when classify/coverage raise any exception."""
-        with patch("app.services.retrieval_client.settings", _mock_settings()):
-            with patch("app.services.retrieval_client._classify_query", side_effect=Exception("connection refused")):
-                with patch("app.services.retrieval_client._get_coverage_ratio", new=AsyncMock(return_value=0.6)):
+        with patch(f"{_MOD}.settings", _mock_settings()):
+            with patch(
+                f"{_MOD}._classify_query",
+                side_effect=Exception("connection refused"),
+            ):
+                with patch(f"{_MOD}._get_coverage_ratio", new=AsyncMock(return_value=0.6)):
                     from app.services.retrieval_client import _get_taxonomy_filter
                     result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 
@@ -78,7 +83,7 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_returns_none_when_knowledge_ingest_url_empty(self):
         """Returns None immediately when knowledge_ingest_url is not configured."""
-        with patch("app.services.retrieval_client.settings", _mock_settings(knowledge_ingest_url="")):
+        with patch(f"{_MOD}.settings", _mock_settings(knowledge_ingest_url="")):
             from app.services.retrieval_client import _get_taxonomy_filter
             result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 
@@ -87,9 +92,9 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_returns_none_when_classify_returns_empty(self):
         """Returns None when classify returns empty list despite sufficient coverage."""
-        with patch("app.services.retrieval_client.settings", _mock_settings()):
-            with patch("app.services.retrieval_client._classify_query", new=AsyncMock(return_value=[])):
-                with patch("app.services.retrieval_client._get_coverage_ratio", new=AsyncMock(return_value=0.7)):
+        with patch(f"{_MOD}.settings", _mock_settings()):
+            with patch(f"{_MOD}._classify_query", new=AsyncMock(return_value=[])):
+                with patch(f"{_MOD}._get_coverage_ratio", new=AsyncMock(return_value=0.7)):
                     from app.services.retrieval_client import _get_taxonomy_filter
                     result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 
@@ -98,9 +103,9 @@ class TestGetTaxonomyFilter:
     @pytest.mark.asyncio
     async def test_exact_coverage_threshold_passes(self):
         """Returns node IDs when coverage exactly equals the minimum threshold (30%)."""
-        with patch("app.services.retrieval_client.settings", _mock_settings()):
-            with patch("app.services.retrieval_client._classify_query", new=AsyncMock(return_value=[3])):
-                with patch("app.services.retrieval_client._get_coverage_ratio", new=AsyncMock(return_value=0.3)):
+        with patch(f"{_MOD}.settings", _mock_settings()):
+            with patch(f"{_MOD}._classify_query", new=AsyncMock(return_value=[3])):
+                with patch(f"{_MOD}._get_coverage_ratio", new=AsyncMock(return_value=0.3)):
                     from app.services.retrieval_client import _get_taxonomy_filter
                     result = await _get_taxonomy_filter("test query", "my-kb", "org1")
 

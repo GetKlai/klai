@@ -61,8 +61,12 @@ async def _get_taxonomy_filter(
 
     try:
         node_ids, coverage = await asyncio.gather(
-            asyncio.wait_for(_classify_query(base, query, kb_slug, org_id), timeout=_TAXONOMY_TIMEOUT),
-            asyncio.wait_for(_get_coverage_ratio(base, kb_slug, org_id), timeout=_TAXONOMY_TIMEOUT),
+            asyncio.wait_for(
+                _classify_query(base, query, kb_slug, org_id), timeout=_TAXONOMY_TIMEOUT
+            ),
+            asyncio.wait_for(
+                _get_coverage_ratio(base, kb_slug, org_id), timeout=_TAXONOMY_TIMEOUT
+            ),
         )
     except Exception:
         logger.warning("taxonomy_filter_skipped", kb_slug=kb_slug, org_id=org_id)

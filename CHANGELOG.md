@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased] — 2026-04-07 — SPEC-KB-027: Taxonomy-Aware Retrieval + Completeness Fixes
+
+### Added — SPEC-KB-027 R1: Query classification before retrieval (research-api)
+
+- **`_get_taxonomy_filter()`** (`klai-focus/research-api/app/services/retrieval_client.py`): New function that classifies a query against the KB taxonomy before retrieval. Calls `/ingest/v1/taxonomy/classify` and `/ingest/v1/taxonomy/coverage-stats` in parallel with a 3 s timeout. Returns node IDs when coverage ≥ 30% (configurable), `None` on any failure.
+- **`_classify_query()` / `_get_coverage_ratio()`**: Extracted as module-level helpers for clean testability.
+- **`retrieve_broad()`** extended with `kb_slug` parameter — when set, applies taxonomy filter as `taxonomy_node_ids` in the retrieval-api request body.
+- **`Notebook.kb_slug`** (`klai-focus/research-api`): New nullable column on `research.notebooks`. Notebooks linked to a KB automatically apply taxonomy filtering in broad mode — no per-request plumbing needed.
+- **Alembic migration** `0004_add_kb_slug_to_notebooks` — adds `kb_slug VARCHAR(128)` to `research.notebooks`.
+- **Config**: `knowledge_ingest_url` and `taxonomy_retrieval_min_coverage` (default: `0.3`) in `research-api/app/core/config.py`.
+- **7 unit tests** in `tests/test_taxonomy_filter.py` covering: sufficient coverage, low coverage, timeout, exception, empty URL, empty node list, exact threshold boundary.
+
+### Fixed — SPEC-KB-027 R2: Proposal generation moved to batch end (knowledge-ingest)
+
+- **Removed dead code**: `maybe_generate_proposal()` call in `routes/ingest.py` always passed exactly 1 document but the function requires ≥ 3 (`_MIN_UNMATCHED_FOR_PROPOSAL`). It was always a no-op. Call removed entirely.
+- **Batch proposal generation**: `_run_backfill()` now collects unmatched documents during Phase 2 and calls `maybe_generate_proposal()` once at the end with the full batch — the first real chance for proposals to fire during backfill.
+- **`maybe_generate_proposal()` returns `bool`** — `True` when a proposal was actually submitted, `False` on all early-exit paths (< 3 docs, missing token, name clash, LLM failure). `proposals_submitted` counter in backfill result now reflects actual outcome.
+- **Fixed `except (TimeoutError, Exception)`** → `except Exception` in `proposal_generator.py` (TimeoutError is a subclass of Exception — dead code pattern).
+- **3 unit tests** in `tests/test_taxonomy_backfill_proposals.py` covering: unmatched batch → called, all matched → not called, no nodes → proposals_submitted=0.
+
+### Removed — SPEC-KB-027 R3: `doc_count` denormalization (portal)
+
+- **`PortalTaxonomyNode.doc_count`** column removed from `portal_taxonomy_nodes`. It was only updated on node-delete; every re-ingest, backfill, and connector cleanup left it stale. Coverage dashboard already uses live Qdrant counts.
+- **Alembic migration** `d3e4f5a6b7c8_drop_doc_count_from_taxonomy_nodes` — drops the column with downgrade support.
+- **`TaxonomyNodeOut.doc_count`** removed from portal API response schema.
+- **Frontend**: `doc_count` removed from `TaxonomyNode` TypeScript interface and taxonomy tree UI.
+
+### Deployment notes
+
+- Run migrations on `klai-portal` (`d3e4f5a6b7c8`) and `research-api` (`0004`) before deploying.
+- New env vars for research-api: `KNOWLEDGE_INGEST_URL` (default: `http://knowledge-ingest:8000`), `TAXONOMY_RETRIEVAL_MIN_COVERAGE` (default: `0.3`).
+- To activate taxonomy-filtered retrieval: set `kb_slug` on an existing notebook via `PATCH /v1/notebooks/{nb_id}`.
+
 ## [Unreleased] — 2026-04-06 — SPEC-KB-026: Taxonomy Integration Hardening
 
 ### Fixed — SPEC-KB-026: Taxonomy Integration Hardening (6 bugs)
