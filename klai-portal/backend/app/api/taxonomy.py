@@ -779,6 +779,29 @@ async def trigger_backfill(
     return result
 
 
+@router.get("/{kb_slug}/taxonomy/backfill/{job_id}")
+async def get_backfill_status(
+    kb_slug: str,
+    job_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Proxy backfill job status from knowledge-ingest. Requires contributor role."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    await _require_role(kb, caller_id, db, "contributor")
+
+    from app.services.knowledge_ingest_client import get_taxonomy_backfill_status
+
+    try:
+        return await get_taxonomy_backfill_status(job_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not fetch backfill status",
+        ) from None
+
+
 # -- Coverage stats -----------------------------------------------------------
 
 # 5-minute in-memory cache: key = (org_id_str, kb_slug), value = (monotonic_ts, data_dict)

@@ -554,11 +554,26 @@ function TaxonomyTab() {
 
   const backfillMutation = useMutation({
     mutationFn: async () => {
-      return await apiFetch<{ job_id: number; status: string }>(
+      // 1. Enqueue the job
+      const enqueue = await apiFetch<{ job_id: number; status: string }>(
         `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`,
         token,
         { method: 'POST' },
       )
+      const jobId = enqueue.job_id
+
+      // 2. Poll until done (max 10 min, every 5 s)
+      const MAX_POLLS = 120
+      for (let i = 0; i < MAX_POLLS; i++) {
+        await new Promise((r) => setTimeout(r, 5000))
+        const s = await apiFetch<{ job_id: number; status: string }>(
+          `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill/${jobId}`,
+          token,
+        )
+        if (s.status === 'succeeded') return s
+        if (s.status === 'failed') throw new Error('Backfill job failed')
+      }
+      throw new Error('Backfill timed out')
     },
     onMutate: () => setSuggestState('applying'),
     onSuccess: () => {
@@ -569,8 +584,15 @@ function TaxonomyTab() {
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-top-tags', kbSlug] })
     },
     onError: (err) => {
-      taxonomyLogger.error('Backfill trigger failed', { slug: kbSlug, error: err })
-      setSuggestState('proposals_ready')
+      taxonomyLogger.error('Backfill failed', { slug: kbSlug, error: err })
+      // If there are still pending proposals, go back to proposals_ready; otherwise idle
+      setSuggestState((prev) => {
+        if (prev === 'applying') {
+          const pending = (proposalsQuery.data?.proposals ?? []).filter((p) => p.status === 'pending').length
+          return pending > 0 ? 'proposals_ready' : 'idle'
+        }
+        return prev
+      })
     },
   })
 
