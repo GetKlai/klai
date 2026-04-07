@@ -9,19 +9,22 @@ paths:
 # Testing Rules
 
 ## [HARD] Close browser when done
-After ANY Playwright testing, close all tabs then `browser_close()`. Brave locks `userDataDir` with `SingletonLock` — leaving it open blocks the next session.
+After ANY Playwright testing, call `browser_close()` explicitly. Even in isolated mode (which
+auto-closes on session disconnect), closing explicitly is required — do not leave it for the
+disconnect event.
 
 ## Playwright MCP workflow
-1. Kill Brave before starting: `pkill -x "Brave Browser"`
-2. Navigate: `browser_navigate({ url: '...' })`
-3. Inspect: `browser_snapshot()` (prefer over screenshots for assertions)
-4. Interact via `ref` from snapshot, never CSS selectors: `browser_click({ ref: 'e66' })`
-5. Close browser when done (see rule above)
+1. Navigate: `browser_navigate({ url: '...' })`
+2. Inspect: `browser_snapshot()` (prefer over screenshots for assertions)
+3. Interact via `ref` from snapshot, never CSS selectors: `browser_click({ ref: 'e66' })`
+4. **Always call `browser_close()` as the final step**
 
 ## Playwright session management
-- Persistent profile at `~/.claude/mcp-brave-profile` — login sessions survive across runs.
-- Brave locks `userDataDir` with `SingletonLock` — only one session at a time.
-- If "Profile already in use": `pkill -x "Brave Browser"`
+- **Isolated mode**: each Claude Code session gets a fresh browser context. Auto-closes on
+  disconnect. No profile locking — multiple sessions can run in parallel.
+- **Login persistence**: stored in `~/.claude/mcp-brave-storageState.json` (cookies + localStorage).
+  Load fresh with `node scripts/export-mcp-session.mjs` if session expires.
+- If login is gone after a session: re-log in, then re-run the export script.
 - Grant permissions programmatically: `context.grantPermissions(['microphone'], { origin: '...' })`
 
 ## Browser console + GlitchTip
@@ -40,6 +43,22 @@ After ANY Playwright testing, close all tabs then `browser_close()`. Brave locks
 - MagicMock is truthy for `.headers.get()` — set `request.headers = {}` explicitly when
   testing middleware that reads optional headers. Otherwise the mock returns a MagicMock
   object that passes truthiness checks.
+
+## Inner-function import patching (HIGH)
+
+When a function imports all its dependencies inside the function body (common in task workers), patching the module-level name fails.
+
+**Why:** `patch("my_module.AsyncQdrantClient")` fails with AttributeError when `AsyncQdrantClient` is only imported inside `_run_backfill()`, not at module level.
+
+**Prevention:** Patch at the source module: `patch("qdrant_client.AsyncQdrantClient")`. When in doubt, look at the actual `import` statement inside the function to find the correct patch target.
+
+## asyncio.gather + AsyncMock produces coroutine-never-awaited warnings (MED)
+
+Patching `asyncio.gather` with `AsyncMock` when the gather call wraps `asyncio.wait_for(inner_fn(), ...)` creates coroutines for the inner calls that are never awaited.
+
+**Why:** `asyncio.wait_for(inner_fn(), ...)` creates a coroutine object before the mocked `gather` discards it, producing `RuntimeWarning: coroutine was never awaited`.
+
+**Prevention:** Extract inner functions as module-level helpers so they can be patched individually. The caller then calls the helper directly, and tests patch the helper — no orphaned coroutines.
 
 ## Frontend test patterns
 - UI bugfixes require browser verification — code reading scores zero.

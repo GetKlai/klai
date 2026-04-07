@@ -41,11 +41,9 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
-from knowledge_ingest.proposal_generator import DocumentSummary, maybe_generate_proposal
 from knowledge_ingest.taxonomy_classifier import classify_document
 
 _SENTINEL = 253402300800  # 9999-12-31
-_background_tasks: set = set()  # Prevents fire-and-forget tasks from being GC'd
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -388,27 +386,6 @@ async def ingest_document(req: IngestRequest) -> dict:
         tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
     )
-
-    # Taxonomy proposal generation (SPEC-KB-022 R4) — fire-and-forget, non-blocking.
-    # Self-bootstrapping: fires when taxonomy_node_ids is empty regardless of whether the KB
-    # already has nodes. This covers both:
-    #   - KB with 0 nodes: all documents are unmatched -> proposals generated from scratch
-    #   - KB with nodes: only truly unmatched documents (confidence < 0.5) trigger proposals
-    # The >= 3 threshold in maybe_generate_proposal prevents noise from single documents.
-    if has_taxonomy and not taxonomy_node_ids:
-        import asyncio as _asyncio
-        _t = _asyncio.create_task(
-            maybe_generate_proposal(
-                org_id=req.org_id,
-                kb_slug=req.kb_slug,
-                unmatched_documents=[
-                    DocumentSummary(title=title, content_preview=req.content[:500])
-                ],
-                existing_nodes=taxonomy_nodes,
-            )
-        )
-        _background_tasks.add(_t)
-        _t.add_done_callback(_background_tasks.discard)
 
     # Enqueue enrichment as async Procrastinate task (non-blocking)
     if await org_config.is_enrichment_enabled(req.org_id, pool):

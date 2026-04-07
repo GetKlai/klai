@@ -455,6 +455,32 @@ services:
     networks:
       - net-postgres
 
+  glitchtip-oidc-setup:
+    image: glitchtip/glitchtip:latest
+    # Run: docker compose run --rm glitchtip-oidc-setup
+    # Idempotent — safe to re-run after credential rotation.
+    command: python /setup/setup_oidc.py
+    restart: "no"
+    profiles:
+      - setup
+    depends_on:
+      postgres:
+        condition: service_healthy
+      glitchtip-web:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD}@postgres:5432/glitchtip
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      GLITCHTIP_DOMAIN: https://errors.${DOMAIN}
+      GLITCHTIP_OIDC_CLIENT_ID: ${GLITCHTIP_OIDC_CLIENT_ID}
+      GLITCHTIP_OIDC_CLIENT_SECRET: ${GLITCHTIP_OIDC_CLIENT_SECRET}
+      GLITCHTIP_OIDC_SERVER_URL: https://auth.${DOMAIN}
+    volumes:
+      - ./glitchtip/setup_oidc.py:/setup/setup_oidc.py:ro
+    networks:
+      - klai-net
+      - net-postgres
+
   # ─── Monitoring stack ─────────────────────────────────────────────────────
   # Note: runs on core-01 until monitor-01 is provisioned.
   # To migrate: update Alloy endpoint URLs to point to monitor-01.
