@@ -10,7 +10,7 @@ class Base(DeclarativeBase):
 
 class Notebook(Base):
     __tablename__ = "notebooks"
-    __table_args__ = {"schema": "research"}
+    __table_args__ = {"schema": "research"}  # noqa: RUF012
 
     id = Column(VARCHAR(32), primary_key=True)
     tenant_id = Column(VARCHAR(64), nullable=False, index=True)
