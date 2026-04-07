@@ -1257,6 +1257,7 @@
   "knowledge_taxonomy_suggest_ready": "{count} categorievoorstellen klaar - bekijk en activeer hieronder",
   "knowledge_taxonomy_suggest_apply_all": "Toepassen op kennisbank",
   "knowledge_taxonomy_retag": "Opnieuw taggen",
+  "knowledge_taxonomy_retag_running": "Opnieuw taggen loopt...",
   "knowledge_taxonomy_suggest_applying": "Bestaande documenten categoriseren...",
   "knowledge_taxonomy_suggest_done": "Klaar! Alle documenten zijn gecategoriseerd.",
   "knowledge_taxonomy_suggest_error": "Kon geen suggesties genereren",
