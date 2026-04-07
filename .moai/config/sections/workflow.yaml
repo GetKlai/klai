@@ -1,0 +1,42 @@
+workflow:
+  execution_mode: auto           # auto / solo / team
+
+  auto_clear:
+    enabled: true
+    after_plan: true             # /clear na /moai plan (verplicht per SPEC workflow)
+    after_run: false
+    token_threshold: 150000
+
+  token_budget:
+    plan: 30000
+    run: 180000
+    sync: 40000
+
+  loop_prevention:
+    failure_pattern_detection: true
+    max_iterations: 100
+    max_retries_per_operation: 3
+
+  completion:
+    detect_in_output: true
+    markers:
+      done: <moai>DONE</moai>
+      complete: <moai>COMPLETE</moai>
+
+  team:
+    enabled: false               # zet op true + CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 voor Agent Teams
+    delegate_mode: true
+    default_model: sonnet
+    max_teammates: 10
+    require_plan_approval: true
+    auto_selection:
+      min_complexity_score: 7
+      min_domains_for_team: 3
+      min_files_for_team: 10
+
+  worktree:
+    auto_create: true
+    auto_cleanup: true
+    auto_merge: true
+    session_name_pattern: moai-klai-{SPEC-ID}
+    tmux_preferred: false        # Windows/VSCode: geen tmux
