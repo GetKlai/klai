@@ -43,8 +43,10 @@ async def maybe_generate_proposal(
     kb_slug: str,
     unmatched_documents: list[DocumentSummary],
     existing_nodes: list[TaxonomyNode],
-) -> None:
+) -> bool:
     """Generate and submit a taxonomy proposal if conditions are met.
+
+    Returns True when a proposal was submitted, False in all other cases.
 
     Conditions:
     - At least 3 unmatched documents in the batch
@@ -52,7 +54,7 @@ async def maybe_generate_proposal(
     - Suggested name doesn't already exist among KB's taxonomy nodes
     """
     if len(unmatched_documents) < _MIN_UNMATCHED_FOR_PROPOSAL:
-        return
+        return False
 
     if not settings.portal_internal_token:
         logger.warning(
@@ -60,7 +62,7 @@ async def maybe_generate_proposal(
             reason="missing PORTAL_INTERNAL_TOKEN",
             kb_slug=kb_slug,
         )
-        return
+        return False
 
     # Generate suggested category name
     try:
@@ -68,16 +70,16 @@ async def maybe_generate_proposal(
             _suggest_category_name(unmatched_documents),
             timeout=settings.taxonomy_classification_timeout,
         )
-    except (TimeoutError, Exception) as exc:
+    except Exception as exc:
         logger.warning(
             "taxonomy_proposal_generation_failed",
             kb_slug=kb_slug,
             error=str(exc),
         )
-        return
+        return False
 
     if not suggested_name:
-        return
+        return False
 
     # Check that suggested name doesn't already exist
     existing_names = {node.name.lower() for node in existing_nodes}
@@ -88,7 +90,7 @@ async def maybe_generate_proposal(
             suggested_name=suggested_name,
             kb_slug=kb_slug,
         )
-        return
+        return False
 
     # Generate description (same pattern as generate_bootstrap_proposals)
     sample_titles = [doc.title for doc in unmatched_documents[:5]]
@@ -117,6 +119,7 @@ async def maybe_generate_proposal(
         suggested_name=suggested_name,
         unmatched_count=len(unmatched_documents),
     )
+    return True
 
 
 _BOOTSTRAP_SYSTEM_PROMPT = (
@@ -156,7 +159,7 @@ async def generate_bootstrap_proposals(
             _suggest_multiple_categories(documents[:50]),
             timeout=30.0,
         )
-    except (TimeoutError, Exception) as exc:
+    except Exception as exc:
         logger.warning(
             "bootstrap_proposals_generation_failed",
             kb_slug=kb_slug,

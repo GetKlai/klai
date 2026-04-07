@@ -86,7 +86,7 @@ class TestRunBackfillProposals:
         phase2_points = [_make_qdrant_point(f"doc{i}", f"Doc {i}") for i in range(5)]
         client = _make_scroll_client(phase2_points)
 
-        mock_proposal = AsyncMock()
+        mock_proposal = AsyncMock(return_value=True)
 
         patches = _common_patches(client, taxonomy_nodes, classify_return=([], []))
         patches.append(
