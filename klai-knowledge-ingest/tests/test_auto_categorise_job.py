@@ -65,8 +65,8 @@ class TestAutoCategoriseJobEndpoint:
 class TestAutoCategoriseTaskRegistration:
     """R5: Procrastinate task for auto-categorise is registered correctly."""
 
-    def test_task_registered_with_retry(self):
-        """run_auto_categorise task should be registered on the Procrastinate app."""
+    def test_task_registered_with_stepwise_retry(self):
+        """run_auto_categorise task should be registered with 30s/5m/30m stepwise retry."""
         mock_app = MagicMock()
         registered_tasks = {}
 
@@ -79,17 +79,15 @@ class TestAutoCategoriseTaskRegistration:
 
         mock_app.task = mock_task
 
-        # procrastinate must be importable for register_auto_categorise_task
         import sys
         mock_procrastinate = MagicMock()
 
-        # Create a real RetryStrategy-like object
-        class FakeRetryStrategy:
-            def __init__(self, max_attempts=1, wait=0):
-                self.max_attempts = max_attempts
-                self.wait = wait
+        # _StepwiseRetry inherits from BaseRetryStrategy — provide a real base class.
+        class FakeBaseRetryStrategy:
+            pass
 
-        mock_procrastinate.RetryStrategy = FakeRetryStrategy
+        mock_procrastinate.BaseRetryStrategy = FakeBaseRetryStrategy
+        mock_procrastinate.RetryDecision = MagicMock
 
         with patch.dict(sys.modules, {"procrastinate": mock_procrastinate}):
             from knowledge_ingest.clustering_tasks import register_auto_categorise_task
@@ -98,6 +96,8 @@ class TestAutoCategoriseTaskRegistration:
         assert "run_auto_categorise" in registered_tasks
         task_config = registered_tasks["run_auto_categorise"]
         assert task_config["queue"] == "taxonomy-backfill"
-        assert task_config["retry"].max_attempts == 3
+        # Verify stepwise backoff: 30s, 5m, 30m (SPEC-KB-026 R5)
+        retry = task_config["retry"]
+        assert retry._waits == [30, 300, 1800]
 
 

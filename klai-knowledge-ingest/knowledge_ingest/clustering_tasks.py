@@ -203,17 +203,33 @@ def register_auto_categorise_task(procrastinate_app: Any) -> None:
     """Register the auto-categorise Procrastinate task.
 
     Called from enrichment_tasks.init_app() alongside other task registrations.
-    Retry: max 3 attempts at 30s, 5m, 30m (SPEC-KB-026 R5).
+    Retry: 30s → 5m → 30m (max 3 retries, SPEC-KB-026 R5).
     """
     import procrastinate
 
-    @procrastinate_app.task(
-        queue="taxonomy-backfill",
-        retry=procrastinate.RetryStrategy(
-            max_attempts=3,
-            wait=30,
-        ),
-    )
+    class _StepwiseRetry(procrastinate.BaseRetryStrategy):
+        """Three-step backoff: 30s, 5m, 30m then give up.
+
+        Logs auto_categorise_exhausted at error level only after all retries
+        are spent — not on every individual failure.
+        """
+
+        _waits = [30, 300, 1800]
+
+        def get_retry_decision(
+            self, *, exception: BaseException, job: Any
+        ) -> "procrastinate.RetryDecision | None":
+            if job.attempts >= len(self._waits):
+                logger.error(
+                    "auto_categorise_exhausted",
+                    org_id=job.task_kwargs.get("org_id"),
+                    kb_slug=job.task_kwargs.get("kb_slug"),
+                    node_id=job.task_kwargs.get("node_id"),
+                )
+                return None
+            return procrastinate.RetryDecision(retry_in={"seconds": self._waits[job.attempts]})
+
+    @procrastinate_app.task(queue="taxonomy-backfill", retry=_StepwiseRetry())
     async def run_auto_categorise(
         org_id: str,
         kb_slug: str,
@@ -242,8 +258,9 @@ def register_auto_categorise_task(procrastinate_app: Any) -> None:
             )
             return {"status": "completed", "categorised": categorised}
         except Exception:
-            logger.exception(
-                "auto_categorise_exhausted",
+            # Per-attempt warning; exhaustion is logged by _StepwiseRetry above.
+            logger.warning(
+                "auto_categorise_attempt_failed",
                 org_id=org_id,
                 kb_slug=kb_slug,
                 node_id=node_id,
