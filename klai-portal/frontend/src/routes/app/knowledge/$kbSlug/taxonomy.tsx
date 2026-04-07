@@ -702,16 +702,18 @@ function TaxonomyTab() {
                 {m.knowledge_taxonomy_coverage_filter_clear()}
               </button>
             )}
-            {canEdit && nodes.length > 0 && suggestState !== 'applying' && (
+            {canEdit && nodes.length > 0 && (
               <Button
                 size="sm"
                 variant="ghost"
                 className="ml-auto h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
                 onClick={() => backfillMutation.mutate()}
-                disabled={backfillMutation.isPending}
-                title={m.knowledge_taxonomy_suggest_apply_all()}
+                disabled={backfillMutation.isPending || suggestState === 'applying'}
+                title={backfillMutation.isPending || suggestState === 'applying'
+                  ? m.knowledge_taxonomy_retag_running()
+                  : m.knowledge_taxonomy_retag()}
               >
-                {backfillMutation.isPending
+                {backfillMutation.isPending || suggestState === 'applying'
                   ? <Loader2 className="h-3 w-3 animate-spin" />
                   : <Sparkles className="h-3 w-3" />
                 }
