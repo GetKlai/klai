@@ -37,7 +37,6 @@ class TaxonomyNodeOut(BaseModel):
     name: str
     slug: str
     description: str | None = None
-    doc_count: int
     sort_order: int
     created_at: datetime
     created_by: str
@@ -105,7 +104,6 @@ def _node_out(node: PortalTaxonomyNode) -> TaxonomyNodeOut:
         name=node.name,
         slug=node.slug,
         description=node.description,
-        doc_count=node.doc_count,
         sort_order=node.sort_order,
         created_at=node.created_at,
         created_by=node.created_by,
@@ -342,17 +340,9 @@ async def delete_taxonomy_node(
         .values(parent_id=node.parent_id)
     )
 
-    # Update parent doc_count if parent exists
-    reassigned_docs = node.doc_count
-    if node.parent_id is not None and reassigned_docs > 0:
-        parent_result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.id == node.parent_id))
-        parent = parent_result.scalar_one_or_none()
-        if parent:
-            parent.doc_count += reassigned_docs
-
     await db.delete(node)
     await db.commit()
-    return {"reassigned_docs": reassigned_docs}
+    return {}
 
 
 # -- Taxonomy proposals -------------------------------------------------------
@@ -551,7 +541,6 @@ async def _execute_merge(
     await db.execute(
         update(PortalTaxonomyNode).where(PortalTaxonomyNode.parent_id == source_id).values(parent_id=target_id)
     )
-    target_node.doc_count += source_node.doc_count
     await db.delete(source_node)
 
 

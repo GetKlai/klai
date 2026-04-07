@@ -17,6 +17,8 @@ from typing import Any
 
 import structlog
 
+from knowledge_ingest.proposal_generator import DocumentSummary, maybe_generate_proposal
+
 logger = structlog.get_logger()
 
 
@@ -78,6 +80,7 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
     classified = 0
     tagged = 0
     skipped = 0
+    proposals_submitted = 0
 
     # Phase 0: Blind content_label generation (SPEC-KB-023)
     # Runs before taxonomy phases so labels are taxonomy-independent.
@@ -155,6 +158,7 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
             "classified": 0,
             "tagged": 0,
             "skipped": 0,
+            "proposals_submitted": 0,
         }
 
     # Phase 1: Migrate old taxonomy_node_id -> taxonomy_node_ids
@@ -202,6 +206,8 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
         offset = next_offset
 
     # Phase 2: Re-classify unclassified chunks
+    # Collect unmatched documents for batch proposal generation at the end.
+    unmatched_summaries: list[DocumentSummary] = []
     offset = None
     while True:
         phase2_filter = Filter(
@@ -248,6 +254,11 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
             )
             node_ids = [nid for nid, _conf in matched_nodes]
 
+            if not node_ids:
+                unmatched_summaries.append(
+                    DocumentSummary(title=title, content_preview=content_preview)
+                )
+
             point_ids = [p.id for p in doc_points]
             update_payload: dict = {"taxonomy_node_ids": node_ids}
             if suggested_tags:
@@ -264,6 +275,16 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
         if next_offset is None:
             break
         offset = next_offset
+
+    # Phase 2 post-processing: generate taxonomy proposal if enough unmatched docs accumulated.
+    if unmatched_summaries:
+        await maybe_generate_proposal(
+            org_id=org_id,
+            kb_slug=kb_slug,
+            unmatched_documents=unmatched_summaries,
+            existing_nodes=taxonomy_nodes,
+        )
+        proposals_submitted = 1
 
     # Phase 3: Generate tags for chunks with taxonomy_node_ids but no tags
     offset = None
@@ -342,4 +363,5 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
         "classified": classified,
         "tagged": tagged,
         "skipped": skipped,
+        "proposals_submitted": proposals_submitted,
     }
