@@ -2,6 +2,7 @@
 
 Tests classify_gap_taxonomy client function and the wiring in create_gap_event.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
