@@ -20,6 +20,7 @@ class Notebook(Base):
     description = Column(Text, nullable=True)
     default_mode = Column(VARCHAR(16), nullable=False, default="narrow")
     save_history = Column(Boolean, nullable=False, default=True, server_default="true")
+    kb_slug = Column(VARCHAR(128), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(
         TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

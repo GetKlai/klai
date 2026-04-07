@@ -30,6 +30,7 @@ class NotebookCreate(BaseModel):
     description: str | None = None
     scope: Literal["personal", "org"] = "personal"
     default_mode: Literal["narrow", "broad", "web"] = "narrow"
+    kb_slug: str | None = None
 
 
 class NotebookUpdate(BaseModel):
@@ -38,6 +39,7 @@ class NotebookUpdate(BaseModel):
     scope: Literal["personal", "org"] | None = None
     default_mode: Literal["narrow", "broad", "web"] | None = None
     save_history: bool | None = None
+    kb_slug: str | None = None
 
 
 class NotebookResponse(BaseModel):
@@ -47,6 +49,7 @@ class NotebookResponse(BaseModel):
     scope: str
     default_mode: str
     save_history: bool
+    kb_slug: str | None
     owner_user_id: str
     sources_count: int
     created_at: datetime
@@ -110,6 +113,7 @@ async def create_notebook(
         name=body.name,
         description=body.description,
         default_mode=body.default_mode,
+        kb_slug=body.kb_slug,
     )
     db.add(nb)
     await db.commit()
@@ -125,6 +129,7 @@ async def create_notebook(
         scope=nb.scope,
         default_mode=nb.default_mode,
         save_history=nb.save_history,
+        kb_slug=nb.kb_slug,
         owner_user_id=nb.owner_user_id,
         sources_count=0,
         created_at=nb.created_at,
@@ -173,6 +178,7 @@ async def list_notebooks(
                 scope=nb.scope,
                 default_mode=nb.default_mode,
                 save_history=nb.save_history,
+                kb_slug=nb.kb_slug,
                 owner_user_id=nb.owner_user_id,
                 sources_count=count,
                 created_at=nb.created_at,
@@ -202,6 +208,7 @@ async def get_notebook(
         scope=nb.scope,
         default_mode=nb.default_mode,
         save_history=nb.save_history,
+        kb_slug=nb.kb_slug,
         owner_user_id=nb.owner_user_id,
         sources_count=count,
         created_at=nb.created_at,
@@ -233,6 +240,8 @@ async def update_notebook(
         nb.default_mode = body.default_mode
     if body.save_history is not None:
         nb.save_history = body.save_history
+    if body.kb_slug is not None:
+        nb.kb_slug = body.kb_slug
     nb.updated_at = datetime.utcnow()
 
     await db.commit()
@@ -246,6 +255,7 @@ async def update_notebook(
         scope=nb.scope,
         default_mode=nb.default_mode,
         save_history=nb.save_history,
+        kb_slug=nb.kb_slug,
         owner_user_id=nb.owner_user_id,
         sources_count=count,
         created_at=nb.created_at,
