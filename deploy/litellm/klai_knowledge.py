@@ -39,6 +39,7 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
     "PORTAL_RETRIEVAL_LOG_URL", f"{PORTAL_API_URL}/internal/v1/retrieval-log"
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
+KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
 
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
@@ -398,13 +399,18 @@ class KlaiKnowledgeHook(CustomLogger):
             "1. Begin met een korte TLDR (2-3 zinnen) van het antwoord.\n"
             "2. Direct daarna een bronnenlijst met ALLEEN de echte source_url's uit de chunks:\n"
             "   📎 [Paginatitel](https://notion.so/...) | [Titel](https://...)\n"
-            "3. Daarna het uitgebreide antwoord met [n] citaties.\n\n"
+            "3. Daarna het uitgebreide antwoord met inline citaties.\n"
+            "   Citeer met [n] waar n het chunknummer is. ALTIJD met een spatie ervoor: '...tekst [1].' NOOIT '...tekst1' of '...tekst[1]'.\n\n"
             "STRIKT:\n"
             "- Gebruik UITSLUITEND URLs die letterlijk in de chunks staan (source_url velden).\n"
             "- Verzin NOOIT een URL. Geen portal.voys.nl, geen freedom.voys.nl, geen enkele URL die niet in de bronnen staat.\n"
             "- Als een bron geen source_url heeft, noem alleen de titel zonder link.\n"
             "- Gebruik de titel NOOIT als URL-target. Fout: [tekst](Support wiki). Goed: [tekst](https://notion.so/...).\n"
-            "- Als meerdere chunks dezelfde source_url hebben, toon die URL slechts één keer.]\n"
+            "- Als meerdere chunks dezelfde source_url hebben, toon die URL slechts één keer.\n\n"
+            "AFBEELDINGEN:\n"
+            "- Als een chunk een 'images:' regel bevat, toon relevante afbeeldingen in het UITGEBREIDE antwoord (sectie 3) met markdown: ![beschrijving](url)\n"
+            "- Voeg GEEN afbeeldingen toe in de TLDR (sectie 1).\n"
+            "- Gebruik alleen afbeelding-URLs die letterlijk in de chunks staan.]\n"
         )
         lines = [header, source_link_instruction]
         for chunk in chunks:
@@ -424,6 +430,13 @@ class KlaiKnowledgeHook(CustomLogger):
             lines.append(text)
             if source_url:
                 lines.append(f"source_url: {source_url}")
+            image_urls = chunk.get("image_urls") or []
+            if image_urls:
+                absolute_urls = [
+                    f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u
+                    for u in image_urls
+                ]
+                lines.append(f"images: {', '.join(absolute_urls)}")
             lines.append("")
         lines.append("[Einde kennisbank-context]")
         context_block = "\n".join(lines)
