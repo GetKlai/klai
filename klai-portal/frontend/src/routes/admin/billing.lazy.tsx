@@ -154,7 +154,7 @@ function BillingPage() {
   return (
     <div className="p-8 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-[var(--color-foreground)]">{m.admin_billing_heading()}</h1>
+        <h1 className="text-base font-semibold text-[var(--color-foreground)]">{m.admin_billing_heading()}</h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
           {m.admin_billing_subtitle()}
         </p>
@@ -566,7 +566,7 @@ function ActiveView({
           </div>
           <div className="pt-3 border-t border-[var(--color-border)]">
             <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-            <p className="text-lg font-semibold text-[var(--color-foreground)]">
+            <p className="text-base font-semibold text-[var(--color-foreground)]">
               {totalPrice(status.plan, status.billing_cycle, status.seats)}
             </p>
           </div>

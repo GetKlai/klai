@@ -57,7 +57,7 @@ function AdminSettingsPage() {
   return (
     <div className="p-8 space-y-6 max-w-3xl" data-help-id="admin-settings-general">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
+        <h1 className="text-base font-semibold text-[var(--color-foreground)]">
           {m.admin_settings_heading()}
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">

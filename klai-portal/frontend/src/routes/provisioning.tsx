@@ -96,7 +96,7 @@ function ProvisioningPage() {
           <>
             <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
             <div className="space-y-2">
-              <p className="text-lg font-semibold text-[var(--color-foreground)]">
+              <p className="text-base font-semibold text-[var(--color-foreground)]">
                 {m.provisioning_polling_title()}{dots}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -113,7 +113,7 @@ function ProvisioningPage() {
               className="mx-auto text-[var(--color-rl-accent)]"
               strokeWidth={1.5}
             />
-            <p className="text-lg font-semibold text-[var(--color-foreground)]">
+            <p className="text-base font-semibold text-[var(--color-foreground)]">
               {m.provisioning_ready_title()}
             </p>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -130,7 +130,7 @@ function ProvisioningPage() {
               strokeWidth={1.5}
             />
             <div className="space-y-2">
-              <p className="text-lg font-semibold text-[var(--color-foreground)]">
+              <p className="text-base font-semibold text-[var(--color-foreground)]">
                 {m.provisioning_failed_title()}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">

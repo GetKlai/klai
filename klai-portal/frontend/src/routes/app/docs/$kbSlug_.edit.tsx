@@ -84,7 +84,7 @@ function EditKBPage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
+        <h1 className="text-base font-semibold text-[var(--color-foreground)]">
           {m.docs_kb_edit_modal_title()}
         </h1>
         <Button

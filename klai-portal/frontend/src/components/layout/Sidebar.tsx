@@ -83,7 +83,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   rel="noopener noreferrer"
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-1.5 text-[13px] transition-colors',
+                    'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
                     'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
@@ -97,7 +97,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   activeOptions={item.end ? { exact: true } : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-1.5 text-[13px] transition-colors',
+                    'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
                     'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
@@ -117,7 +117,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                         to={child.to ?? '/'}
                         activeOptions={child.end ? { exact: true } : undefined}
                         className={cn(
-                          'flex items-center rounded-md px-3 py-1 text-[13px] transition-colors',
+                          'flex items-center rounded-md px-3 py-1 text-sm transition-colors',
                           'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                           'gap-2'
                         )}
@@ -144,7 +144,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             to={inAdmin ? '/app' : '/admin'}
             title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
-              'flex items-center rounded-md px-3 py-1.5 text-[13px] transition-colors',
+              'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
               'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
               collapsed ? 'justify-center' : 'gap-3'
             )}
@@ -216,7 +216,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           to="/app/account"
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
-            'flex items-center rounded-md px-3 py-1.5 text-[13px] transition-colors',
+            'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
             'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3'
           )}
@@ -236,7 +236,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           }}
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
-            'flex w-full items-center rounded-md px-3 py-1.5 text-[13px] transition-colors',
+            'flex w-full items-center rounded-md px-3 py-1.5 text-sm transition-colors',
             'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3'
           )}
