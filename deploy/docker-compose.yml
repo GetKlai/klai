@@ -913,13 +913,17 @@ services:
       - /opt/klai/garage-meta:/var/lib/garage/meta
       - /opt/klai/garage-data:/var/lib/garage/data
       - /opt/klai/garage/garage.toml:/etc/garage.toml:ro
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
     networks:
       - klai-net
     healthcheck:
       test: ["CMD", "/garage", "status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     deploy:
       resources:
         limits:
