@@ -5,12 +5,12 @@ Route prefix: /api/bots
 
 import asyncio
 import io
-import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, model_validator
@@ -33,7 +33,7 @@ from app.services.events import emit_event
 from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/bots", tags=["meetings"])
 
@@ -218,7 +218,11 @@ async def start_meeting(
     except httpx.HTTPStatusError as exc:
         meeting.status = "failed"
         meeting.error_message = f"Bot start failed: {exc.response.status_code}"
-        logger.exception("Vexa bot start failed: %s", exc)
+        logger.exception("Vexa bot start failed", meeting_id=str(meeting.id), status_code=exc.response.status_code)
+    except Exception as exc:
+        meeting.status = "failed"
+        meeting.error_message = f"Bot start failed: {type(exc).__name__}"
+        logger.exception("Vexa bot start failed", meeting_id=str(meeting.id), error=str(exc))
 
     await db.commit()
     await db.refresh(meeting)
@@ -270,8 +274,8 @@ async def stop_meeting(
     if ref:
         try:
             await vexa.stop_bot(ref.platform, ref.native_meeting_id)
-        except httpx.HTTPStatusError as exc:
-            logger.warning("Vexa stop_bot failed (continuing): %s", exc)
+        except Exception as exc:
+            logger.warning("Vexa stop_bot failed, continuing", meeting_id=str(meeting.id), error=str(exc))
 
     meeting.status = "stopping"
     meeting.ended_at = datetime.now(UTC)
@@ -302,8 +306,8 @@ async def delete_meeting(
     if ref and meeting.status in ACTIVE_STATUSES:
         try:
             await vexa.stop_bot(ref.platform, ref.native_meeting_id)
-        except httpx.HTTPStatusError:
-            pass
+        except Exception as exc:
+            logger.warning("Vexa stop_bot failed during delete, continuing", meeting_id=str(meeting.id), error=str(exc))
 
     await db.delete(meeting)
     await db.commit()
@@ -348,7 +352,7 @@ async def summarize_meeting_endpoint(
             language=meeting.language or "en",
         )
     except Exception as exc:
-        logger.exception("Summarization failed for meeting %s: %s", meeting_id, exc)
+        logger.exception("Summarization failed", meeting_id=str(meeting_id))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Summarization failed: {exc}",
@@ -517,16 +521,10 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                     segments_fetched = filter_segments(raw_segments)
                     break
                 if seg_attempt < 5:
-                    logger.info(
-                        "No transcript segments yet for meeting %s (attempt %d/6), retrying in 15s...",
-                        meeting.id,
-                        seg_attempt + 1,
-                    )
+                    logger.info("No transcript segments yet, retrying", meeting_id=str(meeting.id), attempt=seg_attempt + 1, max_attempts=6)
                     await asyncio.sleep(15)
             except Exception as exc:
-                logger.warning(
-                    "Segment fetch failed for meeting %s (attempt %d/6): %s", meeting.id, seg_attempt + 1, exc
-                )
+                logger.warning("Segment fetch failed", meeting_id=str(meeting.id), attempt=seg_attempt + 1, max_attempts=6, error=str(exc))
                 if seg_attempt < 5:
                     await asyncio.sleep(15)
 
@@ -551,19 +549,12 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                 break
             except ValueError:
                 if attempt < 4:
-                    logger.info(
-                        "Recording not ready for vexa meeting %s (attempt %d/5), retrying in 5s...",
-                        meeting.vexa_meeting_id,
-                        attempt + 1,
-                    )
+                    logger.info("Recording not ready, retrying", vexa_meeting_id=meeting.vexa_meeting_id, attempt=attempt + 1, max_attempts=5)
                     await asyncio.sleep(5)
                 else:
                     # No recording available (recording_enabled=False or meeting too short).
                     # Complete with empty transcript rather than failing.
-                    logger.info(
-                        "No recording for vexa meeting %s and no transcript segments — completing with empty transcript",
-                        meeting.vexa_meeting_id,
-                    )
+                    logger.info("No recording and no segments, completing with empty transcript", vexa_meeting_id=meeting.vexa_meeting_id)
                     meeting.status = "done"
                     meeting.error_message = None
                     return
@@ -588,7 +579,7 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
         meeting.error_message = None
 
     except Exception as exc:
-        logger.exception("Transcription failed for meeting %s: %s", meeting.id, exc)
+        logger.exception("Transcription failed", meeting_id=str(meeting.id))
         meeting.status = "failed"
         meeting.error_message = str(exc)
 
@@ -602,7 +593,7 @@ async def vexa_webhook(
     _require_webhook_secret(request)
 
     if not payload.platform or not payload.native_meeting_id:
-        logger.info("Vexa webhook: no platform/native_meeting_id, ignoring")
+        logger.info("Vexa webhook: no platform/native_meeting_id, ignoring", payload_status=payload.status)
         return {"status": "ignored"}
 
     VEXA_STATUS_MAP = {
@@ -624,14 +615,14 @@ async def vexa_webhook(
         .order_by(VexaMeeting.created_at.desc())
     )
     if meeting is None:
-        logger.warning("Vexa webhook: no matching meeting for %s/%s", payload.platform, payload.native_meeting_id)
+        logger.warning("Vexa webhook: no matching meeting", platform=payload.platform, native_meeting_id=payload.native_meeting_id)
         return {"status": "ignored"}
 
     if payload.status is not None and payload.status != "completed":
         if portal_status and meeting.status != portal_status and meeting.status != "stopping":
             meeting.status = portal_status
             await db.commit()
-            logger.info("Vexa webhook: synced status %s->%s for meeting %s", payload.status, portal_status, meeting.id)
+            logger.info("Vexa webhook: synced status", vexa_status=payload.status, portal_status=portal_status, meeting_id=str(meeting.id))
         return {"status": "synced"}
 
     meeting.status = "stopping"
