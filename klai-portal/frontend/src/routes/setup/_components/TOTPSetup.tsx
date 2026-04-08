@@ -53,7 +53,7 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-base font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.setup_2fa_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">

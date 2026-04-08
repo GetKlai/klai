@@ -78,7 +78,7 @@ function SignupPage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
             <CheckCircle size={22} className="text-[var(--color-rl-cream)]" strokeWidth={1.5} />
           </div>
-          <p className="text-base font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-[var(--color-foreground)]">
             {m.signup_confirm_heading()}
           </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -101,7 +101,7 @@ function SignupPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-1">
-        <h2 className="text-base font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.signup_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">

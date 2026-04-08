@@ -200,7 +200,7 @@ function LoginPage() {
         /* TOTP challenge step */
         <>
           <div className="space-y-2">
-            <h2 className="text-base font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
               {m.totp_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -251,7 +251,7 @@ function LoginPage() {
         /* Password login step */
         <>
           <div className="space-y-2">
-            <h2 className="text-base font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
               {m.login_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">

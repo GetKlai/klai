@@ -233,7 +233,7 @@ export function BillingSetupView({ token, onComplete }: BillingSetupViewProps) {
             </div>
             <div className="ml-auto text-right">
               <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-              <p className="text-base font-semibold text-[var(--color-foreground)]">
+              <p className="text-xl font-semibold text-[var(--color-foreground)]">
                 {totalPrice(form.plan, form.billing_cycle, form.seats)}
               </p>
               {form.billing_cycle === 'yearly' && (
