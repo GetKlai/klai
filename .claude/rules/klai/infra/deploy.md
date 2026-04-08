@@ -56,6 +56,14 @@ Local `alembic/versions/` may be missing migrations that only exist in productio
 Two branches with migrations → multiple heads → `alembic upgrade head` fails.
 Fix: `alembic merge heads -m "merge heads"`. Use `IF NOT EXISTS` in all DDL.
 
+## CI compose-sync overwrites server config (HIGH)
+
+The `deploy-compose.yml` GitHub Actions workflow syncs `deploy/docker-compose.yml` to the server and triggers service recreation. If the repo contains template placeholders (like `RENDER_ME`) or config files without real secrets, it overwrites the working server config.
+
+**Why:** CI treats the repo as source of truth and copies files verbatim. Config files with inline secrets (not env vars) get overwritten with whatever is in git.
+
+**Prevention:** Never put secrets in config files — always use environment variables. For services that don't support env var substitution in their config (like Garage), use a Docker entrypoint that renders the config, or mount a server-local config that CI does not touch. Test by checking `git diff deploy/` before pushing — if config files changed, verify they contain no placeholders.
+
 ## Renovate
 Schedule: Monday 05:00 Amsterdam. Automerge: patch (any), minor (devDeps only).
 Docker images: grouped manual PR. Trigger: `gh workflow run renovate.yml`.

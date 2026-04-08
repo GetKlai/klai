@@ -37,6 +37,14 @@ docker ps --filter name=[service] --format '{{.Names}}\t{{.Status}}'
 - Special chars (`/`, `+`, `=`) in passwords break `redis://` and `postgres://` URL parsing.
 - Prefer separate `HOST`/`PORT`/`PASSWORD` vars over combined URLs.
 
+## Presigned URLs with Docker-internal hostnames (HIGH)
+
+S3 SDKs (minio, boto3) generate presigned URLs using the endpoint they were configured with. If the endpoint is a Docker-internal hostname (e.g., `garage:3900`), the presigned URL is unreachable from browsers.
+
+**Why:** The SDK has no concept of "public URL" — it uses the endpoint verbatim. Inside Docker Compose, services resolve each other by container name, but browsers cannot.
+
+**Prevention:** Never serve presigned URLs to browsers when the S3 endpoint is Docker-internal. Use reverse proxy (Caddy) + S3 website mode instead. See `platform/garage.md` for the Garage-specific pattern.
+
 ## CI deploy verification
 - CI green ≠ production deployed. After `gh run watch`, verify on the server: container age, health endpoint, logs.
 - `set -e` in all deploy scripts — without it, `docker pull` failure silently continues with the old image.

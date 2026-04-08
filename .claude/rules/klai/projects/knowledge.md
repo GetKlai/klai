@@ -144,6 +144,29 @@ The agent saw `_verify_internal_token` in the taxonomy routes and copied that he
 
 **Prevention:** Before wiring any portal→ingest HTTP call, check `InternalSecretMiddleware` in `knowledge_ingest/middleware.py` to confirm the exact header name. Never infer it from per-route helpers.
 
+## Content-addressed storage for images (SHA256)
+
+**When:** Storing extracted images (or any binary content) in S3/Garage with tenant-scoped paths.
+
+Use SHA256 hash of the file content as the object key. This provides automatic deduplication — the same image extracted from multiple documents is stored once.
+
+```python
+content_hash = hashlib.sha256(image_bytes).hexdigest()
+key = f"{org_id}/{content_hash}.{ext}"
+```
+
+Combined with `filetype` library for magic-bytes MIME detection (zero C dependencies, unlike Pillow), this gives a lightweight image storage pipeline with no duplicate writes.
+
+**Rule:** Use content hash as S3 key for binary assets. Use `filetype` (not Pillow) for MIME detection when you only need type identification.
+
+## Extra JSONB passthrough to downstream services
+
+**When:** Adding new metadata fields that must flow through the connector to knowledge-ingest to Qdrant.
+
+The `extra` JSONB dict on connector ingest requests flows through automatically to Qdrant payload via `extra_payload.update(req.extra)` in knowledge-ingest. No code change needed in knowledge-ingest for new metadata fields — just set them in the connector's `extra` dict.
+
+**Rule:** For new metadata fields originating in the connector, add them to the `extra` dict. They will appear in Qdrant payload without touching knowledge-ingest code. But see "Procrastinate enrichment passthrough" — fields must also be in `extra_payload` before `defer_async`.
+
 ## locals() for if/elif branch variable capture (MED)
 
 Using `locals().get("node")` after an if/elif chain to retrieve a variable set in only one branch bypasses type checking (pyright cannot track it), hides control flow, and breaks on rename.

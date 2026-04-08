@@ -38,6 +38,48 @@ paths:
 - Use `lsof -nP -iTCP:PORT -sTCP:LISTEN` to check if a port is in use. Curl without timeouts hangs indefinitely.
 - If you must use curl: `--connect-timeout 2 --max-time 3`.
 
+## asyncio.to_thread() for sync SDKs
+
+**When:** Wrapping a synchronous third-party SDK (e.g., minio, requests) in an async service.
+
+`asyncio.to_thread(sync_func, *args)` runs the call in a thread pool without blocking the event loop. Cleaner than importing an async fork of the SDK that adds transitive dependencies (e.g., miniopy-async pulls in aiohttp).
+
+```python
+url = await asyncio.to_thread(client.presigned_get_object, bucket, key, expires=timedelta(hours=1))
+```
+
+**Rule:** Prefer `asyncio.to_thread()` over async SDK forks when the sync SDK is lightweight and call volume is moderate.
+
+## Feature flag via empty env var
+
+**When:** A feature depends on an external service that may not be deployed (e.g., S3 storage, analytics).
+
+Use an empty-string default in pydantic-settings. The feature activates only when the env var is set:
+
+```python
+class Settings(BaseSettings):
+    garage_s3_endpoint: str = ""  # empty = feature disabled
+
+# Usage
+if settings.garage_s3_endpoint:
+    await upload_image(...)
+```
+
+**Rule:** Use empty string (not `None`, not a boolean flag) for optional service endpoints. One env var controls both "is configured" and "what to connect to."
+
+## Temp directory cleanup — always use context manager (MED)
+
+`tempfile.mkdtemp()` creates a directory but never cleans it up. In long-running services this leaks disk space silently.
+
+**Why:** `mkdtemp()` returns a path string with no lifecycle management. If the caller forgets `shutil.rmtree()` (or an exception skips it), the dir persists forever.
+
+**Prevention:** Always use `tempfile.TemporaryDirectory()` as a context manager:
+
+```python
+with tempfile.TemporaryDirectory() as tmpdir:
+    # tmpdir is cleaned up on exit, even on exception
+```
+
 ## Service restarts
 - Always restart via restart scripts or `docker compose restart`, with output visible in foreground.
 - Never use `run_in_background=true` to start servers — hides startup failures.
