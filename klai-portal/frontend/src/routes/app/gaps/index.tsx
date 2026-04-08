@@ -204,7 +204,7 @@ function GapsPage() {
                   return (
                     <tr
                       key={rowKey}
-                      className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+                      className="bg-[var(--color-card)]"
                     >
                       <td className="px-6 py-3 text-[var(--color-foreground)] max-w-xs truncate">
                         {gap.query_text}
