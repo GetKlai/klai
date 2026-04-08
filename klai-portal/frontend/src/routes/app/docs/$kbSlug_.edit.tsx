@@ -82,7 +82,7 @@ function EditKBPage() {
   }
 
   return (
-    <div className="p-8 max-w-lg">
+    <div className="p-12 max-w-lg">
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.docs_kb_edit_modal_title()}

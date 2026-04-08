@@ -145,14 +145,14 @@ function BillingPage() {
 
   if (loadingStatus) {
     return (
-      <div className="p-8">
+      <div className="p-12">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
       </div>
     )
   }
 
   return (
-    <div className="p-8 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
+    <div className="p-12 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
       <div className="space-y-1">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{m.admin_billing_heading()}</h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">

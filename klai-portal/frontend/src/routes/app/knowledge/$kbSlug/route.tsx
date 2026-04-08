@@ -100,7 +100,7 @@ function KbLayout() {
 
   if (isLoading) {
     return (
-      <div className="p-8">
+      <div className="p-12">
         <div className="h-8 w-48 rounded bg-[var(--color-secondary)] animate-pulse mb-4" />
         <div className="h-4 w-96 rounded bg-[var(--color-secondary)] animate-pulse" />
       </div>
@@ -109,7 +109,7 @@ function KbLayout() {
 
   if (isError || !kb) {
     return (
-      <div className="p-8 text-[var(--color-muted-foreground)]">
+      <div className="p-12 text-[var(--color-muted-foreground)]">
         {m.knowledge_detail_not_found()}
       </div>
     )
@@ -128,7 +128,7 @@ function KbLayout() {
   void stats // keep query alive for child routes
 
   return (
-    <div className="p-8 max-w-2xl space-y-8">
+    <div className="p-12 max-w-2xl space-y-8">
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">

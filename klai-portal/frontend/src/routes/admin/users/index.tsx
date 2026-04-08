@@ -316,7 +316,7 @@ function UsersPage() {
   })
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-12 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
