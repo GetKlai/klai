@@ -173,7 +173,7 @@ function LoginPage() {
 
   const leftContent = (
     <>
-      <h1 className="text-4xl font-bold leading-tight">
+      <h1 className="text-2xl font-semibold leading-tight">
         {m.login_hero_heading()}
         <br />
         <span className="text-[var(--color-rl-accent)]">{m.login_hero_highlight()}</span>
@@ -200,7 +200,7 @@ function LoginPage() {
         /* TOTP challenge step */
         <>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.totp_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -251,7 +251,7 @@ function LoginPage() {
         /* Password login step */
         <>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.login_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">

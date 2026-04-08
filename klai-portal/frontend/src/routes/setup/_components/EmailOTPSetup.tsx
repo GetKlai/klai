@@ -77,7 +77,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       {phase === 'send' ? (
         <>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.setup_mfa_email_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -92,7 +92,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.setup_mfa_email_code_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">

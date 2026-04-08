@@ -175,7 +175,7 @@ function PasskeySetup({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+        <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
           {m.setup_mfa_passkey_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -293,7 +293,7 @@ function EmailOTPSetup({
       {phase === 'send' ? (
         <>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.setup_mfa_email_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -308,7 +308,7 @@ function EmailOTPSetup({
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.setup_mfa_email_code_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -432,7 +432,7 @@ function TOTPSetup({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+        <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
           {m.setup_2fa_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -567,7 +567,7 @@ function SetupMFAPage() {
 
   const leftContent = (
     <>
-      <h1 className="text-4xl font-bold leading-tight">
+      <h1 className="text-2xl font-semibold leading-tight">
         {m.setup_mfa_hero_heading()}
         <br />
         <span className="text-[var(--color-rl-accent)]">{m.setup_mfa_hero_highlight()}</span>
@@ -590,7 +590,7 @@ function SetupMFAPage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
             <ShieldCheck size={22} className="text-[var(--color-rl-cream)]" />
           </div>
-          <p className="text-xl font-bold text-[var(--color-foreground)]">
+          <p className="text-base font-semibold text-[var(--color-foreground)]">
             {m.setup_mfa_done_heading()}
           </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -603,7 +603,7 @@ function SetupMFAPage() {
       {step === 'pick' && (
         <div className="space-y-5">
           <div className="space-y-1">
-            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.setup_mfa_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
