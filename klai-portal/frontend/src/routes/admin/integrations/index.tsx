@@ -253,7 +253,7 @@ function IntegrationsPage() {
   }
 
   return (
-    <div className="p-12 max-w-2xl">
+    <div className="p-8 max-w-2xl">
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.admin_integrations_title()}

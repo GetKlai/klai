@@ -131,7 +131,7 @@ function KnowledgePage() {
   )
 
   return (
-    <div className="p-12 max-w-2xl">
+    <div className="p-8 max-w-2xl">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-[var(--color-foreground)]">

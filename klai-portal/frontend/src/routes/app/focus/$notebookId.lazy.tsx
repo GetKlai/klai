@@ -289,7 +289,7 @@ function NotebookDetailPage() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-12 space-y-6">
+    <div className="p-8 space-y-6">
       {/* Header */}
       <div>
         <div className="flex items-center justify-between mb-1">
