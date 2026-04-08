@@ -60,7 +60,7 @@ function VerifyEmailPage() {
 
   const leftContent = (
     <>
-      <h1 className="text-4xl font-bold leading-tight">
+      <h1 className="text-2xl font-semibold leading-tight">
         {m.verify_hero_heading()}
         <br />
         <span className="text-[var(--color-rl-accent)]">{m.verify_hero_highlight()}</span>
@@ -86,7 +86,7 @@ function VerifyEmailPage() {
         <div className="space-y-6 text-center">
           <div className="space-y-3">
             <CheckCircle className="mx-auto h-12 w-12 text-[var(--color-success)]" />
-            <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.verify_success_heading()}
             </h1>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -104,7 +104,7 @@ function VerifyEmailPage() {
         <div className="space-y-6 text-center">
           <div className="space-y-3">
             <XCircle className="mx-auto h-12 w-12 text-[var(--color-destructive)]" />
-            <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
+            <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
               {m.verify_error_heading()}
             </h1>
             <p className="text-sm text-[var(--color-muted-foreground)]">

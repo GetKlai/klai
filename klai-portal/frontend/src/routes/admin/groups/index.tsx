@@ -301,7 +301,7 @@ function AdminGroups() {
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
+        <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
           {m.admin_groups_title()}
         </h1>
         <Button size="sm" onClick={() => void navigate({ search: { create: true } })}>
