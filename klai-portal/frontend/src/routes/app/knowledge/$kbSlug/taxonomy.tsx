@@ -82,7 +82,7 @@ function CoverageWidget({
                   {pct}%
                 </span>
                 <span
-                  className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                  className="text-xs px-1.5 py-0.5 rounded-full font-medium"
                   style={{
                     background: node.health === 'healthy' ? 'var(--color-success)' : node.health === 'attention_needed' ? '#F59E0B' : 'var(--color-border)',
                     color: node.health === 'empty' ? 'var(--color-muted-foreground)' : '#fff',
@@ -172,7 +172,7 @@ function TagCloud({
             style={{ fontSize: `${fontSize}rem` }}
           >
             <span>{tag}</span>
-            <span className="text-[10px] opacity-60 tabular-nums">{count}</span>
+            <span className="text-xs opacity-60 tabular-nums">{count}</span>
           </button>
         )
       })}

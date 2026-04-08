@@ -36,7 +36,7 @@ export function MethodCard({
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-[var(--color-foreground)]">{title}</span>
             {recommended && (
-              <span className="rounded-full bg-[var(--color-rl-accent)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+              <span className="rounded-full bg-[var(--color-rl-accent)] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
                 {m.setup_mfa_badge_recommended()}
               </span>
             )}

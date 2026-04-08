@@ -198,7 +198,7 @@ function AdminGroupDetail() {
       <Card>
         <CardContent className="pt-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-lg">
+            <h2 className="text-base font-medium">
               {m.admin_groups_members_title()}
             </h2>
             <Button
