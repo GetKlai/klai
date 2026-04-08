@@ -124,24 +124,26 @@ class NotionAdapter(BaseAdapter):
     @staticmethod
     def _search_all_pages(
         client: RateLimitedNotionClient,
-        last_synced_at: str | None,
         max_pages: int,
         database_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch Notion pages via the Search API with optional database filter.
+        """Fetch ALL accessible Notion pages via the Search API.
+
+        Always returns the full set of pages — no time-based filtering.
+        The sync engine handles reconciliation (new/changed/deleted) by
+        comparing page last_edited_time against the cursor.
 
         Runs synchronously — call via asyncio.to_thread.
 
         Args:
             client: Rate-limited Notion client.
-            last_synced_at: ISO 8601 timestamp; skip pages last edited before this.
             max_pages: Safety limit on total pages returned.
             database_ids: When set, only include pages whose parent is one of
                 these database IDs (post-fetch filter — notion_client v2 has no
                 server-side database query endpoint).
 
         Returns:
-            List of Notion page objects.
+            List of Notion page objects (including last_edited_time metadata).
         """
         db_filter: set[str] = set(database_ids) if database_ids else set()
         pages: list[dict[str, Any]] = []
@@ -170,9 +172,6 @@ class NotionAdapter(BaseAdapter):
                     parent = page.get("parent", {})
                     if parent.get("type") != "database_id" or parent.get("database_id") not in db_filter:
                         continue
-                last_edited: str = page.get("last_edited_time", "")
-                if last_synced_at and last_edited <= last_synced_at:
-                    continue
                 pages.append(page)
                 if len(pages) >= max_pages:
                     break
@@ -226,21 +225,23 @@ class NotionAdapter(BaseAdapter):
         connector: Any,
         cursor_context: dict[str, Any] | None = None,
     ) -> list[DocumentRef]:
-        """List accessible Notion pages, optionally filtered by last_synced_at.
+        """List ALL accessible Notion pages with metadata.
+
+        Always returns the full set of pages — the sync engine handles
+        reconciliation (new/changed/unchanged/deleted) using last_edited.
 
         Args:
             connector: Connector model instance with config JSONB.
-            cursor_context: Previous cursor state with optional last_synced_at.
+            cursor_context: Ignored for Notion (kept for interface compat).
 
         Returns:
-            List of DocumentRef, one per Notion page.
+            List of DocumentRef with last_edited set, one per Notion page.
         """
         cfg = self._extract_config(connector)
         client = self._build_sync_client(cfg["access_token"])
         page_ids: list[str] = cfg["page_ids"]
         database_ids: list[str] = cfg["database_ids"]
         max_pages: int = cfg["max_pages"]
-        last_synced_at: str | None = (cursor_context or {}).get("last_synced_at")
 
         connector_id = str(getattr(connector, "connector_id", "") or getattr(connector, "id", ""))
 
@@ -252,11 +253,11 @@ class NotionAdapter(BaseAdapter):
             pages = await asyncio.to_thread(self._fetch_specific_pages, client, page_ids)
         else:
             logger.info(
-                "Listing Notion pages (connector=%s, incremental=%s, database_filter=%s)",
-                connector_id, last_synced_at is not None, bool(database_ids),
+                "Listing all Notion pages (connector=%s, database_filter=%s)",
+                connector_id, bool(database_ids),
             )
             pages = await asyncio.to_thread(
-                self._search_all_pages, client, last_synced_at, max_pages, database_ids or None
+                self._search_all_pages, client, max_pages, database_ids or None
             )
 
         refs = [
@@ -267,6 +268,7 @@ class NotionAdapter(BaseAdapter):
                 content_type="notion_page",
                 source_ref=page["id"],
                 source_url=f"https://notion.so/{page['id'].replace('-', '')}",
+                last_edited=page.get("last_edited_time", ""),
             )
             for page in pages
         ]

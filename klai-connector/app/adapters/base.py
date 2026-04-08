@@ -40,6 +40,7 @@ class DocumentRef:
     content_type: str
     source_ref: str = ""
     source_url: str = ""
+    last_edited: str = ""  # ISO 8601 from source (used by sync engine for reconciliation)
     images: list[ImageRef] | None = None
 
 
