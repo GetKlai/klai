@@ -199,7 +199,7 @@ function GapsPage() {
                 </tr>
               </thead>
               <tbody>
-                {gaps.map((gap, i) => {
+                {gaps.map((gap) => {
                   const rowKey = `${gap.query_text}-${gap.gap_type}`
                   return (
                     <tr

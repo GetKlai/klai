@@ -126,7 +126,7 @@ function ConnectorsTab() {
                 </tr>
               </thead>
               <tbody>
-                {connectors.map((c, i) => {
+                {connectors.map((c) => {
                   const isSyncing = syncingIds.has(c.id)
                   const isRunning = c.last_sync_status?.toUpperCase() === 'RUNNING'
                   return (

@@ -218,7 +218,7 @@ export function TranscriptionTable({
               </tr>
             </thead>
             <tbody>
-              {filteredItems.map((item, i) => {
+              {filteredItems.map((item) => {
                 const isEditing = editingId === item.id
                 const isConfirmingDelete = confirmingDeleteId === item.id
                 const isSaving = isRenaming && renamingId === item.id
