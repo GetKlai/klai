@@ -31,8 +31,9 @@ def _mock_image_store() -> MagicMock:
     store.validate_image = MagicMock(return_value="image/png")
 
     async def _upload(*args, **kwargs):
+        key = f"org/images/kb/{args[3]}"
         return ImageUploadResult(
-            object_key=f"org/images/kb/{args[3]}", presigned_url="https://garage/signed-url", deduplicated=False,
+            object_key=key, public_url=f"/kb-images/{key}", deduplicated=False,
         )
 
     store.upload_image = _upload
@@ -84,15 +85,15 @@ Some explanation text here.
         store = _mock_image_store()
         http = _mock_http_ok()
 
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=resolved,
             org_id="org-acme",
             kb_slug="docs",
             image_store=store,
             http_client=http,
         )
-        assert len(presigned_urls) == 2
-        assert all(url.startswith("https://garage/") for url in presigned_urls)
+        assert len(public_urls) == 2
+        assert all(url.startswith("/kb-images/") for url in public_urls)
 
         # 5. Build ingest payload with image_urls
         payload = _build_payload(
@@ -104,9 +105,9 @@ Some explanation text here.
             source_ref="acme/repo:main:docs/architecture.md",
             source_url="",
             content_type="kb_article",
-            image_urls=presigned_urls,
+            image_urls=public_urls,
         )
-        assert payload["extra"]["image_urls"] == presigned_urls
+        assert payload["extra"]["image_urls"] == public_urls
         assert payload["content"] == markdown
 
 
@@ -141,14 +142,14 @@ Follow these steps:
         assert resolved[2][1] == "https://docs.example.com/assets/step3.gif"  # root-relative
 
         # Download + upload
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=resolved,
             org_id="org-ex",
             kb_slug="kb",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
         )
-        assert len(presigned_urls) == 3
+        assert len(public_urls) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +218,14 @@ class TestNotionE2E:
             ("photo", "https://prod-files.notion.so/signed/photo.jpg?token=xyz"),
         ]
 
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=image_urls,
             org_id="org-notion",
             kb_slug="notion-kb",
             image_store=_mock_image_store(),
             http_client=_mock_http_ok(),
         )
-        assert len(presigned_urls) == 2
+        assert len(public_urls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +246,7 @@ class TestPDFImageE2E:
             {"data_b64": b64_data, "mime_type": "image/jpeg"},
         ]
 
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=[],  # No markdown images in PDF
             org_id="org-pdf",
             kb_slug="reports",
@@ -253,7 +254,7 @@ class TestPDFImageE2E:
             http_client=_mock_http_ok(),
             parsed_images=parsed_images,
         )
-        assert len(presigned_urls) == 2
+        assert len(public_urls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +269,7 @@ class TestMixedE2E:
         """Both markdown image URLs and parser-extracted images are uploaded."""
         png_data = _png_bytes()
 
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=[("logo", "https://example.com/logo.png")],
             org_id="org-mix",
             kb_slug="mixed",
@@ -277,7 +278,7 @@ class TestMixedE2E:
             parsed_images=[{"data_b64": base64.b64encode(png_data).decode(), "mime_type": "image/png"}],
         )
         # 1 parsed + 1 markdown = 2 total
-        assert len(presigned_urls) == 2
+        assert len(public_urls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +308,7 @@ class TestResilienceE2E:
 
         http.get = mixed_get
 
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=[("a", "https://ok.com/1.png"), ("b", "https://fail.com/2.png"), ("c", "https://ok.com/3.png")],
             org_id="org-r",
             kb_slug="kb",
@@ -315,7 +316,7 @@ class TestResilienceE2E:
             http_client=http,
         )
         # 2 out of 3 should succeed
-        assert len(presigned_urls) == 2
+        assert len(public_urls) == 2
 
     @pytest.mark.asyncio
     async def test_non_200_response_skipped(self):
@@ -327,14 +328,14 @@ class TestResilienceE2E:
         resp.content = b""
         http.get = AsyncMock(return_value=resp)
 
-        presigned_urls = await download_and_upload_images(
+        public_urls = await download_and_upload_images(
             image_urls=[("missing", "https://example.com/gone.png")],
             org_id="org-r",
             kb_slug="kb",
             image_store=store,
             http_client=http,
         )
-        assert presigned_urls == []
+        assert public_urls == []
 
 
 # ---------------------------------------------------------------------------

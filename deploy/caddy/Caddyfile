@@ -166,6 +166,13 @@
         reverse_proxy portal-api:8010
     }
 
+    # Knowledge base images served via Garage S3 website endpoint (anonymous reads)
+    handle_path /kb-images/* {
+        reverse_proxy garage:3902 {
+            header_up Host klai-images.web.garage
+        }
+    }
+
     handle /api/* {
         rate_limit {
             zone portal_api_per_ip {

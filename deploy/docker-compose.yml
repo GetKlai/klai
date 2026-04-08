@@ -903,20 +903,20 @@ services:
       - falkordb
 
   # ─── Garage S3 (image storage for knowledge pipeline) ────────────────────────
+  # Garage serves images via two endpoints:
+  #   - S3 API on :3900 (authenticated uploads from klai-connector)
+  #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
     image: dxflrs/garage:v2.2.0
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
       - /opt/klai/garage-data:/var/lib/garage/data
-      - ./garage/garage.toml:/etc/garage.toml:ro
-    environment:
-      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
-      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+      - /opt/klai/garage/garage.toml:/etc/garage.toml:ro
     networks:
       - klai-net
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3900/health"]
+      test: ["CMD", "/garage", "status"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -925,22 +925,6 @@ services:
         limits:
           cpus: '1'
           memory: 1G
-
-  garage-init:
-    image: curlimages/curl:latest
-    depends_on:
-      garage:
-        condition: service_healthy
-    environment:
-      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
-      GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
-      GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY:-}
-    volumes:
-      - ./garage/init-garage.sh:/init-garage.sh:ro
-    entrypoint: ["/bin/sh", "/init-garage.sh"]
-    networks:
-      - klai-net
-    restart: "no"
 
   # ─── Klai Connector (external source sync to knowledge layer) ───────────────
   klai-connector:

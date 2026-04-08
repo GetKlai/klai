@@ -1,93 +1,59 @@
-#!/usr/bin/env bash
-# Bootstrap Garage: assign layout, create bucket, create access key.
-# Runs as a one-shot init container after Garage starts.
-set -euo pipefail
+#!/usr/bin/env sh
+# Bootstrap Garage: assign layout, create bucket, enable website, create access key.
+# Designed to run via `docker exec` on the garage container (has /garage CLI).
+# Usage: docker exec klai-core-garage-1 sh /opt/garage-init.sh
+set -eu
 
-GARAGE_ADMIN="http://garage:3903"
-ADMIN_TOKEN="${GARAGE_ADMIN_TOKEN:?GARAGE_ADMIN_TOKEN is required}"
 BUCKET="${GARAGE_BUCKET:-klai-images}"
 
-header=(-H "Authorization: Bearer ${ADMIN_TOKEN}")
+echo "=== Garage Bootstrap ==="
 
-echo "Waiting for Garage admin API..."
-for i in $(seq 1 30); do
-    if curl -sf "${header[@]}" "${GARAGE_ADMIN}/v1/status" >/dev/null 2>&1; then
-        echo "Garage is ready."
-        break
-    fi
-    sleep 1
-done
-
-# Get node ID from status.
-NODE_ID=$(curl -sf "${header[@]}" "${GARAGE_ADMIN}/v1/status" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print(data['node'])
-")
+# 1. Get node ID
+NODE_ID=$(/garage status 2>/dev/null | grep -oE '[a-f0-9]{16}' | head -1)
+if [ -z "${NODE_ID}" ]; then
+    echo "ERROR: Could not determine node ID"
+    exit 1
+fi
 echo "Node ID: ${NODE_ID}"
 
-# Check if layout is already applied (node has a role).
-HAS_ROLE=$(curl -sf "${header[@]}" "${GARAGE_ADMIN}/v1/layout" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-roles = data.get('stagedRoleChanges', []) + [r for r in data.get('roles', []) if r.get('zone')]
-print('yes' if roles else 'no')
-" 2>/dev/null || echo "no")
-
-if [ "${HAS_ROLE}" = "no" ]; then
+# 2. Assign layout (skip if already assigned)
+CURRENT_CAPACITY=$(/garage layout show 2>/dev/null | grep "${NODE_ID}" | grep -c "1000.0 MB" || true)
+if [ "${CURRENT_CAPACITY}" -eq 0 ]; then
     echo "Assigning layout..."
-    curl -sf "${header[@]}" -X POST "${GARAGE_ADMIN}/v1/layout" \
-        -H "Content-Type: application/json" \
-        -d "[{\"id\": \"${NODE_ID}\", \"zone\": \"default\", \"capacity\": 1073741824}]"
-
-    # Get current layout version and apply.
-    VERSION=$(curl -sf "${header[@]}" "${GARAGE_ADMIN}/v1/layout" | python3 -c "
-import json, sys
-print(json.load(sys.stdin).get('version', 0) + 1)
-")
-    curl -sf "${header[@]}" -X POST "${GARAGE_ADMIN}/v1/layout/apply" \
-        -H "Content-Type: application/json" \
-        -d "{\"version\": ${VERSION}}"
-    echo "Layout applied (version ${VERSION})."
+    /garage layout assign -z default -c 1G "${NODE_ID}"
+    /garage layout apply --version 1
+    echo "Layout applied."
 else
     echo "Layout already assigned, skipping."
 fi
 
-# Create bucket if it doesn't exist.
-EXISTING=$(curl -sf "${header[@]}" "${GARAGE_ADMIN}/v1/bucket?globalAlias=${BUCKET}" 2>/dev/null || true)
-if [ -z "${EXISTING}" ] || echo "${EXISTING}" | grep -q '"code"'; then
+# 3. Create bucket (skip if exists)
+BUCKET_EXISTS=$(/garage bucket list 2>/dev/null | grep -c "${BUCKET}" || true)
+if [ "${BUCKET_EXISTS}" -eq 0 ]; then
     echo "Creating bucket '${BUCKET}'..."
-    curl -sf "${header[@]}" -X POST "${GARAGE_ADMIN}/v1/bucket" \
-        -H "Content-Type: application/json" \
-        -d "{\"globalAlias\": \"${BUCKET}\"}"
+    /garage bucket create "${BUCKET}"
     echo "Bucket created."
 else
     echo "Bucket '${BUCKET}' already exists."
 fi
 
-# Create access key if not already set in env.
+# 4. Enable website access (anonymous reads via web endpoint)
+echo "Enabling website access on '${BUCKET}'..."
+/garage bucket website --allow "${BUCKET}" 2>/dev/null || true
+
+# 5. Create access key (skip if env var already set)
 if [ -z "${GARAGE_ACCESS_KEY:-}" ]; then
     echo "Creating access key..."
-    KEY_RESPONSE=$(curl -sf "${header[@]}" -X POST "${GARAGE_ADMIN}/v1/key" \
-        -H "Content-Type: application/json" \
-        -d "{\"name\": \"klai-connector\"}")
-    ACCESS_KEY=$(echo "${KEY_RESPONSE}" | python3 -c "import json,sys; print(json.load(sys.stdin)['accessKeyId'])")
-    SECRET_KEY=$(echo "${KEY_RESPONSE}" | python3 -c "import json,sys; print(json.load(sys.stdin)['secretAccessKey'])")
+    /garage key create klai-connector
+    echo ""
+    echo "IMPORTANT: Copy the Key ID and Secret key above into your .env.sops!"
+    echo "Set GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY."
 
-    # Grant read+write on the bucket.
-    KEY_ID=$(echo "${KEY_RESPONSE}" | python3 -c "import json,sys; print(json.load(sys.stdin)['accessKeyId'])")
-    BUCKET_ID=$(curl -sf "${header[@]}" "${GARAGE_ADMIN}/v1/bucket?globalAlias=${BUCKET}" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
-    curl -sf "${header[@]}" -X POST "${GARAGE_ADMIN}/v1/bucket/allow" \
-        -H "Content-Type: application/json" \
-        -d "{\"bucketId\": \"${BUCKET_ID}\", \"accessKeyId\": \"${KEY_ID}\", \"permissions\": {\"read\": true, \"write\": true, \"owner\": true}}"
-
-    echo "============================================"
-    echo "GARAGE_ACCESS_KEY=${ACCESS_KEY}"
-    echo "GARAGE_SECRET_KEY=${SECRET_KEY}"
-    echo "============================================"
-    echo "Add these to your .env file!"
+    # Grant key access to bucket
+    /garage bucket allow --read --write --owner "${BUCKET}" --key klai-connector
+    echo "Key granted RWO on '${BUCKET}'."
 else
     echo "GARAGE_ACCESS_KEY already set, skipping key creation."
 fi
 
-echo "Garage bootstrap complete."
+echo "=== Garage Bootstrap Complete ==="

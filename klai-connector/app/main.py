@@ -91,7 +91,6 @@ def create_app() -> FastAPI:
                 secret_key=settings.garage_secret_key,
                 bucket=settings.garage_bucket,
                 region=settings.garage_region,
-                presigned_ttl_seconds=settings.garage_presigned_ttl,
             )
             logger.info("Image storage enabled (endpoint=%s)", settings.garage_s3_endpoint)
 

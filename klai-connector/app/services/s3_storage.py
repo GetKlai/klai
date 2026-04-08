@@ -3,13 +3,15 @@
 Uses ``asyncio.to_thread()`` to wrap the synchronous minio client,
 keeping the connector's async event loop non-blocking.  Designed for
 Garage (S3-compatible) but works with any S3-compatible store.
+
+Images are served publicly via Garage's website mode + Caddy reverse proxy.
+No presigned URLs needed — Caddy handles TLS, Garage serves anonymously.
 """
 
 import asyncio
 import hashlib
 import io
 from dataclasses import dataclass
-from datetime import timedelta
 
 import filetype
 from minio import Minio
@@ -33,18 +35,25 @@ _SVG_SIGNATURES = (b"<?xml", b"<svg")
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 MAX_IMAGES_PER_DOCUMENT = 20
 
+# Public URL prefix served by Caddy → Garage website endpoint.
+# The full URL becomes: https://{tenant}.getklai.com/kb-images/{object_key}
+PUBLIC_IMAGE_PATH_PREFIX = "/kb-images"
+
 
 @dataclass(frozen=True)
 class ImageUploadResult:
     """Result of an image upload operation."""
 
     object_key: str
-    presigned_url: str
+    public_url: str
     deduplicated: bool
 
 
 class ImageStore:
     """Tenant-scoped, content-addressed image storage over S3.
+
+    Images are uploaded via S3 API (authenticated) and served publicly via
+    Garage's website mode through a Caddy reverse proxy at ``/kb-images/``.
 
     Args:
         endpoint: S3 endpoint (e.g. ``garage:3900``).
@@ -52,7 +61,6 @@ class ImageStore:
         secret_key: S3 secret key.
         bucket: Target bucket name.
         region: S3 region (must be ``"garage"`` for Garage).
-        presigned_ttl_seconds: TTL for presigned GET URLs (default 7 days).
     """
 
     def __init__(
@@ -62,10 +70,9 @@ class ImageStore:
         secret_key: str,
         bucket: str,
         region: str = "garage",
-        presigned_ttl_seconds: int = 604800,
+        **_kwargs: object,
     ) -> None:
         self._bucket = bucket
-        self._presigned_ttl = timedelta(seconds=presigned_ttl_seconds)
         self._client = Minio(
             endpoint,
             access_key=access_key,
@@ -87,6 +94,15 @@ class ImageStore:
         content_hash = hashlib.sha256(data).hexdigest()
         ext = ext.lower().lstrip(".")
         return f"{org_id}/images/{kb_slug}/{content_hash}.{ext}"
+
+    @staticmethod
+    def build_public_url(object_key: str) -> str:
+        """Build the public URL path for an image served via Caddy.
+
+        Returns a relative path like ``/kb-images/{object_key}`` that is
+        resolved by the frontend against the current tenant domain.
+        """
+        return f"{PUBLIC_IMAGE_PATH_PREFIX}/{object_key}"
 
     @staticmethod
     def validate_image(data: bytes) -> str | None:
@@ -119,16 +135,17 @@ class ImageStore:
         """Upload an image to S3 with content-addressed deduplication.
 
         If an object with the same SHA-256 key already exists, the upload
-        is skipped and a fresh presigned URL is returned.
+        is skipped and the public URL is returned directly.
         """
         object_key = self.build_object_key(org_id, kb_slug, data, ext)
 
         # Check for existing object (deduplication).
         if await self._object_exists(object_key):
-            url = await self._presigned_get(object_key)
-            logger.info("Image deduplicated", object_key=object_key)
+            logger.info("Image deduplicated: %s", object_key)
             return ImageUploadResult(
-                object_key=object_key, presigned_url=url, deduplicated=True,
+                object_key=object_key,
+                public_url=self.build_public_url(object_key),
+                deduplicated=True,
             )
 
         # Upload new object.
@@ -140,10 +157,11 @@ class ImageStore:
             len(data),
             content_type=self.validate_image(data) or "application/octet-stream",
         )
-        url = await self._presigned_get(object_key)
-        logger.info("Image uploaded", object_key=object_key, size=len(data))
+        logger.info("Image uploaded: %s (%d bytes)", object_key, len(data))
         return ImageUploadResult(
-            object_key=object_key, presigned_url=url, deduplicated=False,
+            object_key=object_key,
+            public_url=self.build_public_url(object_key),
+            deduplicated=False,
         )
 
     async def _object_exists(self, object_key: str) -> bool:
@@ -153,12 +171,3 @@ class ImageStore:
             return True
         except S3Error:
             return False
-
-    async def _presigned_get(self, object_key: str) -> str:
-        """Generate a presigned GET URL for an object."""
-        return await asyncio.to_thread(
-            self._client.presigned_get_object,
-            self._bucket,
-            object_key,
-            expires=self._presigned_ttl,
-        )

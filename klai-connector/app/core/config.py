@@ -46,7 +46,6 @@ class Settings(BaseSettings):
     garage_secret_key: str = ""
     garage_bucket: str = "klai-images"
     garage_region: str = "garage"
-    garage_presigned_ttl: int = 604800  # 7 days
 
     # Optional
     log_level: str = "INFO"

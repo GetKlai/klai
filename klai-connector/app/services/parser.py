@@ -60,7 +60,7 @@ def parse_document(content: bytes, filename: str) -> str:
         logger.info("Parsed text document %s: %d characters", filename, len(text))
         return text
 
-    elements = partition(str(_write_temp(content, filename)))
+    elements = _partition_with_cleanup(content, filename)
     text = "\n\n".join(str(e) for e in elements if str(e).strip())
 
     logger.info("Parsed document %s: %d characters extracted", filename, len(text))
@@ -91,7 +91,7 @@ def parse_document_with_images(content: bytes, filename: str) -> ParseResult:
         logger.info("Parsed text document %s: %d characters", filename, len(text))
         return ParseResult(text=text)
 
-    elements = partition(str(_write_temp(content, filename)))
+    elements = _partition_with_cleanup(content, filename)
 
     text_parts: list[str] = []
     images: list[dict[str, str]] = []
@@ -115,14 +115,11 @@ def parse_document_with_images(content: bytes, filename: str) -> ParseResult:
     return ParseResult(text=text, images=images)
 
 
-def _write_temp(content: bytes, filename: str) -> Path:
-    """Write content to a temporary file and return the path.
+def _partition_with_cleanup(content: bytes, filename: str) -> list:  # type: ignore[type-arg]
+    """Write content to a temp file, run Unstructured partition, and clean up."""
+    import tempfile
 
-    The caller is responsible for cleanup (or relies on OS temp cleanup).
-    """
-    import tempfile as _tf
-
-    tmpdir = _tf.mkdtemp()
-    filepath = Path(tmpdir) / filename
-    filepath.write_bytes(content)
-    return filepath
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = Path(tmpdir) / filename
+        filepath.write_bytes(content)
+        return partition(str(filepath))

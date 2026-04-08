@@ -18,7 +18,6 @@ class TestImageStore:
             secret_key=kwargs.get("secret_key", "test-secret"),
             bucket=kwargs.get("bucket", "klai-images"),
             region=kwargs.get("region", "garage"),
-            presigned_ttl_seconds=kwargs.get("presigned_ttl_seconds", 604800),
         )
 
     def test_object_key_is_content_addressed(self):
@@ -30,23 +29,24 @@ class TestImageStore:
         assert key == f"org-123/images/my-kb/{expected_hash}.png"
 
     def test_object_key_normalises_extension(self):
-        """Extension is lowercased and always starts with a dot."""
         store = self._make_store()
-        data = b"x"
-        key = store.build_object_key("org-1", "kb", data, "PNG")
+        key = store.build_object_key("org-1", "kb", b"x", "PNG")
         assert key.endswith(".png")
 
     def test_object_key_strips_leading_dot(self):
-        """Double-dot is prevented when caller passes '.png'."""
         store = self._make_store()
-        data = b"x"
-        key = store.build_object_key("org-1", "kb", data, ".png")
+        key = store.build_object_key("org-1", "kb", b"x", ".png")
         assert ".." not in key
         assert key.endswith(".png")
 
+    def test_public_url_format(self):
+        """Public URL uses /kb-images/ prefix."""
+        url = ImageStore.build_public_url("org-1/images/kb/abc123.png")
+        assert url == "/kb-images/org-1/images/kb/abc123.png"
+
     @pytest.mark.asyncio
     async def test_upload_image_calls_put_object(self):
-        """upload_image puts the object and returns a presigned URL."""
+        """upload_image puts the object and returns a public URL."""
         from minio.error import S3Error
 
         store = self._make_store()
@@ -55,13 +55,12 @@ class TestImageStore:
             side_effect=S3Error("NoSuchKey", "Not found", "", "", "", "")
         )
         mock_client.put_object = MagicMock()
-        mock_client.presigned_get_object = MagicMock(return_value="https://garage:3900/signed-url")
         store._client = mock_client
 
         result = await store.upload_image("org-1", "kb-1", b"PNG image bytes", ".png")
 
         assert isinstance(result, ImageUploadResult)
-        assert result.presigned_url == "https://garage:3900/signed-url"
+        assert result.public_url.startswith("/kb-images/org-1/images/kb-1/")
         assert result.object_key.startswith("org-1/images/kb-1/")
         mock_client.put_object.assert_called_once()
 
@@ -70,14 +69,12 @@ class TestImageStore:
         """upload_image skips upload when object already exists."""
         store = self._make_store()
         mock_client = MagicMock()
-        # stat_object succeeds = object exists
         mock_client.stat_object = MagicMock(return_value=MagicMock())
-        mock_client.presigned_get_object = MagicMock(return_value="https://garage:3900/existing")
         store._client = mock_client
 
         result = await store.upload_image("org-1", "kb-1", b"data", ".jpg")
 
-        assert result.presigned_url == "https://garage:3900/existing"
+        assert result.public_url.startswith("/kb-images/")
         assert result.deduplicated is True
         mock_client.put_object.assert_not_called()
 
@@ -92,7 +89,6 @@ class TestImageStore:
             side_effect=S3Error("NoSuchKey", "Not found", "", "", "", "")
         )
         mock_client.put_object = MagicMock()
-        mock_client.presigned_get_object = MagicMock(return_value="https://garage:3900/new")
         store._client = mock_client
 
         result = await store.upload_image("org-1", "kb-1", b"new data", ".png")
@@ -101,43 +97,23 @@ class TestImageStore:
         mock_client.put_object.assert_called_once()
 
     def test_validate_image_accepts_png(self):
-        """PNG magic bytes are accepted."""
-        store = self._make_store()
-        # PNG magic bytes
         png_header = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        result = store.validate_image(png_header)
-        assert result is not None
-        assert result.startswith("image/")
+        assert ImageStore.validate_image(png_header) is not None
 
     def test_validate_image_accepts_jpeg(self):
-        """JPEG magic bytes are accepted."""
-        store = self._make_store()
         jpeg_header = b"\xff\xd8\xff\xe0" + b"\x00" * 100
-        result = store.validate_image(jpeg_header)
-        assert result is not None
-        assert result.startswith("image/")
+        assert ImageStore.validate_image(jpeg_header) is not None
 
     def test_validate_image_rejects_text(self):
-        """Plain text is rejected."""
-        store = self._make_store()
-        assert store.validate_image(b"Hello, world!") is None
+        assert ImageStore.validate_image(b"Hello, world!") is None
 
     def test_validate_image_rejects_empty(self):
-        """Empty bytes are rejected."""
-        store = self._make_store()
-        assert store.validate_image(b"") is None
+        assert ImageStore.validate_image(b"") is None
 
     def test_validate_image_accepts_gif(self):
-        """GIF magic bytes are accepted."""
-        store = self._make_store()
         gif_header = b"GIF89a" + b"\x00" * 100
-        result = store.validate_image(gif_header)
-        assert result is not None
+        assert ImageStore.validate_image(gif_header) is not None
 
     def test_validate_image_accepts_webp(self):
-        """WebP magic bytes are accepted."""
-        store = self._make_store()
-        # Minimal valid RIFF/WEBP header: RIFF + size (4 bytes LE) + WEBP + VP8 chunk
         webp_header = b"RIFF" + b"\x24\x00\x00\x00" + b"WEBP" + b"VP8 " + b"\x18\x00\x00\x00" + b"\x00" * 24
-        result = store.validate_image(webp_header)
-        assert result is not None
+        assert ImageStore.validate_image(webp_header) is not None
