@@ -61,13 +61,13 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_expand() : m.sidebar_collapse()}
           className={cn(
             'flex items-center justify-center rounded-lg p-2 transition-colors',
-            'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
             collapsed && 'w-full'
           )}
         >
           {collapsed
-            ? <PanelLeftOpen size={15} strokeWidth={1.5} />
-            : <PanelLeftClose size={15} strokeWidth={1.5} />
+            ? <PanelLeftOpen size={18} strokeWidth={1.5} />
+            : <PanelLeftClose size={18} strokeWidth={1.5} />
           }
         </button>
       </div>
@@ -83,12 +83,12 @@ export function Sidebar({ navItems }: SidebarProps) {
                   rel="noopener noreferrer"
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
-                    'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                    'flex items-center rounded-md px-3 py-2 text-[15px] transition-colors',
+                    'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
                 >
-                  <item.icon size={15} strokeWidth={1.5} />
+                  <item.icon size={18} strokeWidth={1.5} />
                   {!collapsed && item.label}
                 </a>
               ) : (
@@ -97,15 +97,15 @@ export function Sidebar({ navItems }: SidebarProps) {
                   activeOptions={item.end ? { exact: true } : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
-                    'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                    'flex items-center rounded-md px-3 py-2 text-[15px] transition-colors',
+                    'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
                   activeProps={{
                     className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
                   }}
                 >
-                  <item.icon size={15} strokeWidth={1.5} />
+                  <item.icon size={18} strokeWidth={1.5} />
                   {!collapsed && item.label}
                 </Link>
               )}
@@ -117,15 +117,15 @@ export function Sidebar({ navItems }: SidebarProps) {
                         to={child.to ?? '/'}
                         activeOptions={child.end ? { exact: true } : undefined}
                         className={cn(
-                          'flex items-center rounded-md px-3 py-1 text-sm transition-colors',
-                          'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                          'flex items-center rounded-md px-3 py-1.5 text-[15px] transition-colors',
+                          'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                           'gap-2'
                         )}
                         activeProps={{
                           className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
                         }}
                       >
-                        <child.icon size={13} strokeWidth={1.5} />
+                        <child.icon size={15} strokeWidth={1.5} />
                         {child.label}
                       </Link>
                     </li>
@@ -144,14 +144,14 @@ export function Sidebar({ navItems }: SidebarProps) {
             to={inAdmin ? '/app' : '/admin'}
             title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
-              'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
-              'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+              'flex items-center rounded-md px-3 py-2 text-[15px] transition-colors',
+              'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
               collapsed ? 'justify-center' : 'gap-3'
             )}
           >
             {inAdmin
-              ? <LayoutGrid size={15} strokeWidth={1.5} />
-              : <Shield size={15} strokeWidth={1.5} />
+              ? <LayoutGrid size={18} strokeWidth={1.5} />
+              : <Shield size={18} strokeWidth={1.5} />
             }
             {!collapsed && (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin())}
           </Link>
@@ -167,7 +167,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           <button
             onClick={() => switchLocale(locale === 'nl' ? 'en' : 'nl')}
             title={locale === 'nl' ? 'Switch to English' : 'Wisselen naar Nederlands'}
-            className="text-xs font-medium text-[var(--color-sidebar-muted-foreground)] hover:text-[var(--color-sidebar-foreground)] transition-colors"
+            className="text-xs font-medium text-[var(--color-sidebar-foreground)]/70 hover:text-[var(--color-sidebar-foreground)] transition-colors"
           >
             {locale.toUpperCase()}
           </button>
@@ -216,15 +216,15 @@ export function Sidebar({ navItems }: SidebarProps) {
           to="/app/account"
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
-            'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
-            'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'flex items-center rounded-md px-3 py-2 text-[15px] transition-colors',
+            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3'
           )}
           activeProps={{
             className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
           }}
         >
-          <UserCircle size={15} strokeWidth={1.5} />
+          <UserCircle size={18} strokeWidth={1.5} />
           {!collapsed && m.sidebar_account()}
         </Link>
         <button
@@ -236,12 +236,12 @@ export function Sidebar({ navItems }: SidebarProps) {
           }}
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
-            'flex w-full items-center rounded-md px-3 py-1.5 text-sm transition-colors',
-            'text-[var(--color-sidebar-muted-foreground)] hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'flex w-full items-center rounded-md px-3 py-2 text-[15px] transition-colors',
+            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3'
           )}
         >
-          <LogOut size={15} strokeWidth={1.5} />
+          <LogOut size={18} strokeWidth={1.5} />
           {!collapsed && m.sidebar_logout()}
         </button>
       </div>
