@@ -394,9 +394,13 @@ class KlaiKnowledgeHook(CustomLogger):
                 "Je mag dit aanvullen met je algemene kennis.]\n"
             )
         source_link_instruction = (
-            "[Wanneer een bron een URL heeft, voeg die toe als markdown-link bij de titel. "
-            "Voorbeeld: zie [Paginatitel](https://...). "
-            "Doe dit ALTIJD wanneer een source_url beschikbaar is.]\n"
+            "[ANTWOORDFORMAAT — volg dit ALTIJD:\n"
+            "1. Begin met een korte TLDR (2-3 zinnen) van het antwoord.\n"
+            "2. Direct daarna een lijst met links naar de relevante bronnen:\n"
+            "   📎 [Paginatitel](source_url) | [Paginatitel](source_url)\n"
+            "3. Daarna het uitgebreide antwoord met [n] citaties.\n\n"
+            "Wanneer een bron een source_url heeft, gebruik die ALTIJD als markdown-link. "
+            "Laat GEEN enkele source_url weg uit de bronnenlijst.]\n"
         )
         lines = [header, source_link_instruction]
         for chunk in chunks:
