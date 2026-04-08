@@ -408,9 +408,9 @@ class KlaiKnowledgeHook(CustomLogger):
             "- Gebruik de titel NOOIT als URL-target. Fout: [tekst](Support wiki). Goed: [tekst](https://notion.so/...).\n"
             "- Als meerdere chunks dezelfde source_url hebben, toon die URL slechts één keer.\n\n"
             "AFBEELDINGEN:\n"
-            "- Als een chunk een 'images:' regel bevat, toon relevante afbeeldingen in het UITGEBREIDE antwoord (sectie 3) met markdown: ![beschrijving](url)\n"
-            "- Voeg GEEN afbeeldingen toe in de TLDR (sectie 1).\n"
-            "- Gebruik alleen afbeelding-URLs die letterlijk in de chunks staan.]\n"
+            "- Chunks kunnen ![afbeelding](url) markdown bevatten. Neem deze ALTIJD letterlijk over in het uitgebreide antwoord (sectie 3).\n"
+            "- Verander NIETS aan de image URL. Kopieer de hele ![...](https://...) tag exact.\n"
+            "- Voeg GEEN afbeeldingen toe in de TLDR (sectie 1).]\n"
         )
         lines = [header, source_link_instruction]
         for chunk in chunks:
@@ -436,7 +436,8 @@ class KlaiKnowledgeHook(CustomLogger):
                     f"{KB_IMAGES_BASE_URL}{u}" if u.startswith("/") else u
                     for u in image_urls
                 ]
-                lines.append(f"images: {', '.join(absolute_urls)}")
+                for i, img_url in enumerate(absolute_urls, 1):
+                    lines.append(f"![afbeelding {i}]({img_url})")
             lines.append("")
         lines.append("[Einde kennisbank-context]")
         context_block = "\n".join(lines)
