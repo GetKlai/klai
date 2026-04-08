@@ -25,14 +25,14 @@ export function LocaleSwitcher() {
     <div className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
       <button
         onClick={() => handleSwitch('nl')}
-        className={locale === 'nl' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+        className={locale === 'nl' ? 'font-semibold text-[var(--color-foreground)]' : 'opacity-40 hover:opacity-70'}
       >
         NL
       </button>
       <span className="opacity-30">/</span>
       <button
         onClick={() => handleSwitch('en')}
-        className={locale === 'en' ? 'font-semibold text-[var(--color-purple-deep)]' : 'opacity-40 hover:opacity-70'}
+        className={locale === 'en' ? 'font-semibold text-[var(--color-foreground)]' : 'opacity-40 hover:opacity-70'}
       >
         EN
       </button>

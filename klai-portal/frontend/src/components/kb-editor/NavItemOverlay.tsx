@@ -20,7 +20,7 @@ export function NavItemOverlay({ node, projectedDepth, activeTitle, activePath }
 
   return (
     <div
-      className="flex items-center gap-1.5 rounded text-xs font-medium bg-[var(--color-card)] border border-[var(--color-border)] shadow-md py-1 pr-2 text-[var(--color-purple-deep)]"
+      className="flex items-center gap-1.5 rounded text-xs font-medium bg-[var(--color-card)] border border-[var(--color-border)] shadow-md py-1 pr-2 text-[var(--color-foreground)]"
       style={{ paddingLeft: `${paddingLeft}px` }}
     >
       {isDir

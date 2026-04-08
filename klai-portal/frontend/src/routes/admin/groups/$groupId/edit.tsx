@@ -173,7 +173,7 @@ function EditGroupPage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.admin_groups_edit()}
         </h1>
         <Button
@@ -212,7 +212,7 @@ function EditGroupPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={m.admin_groups_description_placeholder()}
                 rows={3}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-purple-deep)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
 
@@ -229,7 +229,7 @@ function EditGroupPage() {
                   {currentMembers.map((user) => (
                     <div key={user.zitadel_user_id} className="flex items-center justify-between py-1">
                       <div>
-                        <span className="text-sm text-[var(--color-purple-deep)]">
+                        <span className="text-sm text-[var(--color-foreground)]">
                           {displayName(user)}
                         </span>
                         <span className="text-xs text-[var(--color-muted-foreground)] ml-2">

@@ -1,36 +1,42 @@
-/* Self-hosted fonts via Fontsource — no external requests */
-@import "@fontsource/libre-baskerville/400.css";
-@import "@fontsource/libre-baskerville/700.css";
-@import "@fontsource/libre-baskerville/400-italic.css";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/manrope";
+/* Self-hosted Klai brand fonts */
+@font-face { font-family: "Parabole Regular"; src: url("/fonts/parabole-regular.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Parabole Medium";  src: url("/fonts/parabole-medium.woff2") format("woff2"); font-display: swap; font-weight: 500; }
+@font-face { font-family: "Parabole Bold";    src: url("/fonts/parabole-bold.woff2") format("woff2"); font-display: swap; font-weight: 700; }
+@font-face { font-family: "Parabole Display"; src: url("/fonts/parabole-display.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Decima Mono";      src: url("/fonts/decima-mono.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+
 @import "tailwindcss";
 
 @theme inline {
-  /* Klai brand colors */
-  --color-purple-primary: #2D1B69;
-  --color-purple-deep:    #1A0F40;
-  --color-purple-accent:  #7C6AFF;
-  --color-purple-muted:   #4A3A8A;
-  --color-sand-light:     #F5F0E8;
-  --color-sand-mid:       #EAE3D5;
-  --color-off-white:      #FAFAF8;
+  /* Klai brand colors — warm ivory palette */
+  --color-rl-bg:           #fffef2;
+  --color-rl-dark:         #191918;
+  --color-rl-dark-60:      #19191899;
+  --color-rl-dark-30:      #1919184d;
+  --color-rl-dark-10:      #1919181a;
+  --color-rl-accent:       #fcaa2d;
+  --color-rl-accent-dark:  #a36404;
+  --color-rl-accent-hover: #e89a1f;
+  --color-rl-cream:        #f3f2e7;
+  --color-rl-border:       #e3e2d8;
+  --color-rl-border-light: #d1d0c666;
+  --color-rl-muted:        #bab9b0;
 
   /* shadcn/ui semantic tokens mapped to Klai brand */
-  --color-background:           #FAFAF8;
-  --color-foreground:           #1A1A1A;
-  --color-card:                 #FFFFFF;
-  --color-card-foreground:      #1A1A1A;
-  --color-popover:              #FFFFFF;
-  --color-popover-foreground:   #1A1A1A;
-  --color-primary:              #2D1B69;
-  --color-primary-foreground:   #FAFAF8;
-  --color-secondary:            #F5F0E8;
-  --color-secondary-foreground: #2D1B69;
-  --color-muted:                #EAE3D5;
-  --color-muted-foreground:     #6B6B6B;
-  --color-accent:               #7C6AFF;
-  --color-accent-foreground:    #FAFAF8;
+  --color-background:           #fffef2;
+  --color-foreground:           #191918;
+  --color-card:                 #f3f2e7;
+  --color-card-foreground:      #191918;
+  --color-popover:              #fffef2;
+  --color-popover-foreground:   #191918;
+  --color-primary:              #fcaa2d;
+  --color-primary-foreground:   #191918;
+  --color-secondary:            #f3f2e7;
+  --color-secondary-foreground: #191918;
+  --color-muted:                #f3f2e7;
+  --color-muted-foreground:     #19191899;
+  --color-accent:               #fcaa2d;
+  --color-accent-foreground:    #191918;
   --color-destructive:          #C0392B;
   --color-destructive-bg:       #FEF2F2;
   --color-destructive-text:     #B91C1C;
@@ -41,22 +47,23 @@
   --color-warning-bg:           #FFFBEB;
   --color-warning-subtle:       #FEF3C7;
   --color-warning-text:         #92400E;
-  --color-border:               rgba(45, 27, 105, 0.1);
-  --color-input:                rgba(45, 27, 105, 0.08);
-  --color-ring:                 #7C6AFF;
+  --color-border:               #e3e2d8;
+  --color-input:                #f3f2e7;
+  --color-ring:                 #fcaa2d;
 
-  /* Sidebar (dark purple) */
-  --color-sidebar:                  #1A0F40;
-  --color-sidebar-foreground:       #F5F0E8;
-  --color-sidebar-border:           rgba(124, 106, 255, 0.15);
-  --color-sidebar-accent:           rgba(124, 106, 255, 0.15);
-  --color-sidebar-accent-foreground: #FAFAF8;
-  --color-sidebar-muted-foreground: rgba(245, 240, 232, 0.55);
+  /* Sidebar (light organic) */
+  --color-sidebar:                    #f3f2e7;
+  --color-sidebar-foreground:         #191918;
+  --color-sidebar-border:             #e3e2d8;
+  --color-sidebar-accent:             #fcaa2d1a;
+  --color-sidebar-accent-foreground:  #191918;
+  --color-sidebar-muted-foreground:   #19191899;
 
   /* Typography */
-  --font-serif:   "Libre Baskerville", Georgia, serif;
-  --font-sans:    "Inter", system-ui, sans-serif;
-  --font-display: "Manrope", system-ui, sans-serif;
+  --font-sans:    "Parabole Regular", system-ui, sans-serif;
+  --font-display: "Parabole Medium", system-ui, sans-serif;
+  --font-display-bold: "Parabole Bold", system-ui, sans-serif;
+  --font-mono:    "Decima Mono", monospace;
 
   /* Radius */
   --radius-sm: 0.375rem;
@@ -112,7 +119,7 @@ body {
 .bn-editor {
   font-size: 0.9375rem; /* 15px — compact but readable for an editing context */
   line-height: 1.65;
-  color: var(--color-purple-deep);
+  color: var(--color-foreground);
   font-family: var(--font-sans);
 }
 
@@ -148,35 +155,35 @@ body {
 
 /* Links: distinct from underline formatting via color */
 .bn-editor a {
-  color: var(--color-purple-accent);
+  color: var(--color-rl-accent-dark);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 /* ─── Driver.js popover overrides ─────────────────────────────────────── */
 .driver-popover {
-  background: var(--color-card) !important;
+  background: var(--color-background) !important;
   border-radius: 0.75rem !important;
-  box-shadow: 0 4px 24px rgba(45, 27, 105, 0.12) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08) !important;
   border: 1px solid var(--color-border) !important;
-  z-index: 10002 !important; /* Above driver.js overlay (~10000) and annotated elements (10001) */
+  z-index: 10002 !important;
 }
 .driver-popover-title {
-  color: var(--color-purple-deep) !important;
+  color: var(--color-foreground) !important;
   font-weight: 600 !important;
 }
 .driver-popover-description {
   color: var(--color-muted-foreground) !important;
 }
 .driver-popover-progress-text {
-  color: var(--color-accent) !important;
+  color: var(--color-rl-accent-dark) !important;
 }
 .driver-popover-next-btn,
 .driver-popover-prev-btn {
-  background: var(--color-purple-accent) !important;
-  color: white !important;
+  background: var(--color-rl-accent) !important;
+  color: var(--color-foreground) !important;
   border: none !important;
-  border-radius: 0.375rem !important;
+  border-radius: 999px !important;
 }
 .driver-popover-close-btn {
   color: var(--color-muted-foreground) !important;

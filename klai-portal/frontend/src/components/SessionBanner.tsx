@@ -38,7 +38,7 @@ export function SessionBanner(): React.ReactNode {
   if (!isExpiring) return null
 
   return (
-    <div className="flex items-center gap-2 bg-[var(--color-sand-mid)] px-4 py-2 text-sm text-[var(--color-purple-deep)]">
+    <div className="flex items-center gap-2 bg-[var(--color-rl-cream)] px-4 py-2 text-sm text-[var(--color-foreground)]">
       <RefreshCw className="h-4 w-4 animate-spin" />
       {m.session_token_expiring()}
     </div>

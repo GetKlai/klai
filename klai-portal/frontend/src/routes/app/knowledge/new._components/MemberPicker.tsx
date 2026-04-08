@@ -74,7 +74,7 @@ export function MemberPicker({
     <div className="flex flex-col gap-4">
       {/* Groups */}
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+        <span className="text-sm font-medium text-[var(--color-foreground)]">
           {m.knowledge_sharing_groups()}
         </span>
         <div
@@ -108,7 +108,7 @@ export function MemberPicker({
                     ])
                     setGroupSearch('')
                   }}
-                  className="w-full px-3 py-2 text-left text-sm text-[var(--color-purple-deep)] hover:bg-[var(--color-secondary)] transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
                 >
                   {g.name}
                 </button>
@@ -121,7 +121,7 @@ export function MemberPicker({
             key={g.id}
             className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
           >
-            <span className="text-sm text-[var(--color-purple-deep)]">{g.name}</span>
+            <span className="text-sm text-[var(--color-foreground)]">{g.name}</span>
             <div className="flex items-center gap-2">
               <RoleSelect
                 value={g.role}
@@ -147,7 +147,7 @@ export function MemberPicker({
 
       {/* Persons */}
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+        <span className="text-sm font-medium text-[var(--color-foreground)]">
           {m.knowledge_sharing_persons()}
         </span>
         <div
@@ -188,7 +188,7 @@ export function MemberPicker({
                   }}
                   className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
                 >
-                  <span className="text-[var(--color-purple-deep)]">{u.display_name}</span>
+                  <span className="text-[var(--color-foreground)]">{u.display_name}</span>
                   <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">
                     {u.email}
                   </span>
@@ -203,7 +203,7 @@ export function MemberPicker({
             className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
           >
             <div>
-              <span className="text-sm text-[var(--color-purple-deep)]">{u.name}</span>
+              <span className="text-sm text-[var(--color-foreground)]">{u.name}</span>
               <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
             </div>
             <div className="flex items-center gap-2">

@@ -146,7 +146,7 @@ export function KBScopeBar() {
           isPending ? 'opacity-50' : '',
           isOn
             ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
-            : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]',
+            : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
         ].join(' ')}
       >
         <BookOpen className="h-3.5 w-3.5" />
@@ -191,7 +191,7 @@ export function KBScopeBar() {
                 'flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted-foreground)] transition-colors',
                 isPending
                   ? 'opacity-50'
-                  : 'hover:border-[var(--color-accent)] hover:text-[var(--color-purple-deep)]',
+                  : 'hover:border-[var(--color-accent)] hover:text-[var(--color-foreground)]',
               ].join(' ')}
             >
               {filterLabel}
@@ -212,7 +212,7 @@ export function KBScopeBar() {
                       disabled={isPending}
                       className="h-3.5 w-3.5 accent-[var(--color-accent)]"
                     />
-                    <span className="truncate text-[var(--color-purple-deep)]">{kb.name}</span>
+                    <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
                   </label>
                 ))}
               </div>
@@ -232,7 +232,7 @@ export function KBScopeBar() {
               <span
                 className={
                   pref.kb_narrow
-                    ? 'text-[var(--color-purple-deep)]'
+                    ? 'text-[var(--color-foreground)]'
                     : 'text-[var(--color-muted-foreground)]'
                 }
               >

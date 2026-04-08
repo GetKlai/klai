@@ -72,10 +72,10 @@ function PasswordSetPage() {
 
   const leftContent = (
     <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
+      <h1 className="text-4xl font-bold leading-tight">
         {m.set_hero_heading()}
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
         {m.set_hero_body()}
       </p>
     </>
@@ -86,7 +86,7 @@ function PasswordSetPage() {
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="space-y-3 text-center">
           <p className="text-sm text-[var(--color-destructive-text)]">{m.set_invalid_link()}</p>
-          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline">
+          <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline">
             {m.set_invalid_link_back()}
           </a>
         </div>
@@ -98,10 +98,10 @@ function PasswordSetPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
         <div className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">
-            <KeyRound size={22} className="text-[var(--color-sand-light)]" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
+            <KeyRound size={22} className="text-[var(--color-rl-cream)]" />
           </div>
-          <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
+          <p className="text-xl font-bold text-[var(--color-foreground)]">
             {m.set_done_heading()}
           </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -111,7 +111,7 @@ function PasswordSetPage() {
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.set_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -132,7 +132,7 @@ function PasswordSetPage() {
                 required
                 autoComplete="new-password"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -147,7 +147,7 @@ function PasswordSetPage() {
                 onChange={(e) => setConfirm(e.target.value)}
                 required
                 autoComplete="new-password"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -161,7 +161,7 @@ function PasswordSetPage() {
           </form>
 
           <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-            <a href="/" className="text-[var(--color-purple-muted)] hover:underline">
+            <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
               {m.set_back()}
             </a>
           </p>

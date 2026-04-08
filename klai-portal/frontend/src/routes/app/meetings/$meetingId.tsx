@@ -244,7 +244,7 @@ function MeetingDetailPage() {
       {ACTIVE_STATUSES.includes(meeting.status) ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
+            <CardTitle className="text-xl font-bold text-[var(--color-foreground)]">
               {meeting.meeting_title ?? meeting.meeting_url}
             </CardTitle>
             <StatusBadge status={meeting.status} />
@@ -274,7 +274,7 @@ function MeetingDetailPage() {
         </Card>
       ) : (
         <div className="flex items-center justify-between">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {meeting.meeting_title ?? meeting.meeting_url}
           </h1>
           <StatusBadge status={meeting.status} />
@@ -335,7 +335,7 @@ function MeetingDetailPage() {
                       [{formatTimestamp(seg.start)}]
                     </span>
                     <div>
-                      <span className="font-medium text-[var(--color-purple-deep)]">
+                      <span className="font-medium text-[var(--color-foreground)]">
                         {seg.speaker}:{' '}
                       </span>
                       <span className="text-[var(--color-foreground)]">{seg.text}</span>

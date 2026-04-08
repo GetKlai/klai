@@ -263,7 +263,7 @@ export function NavTree({
           <div key={flat.id}>
             {dropLineBefore === flat.id && (
               <div
-                className="h-0.5 mr-2 rounded-sm bg-[var(--color-purple-accent)]"
+                className="h-0.5 mr-2 rounded-sm bg-[var(--color-rl-accent)]"
                 style={{ marginLeft: `${dropLineDepth * INDENT_WIDTH + 8}px` }}
               />
             )}
@@ -290,7 +290,7 @@ export function NavTree({
             />
             {dropLineAfter === flat.id && (
               <div
-                className="h-0.5 mr-2 rounded-sm bg-[var(--color-purple-accent)]"
+                className="h-0.5 mr-2 rounded-sm bg-[var(--color-rl-accent)]"
                 style={{ marginLeft: `${dropLineDepth * INDENT_WIDTH + 8}px` }}
               />
             )}

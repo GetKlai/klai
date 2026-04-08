@@ -109,8 +109,8 @@ function GapsPage() {
     <div className="p-8 max-w-4xl">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <AlertTriangle className="h-7 w-7 text-[var(--color-purple-deep)]" />
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {m.gaps_page_title()}
           </h1>
         </div>
@@ -206,7 +206,7 @@ function GapsPage() {
                       key={rowKey}
                       className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
                     >
-                      <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs truncate">
+                      <td className="px-6 py-3 text-[var(--color-foreground)] max-w-xs truncate">
                         {gap.query_text}
                       </td>
                       <td className="px-4 py-3">
@@ -217,7 +217,7 @@ function GapsPage() {
                       <td className="px-4 py-3 text-[var(--color-muted-foreground)]">
                         {gap.nearest_kb_slug ?? '\u2014'}
                       </td>
-                      <td className="px-4 py-3 text-right font-medium text-[var(--color-purple-deep)]">
+                      <td className="px-4 py-3 text-right font-medium text-[var(--color-foreground)]">
                         {gap.occurrence_count}
                       </td>
                       <td className="px-4 py-3 text-right text-[var(--color-muted-foreground)]">

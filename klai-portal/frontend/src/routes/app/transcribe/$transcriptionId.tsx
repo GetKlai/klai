@@ -125,7 +125,7 @@ function TranscriptionDetailPage() {
   return (
     <div className="p-8 max-w-3xl">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {displayTitle}
         </h1>
         <Button
@@ -173,7 +173,7 @@ function TranscriptionDetailPage() {
 
         {transcription.text.trim() && (
           <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-[var(--color-purple-deep)] shrink-0">
+            <label className="text-sm font-medium text-[var(--color-foreground)] shrink-0">
               {m.app_transcribe_summary_type_label()}
             </label>
             <Select

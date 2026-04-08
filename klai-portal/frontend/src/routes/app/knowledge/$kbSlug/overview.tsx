@@ -106,7 +106,7 @@ function OverviewTab() {
             <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
               <Database className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                <p className="text-xs font-medium text-[var(--color-foreground)]">
                   {m.knowledge_detail_volume_sources()}
                 </p>
                 <p className="text-sm text-[var(--color-foreground)]">
@@ -119,7 +119,7 @@ function OverviewTab() {
             <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
               <Search className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                <p className="text-xs font-medium text-[var(--color-foreground)]">
                   {m.knowledge_detail_volume_search_chunks()}
                 </p>
                 <p className="text-sm text-[var(--color-foreground)]">
@@ -132,7 +132,7 @@ function OverviewTab() {
             <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
               <GitBranch className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                <p className="text-xs font-medium text-[var(--color-foreground)]">
                   {m.knowledge_detail_volume_graph()}
                 </p>
                 <p className="text-sm text-[var(--color-foreground)]">

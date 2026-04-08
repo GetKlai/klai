@@ -50,7 +50,7 @@ function DocsPage() {
     <div className="p-8 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {m.docs_kbs_title()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -71,7 +71,7 @@ function DocsPage() {
             <div className="flex flex-col items-center gap-3 py-16 text-center">
               <BookMarked className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
               <div className="space-y-1">
-                <p className="font-medium text-[var(--color-purple-deep)]">
+                <p className="font-medium text-[var(--color-foreground)]">
                   {m.docs_kb_empty_heading()}
                 </p>
                 <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -100,7 +100,7 @@ function DocsPage() {
                     className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
                   >
                     <td
-                      className="px-6 py-3 text-[var(--color-purple-deep)] font-medium cursor-pointer hover:underline"
+                      className="px-6 py-3 text-[var(--color-foreground)] font-medium cursor-pointer hover:underline"
                       onClick={() =>
                         navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })
                       }

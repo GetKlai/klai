@@ -106,7 +106,7 @@ export function PasskeySetup({ token, onSuccess, onBack }: PasskeySetupProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.setup_mfa_passkey_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -138,7 +138,7 @@ export function PasskeySetup({ token, onSuccess, onBack }: PasskeySetupProps) {
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-purple-muted)] hover:underline"
+        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
       >
         {m.setup_mfa_back()}
       </button>

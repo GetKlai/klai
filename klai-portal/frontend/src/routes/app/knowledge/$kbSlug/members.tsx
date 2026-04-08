@@ -248,7 +248,7 @@ function MembersTab() {
                   }`} />
                   <div>
                     <span className={`text-sm font-medium ${
-                      visibilityMode === mode ? 'text-[var(--color-purple-deep)]' : 'text-[var(--color-foreground)]'
+                      visibilityMode === mode ? 'text-[var(--color-foreground)]' : 'text-[var(--color-foreground)]'
                     }`}>
                       {label}
                     </span>
@@ -276,7 +276,7 @@ function MembersTab() {
                 className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
               />
               <div>
-                <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                <span className="text-sm font-medium text-[var(--color-foreground)]">
                   {m.knowledge_sharing_contributor_toggle()}
                 </span>
                 <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
@@ -343,7 +343,7 @@ function MembersTab() {
                       onClick={() => {
                         inviteGroupMutation.mutate({ groupId: g.id, role: 'viewer' })
                       }}
-                      className="w-full px-3 py-2 text-left text-sm text-[var(--color-purple-deep)] hover:bg-[var(--color-secondary)] transition-colors"
+                      className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
                     >
                       {g.name}
                     </button>
@@ -363,7 +363,7 @@ function MembersTab() {
               key={g.id}
               className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
             >
-              <span className="text-sm text-[var(--color-purple-deep)]">{g.group_name}</span>
+              <span className="text-sm text-[var(--color-foreground)]">{g.group_name}</span>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--color-muted-foreground)]">{g.role}</span>
                 {isOwner && (
@@ -424,7 +424,7 @@ function MembersTab() {
                       }}
                       className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
                     >
-                      <span className="text-[var(--color-purple-deep)]">{u.display_name}</span>
+                      <span className="text-[var(--color-foreground)]">{u.display_name}</span>
                       <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
                     </button>
                   ))}
@@ -444,7 +444,7 @@ function MembersTab() {
               className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
             >
               <div>
-                <span className="text-sm text-[var(--color-purple-deep)]">{u.display_name ?? u.email ?? u.user_id}</span>
+                <span className="text-sm text-[var(--color-foreground)]">{u.display_name ?? u.email ?? u.user_id}</span>
                 {u.display_name && u.email && (
                   <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
                 )}

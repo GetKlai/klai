@@ -26,10 +26,10 @@ export const WikiLink = createReactInlineContentSpec(
       <a
         data-wikilink-page-id={inlineContent.props.pageId}
         style={{
-          color: "var(--color-purple-accent)",
+          color: "var(--color-rl-accent)",
           textDecoration: "none",
           cursor: "pointer",
-          borderBottom: "1px solid var(--color-purple-accent)",
+          borderBottom: "1px solid var(--color-rl-accent)",
           display: "inline-flex",
           alignItems: "center",
           gap: "2px",

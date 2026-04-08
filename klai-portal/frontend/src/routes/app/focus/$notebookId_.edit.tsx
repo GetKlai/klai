@@ -102,7 +102,7 @@ function EditFocusPage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.app_focus_edit_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>

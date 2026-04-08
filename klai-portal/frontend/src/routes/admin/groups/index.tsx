@@ -186,7 +186,7 @@ function AdminGroups() {
     columnHelper.accessor('name', {
       header: () => m.admin_groups_name(),
       cell: (info) => (
-        <span className="font-medium text-[var(--color-purple-deep)] flex items-center gap-2">
+        <span className="font-medium text-[var(--color-foreground)] flex items-center gap-2">
           {info.row.original.is_system && (
             <Lock className="h-3 w-3 text-[var(--color-muted-foreground)]" />
           )}
@@ -301,7 +301,7 @@ function AdminGroups() {
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.admin_groups_title()}
         </h1>
         <Button size="sm" onClick={() => void navigate({ search: { create: true } })}>
@@ -358,7 +358,7 @@ function AdminGroups() {
             </p>
           ) : groups.length === 0 ? (
             <div className="px-6 py-12 text-center space-y-3">
-              <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+              <p className="text-sm font-medium text-[var(--color-foreground)]">
                 {m.admin_groups_empty()}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -400,7 +400,7 @@ function AdminGroups() {
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="px-6 py-3 text-[var(--color-purple-deep)]"
+                        className="px-6 py-3 text-[var(--color-foreground)]"
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

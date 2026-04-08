@@ -110,7 +110,7 @@ export function SaveToKnowledgeModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-purple-deep)', marginBottom: '1rem' }}>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-foreground)', marginBottom: '1rem' }}>
           {m.knowledge_save_modal_title()}
         </h2>
 

@@ -58,7 +58,7 @@ const CONNECTOR_TYPES: { type: ConnectorType; label: () => string; available: bo
   { type: 'ms_docs', label: m.admin_connectors_type_ms_docs, available: false },
 ]
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-purple-deep)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-purple-deep)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-purple-deep)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-purple-deep)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
+const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
 
 // -- Route -------------------------------------------------------------------
 
@@ -172,7 +172,7 @@ function AddConnectorPage() {
     <div className="p-8 max-w-lg">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.admin_connectors_add_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
@@ -218,7 +218,7 @@ function AddConnectorPage() {
                             {step.label}
                           </button>
                         ) : (
-                          <span className={isActive ? 'font-medium text-[var(--color-purple-deep)]' : 'text-[var(--color-muted-foreground)]'}>
+                          <span className={isActive ? 'font-medium text-[var(--color-foreground)]' : 'text-[var(--color-muted-foreground)]'}>
                             {step.label}
                           </span>
                         )}
@@ -252,7 +252,7 @@ function AddConnectorPage() {
                       !available ? 'cursor-not-allowed opacity-50' : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
                     ].join(' ')}
                   >
-                    <span className="text-sm font-medium text-[var(--color-purple-deep)]">{label()}</span>
+                    <span className="text-sm font-medium text-[var(--color-foreground)]">{label()}</span>
                     {!available && <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>}
                   </button>
                 ))}
@@ -323,7 +323,7 @@ function AddConnectorPage() {
                           href="https://www.notion.so/my-integrations"
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 text-[var(--color-purple-muted)] hover:text-[var(--color-purple-primary)] underline underline-offset-2"
+                          className="inline-flex items-center gap-0.5 text-[var(--color-rl-accent-dark)] hover:text-[var(--color-foreground)] underline underline-offset-2"
                         >
                           notion.so/my-integrations
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="none" className="size-3 shrink-0" aria-hidden="true">
@@ -436,7 +436,7 @@ function AddConnectorPage() {
                     </div>
                     <button
                       type="button"
-                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)] transition-colors"
+                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                       onClick={() => setShowAdvancedSelector((p) => !p)}
                     >
                       <Settings className="h-3 w-3" />
@@ -557,7 +557,7 @@ function AddConnectorPage() {
                     {previewResult !== null && !previewMutation.isPending && previewResult.word_count > 0 && (
                       <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-[var(--color-purple-deep)]">{m.admin_connectors_webcrawler_preview_title()}</span>
+                          <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
                           <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                         </div>
                         {previewResult.fit_markdown.trim() ? (

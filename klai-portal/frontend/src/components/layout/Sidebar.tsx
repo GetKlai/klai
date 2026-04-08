@@ -45,7 +45,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       role="navigation"
       aria-label="Main navigation"
       className={cn(
-        'flex h-screen shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-foreground)] transition-[width] duration-200',
+        'flex h-screen shrink-0 flex-col bg-[var(--color-sidebar)] border-r border-[var(--color-sidebar-border)] text-[var(--color-sidebar-foreground)] transition-[width] duration-200',
         collapsed ? 'w-14' : 'w-60'
       )}
     >
@@ -53,7 +53,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       <div className="flex h-16 items-center border-b border-[var(--color-sidebar-border)] px-3">
         {!collapsed && (
           <div className="flex-1 px-3">
-            <img src="/klai-logo-white.svg" alt="Klai" className="h-5 w-auto block" />
+            <img src="/klai-logo.svg" alt="Klai" className="h-5 w-auto block" />
           </div>
         )}
         <button
@@ -102,7 +102,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
                   activeProps={{
-                    className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
+                    className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
                   }}
                 >
                   <item.icon size={16} strokeWidth={1.75} />
@@ -122,7 +122,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                           'gap-2'
                         )}
                         activeProps={{
-                          className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
+                          className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
                         }}
                       >
                         <child.icon size={12} strokeWidth={1.75} />
@@ -221,7 +221,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             collapsed ? 'justify-center' : 'gap-3'
           )}
           activeProps={{
-            className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-foreground)]',
+            className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
           }}
         >
           <UserCircle size={16} strokeWidth={1.75} />

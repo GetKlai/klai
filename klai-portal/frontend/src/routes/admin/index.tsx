@@ -37,7 +37,7 @@ function AdminHome() {
   return (
     <div className="p-8 space-y-8 max-w-3xl">
       <div className="space-y-1">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.admin_home_heading()}
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -55,10 +55,10 @@ function AdminHome() {
             <section.icon
               size={20}
               strokeWidth={1.5}
-              className="text-[var(--color-purple-accent)]"
+              className="text-[var(--color-rl-accent)]"
             />
             <div>
-              <p className="text-sm font-medium text-[var(--color-purple-deep)] group-hover:text-[var(--color-purple-accent)] transition-colors">
+              <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
                 {section.title}
               </p>
               <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">

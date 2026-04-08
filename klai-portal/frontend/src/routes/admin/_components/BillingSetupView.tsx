@@ -169,13 +169,13 @@ export function BillingSetupView({ token, onComplete }: BillingSetupViewProps) {
                 className={[
                   'flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition',
                   form.billing_cycle === cycle
-                    ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)]'
-                    : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-purple-muted)]',
+                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)]'
+                    : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-rl-accent-dark)]',
                 ].join(' ')}
               >
                 {getCycleLabel(cycle)}
                 {cycle === 'yearly' && (
-                  <span className="ml-2 text-xs text-[var(--color-purple-accent)]">{m.admin_billing_yearly_discount()}</span>
+                  <span className="ml-2 text-xs text-[var(--color-rl-accent)]">{m.admin_billing_yearly_discount()}</span>
                 )}
               </button>
             ))}
@@ -191,17 +191,17 @@ export function BillingSetupView({ token, onComplete }: BillingSetupViewProps) {
                 className={[
                   'flex flex-col items-start rounded-xl border p-4 text-left transition',
                   form.plan === plan.id
-                    ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/10'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-purple-muted)]',
+                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent-dark)]',
                 ].join(' ')}
               >
-                <span className="text-sm font-semibold text-[var(--color-purple-deep)]">
+                <span className="text-sm font-semibold text-[var(--color-foreground)]">
                   {plan.name}
                 </span>
                 <span className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
                   {getPlanDescription(plan.id)}
                 </span>
-                <span className="mt-3 text-lg font-bold text-[var(--color-purple-deep)]">
+                <span className="mt-3 text-lg font-bold text-[var(--color-foreground)]">
                   &euro;{form.billing_cycle === 'yearly' ? plan.yearly : plan.monthly}
                   <span className="text-xs font-normal text-[var(--color-muted-foreground)]">
                     {' '}
@@ -228,12 +228,12 @@ export function BillingSetupView({ token, onComplete }: BillingSetupViewProps) {
                 max={500}
                 value={form.seats}
                 onChange={(e) => set('seats', Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-24 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-24 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
             <div className="ml-auto text-right">
               <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-              <p className="text-xl font-bold text-[var(--color-purple-deep)]">
+              <p className="text-xl font-bold text-[var(--color-foreground)]">
                 {totalPrice(form.plan, form.billing_cycle, form.seats)}
               </p>
               {form.billing_cycle === 'yearly' && (

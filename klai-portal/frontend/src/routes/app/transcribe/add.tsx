@@ -266,7 +266,7 @@ function AddTranscribePage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.app_transcribe_add_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
@@ -306,7 +306,7 @@ function AddTranscribePage() {
                   }}
                   className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
                     activeTab === tab
-                      ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                      ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
                       : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
                   }`}
                 >
@@ -397,8 +397,8 @@ function AddTranscribePage() {
               <div
                 className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
                   dragging
-                    ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-purple-accent)]/50'
+                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/5'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent)]/50'
                 }`}
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={(e) => {

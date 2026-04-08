@@ -116,7 +116,7 @@ function FocusPage() {
     <div className="p-8 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {m.app_tool_focus_title()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -146,7 +146,7 @@ function FocusPage() {
             <div className="flex flex-col items-center gap-3 py-16 text-center">
               <BookOpen className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
               <div className="space-y-1">
-                <p className="font-medium text-[var(--color-purple-deep)]">
+                <p className="font-medium text-[var(--color-foreground)]">
                   {m.app_focus_empty_heading()}
                 </p>
                 <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -211,7 +211,7 @@ function FocusPage() {
                           }
                         >
                           <td
-                            className="px-6 py-3 text-[var(--color-purple-deep)] cursor-pointer hover:underline"
+                            className="px-6 py-3 text-[var(--color-foreground)] cursor-pointer hover:underline"
                             onClick={() =>
                               navigate({
                                 to: '/app/focus/$notebookId',
@@ -229,12 +229,12 @@ function FocusPage() {
                           <td className="px-6 py-3 text-[var(--color-muted-foreground)] tabular-nums">
                             {nb.sources_count}
                           </td>
-                          <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                          <td className="px-6 py-3 text-[var(--color-foreground)]">
                             {nb.scope === 'personal'
                               ? m.app_focus_notebook_scope_personal()
                               : m.app_focus_notebook_scope_org()}
                           </td>
-                          <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                          <td className="px-6 py-3 text-[var(--color-foreground)]">
                             {formatDate(nb.created_at)}
                           </td>
                           <td className="px-3 py-3 w-20 text-right">

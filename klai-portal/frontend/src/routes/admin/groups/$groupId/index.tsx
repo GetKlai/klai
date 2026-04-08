@@ -152,7 +152,7 @@ function AdminGroupDetail() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {groupData.name}
           </h1>
           {groupData.description && (
@@ -260,13 +260,13 @@ function AdminGroupDetail() {
                             : 'bg-[var(--color-secondary)]'
                         }
                       >
-                        <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                        <td className="px-6 py-3 text-[var(--color-foreground)]">
                           {displayName(user, member)}
                         </td>
                         <td className="px-6 py-3 text-[var(--color-muted-foreground)]">
                           {displayEmail(user)}
                         </td>
-                        <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                        <td className="px-6 py-3 text-[var(--color-foreground)]">
                           {formatDate(member.joined_at)}
                         </td>
                         <td className="px-6 py-3 text-right">

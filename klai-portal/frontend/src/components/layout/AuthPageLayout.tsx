@@ -10,14 +10,14 @@ interface AuthPageLayoutProps {
  * Two-panel auth page shell shared by login, signup, forgot-password,
  * set-password, verify-email, and 2FA setup pages.
  *
- * Left panel: purple branding with logo + hero content.
- * Right panel: white content area with optional locale switcher.
+ * Left panel: warm dark branding with logo + hero content.
+ * Right panel: ivory content area with optional locale switcher.
  */
 export function AuthPageLayout({ leftContent, children, showLocale = false }: AuthPageLayoutProps) {
   return (
-    <div className="flex min-h-screen bg-[var(--color-off-white)]">
+    <div className="flex min-h-screen bg-[var(--color-background)]">
       {/* Left panel — branding */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-purple-deep)] p-12 text-[var(--color-sand-light)]">
+      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between bg-[var(--color-rl-dark)] p-12 text-[var(--color-rl-cream)]">
         <div>
           <img src="/klai-logo-white.svg" alt="Klai" className="h-7 w-auto block" />
         </div>

@@ -182,7 +182,7 @@ function NewKnowledgeBasePage() {
     <div className="p-8 max-w-lg">
       {/* Header with back/cancel */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.knowledge_new_heading()}
         </h1>
         {step === 1 ? (
@@ -348,7 +348,7 @@ function StepName({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+      <p className="text-sm font-medium text-[var(--color-foreground)]">
         {m.knowledge_wizard_title_step1()}
       </p>
 
@@ -379,7 +379,7 @@ function StepName({
               ) : (
                 <User className="h-4 w-4 text-[var(--color-accent)]" />
               )}
-              <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+              <span className="text-sm font-medium text-[var(--color-foreground)]">
                 {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
               </span>
               <span className="text-xs text-[var(--color-muted-foreground)]">
@@ -431,7 +431,7 @@ function StepName({
           onChange={(e) => setData((prev) => ({ ...prev, description: e.target.value }))}
           placeholder={m.knowledge_wizard_description_placeholder()}
           rows={3}
-          className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-purple-deep)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+          className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
         />
       </div>
     </div>
@@ -472,7 +472,7 @@ function StepAccess({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+      <p className="text-sm font-medium text-[var(--color-foreground)]">
         {m.knowledge_wizard_title_step2({ name: data.name })}
       </p>
 
@@ -497,7 +497,7 @@ function StepAccess({
           >
             <Icon className="h-5 w-5 mt-0.5 text-[var(--color-accent)]" />
             <div>
-              <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+              <span className="text-sm font-medium text-[var(--color-foreground)]">
                 {title}
               </span>
               <span className="block text-xs text-[var(--color-muted-foreground)]">{desc}</span>
@@ -532,7 +532,7 @@ function StepPermissions({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+      <p className="text-sm font-medium text-[var(--color-foreground)]">
         {isRestricted
           ? m.knowledge_wizard_title_step3_restricted({ name: data.name })
           : m.knowledge_wizard_title_step3({ name: data.name })}
@@ -543,7 +543,7 @@ function StepPermissions({
         <Card>
           <CardContent className="pt-4">
             <div className="flex flex-col gap-3">
-              <p className="text-sm text-[var(--color-purple-deep)]">
+              <p className="text-sm text-[var(--color-foreground)]">
                 {m.knowledge_wizard_default_role_label()}
               </p>
               <label className="flex items-start gap-2 cursor-pointer">
@@ -556,7 +556,7 @@ function StepPermissions({
                   className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
                 />
                 <div>
-                  <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                  <span className="text-sm font-medium text-[var(--color-foreground)]">
                     {m.knowledge_wizard_contributor_checkbox()}
                   </span>
                   <span className="block text-xs text-[var(--color-muted-foreground)]">
@@ -579,7 +579,7 @@ function StepPermissions({
       {/* Extra permissions heading for org/public */}
       {!isRestricted && (
         <div>
-          <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+          <p className="text-sm font-medium text-[var(--color-foreground)]">
             {m.knowledge_wizard_extra_permissions_title()}
           </p>
           <p className="text-xs text-[var(--color-muted-foreground)]">
@@ -647,7 +647,7 @@ function StepConfirm({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+      <p className="text-sm font-medium text-[var(--color-foreground)]">
         {m.knowledge_wizard_confirm_title()}
       </p>
 
@@ -658,7 +658,7 @@ function StepConfirm({
             <div className="flex items-start gap-2">
               <Brain className="h-4 w-4 mt-0.5 text-[var(--color-accent)]" />
               <div>
-                <p className="font-medium text-[var(--color-purple-deep)]">{data.name}</p>
+                <p className="font-medium text-[var(--color-foreground)]">{data.name}</p>
                 <p className="text-xs text-[var(--color-muted-foreground)]">{data.slug}</p>
               </div>
             </div>
@@ -674,7 +674,7 @@ function StepConfirm({
             {data.ownerType === 'org' && (
               <div className="flex items-center gap-2">
                 <VisibilityIcon className="h-4 w-4 text-[var(--color-accent)]" />
-                <span className="text-[var(--color-purple-deep)]">{visibilityLabel}</span>
+                <span className="text-[var(--color-foreground)]">{visibilityLabel}</span>
               </div>
             )}
 
