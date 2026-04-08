@@ -55,7 +55,7 @@ export function EditorHeader({
   }, [showMenu])
 
   return (
-    <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--color-border)]">
+    <div className="flex items-center gap-3 px-8 py-3">
       {/* Emoji icon zone */}
       <div className="relative shrink-0" ref={iconPickerRef}>
         <button

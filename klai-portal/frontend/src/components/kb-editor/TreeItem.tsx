@@ -152,13 +152,13 @@ export function TreeItem({
       style={{ opacity: isDragging ? 0 : 1 }}
     >
       <div
-        className={`flex w-full items-center py-[3px] mx-1 rounded-md text-[13px] transition-colors group ${
+        className={`flex w-full items-center py-[3px] mx-1 rounded-[5px] text-sm transition-colors group ${
           isInsideTarget
-            ? 'bg-[var(--color-rl-accent)]/15 ring-1 ring-[var(--color-rl-accent)]'
+            ? 'bg-[var(--color-foreground)]/[0.06]'
             : isSelected && !isDir
-              ? 'bg-[var(--color-foreground)]/[0.04] text-[var(--color-foreground)]'
-              : 'text-[var(--color-foreground)]/80 hover:bg-[var(--color-foreground)]/[0.03]'
-        } ${isFocused ? 'ring-1 ring-[var(--color-rl-accent)] rounded' : ''}`}
+              ? 'bg-[var(--color-foreground)]/[0.04]'
+              : 'hover:bg-[var(--color-foreground)]/[0.03]'
+        } ${isFocused ? 'bg-[var(--color-foreground)]/[0.06]' : ''}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -187,11 +187,11 @@ export function TreeItem({
 
         {/* Title */}
         <button
-          className="flex flex-1 items-center min-w-0 text-left ml-0.5"
+          className="flex flex-1 items-center min-w-0 text-left ml-0.5 text-[var(--color-foreground)]"
           onClick={() => { if (!isDir) onSelect(node) }}
           disabled={isDir && !hasChildren}
         >
-          <span className={`truncate ${isSelected && !isDir ? 'font-medium' : ''}`}>
+          <span className={`truncate ${isSelected && !isDir ? 'font-medium' : 'opacity-80'}`}>
             {displayTitle}
           </span>
         </button>
