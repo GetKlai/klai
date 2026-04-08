@@ -94,7 +94,7 @@ function DocsPage() {
               </thead>
               <tbody>
                 {/* Accessible KBs */}
-                {accessibleKbs.map((kb, i) => (
+                {accessibleKbs.map((kb) => (
                   <tr
                     key={kb.id}
                     className="bg-[var(--color-card)]"
@@ -154,11 +154,7 @@ function DocsPage() {
                 {lockedKbs.map((kb, i) => (
                   <tr
                     key={kb.id}
-                    className={
-                      (accessibleKbs.length + i) % 2 === 0
-                        ? 'bg-[var(--color-card)] opacity-60'
-                        : 'bg-[var(--color-secondary)] opacity-60'
-                    }
+                    className="bg-[var(--color-card)] opacity-60"
                   >
                     <td className="px-6 py-3 text-[var(--color-muted-foreground)] font-medium">
                       <Tooltip label={m.docs_kb_locked_tooltip()}>

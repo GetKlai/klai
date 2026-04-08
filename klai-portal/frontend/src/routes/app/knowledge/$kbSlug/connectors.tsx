@@ -130,7 +130,7 @@ function ConnectorsTab() {
                   const isSyncing = syncingIds.has(c.id)
                   const isRunning = c.last_sync_status?.toUpperCase() === 'RUNNING'
                   return (
-                    <tr key={c.id} className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}>
+                    <tr key={c.id} className="bg-[var(--color-card)]">
                       <td className="px-4 py-2.5 font-medium text-[var(--color-foreground)]">{c.name}</td>
                       <td className="px-4 py-2.5"><ConnectorTypeBadge type={c.connector_type} /></td>
                       <td className="px-4 py-2.5"><SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} /></td>

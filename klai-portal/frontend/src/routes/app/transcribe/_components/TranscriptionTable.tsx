@@ -234,7 +234,7 @@ export function TranscriptionTable({
                 return (
                   <tr
                     key={`${item.source}-${item.id}`}
-                    className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+                    className="bg-[var(--color-card)]"
                   >
                     {/* Title / preview */}
                     <td className="px-6 py-3 text-[var(--color-foreground)] max-w-xs">
