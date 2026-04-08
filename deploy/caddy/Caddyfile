@@ -174,13 +174,6 @@
     }
 
     handle /api/* {
-        rate_limit {
-            zone portal_api_per_ip {
-                key {remote_host}
-                events 60
-                window 1m
-            }
-        }
         reverse_proxy portal-api:8010
     }
 
