@@ -396,11 +396,15 @@ class KlaiKnowledgeHook(CustomLogger):
         source_link_instruction = (
             "[ANTWOORDFORMAAT — volg dit ALTIJD:\n"
             "1. Begin met een korte TLDR (2-3 zinnen) van het antwoord.\n"
-            "2. Direct daarna een lijst met links naar de relevante bronnen:\n"
-            "   📎 [Paginatitel](source_url) | [Paginatitel](source_url)\n"
+            "2. Direct daarna een bronnenlijst met ALLEEN de echte source_url's uit de chunks:\n"
+            "   📎 [Paginatitel](https://notion.so/...) | [Titel](https://...)\n"
             "3. Daarna het uitgebreide antwoord met [n] citaties.\n\n"
-            "Wanneer een bron een source_url heeft, gebruik die ALTIJD als markdown-link. "
-            "Laat GEEN enkele source_url weg uit de bronnenlijst.]\n"
+            "STRIKT:\n"
+            "- Gebruik UITSLUITEND URLs die letterlijk in de chunks staan (source_url velden).\n"
+            "- Verzin NOOIT een URL. Geen portal.voys.nl, geen freedom.voys.nl, geen enkele URL die niet in de bronnen staat.\n"
+            "- Als een bron geen source_url heeft, noem alleen de titel zonder link.\n"
+            "- Gebruik de titel NOOIT als URL-target. Fout: [tekst](Support wiki). Goed: [tekst](https://notion.so/...).\n"
+            "- Als meerdere chunks dezelfde source_url hebben, toon die URL slechts één keer.]\n"
         )
         lines = [header, source_link_instruction]
         for chunk in chunks:
