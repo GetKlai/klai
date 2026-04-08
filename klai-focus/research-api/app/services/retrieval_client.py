@@ -76,6 +76,12 @@ async def _get_taxonomy_filter(
         logger.debug("taxonomy_filter_skipped_low_coverage", kb_slug=kb_slug, coverage=coverage)
         return None
 
+    # Node IDs come from the classify endpoint, which fetches the current taxonomy
+    # immediately before classifying. It can only return IDs that exist at call time.
+    # Stale IDs are not possible without a sub-second race condition (node deleted
+    # between classify response and this line). Even then, Qdrant chunks retain their
+    # taxonomy_node_ids after portal node deletion — MatchAny([stale_id]) still
+    # returns the correctly tagged content.
     return node_ids if node_ids else None
 
 
