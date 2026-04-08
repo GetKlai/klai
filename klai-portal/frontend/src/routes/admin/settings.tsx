@@ -55,7 +55,7 @@ function AdminSettingsPage() {
   }, [settings])
 
   return (
-    <div className="p-8 space-y-6 max-w-3xl" data-help-id="admin-settings-general">
+    <div className="p-12 space-y-6 max-w-3xl" data-help-id="admin-settings-general">
       <div className="space-y-1">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.admin_settings_heading()}

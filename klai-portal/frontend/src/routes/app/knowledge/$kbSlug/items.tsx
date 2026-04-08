@@ -45,7 +45,7 @@ function ItemsTab() {
 
   if (!data?.items?.length) {
     return (
-      <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
+      <div className="rounded-lg border border-dashed border-[var(--color-border)] p-12 text-center">
         <List className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-3" />
         <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_items_empty_state()}</p>
       </div>

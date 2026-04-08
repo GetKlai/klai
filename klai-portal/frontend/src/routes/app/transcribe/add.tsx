@@ -264,7 +264,7 @@ function AddTranscribePage() {
   const isTranscribing = transcribeMutation.isPending || retryMutation.isPending
 
   return (
-    <div className="p-8 max-w-lg">
+    <div className="p-12 max-w-lg">
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
           {m.app_transcribe_add_title()}
@@ -395,7 +395,7 @@ function AddTranscribePage() {
             {/* Upload tab */}
             {activeTab === 'upload' && (
               <div
-                className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                className={`border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors ${
                   dragging
                     ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
                     : 'border-[var(--color-border)] hover:border-[var(--color-purple-accent)]/50'
