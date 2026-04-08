@@ -151,7 +151,7 @@ function DocsPage() {
                 ))}
 
                 {/* Locked KBs */}
-                {lockedKbs.map((kb, i) => (
+                {lockedKbs.map((kb) => (
                   <tr
                     key={kb.id}
                     className="bg-[var(--color-card)] opacity-60"
