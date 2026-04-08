@@ -20,7 +20,7 @@ class TestDownloadAndUploadImages:
         async def fake_upload(*args, **kwargs):
             from app.services.s3_storage import ImageUploadResult
             return ImageUploadResult(
-                object_key="org/img/hash.png", presigned_url="https://s3/signed", deduplicated=False,
+                object_key="org/img/hash.png", public_url="/kb-images/org/img/hash.png", deduplicated=False,
             )
 
         mock_store.upload_image = fake_upload
@@ -42,7 +42,7 @@ class TestDownloadAndUploadImages:
         )
 
         assert len(result) == 1
-        assert result[0] == "https://s3/signed"
+        assert result[0] == "/kb-images/org/img/hash.png"
 
     @pytest.mark.asyncio
     async def test_skips_failed_downloads(self):
@@ -111,7 +111,7 @@ class TestDownloadAndUploadImages:
 
         async def fake_upload(*args, **kwargs):
             from app.services.s3_storage import ImageUploadResult
-            return ImageUploadResult(object_key="key", presigned_url="https://s3/url", deduplicated=False)
+            return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
 
@@ -143,7 +143,7 @@ class TestDownloadAndUploadImages:
 
         async def fake_upload(*args, **kwargs):
             from app.services.s3_storage import ImageUploadResult
-            return ImageUploadResult(object_key="key", presigned_url="https://s3/b64img", deduplicated=False)
+            return ImageUploadResult(object_key="key", public_url="/kb-images/key", deduplicated=False)
 
         mock_store.upload_image = fake_upload
 
@@ -160,4 +160,4 @@ class TestDownloadAndUploadImages:
         )
 
         assert len(result) == 1
-        assert result[0] == "https://s3/b64img"
+        assert result[0] == "/kb-images/key"

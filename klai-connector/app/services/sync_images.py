@@ -55,9 +55,9 @@ async def download_and_upload_images(
             (extracted from PDF/DOCX via Unstructured).
 
     Returns:
-        List of presigned S3 URLs for successfully uploaded images.
+        List of public URLs for successfully uploaded images.
     """
-    presigned_urls: list[str] = []
+    uploaded_urls: list[str] = []
     remaining = MAX_IMAGES_PER_DOCUMENT
 
     # Phase 1: Upload base64 images from parser (PDF/DOCX).
@@ -73,7 +73,7 @@ async def download_and_upload_images(
                 logger.warning("Parsed image too large (%d bytes), skipping", len(data))
                 continue
             result = await image_store.upload_image(org_id, kb_slug, data, _ext_from_mime(mime))
-            presigned_urls.append(result.presigned_url)
+            uploaded_urls.append(result.public_url)
             remaining -= 1
         except Exception:
             logger.exception("Failed to upload parsed image")
@@ -99,9 +99,9 @@ async def download_and_upload_images(
 
             ext = _ext_from_url(url)
             result = await image_store.upload_image(org_id, kb_slug, data, ext)
-            presigned_urls.append(result.presigned_url)
+            uploaded_urls.append(result.public_url)
             remaining -= 1
         except Exception:
             logger.exception("Failed to download/upload image: %s", url)
 
-    return presigned_urls
+    return uploaded_urls
