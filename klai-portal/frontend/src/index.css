@@ -23,17 +23,17 @@
   --color-rl-muted:        #bab9b0;
 
   /* shadcn/ui semantic tokens mapped to Klai brand */
-  --color-background:           #fffef2;
+  --color-background:           #faf9f6;
   --color-foreground:           #191918;
-  --color-card:                 #f3f2e7;
+  --color-card:                 #ffffff;
   --color-card-foreground:      #191918;
-  --color-popover:              #fffef2;
+  --color-popover:              #ffffff;
   --color-popover-foreground:   #191918;
   --color-primary:              #fcaa2d;
   --color-primary-foreground:   #191918;
-  --color-secondary:            #f3f2e7;
+  --color-secondary:            #f5f4ef;
   --color-secondary-foreground: #191918;
-  --color-muted:                #f3f2e7;
+  --color-muted:                #f5f4ef;
   --color-muted-foreground:     #19191899;
   --color-accent:               #fcaa2d;
   --color-accent-foreground:    #191918;
@@ -47,17 +47,17 @@
   --color-warning-bg:           #FFFBEB;
   --color-warning-subtle:       #FEF3C7;
   --color-warning-text:         #92400E;
-  --color-border:               #e3e2d8;
-  --color-input:                #f3f2e7;
+  --color-border:               #e8e6de;
+  --color-input:                #f5f4ef;
   --color-ring:                 #fcaa2d;
 
   /* Sidebar (light organic) */
-  --color-sidebar:                    #f3f2e7;
+  --color-sidebar:                    #f5f4ef;
   --color-sidebar-foreground:         #191918;
-  --color-sidebar-border:             #e3e2d8;
-  --color-sidebar-accent:             #fcaa2d1a;
+  --color-sidebar-border:             #e8e6de;
+  --color-sidebar-accent:             #fcaa2d14;
   --color-sidebar-accent-foreground:  #191918;
-  --color-sidebar-muted-foreground:   #19191899;
+  --color-sidebar-muted-foreground:   #19191880;
 
   /* Typography */
   --font-sans:    "Parabole Regular", system-ui, sans-serif;
