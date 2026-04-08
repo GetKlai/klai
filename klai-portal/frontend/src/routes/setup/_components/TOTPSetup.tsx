@@ -111,7 +111,7 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
             {error && (

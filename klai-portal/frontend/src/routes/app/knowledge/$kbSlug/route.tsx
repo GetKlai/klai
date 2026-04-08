@@ -175,7 +175,7 @@ function KbLayout() {
             >
               <TabIcon className="h-4 w-4" />
               {label}
-              {badge != null && <Badge variant="accent" className="ml-1 text-[10px] px-1.5 py-0 min-w-[18px]">{String(badge)}</Badge>}
+              {badge != null && <Badge variant="accent" className="ml-1 text-xs px-1.5 py-0 min-w-[18px]">{String(badge)}</Badge>}
             </Link>
           ))}
         </nav>

@@ -317,7 +317,7 @@ function SetupView({
                 <span className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
                   {getPlanDescription(plan.id)}
                 </span>
-                <span className="mt-3 text-lg font-bold text-[var(--color-foreground)]">
+                <span className="mt-3 text-xl font-semibold text-[var(--color-foreground)]">
                   &euro;{form.billing_cycle === 'yearly' ? plan.yearly : plan.monthly}
                   <span className="text-xs font-normal text-[var(--color-muted-foreground)]">
                     {' '}

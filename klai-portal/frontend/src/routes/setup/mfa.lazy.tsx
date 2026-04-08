@@ -86,7 +86,7 @@ function MethodCard({
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-[var(--color-foreground)]">{title}</span>
             {recommended && (
-              <span className="rounded-full bg-[var(--color-rl-accent)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+              <span className="rounded-full bg-[var(--color-rl-accent)] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
                 {m.setup_mfa_badge_recommended()}
               </span>
             )}
@@ -332,7 +332,7 @@ function EmailOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -490,7 +490,7 @@ function TOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
             {error && (
