@@ -127,6 +127,9 @@ deploy/
 ├── searxng/                   # SearxNG search engine config
 ├── bge-m3-sparse/             # Custom sparse embedding server (BGE-M3)
 ├── vexa-patches/              # Patches for Vexa meeting bot
+├── garage/                    # Garage S3 object storage (image storage for knowledge pipeline)
+│   ├── garage.toml            # Garage config (secrets via env vars)
+│   └── init-garage.sh         # Bootstrap script (layout, bucket, access key)
 ├── zitadel/                   # Zitadel configuration
 └── fail2ban/                  # Fail2ban configuration
 ```

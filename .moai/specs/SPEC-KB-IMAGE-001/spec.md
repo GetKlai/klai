@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-IMAGE-001
 version: "1.0.0"
-status: approved
+status: implemented
 created: 2026-04-08
 updated: 2026-04-08
 author: Mark Vletter
@@ -14,6 +14,7 @@ priority: high
 |------|---------|--------|
 | 2026-04-08 | 1.0.0 | Initial SPEC creation |
 | 2026-04-08 | 1.1.0 | Component correcties: Garage v2.2.0, minio SDK, filetype validatie, init-script |
+| 2026-04-08 | 1.2.0 | Implemented and deployed: Caddy website mode, env var secrets, E2E verified on production |
 
 ---
 
