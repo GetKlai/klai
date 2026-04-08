@@ -17,8 +17,11 @@ from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
-from app.services.parser import parse_document
+from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
+from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
+from app.services.s3_storage import ImageStore
+from app.services.sync_images import download_and_upload_images
 
 logger = get_logger(__name__)
 
@@ -46,11 +49,14 @@ class SyncEngine:
         registry: AdapterRegistry,
         ingest_client: KnowledgeIngestClient,
         portal_client: PortalClient,
+        image_store: ImageStore | None = None,
     ) -> None:
         self._session_maker = session_maker
         self._registry = registry
         self._ingest_client = ingest_client
         self._portal_client = portal_client
+        self._image_store = image_store
+        self._image_http = httpx.AsyncClient(timeout=30.0) if image_store else None
         self._global_semaphore = asyncio.Semaphore(3)
         self._connector_locks: dict[uuid.UUID, asyncio.Lock] = {}
 
@@ -197,12 +203,30 @@ class SyncEngine:
                     try:
                         content_bytes = await adapter.fetch_document(ref, portal_config)
                         bytes_processed += len(content_bytes)
-                        text = parse_document(content_bytes, ref.path.split("/")[-1])
+                        parse_result = parse_document_with_images(
+                            content_bytes, ref.path.split("/")[-1],
+                        )
+                        text = parse_result.text
                         if not text.strip():
                             logger.info("Skipping empty document (path=%s)", ref.path)
                             documents_ok += 1
                             resume_ingested_refs.add(ref_key)
                             continue
+
+                        # Image extraction and upload (when Garage is configured).
+                        image_urls: list[str] | None = None
+                        if self._image_store and self._image_http:
+                            image_urls = await self._extract_and_upload_images(
+                                text=text,
+                                parsed_images=parse_result.images,
+                                ref=ref,
+                                org_id=portal_config.zitadel_org_id,
+                                kb_slug=portal_config.kb_slug,
+                                connector_type=portal_config.connector_type,
+                                connector_config=portal_config.config,
+                                adapter=adapter,
+                            ) or None  # Convert empty list to None
+
                         await self._ingest_client.ingest_document(
                             org_id=portal_config.zitadel_org_id,
                             kb_slug=portal_config.kb_slug,
@@ -213,6 +237,7 @@ class SyncEngine:
                             source_url=ref.source_url,
                             content_type=ref.content_type,
                             allowed_assertion_modes=portal_config.allowed_assertion_modes,
+                            image_urls=image_urls,
                         )
                         documents_ok += 1
                         resume_ingested_refs.add(ref_key)
@@ -319,6 +344,59 @@ class SyncEngine:
             documents_failed=documents_failed,
             bytes_processed=bytes_processed,
             error_details=error_details if error_details else None,
+        )
+
+    async def _extract_and_upload_images(
+        self,
+        *,
+        text: str,
+        parsed_images: list[dict[str, str]],
+        ref: Any,
+        org_id: str,
+        kb_slug: str,
+        connector_type: str,
+        connector_config: dict[str, Any],
+        adapter: Any = None,
+    ) -> list[str]:
+        """Extract image URLs from document content and upload to S3.
+
+        Resolves relative URLs based on the connector type and config.
+        For Notion, also handles image block URLs cached by the adapter.
+        """
+        assert self._image_store is not None
+        assert self._image_http is not None
+
+        # Extract markdown image URLs from text content.
+        raw_urls = extract_markdown_image_urls(text)
+
+        # For Notion: also include image block URLs from the adapter cache.
+        if connector_type == "notion" and adapter is not None:
+            from app.adapters.notion import NotionAdapter
+
+            if isinstance(adapter, NotionAdapter):
+                for img_ref in adapter.get_cached_images(ref.ref):
+                    raw_urls.append((img_ref.alt, img_ref.url))
+
+        # Resolve relative URLs based on connector type.
+        resolved: list[tuple[str, str]] = []
+        for alt, url in raw_urls:
+            if connector_type == "github":
+                owner = connector_config.get("repo_owner", "")
+                repo = connector_config.get("repo_name", "")
+                branch = connector_config.get("branch", "main")
+                base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
+                url = resolve_relative_url(url, base)
+            elif connector_type == "webcrawler":
+                url = resolve_relative_url(url, ref.source_ref or ref.source_url or "")
+            resolved.append((alt, url))
+
+        return await download_and_upload_images(
+            image_urls=resolved,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            image_store=self._image_store,
+            http_client=self._image_http,
+            parsed_images=parsed_images,
         )
 
     async def _fail_sync_run(self, sync_run_id: uuid.UUID, error_message: str) -> None:

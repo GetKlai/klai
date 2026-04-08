@@ -22,7 +22,7 @@ from notion_sync import fetch_blocks_recursive
 from notion_sync.client import RateLimitedNotionClient
 from notion_sync.extract import extract_block_text
 
-from app.adapters.base import BaseAdapter, DocumentRef
+from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
 from app.core.logging import get_logger
 
@@ -40,6 +40,8 @@ class NotionAdapter(BaseAdapter):
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        # Cache of image refs extracted during fetch_document, keyed by page ID.
+        self._image_cache: dict[str, list[ImageRef]] = {}
 
     async def aclose(self) -> None:
         """No persistent resources to close."""
@@ -294,8 +296,16 @@ class NotionAdapter(BaseAdapter):
 
         blocks = await asyncio.to_thread(fetch_blocks_recursive, client, ref.ref)
         texts = _flatten_block_texts(blocks)
+        images = _extract_image_blocks(blocks)
+        if images:
+            self._image_cache[ref.ref] = images
+            logger.info("Extracted %d images from Notion page %s", len(images), ref.ref)
         content = "\n".join(texts)
         return content.encode("utf-8")
+
+    def get_cached_images(self, page_id: str) -> list[ImageRef]:
+        """Return image refs extracted during the last fetch_document call."""
+        return self._image_cache.pop(page_id, [])
 
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return cursor state based on max(last_edited_time) of accessible pages.
@@ -347,3 +357,36 @@ def _flatten_block_texts(blocks: list[dict[str, Any]]) -> list[str]:
         if children:
             texts.extend(_flatten_block_texts(children))
     return texts
+
+
+def _extract_image_blocks(blocks: list[dict[str, Any]]) -> list[ImageRef]:
+    """Recursively extract image URLs from Notion image blocks.
+
+    Handles both ``external`` (URL) and ``file`` (Notion-hosted, expiring URL)
+    image block types.
+
+    Args:
+        blocks: List of block dicts from fetch_blocks_recursive.
+
+    Returns:
+        List of ImageRef with the image URL and source path.
+    """
+    images: list[ImageRef] = []
+    for block in blocks:
+        if block.get("type") == "image":
+            img_data = block.get("image", {})
+            img_type = img_data.get("type", "")
+            url = ""
+            if img_type == "external":
+                url = img_data.get("external", {}).get("url", "")
+            elif img_type == "file":
+                url = img_data.get("file", {}).get("url", "")
+            if url:
+                # Extract caption as alt text.
+                caption_parts = img_data.get("caption", [])
+                alt = "".join(p.get("plain_text", "") for p in caption_parts) if caption_parts else ""
+                images.append(ImageRef(url=url, alt=alt, source_path=block.get("id", "")))
+        children = block.get("_children", [])
+        if children:
+            images.extend(_extract_image_blocks(children))
+    return images
