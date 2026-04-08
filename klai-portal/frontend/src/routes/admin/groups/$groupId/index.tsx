@@ -130,7 +130,7 @@ function AdminGroupDetail() {
 
   if (groupLoading) {
     return (
-      <div className="p-8">
+      <div className="p-12">
         <p className="text-sm text-[var(--color-muted-foreground)]">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
@@ -141,14 +141,14 @@ function AdminGroupDetail() {
 
   if (!groupData) {
     return (
-      <div className="p-8">
+      <div className="p-12">
         <p className="text-sm text-[var(--color-destructive)]">Group not found</p>
       </div>
     )
   }
 
   return (
-    <div className="p-8 space-y-6 max-w-2xl">
+    <div className="p-12 space-y-6 max-w-2xl">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
