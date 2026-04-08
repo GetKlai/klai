@@ -68,7 +68,7 @@ export function HelpButton() {
             backgroundColor: enabled
               ? 'var(--color-rl-accent)'
               : 'var(--color-primary)',
-            color: 'white',
+            color: 'var(--color-foreground)',
             border: 'none',
           }}
           aria-label={m.help_toggle_label()}
