@@ -82,7 +82,7 @@ function InviteUserPage() {
   }
 
   return (
-    <div className="p-8 max-w-lg">
+    <div className="p-12 max-w-lg">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.admin_users_invite_button()}

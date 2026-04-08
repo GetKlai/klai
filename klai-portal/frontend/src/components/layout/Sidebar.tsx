@@ -50,9 +50,12 @@ export function Sidebar({ navItems }: SidebarProps) {
       )}
     >
       {/* Logo + toggle */}
-      <div className="flex h-12 items-center px-3">
+      <div className={cn(
+        'flex h-12 items-center',
+        collapsed ? 'px-0' : 'pl-12 pr-3'
+      )}>
         {!collapsed && (
-          <div className="flex-1 px-3">
+          <div className="flex-1">
             <img src="/klai-logo.svg" alt="Klai" className="h-[18px] w-auto block" />
           </div>
         )}
@@ -73,7 +76,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2 py-4">
+      <nav className="flex-1 overflow-y-auto py-4">
         <ul className="space-y-1">
           {navItems.map((item) => (
             <li key={item.href ?? item.to}>
@@ -83,9 +86,9 @@ export function Sidebar({ navItems }: SidebarProps) {
                   rel="noopener noreferrer"
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-2 text-sm transition-colors',
+                    'flex items-center rounded-md py-2 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-                    collapsed ? 'justify-center' : 'gap-3'
+                    collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
                   )}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
@@ -97,9 +100,9 @@ export function Sidebar({ navItems }: SidebarProps) {
                   activeOptions={item.end ? { exact: true } : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-2 text-sm transition-colors',
+                    'flex items-center rounded-md py-2 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-                    collapsed ? 'justify-center' : 'gap-3'
+                    collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
                   )}
                   activeProps={{
                     className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
@@ -117,7 +120,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                         to={child.to ?? '/'}
                         activeOptions={child.end ? { exact: true } : undefined}
                         className={cn(
-                          'flex items-center rounded-md px-3 py-1.5 text-sm transition-colors',
+                          'flex items-center rounded-md px-6 py-1.5 text-sm transition-colors',
                           'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
                           'gap-2'
                         )}
@@ -139,14 +142,14 @@ export function Sidebar({ navItems }: SidebarProps) {
 
       {/* Admin/App switcher */}
       {isAdmin && (
-        <div className="border-t border-[var(--color-sidebar-border)] px-2 py-3">
+        <div className="border-t border-[var(--color-sidebar-border)] py-3">
           <Link
             to={inAdmin ? '/app' : '/admin'}
             title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
-              'flex items-center rounded-md px-3 py-2 text-sm transition-colors',
+              'flex items-center rounded-md py-2 text-sm transition-colors',
               'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-              collapsed ? 'justify-center' : 'gap-3'
+              collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
             )}
           >
             {inAdmin
@@ -160,8 +163,8 @@ export function Sidebar({ navItems }: SidebarProps) {
 
       {/* Locale switcher */}
       <div className={cn(
-        'border-t border-[var(--color-sidebar-border)] px-2 py-2',
-        collapsed ? 'flex justify-center' : 'flex items-center gap-1 px-5'
+        'border-t border-[var(--color-sidebar-border)] py-2',
+        collapsed ? 'flex justify-center' : 'flex items-center gap-1 px-6'
       )}>
         {collapsed ? (
           <button
@@ -201,9 +204,9 @@ export function Sidebar({ navItems }: SidebarProps) {
       </div>
 
       {/* User + logout */}
-      <div className="border-t border-[var(--color-sidebar-border)] p-2">
+      <div className="border-t border-[var(--color-sidebar-border)] py-2">
         {auth.user && !collapsed && (
-          <div className="mb-2 px-3 py-2">
+          <div className="mb-1 px-6 py-2">
             <p className="truncate text-xs font-medium text-[var(--color-sidebar-foreground)]">
               {auth.user.profile.name ?? auth.user.profile.preferred_username}
             </p>
@@ -216,9 +219,9 @@ export function Sidebar({ navItems }: SidebarProps) {
           to="/app/account"
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
-            'flex items-center rounded-md px-3 py-2 text-sm transition-colors',
+            'flex items-center rounded-md py-2 text-sm transition-colors',
             'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-            collapsed ? 'justify-center' : 'gap-3'
+            collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
           )}
           activeProps={{
             className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
@@ -236,9 +239,9 @@ export function Sidebar({ navItems }: SidebarProps) {
           }}
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
-            'flex w-full items-center rounded-md px-3 py-2 text-sm transition-colors',
+            'flex w-full items-center rounded-md py-2 text-sm transition-colors',
             'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-            collapsed ? 'justify-center' : 'gap-3'
+            collapsed ? 'justify-center px-0' : 'gap-3 px-6'
           )}
         >
           <LogOut size={18} strokeWidth={1.5} />
