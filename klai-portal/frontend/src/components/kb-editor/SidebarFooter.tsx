@@ -1,6 +1,5 @@
 import { Plus, Upload, Check, X } from 'lucide-react'
 import { useRef } from 'react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
 
@@ -31,9 +30,9 @@ export function SidebarFooter({
   const showRootInput = showNewPage && newPageParent === null
 
   return (
-    <div className="px-3 py-3 border-t border-[var(--color-border)] space-y-2">
+    <div className="px-2 py-2 border-t border-[var(--color-border)] space-y-1">
       {showRootInput ? (
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 px-1">
           <Input
             value={newPageTitle}
             onChange={(e) => onNewPageTitleChange(e.target.value)}
@@ -46,35 +45,30 @@ export function SidebarFooter({
             }}
           />
           <div className="flex gap-1">
-            <Button
-              size="sm"
-              className="flex-1 h-6 text-xs"
+            <button
+              className="flex-1 h-7 flex items-center justify-center gap-1 text-xs rounded-md bg-[var(--color-foreground)] text-[var(--color-background)] hover:opacity-90 transition-opacity disabled:opacity-40"
               onClick={onNewPageConfirm}
               disabled={!newPageTitle.trim() || saveStatus === 'saving'}
             >
-              <Check size={11} className="mr-1" />
+              <Check size={11} />
               {m.docs_kb_create()}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2"
+            </button>
+            <button
+              className="h-7 px-2 flex items-center justify-center rounded-md text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] transition-colors"
               onClick={onNewPageCancel}
             >
               <X size={11} />
-            </Button>
+            </button>
           </div>
         </div>
       ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
+        <button
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
           onClick={onShowNewPage}
         >
-          <Plus size={12} className="mr-1.5" />
+          <Plus size={14} strokeWidth={1.5} />
           {m.docs_pages_new()}
-        </Button>
+        </button>
       )}
       <input
         ref={fileInputRef}
@@ -87,10 +81,13 @@ export function SidebarFooter({
           e.target.value = ''
         }}
       />
-      <Button variant="outline" size="sm" className="w-full" onClick={() => fileInputRef.current?.click()}>
-        <Upload size={12} className="mr-1.5" />
+      <button
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Upload size={14} strokeWidth={1.5} />
         {m.docs_pages_upload()}
-      </Button>
+      </button>
     </div>
   )
 }

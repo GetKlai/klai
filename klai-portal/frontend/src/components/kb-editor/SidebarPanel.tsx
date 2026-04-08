@@ -43,17 +43,17 @@ export function SidebarPanel({
   onUpload,
 }: SidebarPanelProps) {
   return (
-    <aside className="w-56 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-muted)] flex flex-col">
-      <div className="px-3 py-3 border-b border-[var(--color-border)]">
+    <aside className="w-60 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-background)] flex flex-col">
+      <div className="px-4 py-3">
         <Link
           to="/app/docs"
-          className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+          className="flex items-center gap-1.5 text-[11px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
         >
-          <ArrowLeft size={12} />
+          <ArrowLeft size={11} strokeWidth={1.5} />
           {m.docs_editor_back()}
         </Link>
       </div>
-      <div className="flex-1 overflow-y-auto py-2">
+      <div className="flex-1 overflow-y-auto px-1 py-1">
         {displayTree.length === 0 ? (
           <p className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
             {m.docs_pages_empty()}

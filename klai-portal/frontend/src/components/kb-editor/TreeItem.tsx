@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, FolderOpen, Plus, Check, X, MoreHorizontal, GripVertical } from 'lucide-react'
+import { ChevronRight, Plus, Check, X, MoreHorizontal, GripVertical } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
@@ -81,13 +81,12 @@ export function TreeItem({
 
   const { setNodeRef: setDropRef } = useDroppable({ id: node.path, disabled: isDragging })
 
-  // Combine drag and drop refs on the same element
   const setNodeRef = (el: HTMLDivElement | null) => {
     setDragRef(el)
     setDropRef(el)
   }
 
-  const paddingLeft = depth * INDENT_WIDTH + 8
+  const paddingLeft = depth * INDENT_WIDTH + 6
 
   const displayTitle =
     activePath && activePath === stripMdExt(node.path)
@@ -106,7 +105,7 @@ export function TreeItem({
   }
 
   const subpageInput = isAddingSubpageHere && (
-    <div className="py-1 pr-2" style={{ paddingLeft: `${paddingLeft + 12}px` }}>
+    <div className="py-0.5 pr-2" style={{ paddingLeft: `${paddingLeft + 20}px` }}>
       <div className="flex gap-1 items-center">
         <Input
           value={newPageTitle}
@@ -140,7 +139,6 @@ export function TreeItem({
     </div>
   )
 
-  // Visual highlight for "drop inside" intent
   const isInsideTarget = dropIntent === 'inside'
 
   return (
@@ -154,30 +152,23 @@ export function TreeItem({
       style={{ opacity: isDragging ? 0 : 1 }}
     >
       <div
-        className={`flex w-full items-center py-1 text-xs transition-colors group ${
+        className={`flex w-full items-center py-[3px] mx-1 rounded-md text-[13px] transition-colors group ${
           isInsideTarget
-            ? 'bg-[var(--color-rl-accent)]/20 ring-1 ring-[var(--color-rl-accent)] rounded'
+            ? 'bg-[var(--color-rl-accent)]/15 ring-1 ring-[var(--color-rl-accent)]'
             : isSelected && !isDir
-              ? 'bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)] font-medium'
-              : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
+              ? 'bg-[var(--color-foreground)]/[0.04] text-[var(--color-foreground)]'
+              : 'text-[var(--color-foreground)]/80 hover:bg-[var(--color-foreground)]/[0.03]'
         } ${isFocused ? 'ring-1 ring-[var(--color-rl-accent)] rounded' : ''}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <span className="relative shrink-0" style={{ width: `${paddingLeft}px` }}>
-          {Array.from({ length: depth }, (_, i) => (
-            <span
-              key={i}
-              className="absolute top-0 bottom-0 w-px bg-[var(--color-border)]"
-              style={{ left: `${i * INDENT_WIDTH + 8 + INDENT_WIDTH / 2}px` }}
-            />
-          ))}
-        </span>
+        <span className="shrink-0" style={{ width: `${paddingLeft}px` }} />
 
-        <div className="w-5 h-5 shrink-0 flex items-center justify-center mr-1">
-          {hasChildren && hovered ? (
+        {/* Chevron / icon area */}
+        <div className="w-5 h-5 shrink-0 flex items-center justify-center">
+          {hasChildren ? (
             <button
-              className="flex items-center justify-center w-full h-full"
+              className="flex items-center justify-center w-full h-full rounded hover:bg-[var(--color-foreground)]/[0.06] transition-colors"
               onClick={(e) => { e.stopPropagation(); onToggleCollapse(node.path) }}
               tabIndex={-1}
               aria-label={isCollapsed ? m.docs_tree_expand() : m.docs_tree_collapse()}
@@ -185,51 +176,47 @@ export function TreeItem({
             >
               <ChevronRight
                 size={12}
-                className={`text-[var(--color-muted-foreground)] transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                strokeWidth={1.5}
+                className={`text-[var(--color-muted-foreground)] transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
               />
             </button>
-          ) : isDir ? (
-            <FolderOpen size={13} className="shrink-0 text-[var(--color-muted-foreground)]" />
           ) : (
-            <span className="shrink-0 text-sm leading-none select-none">{node.icon ?? DEFAULT_ICON}</span>
+            <span className="shrink-0 text-[13px] leading-none select-none opacity-70">{node.icon ?? DEFAULT_ICON}</span>
           )}
         </div>
 
+        {/* Title */}
         <button
-          className={`flex flex-1 items-center gap-1.5 min-w-0 text-left ${
-            isDir
-              ? 'font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
-              : isSelected
-                ? 'text-[var(--color-foreground)] font-medium'
-                : 'text-[var(--color-foreground)]'
-          }`}
+          className="flex flex-1 items-center min-w-0 text-left ml-0.5"
           onClick={() => { if (!isDir) onSelect(node) }}
           disabled={isDir && !hasChildren}
         >
-          {isDir && <FolderOpen size={13} className="shrink-0" />}
-          <span className="truncate">{displayTitle}</span>
+          <span className={`truncate ${isSelected && !isDir ? 'font-medium' : ''}`}>
+            {displayTitle}
+          </span>
         </button>
 
-        <div className="flex items-center gap-0.5 mr-1.5 shrink-0">
+        {/* Actions - only on hover */}
+        <div className="flex items-center gap-0 mr-1 shrink-0">
           {(hovered || menuOpen) && !isDraggingActive && (
             <>
               <button
                 type="button"
-                className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                 onClick={() => onAddSubpage(nodePath)}
                 title={m.docs_pages_add_subpage()}
                 aria-label={m.docs_pages_add_subpage()}
               >
-                <Plus size={10} />
+                <Plus size={12} strokeWidth={1.5} />
               </button>
               <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                     aria-label={m.docs_tree_more_options()}
                   >
-                    <MoreHorizontal size={10} />
+                    <MoreHorizontal size={12} strokeWidth={1.5} />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44">
@@ -262,9 +249,11 @@ export function TreeItem({
               </DropdownMenu>
             </>
           )}
-          <span className="cursor-grab touch-none" {...attributes} {...listeners}>
-            <GripVertical size={12} className="text-[var(--color-muted-foreground)] opacity-40 flex-shrink-0" />
-          </span>
+          {(hovered || menuOpen) && !isDraggingActive && (
+            <span className="cursor-grab touch-none" {...attributes} {...listeners}>
+              <GripVertical size={12} strokeWidth={1.5} className="text-[var(--color-muted-foreground)] opacity-30" />
+            </span>
+          )}
         </div>
       </div>
       {subpageInput}
