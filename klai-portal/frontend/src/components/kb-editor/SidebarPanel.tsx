@@ -47,7 +47,7 @@ export function SidebarPanel({
       <div className="px-4 py-3">
         <Link
           to="/app/docs"
-          className="flex items-center gap-1.5 text-[11px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+          className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
         >
           <ArrowLeft size={11} strokeWidth={1.5} />
           {m.docs_editor_back()}
