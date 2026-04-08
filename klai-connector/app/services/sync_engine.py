@@ -146,6 +146,7 @@ class SyncEngine:
 
             status = SyncStatus.COMPLETED
             cursor_state: dict[str, Any] | None = None
+            refs: list = []  # all discovered refs (for cursor_state synced_refs)
 
             try:
                 cursor_state = await adapter.get_cursor_state(portal_config)
@@ -153,24 +154,28 @@ class SyncEngine:
                 last_run = await self._get_last_successful_run(session, connector_id)
                 last_pending = await self._get_last_pending_run(session, connector_id)
 
-                cursor_context: dict[str, Any] | None = None
+                # Resume state: refs already ingested in an interrupted run.
                 resume_ingested_refs: set[str] = set()
                 if last_pending and last_pending.cursor_state:
-                    cursor_context = last_pending.cursor_state
-                    resume_ingested_refs = set(cursor_context.get("ingested_refs", []))
+                    resume_ingested_refs = set(
+                        last_pending.cursor_state.get("ingested_refs", [])
+                    )
                     if resume_ingested_refs:
                         logger.info(
                             "Resuming interrupted sync for connector %s: %d refs already ingested, skipping",
                             connector_id,
                             len(resume_ingested_refs),
                         )
-                elif last_run and last_run.cursor_state:
-                    cursor_context = last_run.cursor_state
+
+                # Previous sync state for reconciliation.
+                prev_cursor = (last_run.cursor_state or {}) if last_run else {}
+                prev_synced_refs: set[str] = set(prev_cursor.get("synced_refs", []))
+                prev_synced_at: str = prev_cursor.get("last_synced_at", "")
 
                 # Tree-SHA optimisation for GitHub (safe: non-GitHub adapters won't have tree_sha).
-                if last_run and last_run.cursor_state:
-                    old_sha = last_run.cursor_state.get("tree_sha")
-                    new_sha = cursor_state.get("tree_sha")
+                if prev_cursor:
+                    old_sha = prev_cursor.get("tree_sha")
+                    new_sha = (cursor_state or {}).get("tree_sha")
                     if old_sha and new_sha and old_sha == new_sha:
                         logger.info("No changes detected for connector %s, skipping sync", connector_id)
                         sync_run.status = SyncStatus.COMPLETED
@@ -190,15 +195,38 @@ class SyncEngine:
                         )
                         return
 
+                # Discovery: always fetch ALL refs (adapter does no time filtering).
+                # cursor_context still passed for adapters that use it (e.g. webcrawler).
+                cursor_context = prev_cursor or None
                 refs = await adapter.list_documents(portal_config, cursor_context=cursor_context)
-                documents_total = len(refs)
 
+                # Reconciliation: decide which refs need syncing.
+                # - New: not in prev_synced_refs → always sync
+                # - Changed: last_edited > prev_synced_at → re-sync
+                # - Unchanged: skip (already indexed, not modified)
+                documents_skipped = 0
+                refs_to_sync: list = []
                 for ref in refs:
-                    # Skip refs already ingested in an interrupted run (resume mode).
                     ref_key = ref.source_ref or ref.path
                     if ref_key in resume_ingested_refs:
                         documents_ok += 1
                         continue
+                    is_new = ref_key not in prev_synced_refs
+                    is_changed = bool(ref.last_edited and ref.last_edited > prev_synced_at)
+                    if is_new or is_changed or not prev_synced_at:
+                        refs_to_sync.append(ref)
+                    else:
+                        documents_skipped += 1
+
+                documents_total = len(refs_to_sync)
+                if documents_skipped:
+                    logger.info(
+                        "Reconciliation for connector %s: %d to sync, %d unchanged (skipped), %d total discovered",
+                        connector_id, len(refs_to_sync), documents_skipped, len(refs),
+                    )
+
+                for ref in refs_to_sync:
+                    ref_key = ref.source_ref or ref.path
 
                     try:
                         content_bytes = await adapter.fetch_document(ref, portal_config)
@@ -316,6 +344,15 @@ class SyncEngine:
             sync_run.documents_failed = documents_failed
             sync_run.bytes_processed = bytes_processed
             sync_run.error_details = error_details if error_details else None
+            # Store all discovered refs for reconciliation on the next sync.
+            # This is the full set from the adapter — new refs appear here, deleted
+            # refs disappear. The sync engine compares against this on the next run.
+            if status == SyncStatus.COMPLETED and cursor_state is not None:
+                failed_refs = {e.get("file", "") for e in error_details}
+                cursor_state["synced_refs"] = sorted(
+                    (r.source_ref or r.path) for r in refs
+                    if (r.source_ref or r.path) not in failed_refs
+                )
             sync_run.cursor_state = cursor_state
             await session.commit()
 
