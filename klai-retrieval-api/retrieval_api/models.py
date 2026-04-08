@@ -37,6 +37,7 @@ class ChunkResult(BaseModel):
     source_connector_id: str | None = None  # Connector that produced this chunk
     source_url: str | None = None           # Canonical URL for this source
     title: str | None = None               # Document title from Qdrant payload
+    image_urls: list[str] | None = None    # Presigned S3 URLs for images in this document
 
 
 class RetrieveMetadata(BaseModel):

@@ -6,6 +6,21 @@ from typing import Any
 
 
 @dataclass
+class ImageRef:
+    """Reference to an image discovered in a document.
+
+    Attributes:
+        url: Original image URL or path in the source.
+        alt: Alt text from the image reference (empty string if absent).
+        source_path: Path of the image relative to the source root.
+    """
+
+    url: str
+    source_path: str
+    alt: str = ""
+
+
+@dataclass
 class DocumentRef:
     """Reference to a document in an external source.
 
@@ -16,6 +31,7 @@ class DocumentRef:
         content_type: MIME type or file extension.
         source_ref: Adapter-specific source reference string
             (e.g., "owner/repo:branch:path" for GitHub, full URL for web crawler).
+        images: Images discovered in or alongside this document.
     """
 
     path: str
@@ -24,6 +40,7 @@ class DocumentRef:
     content_type: str
     source_ref: str = ""
     source_url: str = ""
+    images: list[ImageRef] | None = None
 
 
 class BaseAdapter(ABC):

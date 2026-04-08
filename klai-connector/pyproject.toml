@@ -20,6 +20,8 @@ dependencies = [
     "PyJWT[crypto]>=2.9.0",
     "structlog>=25.0",
     "notion-sync-lib @ git+https://github.com/mvletter/notion-sync-lib.git",
+    "minio>=7.2.0",
+    "filetype>=1.2.0",
 ]
 
 [project.optional-dependencies]
