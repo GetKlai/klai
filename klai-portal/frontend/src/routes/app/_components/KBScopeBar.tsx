@@ -205,13 +205,16 @@ export function KBScopeBar() {
             {dropdownOpen && (
               <div className="absolute left-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1.5 shadow-lg">
                 {orgKbs.map((kb) => (
-                  <label
+                  <button
                     key={kb.slug}
-                    className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors"
+                    type="button"
+                    onClick={() => toggleSlug(kb.slug)}
+                    disabled={isPending}
+                    className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
                   >
                     <span className={['h-1.5 w-1.5 rounded-full shrink-0', currentSlugs.includes(kb.slug) ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'].join(' ')} />
                     <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
-                  </label>
+                  </button>
                 ))}
               </div>
             )}
