@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     portal_internal_secret: str = ""  # Secret klai-connector sends TO portal (must match portal's INTERNAL_SECRET)
     portal_caller_secret: str = ""  # Secret portal sends TO klai-connector (must match portal's KLAI_CONNECTOR_SECRET)
 
+    # Image storage (Garage S3)
+    garage_s3_endpoint: str = ""
+    garage_access_key: str = ""
+    garage_secret_key: str = ""
+    garage_bucket: str = "klai-images"
+    garage_region: str = "garage"
+    garage_presigned_ttl: int = 604800  # 7 days
+
     # Optional
     log_level: str = "INFO"
 

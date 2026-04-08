@@ -229,6 +229,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 source_connector_id=r.get("source_connector_id"),
                 source_url=r.get("source_url"),
                 title=r.get("title"),
+                image_urls=r.get("image_urls"),
             )
             for r in serving
         ]

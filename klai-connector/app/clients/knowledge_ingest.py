@@ -7,6 +7,38 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _build_payload(
+    *,
+    org_id: str,
+    kb_slug: str,
+    path: str,
+    content: str,
+    source_connector_id: str,
+    source_ref: str,
+    source_url: str = "",
+    content_type: str = "unknown",
+    image_urls: list[str] | None = None,
+) -> dict:
+    """Build the JSON payload for the knowledge-ingest endpoint."""
+    payload: dict = {
+        "org_id": org_id,
+        "kb_slug": kb_slug,
+        "path": path,
+        "content": content,
+        "source_connector_id": source_connector_id,
+        "source_ref": source_ref,
+        "content_type": content_type,
+    }
+    extra: dict[str, object] = {}
+    if source_url:
+        extra["source_url"] = source_url
+    if image_urls:
+        extra["image_urls"] = image_urls
+    if extra:
+        payload["extra"] = extra
+    return payload
+
+
 class KnowledgeIngestClient:
     """HTTP client for the knowledge-ingest service.
 
@@ -33,6 +65,7 @@ class KnowledgeIngestClient:
         source_url: str = "",
         content_type: str = "unknown",
         allowed_assertion_modes: list[str] | None = None,
+        image_urls: list[str] | None = None,
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -46,6 +79,7 @@ class KnowledgeIngestClient:
             content_type: Semantic content type (e.g. ``kb_article``, ``pdf_document``).
             allowed_assertion_modes: Optional connector-level hint for which assertion modes
                 this source can produce. Used in knowledge-ingest when content has no frontmatter.
+            image_urls: Optional list of presigned S3 URLs for images extracted from the document.
 
         Raises:
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
@@ -54,17 +88,17 @@ class KnowledgeIngestClient:
         if self._internal_secret:
             headers["x-internal-secret"] = self._internal_secret
 
-        payload: dict = {
-            "org_id": org_id,
-            "kb_slug": kb_slug,
-            "path": path,
-            "content": content,
-            "source_connector_id": source_connector_id,
-            "source_ref": source_ref,
-            "content_type": content_type,
-        }
-        if source_url:
-            payload["extra"] = {"source_url": source_url}
+        payload = _build_payload(
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            content=content,
+            source_connector_id=source_connector_id,
+            source_ref=source_ref,
+            source_url=source_url,
+            content_type=content_type,
+            image_urls=image_urls,
+        )
         if allowed_assertion_modes is not None:
             payload["allowed_assertion_modes"] = allowed_assertion_modes
 

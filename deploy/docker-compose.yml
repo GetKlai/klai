@@ -902,6 +902,46 @@ services:
       - postgres
       - falkordb
 
+  # ─── Garage S3 (image storage for knowledge pipeline) ────────────────────────
+  garage:
+    image: dxflrs/garage:v2.2.0
+    restart: unless-stopped
+    volumes:
+      - /opt/klai/garage-meta:/var/lib/garage/meta
+      - /opt/klai/garage-data:/var/lib/garage/data
+      - ./garage/garage.toml:/etc/garage.toml:ro
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+    networks:
+      - klai-net
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3900/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  garage-init:
+    image: curlimages/curl:latest
+    depends_on:
+      garage:
+        condition: service_healthy
+    environment:
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
+      GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY:-}
+    volumes:
+      - ./garage/init-garage.sh:/init-garage.sh:ro
+    entrypoint: ["/bin/sh", "/init-garage.sh"]
+    networks:
+      - klai-net
+    restart: "no"
+
   # ─── Klai Connector (external source sync to knowledge layer) ───────────────
   klai-connector:
     image: ghcr.io/getklai/klai-connector:latest
@@ -917,6 +957,11 @@ services:
       PORTAL_API_URL: http://portal-api:8010
       PORTAL_CALLER_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      GARAGE_S3_ENDPOINT: garage:3900
+      GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
+      GARAGE_REGION: garage
       LOG_LEVEL: INFO
     networks:
       - klai-net
@@ -926,6 +971,8 @@ services:
         condition: service_healthy
       knowledge-ingest:
         condition: service_started
+      garage:
+        condition: service_healthy
 
   # ─── Crawl4AI (internal web crawler for klai-connector) ─────────────────────
   crawl4ai:

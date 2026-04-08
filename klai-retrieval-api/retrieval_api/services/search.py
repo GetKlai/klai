@@ -261,6 +261,7 @@ async def _search_knowledge(
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
             "title": r.payload.get("title"),
+            "image_urls": r.payload.get("image_urls"),
             "links_to": r.payload.get("links_to", []),
             "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }
@@ -326,6 +327,7 @@ async def fetch_chunks_by_urls(
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
             "title": r.payload.get("title"),
+            "image_urls": r.payload.get("image_urls"),
             "links_to": r.payload.get("links_to", []),
             "incoming_link_count": r.payload.get("incoming_link_count", 0),
         }
