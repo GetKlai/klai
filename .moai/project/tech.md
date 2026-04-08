@@ -158,6 +158,21 @@ Klai is a multi-service TypeScript/Python monorepo. The frontend stack is TypeSc
 | Scheduler | APScheduler | >=3.10.0 |
 | GitHub API | gidgethub | >=5.3.0 |
 | JWT | PyJWT[crypto] | >=2.9.0 |
+| S3 Client | minio | >=7.2.0 |
+| Image Validation | filetype | >=1.2.0 |
+
+---
+
+## Garage S3 (deploy/garage/)
+
+**Purpose:** Image storage for the knowledge pipeline (SPEC-KB-IMAGE-001)
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Object Storage | Garage | v2.2.0 (`dxflrs/garage:v2.2.0`) |
+| S3 API | Port 3900 (authenticated uploads) | — |
+| Web Endpoint | Port 3902 (anonymous reads via Caddy) | — |
+| Caddy Route | `/kb-images/*` → `garage:3902` | — |
 
 ---
 
