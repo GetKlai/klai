@@ -80,7 +80,7 @@ function AppHome() {
               <tool.icon
                 size={20}
                 strokeWidth={1.5}
-                className="text-[var(--color-rl-accent)]"
+                className="text-[var(--color-muted-foreground)]"
               />
               <div>
                 <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
