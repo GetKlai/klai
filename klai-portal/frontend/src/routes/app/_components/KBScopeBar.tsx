@@ -145,7 +145,7 @@ export function KBScopeBar() {
           'flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors',
           isPending ? 'opacity-50' : '',
           isOn
-            ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+            ? 'bg-[var(--color-accent)]/10 text-[var(--color-rl-accent-dark)]'
             : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
         ].join(' ')}
       >
@@ -154,7 +154,7 @@ export function KBScopeBar() {
         <span
           className={[
             'h-2 w-2 rounded-full',
-            isOn ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-muted-foreground)]/40',
+            isOn ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/40',
           ].join(' ')}
         />
       </button>
