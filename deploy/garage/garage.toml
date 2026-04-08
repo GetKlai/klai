@@ -1,9 +1,10 @@
 # Garage S3-compatible object storage — single-node configuration.
 # Docs: https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/
 #
-# IMPORTANT: Garage does NOT support environment variable substitution in this file.
-# The rpc_secret and admin_token must be rendered with real values before deployment.
-# Use deploy/garage/render-config.sh or edit directly on the server.
+# Secrets (rpc_secret, admin_token) are injected via environment variables:
+#   GARAGE_RPC_SECRET — 32-byte hex string (openssl rand -hex 32)
+#   GARAGE_ADMIN_TOKEN — admin API bearer token
+# This avoids secrets in config files and works with SOPS + Docker Compose.
 
 metadata_dir = "/var/lib/garage/meta"
 data_dir = "/var/lib/garage/data"
@@ -13,7 +14,6 @@ replication_factor = 1
 
 rpc_bind_addr = "[::]:3901"
 rpc_public_addr = "127.0.0.1:3901"
-rpc_secret = "RENDER_ME"
 
 [s3_api]
 s3_region = "garage"
@@ -25,4 +25,3 @@ root_domain = ".web.garage"
 
 [admin]
 api_bind_addr = "[::]:3903"
-admin_token = "RENDER_ME"
