@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Klai Styleguide</title>
+
+<style>
+/* ========================================
+   FONT FACES
+   Fonts live in klai-website/public/fonts/
+   Adjust paths if hosting elsewhere.
+   ======================================== */
+@font-face { font-family: "Parabole Regular"; src: url("klai-website/public/fonts/parabole-regular.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Parabole Medium";  src: url("klai-website/public/fonts/parabole-medium.woff2") format("woff2"); font-display: swap; font-weight: 500; }
+@font-face { font-family: "Parabole Bold";    src: url("klai-website/public/fonts/parabole-bold.woff2") format("woff2"); font-display: swap; font-weight: 700; }
+@font-face { font-family: "Parabole Display"; src: url("klai-website/public/fonts/parabole-display.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Decima Mono";      src: url("klai-website/public/fonts/decima-mono.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+
+/* ========================================
+   CSS CUSTOM PROPERTIES (Design Tokens)
+   Source of truth: klai-website/src/styles/global.css
+   ======================================== */
+:root {
+  /* Colors */
+  --color-rl-bg:           #fffef2;
+  --color-rl-dark:         #191918;
+  --color-rl-dark-60:      #19191899;
+  --color-rl-dark-30:      #1919184d;
+  --color-rl-dark-10:      #1919181a;
+  --color-rl-accent:       #fcaa2d;
+  --color-rl-accent-dark:  #a36404;
+  --color-rl-cream:        #f3f2e7;
+  --color-rl-border:       #e3e2d8;
+  --color-rl-border-light: #d1d0c666;
+  --color-rl-muted:        #bab9b0;
+
+  /* Fonts */
+  --font-display:        "Parabole Regular", sans-serif;
+  --font-display-medium: "Parabole Medium", sans-serif;
+  --font-display-bold:   "Parabole Bold", sans-serif;
+  --font-mono:           "Decima Mono", monospace;
+}
+
+/* ========================================
+   BASE
+   ======================================== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { -webkit-font-smoothing: antialiased; scroll-behavior: smooth; }
+
+body {
+  background: var(--color-rl-bg);
+  font-family: var(--font-display);
+  color: var(--color-rl-dark);
+  line-height: 1.6;
+}
+
+/* ========================================
+   STYLEGUIDE LAYOUT
+   ======================================== */
+.sg-container {
+  max-width: 1064px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.sg-header {
+  padding: 64px 0 48px;
+  border-bottom: 1px solid var(--color-rl-border);
+  margin-bottom: 64px;
+}
+
+.sg-header h1 {
+  font-family: var(--font-display);
+  font-size: 48px;
+  letter-spacing: -0.04em;
+  line-height: 110%;
+  margin-bottom: 16px;
+}
+
+.sg-header p {
+  font-size: 17px;
+  color: var(--color-rl-dark-60);
+  max-width: 55ch;
+}
+
+.sg-section {
+  margin-bottom: 96px;
+}
+
+.sg-section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.sg-section-label .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-rl-accent);
+}
+
+.sg-section-label span:last-child {
+  font-family: var(--font-display-medium);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-rl-dark-30);
+}
+
+.sg-section h2 {
+  font-size: 32px;
+  letter-spacing: -0.04em;
+  line-height: 110%;
+  margin-bottom: 16px;
+}
+
+.sg-section > p {
+  font-size: 16px;
+  color: var(--color-rl-dark-60);
+  max-width: 55ch;
+  margin-bottom: 40px;
+}
+
+.sg-subsection {
+  margin-bottom: 48px;
+}
+
+.sg-subsection h3 {
+  font-family: var(--font-display-medium);
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  margin-bottom: 20px;
+}
+
+/* ========================================
+   COLOR SWATCHES
+   ======================================== */
+.sg-colors {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.sg-swatch {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-rl-border);
+}
+
+.sg-swatch-color {
+  height: 80px;
+}
+
+.sg-swatch-info {
+  padding: 12px 16px;
+  background: var(--color-rl-cream);
+}
+
+.sg-swatch-name {
+  font-family: var(--font-display-medium);
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.sg-swatch-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sg-swatch-usage {
+  font-size: 13px;
+  color: var(--color-rl-dark-60);
+  margin-top: 4px;
+}
+
+/* ========================================
+   TYPOGRAPHY SPECIMENS
+   ======================================== */
+.sg-type-specimen {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--color-rl-border);
+}
+
+.sg-type-specimen:last-child { border-bottom: none; }
+
+.sg-type-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.sg-type-sample-hero {
+  font-family: var(--font-display);
+  font-size: 48px;
+  letter-spacing: -0.04em;
+  line-height: 110%;
+}
+
+.sg-type-sample-h2 {
+  font-family: var(--font-display);
+  font-size: 40px;
+  letter-spacing: -0.04em;
+  line-height: 110%;
+}
+
+.sg-type-sample-h3 {
+  font-family: var(--font-display-medium);
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+
+.sg-type-sample-body {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--color-rl-dark-60);
+  line-height: 1.6;
+  max-width: 55ch;
+}
+
+.sg-type-sample-lead {
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--color-rl-dark-60);
+  line-height: 1.6;
+  max-width: 55ch;
+}
+
+.sg-type-sample-small {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--color-rl-dark-60);
+}
+
+.sg-type-sample-label {
+  font-family: var(--font-display-medium);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-rl-dark-30);
+}
+
+.sg-type-sample-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-rl-muted);
+}
+
+.sg-type-sample-bold {
+  font-family: var(--font-display-bold);
+  font-size: 15px;
+}
+
+.font-accent {
+  font-family: "Parabole Display", sans-serif;
+  font-style: normal;
+}
+
+.sg-type-specs {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-muted);
+  margin-top: 8px;
+  letter-spacing: 0.02em;
+}
+
+/* ========================================
+   BUTTONS
+   ======================================== */
+.sg-button-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.btn-accent {
+  background-color: var(--color-rl-accent);
+  color: var(--color-rl-dark);
+  border-radius: 999px;
+  padding: 0.5rem 1.25rem;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+}
+.btn-accent:hover { background-color: #e89a1f; }
+
+.btn-ghost {
+  border: 1px solid var(--color-rl-dark-10);
+  color: var(--color-rl-dark);
+  border-radius: 999px;
+  padding: 0.5rem 1.25rem;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  cursor: pointer;
+  background: transparent;
+}
+.btn-ghost:hover { border-color: var(--color-rl-dark); }
+
+.btn-icon {
+  width: 10px;
+  height: 10px;
+}
+
+/* ========================================
+   CARDS
+   ======================================== */
+.sg-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.sg-card {
+  background: var(--color-rl-cream);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.sg-card-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sg-card-title {
+  font-family: var(--font-display-medium);
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  margin-top: 6px;
+}
+
+.sg-card-desc {
+  font-size: 14px;
+  color: var(--color-rl-dark-60);
+  line-height: 1.6;
+  margin-top: 8px;
+}
+
+/* ========================================
+   SPACING SCALE
+   ======================================== */
+.sg-spacing-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-rl-border);
+}
+
+.sg-spacing-bar {
+  background: var(--color-rl-accent);
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.sg-spacing-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  min-width: 100px;
+}
+
+.sg-spacing-value {
+  font-size: 13px;
+  color: var(--color-rl-dark-60);
+  white-space: nowrap;
+}
+
+/* ========================================
+   RADIUS
+   ======================================== */
+.sg-radius-grid {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.sg-radius-item {
+  text-align: center;
+}
+
+.sg-radius-box {
+  border: 2px solid var(--color-rl-border);
+  background: var(--color-rl-cream);
+  width: 80px;
+  height: 80px;
+  margin-bottom: 8px;
+}
+
+.sg-radius-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sg-radius-val {
+  font-size: 13px;
+  color: var(--color-rl-dark-60);
+  margin-top: 2px;
+}
+
+/* ========================================
+   SECTION LABEL DEMO
+   ======================================== */
+.sg-demo-box {
+  background: var(--color-rl-cream);
+  border-radius: 12px;
+  padding: 32px;
+  margin-bottom: 24px;
+}
+
+.sg-demo-box--dark {
+  background: var(--color-rl-dark);
+  color: white;
+}
+
+/* ========================================
+   TABLE
+   ======================================== */
+.sg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.sg-table th {
+  font-family: var(--font-display-medium);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-rl-dark-30);
+  text-align: left;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-rl-border);
+}
+
+.sg-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-rl-border);
+  color: var(--color-rl-dark-60);
+}
+
+.sg-table td:first-child {
+  color: var(--color-rl-dark);
+  font-family: var(--font-display-medium);
+}
+
+.sg-table code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--color-rl-cream);
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+/* ========================================
+   FAQ DEMO
+   ======================================== */
+.sg-faq-item {
+  border-bottom: 1px solid var(--color-rl-border);
+}
+
+.sg-faq-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-display-medium);
+  font-size: 16px;
+  color: var(--color-rl-dark);
+  text-align: left;
+}
+
+.sg-faq-trigger svg {
+  transition: transform 0.3s ease;
+  color: var(--color-rl-muted);
+  flex-shrink: 0;
+}
+
+.sg-faq-trigger.open svg {
+  transform: rotate(45deg);
+}
+
+.sg-faq-answer {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sg-faq-answer.open {
+  max-height: 300px;
+}
+
+.sg-faq-answer p {
+  font-size: 14px;
+  color: var(--color-rl-dark-60);
+  line-height: 1.6;
+  padding-bottom: 20px;
+  max-width: 55ch;
+}
+
+/* ========================================
+   BROWSER MOCKUP
+   ======================================== */
+.sg-browser {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-rl-border);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.12);
+  max-width: 640px;
+}
+
+.sg-browser-chrome {
+  background: var(--color-rl-bg);
+  border-bottom: 1px solid var(--color-rl-border);
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 8px;
+}
+
+.sg-browser-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.sg-browser-dot--close    { background: #FF5F5780; }
+.sg-browser-dot--minimize { background: #FFBD2E80; }
+.sg-browser-dot--maximize { background: #28C84080; }
+
+.sg-browser-url {
+  background: var(--color-rl-cream);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-rl-dark-30);
+  flex: 1;
+  margin-left: 8px;
+}
+
+.sg-browser-body {
+  background: #FAFAF8;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-rl-muted);
+  font-size: 14px;
+}
+
+/* ========================================
+   FOOTER
+   ======================================== */
+.sg-footer {
+  border-top: 1px solid var(--color-rl-border);
+  padding: 32px 0;
+  margin-top: 64px;
+  font-size: 13px;
+  color: var(--color-rl-dark-30);
+  text-align: center;
+}
+
+/* ========================================
+   NAV
+   ======================================== */
+.sg-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 254, 242, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-rl-border);
+  padding: 0 20px;
+}
+
+.sg-nav-inner {
+  max-width: 1064px;
+  margin: 0 auto;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sg-nav-title {
+  font-family: var(--font-display-medium);
+  font-size: 15px;
+}
+
+.sg-nav-links {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+}
+
+.sg-nav-links a {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-rl-dark-60);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.sg-nav-links a:hover {
+  color: var(--color-rl-dark);
+}
+
+@media (max-width: 768px) {
+  .sg-nav-links { display: none; }
+  .sg-type-sample-hero { font-size: 32px; }
+  .sg-type-sample-h2 { font-size: 32px; }
+  .sg-header h1 { font-size: 32px; }
+  .sg-colors { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+}
+</style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="sg-nav">
+  <div class="sg-nav-inner">
+    <div class="sg-nav-title">Klai Styleguide</div>
+    <ul class="sg-nav-links">
+      <li><a href="#colors">Colors</a></li>
+      <li><a href="#typography">Typography</a></li>
+      <li><a href="#buttons">Buttons</a></li>
+      <li><a href="#cards">Cards</a></li>
+      <li><a href="#components">Components</a></li>
+      <li><a href="#spacing">Spacing</a></li>
+      <li><a href="#tokens">Tokens</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="sg-container">
+
+  <!-- Header -->
+  <header class="sg-header">
+    <h1>Klai <em class="font-accent" style="font-style: normal;">Styleguide</em></h1>
+    <p>Design tokens, typography, components, and patterns for the Klai brand. Source of truth: <code style="font-family: var(--font-mono); font-size: 13px; background: var(--color-rl-cream); padding: 2px 6px; border-radius: 4px;">klai-website/src/styles/global.css</code></p>
+  </header>
+
+  <!-- ==========================================
+       COLORS
+       ========================================== -->
+  <section class="sg-section" id="colors">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Colors</span>
+    </div>
+    <h2>Color palette</h2>
+    <p>Warm and restrained. Ivory backgrounds, near-black text, amber accents. No cold grays, no neon, no gradients.</p>
+
+    <div class="sg-subsection">
+      <h3>Brand colors</h3>
+      <div class="sg-colors">
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #fffef2;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Background</div>
+            <div class="sg-swatch-meta">#fffef2 / rl-bg</div>
+            <div class="sg-swatch-usage">Page body background</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #191918;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Dark</div>
+            <div class="sg-swatch-meta">#191918 / rl-dark</div>
+            <div class="sg-swatch-usage">Headings, primary text</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #fcaa2d;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Accent</div>
+            <div class="sg-swatch-meta">#fcaa2d / rl-accent</div>
+            <div class="sg-swatch-usage">CTA buttons, dots, highlights</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #a36404;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Accent dark</div>
+            <div class="sg-swatch-meta">#a36404 / rl-accent-dark</div>
+            <div class="sg-swatch-usage">Text links on light bg</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #f3f2e7;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Cream</div>
+            <div class="sg-swatch-meta">#f3f2e7 / rl-cream</div>
+            <div class="sg-swatch-usage">Card backgrounds, inputs</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #e3e2d8;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Border</div>
+            <div class="sg-swatch-meta">#e3e2d8 / rl-border</div>
+            <div class="sg-swatch-usage">Dividers, card borders</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #bab9b0;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">Muted</div>
+            <div class="sg-swatch-meta">#bab9b0 / rl-muted</div>
+            <div class="sg-swatch-usage">Label text, mono tags</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Text opacity levels</h3>
+      <div class="sg-colors">
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #191918;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">100% - Headings</div>
+            <div class="sg-swatch-meta">#191918</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #19191899;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">60% - Body text</div>
+            <div class="sg-swatch-meta">#19191899 / rl-dark-60</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #19191866;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">40% - Labels</div>
+            <div class="sg-swatch-meta">rl-dark/40</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #1919184d;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">30% - Placeholders</div>
+            <div class="sg-swatch-meta">#1919184d / rl-dark-30</div>
+          </div>
+        </div>
+
+        <div class="sg-swatch">
+          <div class="sg-swatch-color" style="background: #1919181a;"></div>
+          <div class="sg-swatch-info">
+            <div class="sg-swatch-name">10% - Ghost borders</div>
+            <div class="sg-swatch-meta">#1919181a / rl-dark-10</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Accessibility notes</h3>
+      <table class="sg-table">
+        <thead>
+          <tr><th>Combination</th><th>Result</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>#191918 on #fffef2</td><td>Excellent contrast - primary text on background</td></tr>
+          <tr><td>#191918 on #f3f2e7</td><td>Excellent contrast - text on cards</td></tr>
+          <tr><td>#191918 on #fcaa2d</td><td>Good contrast - button text on accent</td></tr>
+          <tr><td style="color: #a36404;">#fcaa2d as text on #fffef2</td><td style="color: #a36404; font-family: var(--font-display-medium);">Fails AA - never use accent as text on light. Use #a36404 instead.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       TYPOGRAPHY
+       ========================================== -->
+  <section class="sg-section" id="typography">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Typography</span>
+    </div>
+    <h2>Type system</h2>
+    <p>One font family (Parabole) in three weights handles everything. Decima Mono is used only for category labels and UI metadata.</p>
+
+    <div class="sg-subsection">
+      <h3>Font families</h3>
+      <table class="sg-table">
+        <thead>
+          <tr><th>Name</th><th>Weight</th><th>CSS Variable</th><th>Usage</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Parabole Regular</td><td>400</td><td><code>--font-display</code></td><td>Body, headings, nav, buttons - default</td></tr>
+          <tr><td>Parabole Medium</td><td>500</td><td><code>--font-display-medium</code></td><td>Card titles, section labels, prices</td></tr>
+          <tr><td>Parabole Bold</td><td>700</td><td><code>--font-display-bold</code></td><td>Trusted-by names only. Rarely used.</td></tr>
+          <tr><td>Parabole Display</td><td>400</td><td>-</td><td>Accent/emphasis words in headings only</td></tr>
+          <tr><td>Decima Mono</td><td>400</td><td><code>--font-mono</code></td><td>Category labels, URL bars, code</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Heading scale</h3>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Hero H1 - 48px / -0.04em / 110%</div>
+        <div class="sg-type-sample-hero">European AI built for <em class="font-accent" style="font-style: normal;">trust</em></div>
+        <div class="sg-type-specs">font-display / 400 / 48px desktop, 32px mobile / tracking -0.04em / leading 110%</div>
+      </div>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Section H2 - 40px / -0.04em / 110%</div>
+        <div class="sg-type-sample-h2">Everything you need to <em class="font-accent" style="font-style: normal;">build</em></div>
+        <div class="sg-type-specs">font-display / 400 / 40px desktop, 32px mobile / tracking -0.04em / leading 110%</div>
+      </div>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Card Title - 17px / -0.02em</div>
+        <div class="sg-type-sample-h3">Knowledge management for teams</div>
+        <div class="sg-type-specs">font-display-medium / 500 / 17px / tracking -0.02em</div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Body text</h3>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Lead Paragraph - 17px</div>
+        <div class="sg-type-sample-lead">Klai is the European AI platform built for organizations that care about data sovereignty, privacy, and trust. Deploy on your infrastructure or ours.</div>
+        <div class="sg-type-specs">font-display / 400 / 17px / color rl-dark-60 / leading 1.6</div>
+      </div>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Body Paragraph - 16px</div>
+        <div class="sg-type-sample-body">Connect your existing knowledge base, documents, and data sources. Klai indexes everything and makes it searchable through natural language queries.</div>
+        <div class="sg-type-specs">font-display / 400 / 16px / color rl-dark-60 / leading 1.6 / max-width 55ch</div>
+      </div>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Small Text - 13px</div>
+        <div class="sg-type-sample-small">Included in all plans. No credit card required.</div>
+        <div class="sg-type-specs">font-display / 400 / 13px / color rl-dark-60</div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Labels and UI text</h3>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Section Label - 12px uppercase</div>
+        <div class="sg-type-sample-label">Platform features</div>
+        <div class="sg-type-specs">font-display-medium / 500 / 12px / uppercase / tracking 0.04em / color rl-dark/40</div>
+      </div>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Card Category - 11px mono uppercase</div>
+        <div class="sg-type-sample-mono">Knowledge base</div>
+        <div class="sg-type-specs">font-mono (Decima) / 400 / 11px / uppercase / tracking 0.06em / color rl-muted</div>
+      </div>
+
+      <div class="sg-type-specimen">
+        <div class="sg-type-label">Bold (Trusted-by names) - 15px</div>
+        <div class="sg-type-sample-bold">Acme Corp &nbsp; Initech &nbsp; Umbrella &nbsp; Stark Industries</div>
+        <div class="sg-type-specs">font-display-bold / 700 / 15px / color rl-dark/40 / used sparingly</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       BUTTONS
+       ========================================== -->
+  <section class="sg-section" id="buttons">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Buttons</span>
+    </div>
+    <h2>Buttons</h2>
+    <p>Pill-shaped, 12px uppercase with 0.04em tracking. Two variants: accent (primary CTA) and ghost (secondary).</p>
+
+    <div class="sg-subsection">
+      <h3>Primary (.btn-accent)</h3>
+      <div class="sg-button-row">
+        <button class="btn-accent">
+          Get started
+          <svg class="btn-icon" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5H9M9 5L5 1M9 5L5 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="btn-accent">Try for free</button>
+      </div>
+      <table class="sg-table">
+        <tbody>
+          <tr><td>Background</td><td><code>#fcaa2d</code> / hover: <code>#e89a1f</code></td></tr>
+          <tr><td>Text</td><td><code>#191918</code></td></tr>
+          <tr><td>Radius</td><td><code>999px</code> (pill)</td></tr>
+          <tr><td>Padding</td><td><code>0.5rem 1.25rem</code> (8px 20px)</td></tr>
+          <tr><td>Font</td><td>12px, uppercase, tracking 0.04em, weight 400</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Ghost (.btn-ghost)</h3>
+      <div class="sg-button-row">
+        <button class="btn-ghost">
+          Learn more
+          <svg class="btn-icon" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5H9M9 5L5 1M9 5L5 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="btn-ghost">View documentation</button>
+      </div>
+      <table class="sg-table">
+        <tbody>
+          <tr><td>Background</td><td>transparent</td></tr>
+          <tr><td>Border</td><td><code>#1919181a</code> / hover: <code>#191918</code></td></tr>
+          <tr><td>Text</td><td><code>#191918</code></td></tr>
+          <tr><td>All other</td><td>Same size, font, padding, radius as accent</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Button pair (common pattern)</h3>
+      <div class="sg-button-row">
+        <a class="btn-accent" href="#">
+          Start free trial
+          <svg class="btn-icon" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5H9M9 5L5 1M9 5L5 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="btn-ghost" href="#">
+          Book a demo
+          <svg class="btn-icon" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5H9M9 5L5 1M9 5L5 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       CARDS
+       ========================================== -->
+  <section class="sg-section" id="cards">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Cards</span>
+    </div>
+    <h2>Cards</h2>
+    <p>Cream background, rounded-xl (12px), consistent internal spacing. Use inline background style for reliable rendering.</p>
+
+    <div class="sg-subsection">
+      <h3>Content card</h3>
+      <div class="sg-card-grid">
+        <div class="sg-card">
+          <div class="sg-card-label">Knowledge base</div>
+          <div class="sg-card-title">Connect all your sources</div>
+          <div class="sg-card-desc">Bring your documents, wikis, and databases together in one searchable knowledge base.</div>
+        </div>
+        <div class="sg-card">
+          <div class="sg-card-label">AI assistants</div>
+          <div class="sg-card-title">Build custom agents</div>
+          <div class="sg-card-desc">Create AI assistants tailored to your team's specific workflows and knowledge.</div>
+        </div>
+        <div class="sg-card">
+          <div class="sg-card-label">Analytics</div>
+          <div class="sg-card-title">Understand usage patterns</div>
+          <div class="sg-card-desc">Track how your team uses AI, measure adoption, and identify optimization opportunities.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Card anatomy</h3>
+      <table class="sg-table">
+        <thead>
+          <tr><th>Element</th><th>Style</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Container</td><td><code>rounded-xl p-5 sm:p-6</code> / bg: <code>#f3f2e7</code> (inline)</td></tr>
+          <tr><td>Label</td><td><code>font-mono 11px</code> / uppercase / tracking 0.06em / color rl-muted</td></tr>
+          <tr><td>Title</td><td><code>font-display-medium 17px</code> / tracking -0.02em / mt-1.5</td></tr>
+          <tr><td>Description</td><td><code>font-display 14px</code> / color rl-dark/60 / leading 1.6 / mt-2</td></tr>
+          <tr><td>Stack gap</td><td><code>space-y-4</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       COMPONENTS
+       ========================================== -->
+  <section class="sg-section" id="components">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Components</span>
+    </div>
+    <h2>Component patterns</h2>
+    <p>Reusable patterns from the website: section labels, FAQ accordions, browser mockups.</p>
+
+    <div class="sg-subsection">
+      <h3>Section label</h3>
+      <p style="font-size: 14px; color: var(--color-rl-dark-60); margin-bottom: 20px;">Every content section starts with an orange dot + uppercase label.</p>
+      <div class="sg-demo-box">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+          <span style="width: 8px; height: 8px; background: #fcaa2d;"></span>
+          <span style="font-family: var(--font-display-medium); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: #19191866;">Platform features</span>
+        </div>
+        <div style="font-size: 32px; letter-spacing: -0.04em; line-height: 110%;">
+          Everything you need to <em class="font-accent" style="font-style: normal;">build</em>
+        </div>
+        <p style="font-size: 16px; color: var(--color-rl-dark-60); line-height: 1.6; margin-top: 16px; max-width: 55ch;">
+          From knowledge ingestion to AI-powered search, Klai gives your team the tools to work smarter.
+        </p>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>FAQ accordion</h3>
+      <div class="sg-demo-box">
+        <div class="sg-faq-item">
+          <button class="sg-faq-trigger" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+            <span>What makes Klai different from other AI platforms?</span>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <div class="sg-faq-answer">
+            <p>Klai is built from the ground up for European data sovereignty. Your data never leaves the EU, and you can self-host on your own infrastructure.</p>
+          </div>
+        </div>
+        <div class="sg-faq-item">
+          <button class="sg-faq-trigger" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+            <span>Can I self-host Klai?</span>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <div class="sg-faq-answer">
+            <p>Yes. Klai ships as Docker containers with a single docker-compose file. Install on any Linux server with 4GB+ RAM.</p>
+          </div>
+        </div>
+        <div class="sg-faq-item">
+          <button class="sg-faq-trigger" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+            <span>Which AI models does Klai support?</span>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <div class="sg-faq-answer">
+            <p>Klai uses LiteLLM as a model gateway, supporting any model provider. We recommend EU-hosted models for compliance.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Browser mockup</h3>
+      <div class="sg-browser">
+        <div class="sg-browser-chrome">
+          <div class="sg-browser-dot sg-browser-dot--close"></div>
+          <div class="sg-browser-dot sg-browser-dot--minimize"></div>
+          <div class="sg-browser-dot sg-browser-dot--maximize"></div>
+          <div class="sg-browser-url">app.getklai.com/knowledge</div>
+        </div>
+        <div class="sg-browser-body">Product screenshot area</div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Navigation bar</h3>
+      <table class="sg-table">
+        <thead>
+          <tr><th>Property</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Height</td><td>56px</td></tr>
+          <tr><td>Background</td><td><code>#fffef2</code> at 90% opacity + <code>backdrop-blur(12px)</code></td></tr>
+          <tr><td>Position</td><td>Sticky, top: 0, z-index: 50</td></tr>
+          <tr><td>Border</td><td>1px solid rl-border (appears on scroll)</td></tr>
+          <tr><td>Logo height</td><td>20px (h-5)</td></tr>
+          <tr><td>Link style</td><td>12px uppercase, tracking 0.04em, color rl-dark-60</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       SPACING & LAYOUT
+       ========================================== -->
+  <section class="sg-section" id="spacing">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Spacing & Layout</span>
+    </div>
+    <h2>Spacing and layout</h2>
+    <p>Consistent spacing scale based on Tailwind defaults. Container maxes at 1064px.</p>
+
+    <div class="sg-subsection">
+      <h3>Spacing scale</h3>
+      <div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-2</div>
+          <div class="sg-spacing-bar" style="width: 8px;"></div>
+          <div class="sg-spacing-value">8px - section label icon gap</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-3</div>
+          <div class="sg-spacing-bar" style="width: 12px;"></div>
+          <div class="sg-spacing-value">12px - button groups, small gaps</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-4</div>
+          <div class="sg-spacing-bar" style="width: 16px;"></div>
+          <div class="sg-spacing-value">16px - card grids, content gaps</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-5</div>
+          <div class="sg-spacing-bar" style="width: 20px;"></div>
+          <div class="sg-spacing-value">20px - flex layout gaps</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-6</div>
+          <div class="sg-spacing-bar" style="width: 24px;"></div>
+          <div class="sg-spacing-value">24px - card grid gaps, content</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-8</div>
+          <div class="sg-spacing-bar" style="width: 32px;"></div>
+          <div class="sg-spacing-value">32px - footer columns, feature strip</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-10</div>
+          <div class="sg-spacing-bar" style="width: 40px;"></div>
+          <div class="sg-spacing-value">40px - FAQ two-column, sections</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-12</div>
+          <div class="sg-spacing-bar" style="width: 48px;"></div>
+          <div class="sg-spacing-value">48px - hero two-column gap</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">gap-16</div>
+          <div class="sg-spacing-bar" style="width: 64px;"></div>
+          <div class="sg-spacing-value">64px - two-column section gap</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">py-16</div>
+          <div class="sg-spacing-bar" style="width: 64px;"></div>
+          <div class="sg-spacing-value">64px - section padding (mobile)</div>
+        </div>
+        <div class="sg-spacing-row">
+          <div class="sg-spacing-label">py-24</div>
+          <div class="sg-spacing-bar" style="width: 96px;"></div>
+          <div class="sg-spacing-value">96px - section padding (desktop)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Border radius</h3>
+      <div class="sg-radius-grid">
+        <div class="sg-radius-item">
+          <div class="sg-radius-box" style="border-radius: 8px;"></div>
+          <div class="sg-radius-name">rounded-lg</div>
+          <div class="sg-radius-val">8px</div>
+          <div class="sg-radius-val" style="color: var(--color-rl-muted); font-size: 12px;">URL bars, inputs</div>
+        </div>
+        <div class="sg-radius-item">
+          <div class="sg-radius-box" style="border-radius: 12px;"></div>
+          <div class="sg-radius-name">rounded-xl</div>
+          <div class="sg-radius-val">12px</div>
+          <div class="sg-radius-val" style="color: var(--color-rl-muted); font-size: 12px;">Cards, FAQ</div>
+        </div>
+        <div class="sg-radius-item">
+          <div class="sg-radius-box" style="border-radius: 16px;"></div>
+          <div class="sg-radius-name">rounded-2xl</div>
+          <div class="sg-radius-val">16px</div>
+          <div class="sg-radius-val" style="color: var(--color-rl-muted); font-size: 12px;">Sections, paintings</div>
+        </div>
+        <div class="sg-radius-item">
+          <div class="sg-radius-box" style="border-radius: 999px; width: 80px; height: 40px;"></div>
+          <div class="sg-radius-name">rounded-full</div>
+          <div class="sg-radius-val">999px</div>
+          <div class="sg-radius-val" style="color: var(--color-rl-muted); font-size: 12px;">Buttons, badges</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Container & layout</h3>
+      <table class="sg-table">
+        <thead>
+          <tr><th>Property</th><th>Mobile</th><th>Desktop (md: 768px+)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Max width</td><td colspan="2">1064px, mx-auto</td></tr>
+          <tr><td>Padding</td><td>px-5 (20px)</td><td>px-10 (40px)</td></tr>
+          <tr><td>Hero top</td><td>pt-16 (64px)</td><td>pt-28 (112px)</td></tr>
+          <tr><td>Section vertical</td><td>py-16 (64px)</td><td>py-24 (96px)</td></tr>
+          <tr><td>Content spacer</td><td>h-10 (40px)</td><td>h-14 (56px)</td></tr>
+          <tr><td>Heading to body</td><td colspan="2">mt-4 (16px)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Shadows</h3>
+      <table class="sg-table">
+        <thead>
+          <tr><th>Context</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Browser mockup</td><td><code>0 8px 40px rgba(0,0,0,0.12)</code></td></tr>
+          <tr><td>Card hover</td><td><code>hover:shadow-md</code></td></tr>
+          <tr><td>Everything else</td><td>No shadows. The design is intentionally flat.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       CSS TOKENS REFERENCE
+       ========================================== -->
+  <section class="sg-section" id="tokens">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Tokens</span>
+    </div>
+    <h2>CSS custom properties</h2>
+    <p>All tokens are defined as CSS custom properties. Copy these into any project to use the Klai design system.</p>
+
+    <div class="sg-demo-box" style="overflow-x: auto;">
+<pre style="font-family: var(--font-mono); font-size: 13px; line-height: 1.8; color: var(--color-rl-dark-60); white-space: pre; margin: 0;">
+<span style="color: var(--color-rl-muted);">/* Colors */</span>
+--color-rl-bg:           <span style="color: var(--color-rl-dark);">#fffef2</span>;     <span style="color: var(--color-rl-muted);">/* page background */</span>
+--color-rl-dark:         <span style="color: var(--color-rl-dark);">#191918</span>;     <span style="color: var(--color-rl-muted);">/* primary text */</span>
+--color-rl-dark-60:      <span style="color: var(--color-rl-dark);">#19191899</span>;   <span style="color: var(--color-rl-muted);">/* body text */</span>
+--color-rl-dark-30:      <span style="color: var(--color-rl-dark);">#1919184d</span>;   <span style="color: var(--color-rl-muted);">/* placeholders */</span>
+--color-rl-dark-10:      <span style="color: var(--color-rl-dark);">#1919181a</span>;   <span style="color: var(--color-rl-muted);">/* ghost borders */</span>
+--color-rl-accent:       <span style="color: var(--color-rl-dark);">#fcaa2d</span>;     <span style="color: var(--color-rl-muted);">/* amber CTA */</span>
+--color-rl-accent-dark:  <span style="color: var(--color-rl-dark);">#a36404</span>;     <span style="color: var(--color-rl-muted);">/* text links */</span>
+--color-rl-cream:        <span style="color: var(--color-rl-dark);">#f3f2e7</span>;     <span style="color: var(--color-rl-muted);">/* card backgrounds */</span>
+--color-rl-border:       <span style="color: var(--color-rl-dark);">#e3e2d8</span>;     <span style="color: var(--color-rl-muted);">/* borders, dividers */</span>
+--color-rl-border-light: <span style="color: var(--color-rl-dark);">#d1d0c666</span>;   <span style="color: var(--color-rl-muted);">/* subtle borders */</span>
+--color-rl-muted:        <span style="color: var(--color-rl-dark);">#bab9b0</span>;     <span style="color: var(--color-rl-muted);">/* labels, icons */</span>
+
+<span style="color: var(--color-rl-muted);">/* Fonts */</span>
+--font-display:          "Parabole Trial Regular Text", sans-serif;
+--font-display-medium:   "Parabole Trial Medium Text", sans-serif;
+--font-display-bold:     "Parabole Trial Bold Text", sans-serif;
+--font-mono:             "Decima Mono Pro Regular", monospace;
+</pre>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       RULES & ANTI-PATTERNS
+       ========================================== -->
+  <section class="sg-section" id="rules">
+    <div class="sg-section-label">
+      <span class="dot"></span>
+      <span>Rules</span>
+    </div>
+    <h2>Rules and anti-patterns</h2>
+    <p>Important constraints to maintain the Klai visual identity across all products.</p>
+
+    <div class="sg-subsection">
+      <h3>Do</h3>
+      <table class="sg-table">
+        <tbody>
+          <tr><td>Backgrounds</td><td>Warm ivory (<code>#fffef2</code>) or cream (<code>#f3f2e7</code>)</td></tr>
+          <tr><td>Text colors</td><td>Use opacity variants of rl-dark for hierarchy</td></tr>
+          <tr><td>Accent usage</td><td><code>#fcaa2d</code> as background only. <code>#a36404</code> for text links.</td></tr>
+          <tr><td>Font weights</td><td>Regular (400) for most text. Medium (500) for titles. Bold (700) sparingly.</td></tr>
+          <tr><td>Imagery</td><td>Product screenshots, oil-painting backgrounds</td></tr>
+          <tr><td>Motion</td><td>Subtle hover responses, scroll-triggered opacity only</td></tr>
+          <tr><td>Card radius</td><td><code>rounded-xl</code> (12px). Sections: <code>rounded-2xl</code> (16px). Buttons: <code>rounded-full</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sg-subsection">
+      <h3>Don't</h3>
+      <table class="sg-table">
+        <tbody>
+          <tr><td style="color: #a36404;">Neon / gradient accents</td><td>Not Klai. Calm, not flashy.</td></tr>
+          <tr><td style="color: #a36404;">Cold enterprise grays</td><td>Loses warmth. Use cream/ivory tones.</td></tr>
+          <tr><td style="color: #a36404;">Stock photos of people</td><td>Says nothing about the product.</td></tr>
+          <tr><td style="color: #a36404;">Multiple font families</td><td>Parabole handles everything. No Inter, Manrope, etc.</td></tr>
+          <tr><td style="color: #a36404;">Accent as text color</td><td>#fcaa2d fails WCAG AA on light backgrounds.</td></tr>
+          <tr><td style="color: #a36404;">Auto-playing video</td><td>Breaks the calm aesthetic.</td></tr>
+          <tr><td style="color: #a36404;">Decorative animations</td><td>No shimmer, meteor, beam effects.</td></tr>
+          <tr><td style="color: #a36404;">Many elements per screen</td><td>One point per section. Diluting = confusing.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<!-- Footer -->
+<footer class="sg-footer">
+  <div class="sg-container">
+    Klai Styleguide &mdash; Source: <code style="font-family: var(--font-mono); font-size: 12px;">klai-website/src/styles/global.css</code> &mdash; Last updated April 2026
+  </div>
+</footer>
+
+</body>
+</html>
