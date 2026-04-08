@@ -20,7 +20,7 @@ import httpx
 from notion_client import Client
 from notion_sync import fetch_blocks_recursive
 from notion_sync.client import RateLimitedNotionClient
-from notion_sync.extract import extract_block_text
+from notion_sync.extract import extract_block_text, extract_rich_text
 
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
@@ -346,14 +346,41 @@ def _flatten_block_texts(blocks: list[dict[str, Any]]) -> list[str]:
 
     notion-sync-lib stores nested blocks under the '_children' key.
 
+    Filters out noise that pollutes KB chunks:
+    - child_page/child_database reference strings ("child_page:Title")
+    - Expiring S3 presigned URLs from media blocks (only captions kept)
+
     Args:
         blocks: List of block dicts from fetch_blocks_recursive.
 
     Returns:
         Flat list of non-empty text strings.
     """
+    # child_page/child_database blocks produce "child_page:Title" strings
+    # via extract_block_text — useless in a KB chunk.  The Notion API returns
+    # them with has_children=False (they are references, not containers), so
+    # fetch_blocks_recursive never enters them.  Skip the pointer text.
+    _SKIP_BLOCK_TYPES = {"child_page", "child_database"}
+    # Media block types whose extract_block_text output is "{type}:{url}".
+    # The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
+    # produce garbage when chunked.  Captions are useful; URLs are not.
+    _MEDIA_BLOCK_TYPES = {"image", "video", "file", "pdf"}
+
     texts: list[str] = []
     for block in blocks:
+        block_type = block.get("type", "")
+
+        if block_type in _SKIP_BLOCK_TYPES:
+            continue
+
+        if block_type in _MEDIA_BLOCK_TYPES:
+            # Keep only the caption, not the presigned URL.
+            block_data = block.get(block_type, {})
+            caption = extract_rich_text(block_data.get("caption", []))
+            if caption:
+                texts.append(caption)
+            continue
+
         text = extract_block_text(block)
         if text:
             texts.append(text)
