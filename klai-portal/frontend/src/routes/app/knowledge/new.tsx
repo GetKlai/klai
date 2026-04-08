@@ -182,7 +182,7 @@ function NewKnowledgeBasePage() {
     <div className="p-8 max-w-lg">
       {/* Header with back/cancel */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
+        <h1 className="text-base font-semibold text-[var(--color-foreground)]">
           {m.knowledge_new_heading()}
         </h1>
         {step === 1 ? (

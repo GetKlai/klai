@@ -174,7 +174,7 @@ function EditUserPage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
+        <h1 className="text-base font-semibold text-[var(--color-foreground)]">
           {m.admin_users_edit_heading()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={() => void navigate({ to: '/admin/users' })}>

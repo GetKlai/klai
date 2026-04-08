@@ -152,7 +152,7 @@ export function TreeItem({
       style={{ opacity: isDragging ? 0 : 1 }}
     >
       <div
-        className={`flex w-full items-center py-[3px] mx-1 rounded-[5px] text-[13px] transition-colors group ${
+        className={`flex w-full items-center py-[3px] mx-1 rounded-[5px] text-sm transition-colors group ${
           isInsideTarget
             ? 'bg-[var(--color-foreground)]/[0.06]'
             : isSelected && !isDir
@@ -181,7 +181,7 @@ export function TreeItem({
               />
             </button>
           ) : (
-            <span className="shrink-0 text-[13px] leading-none select-none opacity-70">{node.icon ?? DEFAULT_ICON}</span>
+            <span className="shrink-0 text-sm leading-none select-none opacity-70">{node.icon ?? DEFAULT_ICON}</span>
           )}
         </div>
 

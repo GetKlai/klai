@@ -63,7 +63,7 @@ export function SidebarFooter({
         </div>
       ) : (
         <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
           onClick={onShowNewPage}
         >
           <Plus size={14} strokeWidth={1.5} />
@@ -82,7 +82,7 @@ export function SidebarFooter({
         }}
       />
       <button
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-muted-foreground)] hover:bg-[var(--color-foreground)]/[0.04] hover:text-[var(--color-foreground)] rounded-md transition-colors"
         onClick={() => fileInputRef.current?.click()}
       >
         <Upload size={14} strokeWidth={1.5} />

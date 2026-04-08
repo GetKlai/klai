@@ -293,7 +293,7 @@ function NotebookDetailPage() {
       {/* Header */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <h1 className="text-lg font-semibold text-[var(--color-foreground)]">
+          <h1 className="text-base font-semibold text-[var(--color-foreground)]">
             {notebook?.name ?? m.app_focus_loading()}
           </h1>
           <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
