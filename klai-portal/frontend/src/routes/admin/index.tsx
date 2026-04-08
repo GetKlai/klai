@@ -35,7 +35,7 @@ function AdminHome() {
   ]
 
   return (
-    <div className="p-12 space-y-8 max-w-3xl">
+    <div className="p-8 space-y-8 max-w-3xl">
       <div className="space-y-1">
         <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.admin_home_heading()}

@@ -299,7 +299,7 @@ function AdminGroups() {
   })
 
   return (
-    <div className="p-12 space-y-6">
+    <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.admin_groups_title()}
