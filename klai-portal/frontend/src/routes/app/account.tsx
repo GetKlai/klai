@@ -80,7 +80,7 @@ function AccountPage() {
   return (
     <div className="p-8 space-y-6 max-w-2xl">
       <div className="space-y-1">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.account_heading()}
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -95,13 +95,13 @@ function AccountPage() {
             {name && (
               <div className="flex gap-4">
                 <dt className="w-32 shrink-0 text-sm text-[var(--color-muted-foreground)]">Naam</dt>
-                <dd className="text-sm font-medium text-[var(--color-purple-deep)]">{name}</dd>
+                <dd className="text-sm font-medium text-[var(--color-foreground)]">{name}</dd>
               </div>
             )}
             {email && (
               <div className="flex gap-4">
                 <dt className="w-32 shrink-0 text-sm text-[var(--color-muted-foreground)]">E-mail</dt>
-                <dd className="text-sm font-medium text-[var(--color-purple-deep)]">{email}</dd>
+                <dd className="text-sm font-medium text-[var(--color-foreground)]">{email}</dd>
               </div>
             )}
           </dl>

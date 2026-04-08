@@ -74,19 +74,19 @@ function MethodCard({
       onClick={onClick}
       className={`w-full rounded-xl border-2 p-4 text-left transition-all
         ${selected
-          ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
-          : 'border-[var(--color-border)] bg-white hover:border-[var(--color-purple-accent)]/50'
+          ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/5'
+          : 'border-[var(--color-border)] bg-[var(--color-background)] hover:border-[var(--color-rl-accent)]/50'
         }`}
     >
       <div className="flex items-start gap-3">
-        <div className={`mt-0.5 shrink-0 ${selected ? 'text-[var(--color-purple-accent)]' : 'text-[var(--color-sand-mid)]'}`}>
+        <div className={`mt-0.5 shrink-0 ${selected ? 'text-[var(--color-rl-accent)]' : 'text-[var(--color-rl-cream)]'}`}>
           {icon}
         </div>
         <div className="flex-1 space-y-0.5">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-[var(--color-foreground)]">{title}</span>
             {recommended && (
-              <span className="rounded-full bg-[var(--color-purple-accent)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+              <span className="rounded-full bg-[var(--color-rl-accent)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                 {m.setup_mfa_badge_recommended()}
               </span>
             )}
@@ -94,7 +94,7 @@ function MethodCard({
           <p className="text-xs text-[var(--color-muted-foreground)]">{description}</p>
         </div>
         {selected && (
-          <div className="mt-0.5 shrink-0 text-[var(--color-purple-accent)]">
+          <div className="mt-0.5 shrink-0 text-[var(--color-rl-accent)]">
             <ShieldCheck size={16} />
           </div>
         )}
@@ -175,7 +175,7 @@ function PasskeySetup({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.setup_mfa_passkey_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -207,7 +207,7 @@ function PasskeySetup({
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-purple-muted)] hover:underline"
+        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
       >
         {m.setup_mfa_back()}
       </button>
@@ -293,7 +293,7 @@ function EmailOTPSetup({
       {phase === 'send' ? (
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.setup_mfa_email_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -308,7 +308,7 @@ function EmailOTPSetup({
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.setup_mfa_email_code_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -332,7 +332,7 @@ function EmailOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -356,7 +356,7 @@ function EmailOTPSetup({
                   type="button"
                   onClick={handleResend}
                   disabled={sending}
-                  className="text-xs text-[var(--color-purple-muted)] hover:underline"
+                  className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
                 >
                   {m.setup_mfa_email_resend()}
                 </button>
@@ -373,7 +373,7 @@ function EmailOTPSetup({
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-purple-muted)] hover:underline"
+        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
       >
         {m.setup_mfa_back()}
       </button>
@@ -432,7 +432,7 @@ function TOTPSetup({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.setup_2fa_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -445,7 +445,7 @@ function TOTPSetup({
           <p className="text-sm text-[var(--color-destructive-text)]">{loadError}</p>
           <button
             onClick={() => setRetryCount((c) => c + 1)}
-            className="text-xs text-[var(--color-purple-muted)] hover:underline"
+            className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
           >
             {m.setup_2fa_retry()}
           </button>
@@ -454,17 +454,17 @@ function TOTPSetup({
         <>
           <div className="flex flex-col items-center gap-4">
             {uri ? (
-              <div className="rounded-xl border border-[var(--color-border)] bg-white p-4">
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-4">
                 <QRCode value={uri} size={180} />
               </div>
             ) : (
-              <div className="flex h-[212px] w-[212px] items-center justify-center rounded-xl border border-[var(--color-border)] bg-white">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
+              <div className="flex h-[212px] w-[212px] items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
               </div>
             )}
             {secret && (
               <details className="w-full text-center">
-                <summary className="cursor-pointer select-none text-xs text-[var(--color-purple-muted)] hover:underline">
+                <summary className="cursor-pointer select-none text-xs text-[var(--color-rl-accent-dark)] hover:underline">
                   {m.setup_2fa_manual_label()}
                 </summary>
                 <p className="mt-2 break-all rounded-lg bg-[var(--color-border)] px-3 py-2 font-mono text-xs tracking-widest">
@@ -490,7 +490,7 @@ function TOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
             {error && (
@@ -512,7 +512,7 @@ function TOTPSetup({
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-purple-muted)] hover:underline"
+        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
       >
         {m.setup_mfa_back()}
       </button>
@@ -559,24 +559,24 @@ function SetupMFAPage() {
 
   if (!auth.isAuthenticated) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
       </div>
     )
   }
 
   const leftContent = (
     <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
+      <h1 className="text-4xl font-bold leading-tight">
         {m.setup_mfa_hero_heading()}
         <br />
-        <span className="text-[var(--color-purple-accent)]">{m.setup_mfa_hero_highlight()}</span>
+        <span className="text-[var(--color-rl-accent)]">{m.setup_mfa_hero_highlight()}</span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
         {m.setup_mfa_hero_body()}
       </p>
-      <div className="flex items-center gap-3 text-sm text-[var(--color-sand-mid)]">
-        <Shield size={16} className="shrink-0 text-[var(--color-purple-accent)]" />
+      <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
+        <Shield size={16} className="shrink-0 text-[var(--color-rl-accent)]" />
         {m.setup_mfa_hero_methods()}
       </div>
     </>
@@ -587,10 +587,10 @@ function SetupMFAPage() {
       {/* ── Done state ── */}
       {step === 'done' && (
         <div className="space-y-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">
-            <ShieldCheck size={22} className="text-[var(--color-sand-light)]" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
+            <ShieldCheck size={22} className="text-[var(--color-rl-cream)]" />
           </div>
-          <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
+          <p className="text-xl font-bold text-[var(--color-foreground)]">
             {m.setup_mfa_done_heading()}
           </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -603,7 +603,7 @@ function SetupMFAPage() {
       {step === 'pick' && (
         <div className="space-y-5">
           <div className="space-y-1">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.setup_mfa_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -651,7 +651,7 @@ function SetupMFAPage() {
               <button
                 type="button"
                 onClick={handleSkip}
-                className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-muted)] hover:underline"
+                className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-rl-accent-dark)] hover:underline"
               >
                 {m.setup_mfa_skip()}
               </button>

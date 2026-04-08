@@ -16,12 +16,12 @@ function LoggedOutPage() {
 
   const leftContent = (
     <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
+      <h1 className="text-4xl font-bold leading-tight">
         {m.logged_out_hero_heading()}
         <br />
-        <span className="text-[var(--color-purple-accent)]">{m.logged_out_hero_highlight()}</span>
+        <span className="text-[var(--color-rl-accent)]">{m.logged_out_hero_highlight()}</span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
         {m.logged_out_hero_body()}
       </p>
     </>
@@ -30,7 +30,7 @@ function LoggedOutPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-2">
-        <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.logged_out_heading()}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)]">

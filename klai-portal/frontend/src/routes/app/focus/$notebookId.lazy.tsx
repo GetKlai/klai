@@ -293,7 +293,7 @@ function NotebookDetailPage() {
       {/* Header */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {notebook?.name ?? m.app_focus_loading()}
           </h1>
           <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
@@ -310,16 +310,16 @@ function NotebookDetailPage() {
       {showOnboarding && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
           <div className="flex items-start gap-3">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-purple-accent)]" />
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-rl-accent)]" />
             <div className="flex-1 space-y-3 text-sm">
-              <p className="font-medium text-[var(--color-purple-deep)]">
+              <p className="font-medium text-[var(--color-foreground)]">
                 {m.app_focus_onboarding_title()}
               </p>
               <p className="text-[var(--color-muted-foreground)]">
                 {m.app_focus_onboarding_body()}
               </p>
               <div className="space-y-1.5">
-                <p className="text-xs font-medium text-[var(--color-purple-deep)]">
+                <p className="text-xs font-medium text-[var(--color-foreground)]">
                   {m.app_focus_onboarding_modes_heading()}
                 </p>
                 <ul className="space-y-0.5 text-xs text-[var(--color-muted-foreground)]">
@@ -344,7 +344,7 @@ function NotebookDetailPage() {
                 </ul>
               </div>
               <div className="space-y-0.5">
-                <p className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-purple-deep)]">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-foreground)]">
                   <History className="h-3.5 w-3.5" />
                   {m.app_focus_onboarding_history_heading()}
                 </p>
@@ -354,7 +354,7 @@ function NotebookDetailPage() {
               </div>
               <button
                 onClick={dismissOnboarding}
-                className="text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+                className="text-xs font-medium text-[var(--color-rl-accent)] hover:text-[var(--color-foreground)] transition-colors"
               >
                 {m.app_focus_onboarding_dismiss()}
               </button>
@@ -380,7 +380,7 @@ function NotebookDetailPage() {
                 <CardTitle className="text-sm">{m.app_focus_sources_heading()}</CardTitle>
                 <button
                   onClick={() => navigate({ to: '/app/focus/$notebookId/add-source', params: { notebookId } })}
-                  className="flex items-center gap-1 text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+                  className="flex items-center gap-1 text-xs font-medium text-[var(--color-rl-accent)] hover:text-[var(--color-foreground)] transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {m.app_focus_add_source()}
@@ -400,7 +400,7 @@ function NotebookDetailPage() {
                       className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] py-2 last:border-0"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-[var(--color-purple-deep)]">
+                        <p className="truncate text-xs font-medium text-[var(--color-foreground)]">
                           {src.name}
                         </p>
                         <StatusBadge status={src.status} />
@@ -452,7 +452,7 @@ function NotebookDetailPage() {
                     title={m.app_focus_chat_history_on_tooltip()}
                     className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
                       notebook?.save_history !== false
-                        ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                        ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
                         : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
                     }`}
                   >
@@ -467,7 +467,7 @@ function NotebookDetailPage() {
                     title={m.app_focus_chat_history_off_tooltip()}
                     className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
                       notebook?.save_history === false
-                        ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                        ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
                         : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
                     }`}
                   >
@@ -489,7 +489,7 @@ function NotebookDetailPage() {
                       }
                       className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                         chatMode === mode
-                          ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                          ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
                           : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
                       }`}
                     >
@@ -522,7 +522,7 @@ function NotebookDetailPage() {
                   <div
                     className={`inline-block max-w-[85%] rounded-xl px-3 py-2 text-sm ${
                       msg.role === 'user'
-                        ? 'bg-[var(--color-purple-accent)] text-white'
+                        ? 'bg-[var(--color-rl-accent)] text-white'
                         : 'bg-[var(--color-muted)]/40 text-[var(--color-foreground)]'
                     }`}
                   >
@@ -560,7 +560,7 @@ function NotebookDetailPage() {
                                   href={c.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-[var(--color-purple-muted)] hover:text-[var(--color-purple-primary)] underline"
+                                  className="text-[var(--color-rl-accent-dark)] hover:text-[var(--color-foreground)] underline"
                                 >
                                   {c.source_name}
                                 </a>

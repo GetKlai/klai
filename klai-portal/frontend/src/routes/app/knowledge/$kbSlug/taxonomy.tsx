@@ -658,7 +658,7 @@ function TaxonomyTab() {
             <button
               type="button"
               onClick={() => setActiveNodeId(null)}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-purple-deep)] hover:bg-[var(--color-accent)]/20 transition-colors"
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-accent)]/20 transition-colors"
             >
               {m.knowledge_taxonomy_filter_node({ name: activeNode.name })}
               <X className="h-3 w-3" />
@@ -669,7 +669,7 @@ function TaxonomyTab() {
               key={tag}
               type="button"
               onClick={() => toggleTag(tag)}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-purple-deep)] hover:bg-[var(--color-accent)]/20 transition-colors"
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-accent)]/20 transition-colors"
             >
               {m.knowledge_taxonomy_filter_tag({ name: tag })}
               <X className="h-3 w-3" />
@@ -689,8 +689,8 @@ function TaxonomyTab() {
       {isAdmin && (
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <BarChart2 className="h-4 w-4 text-[var(--color-purple-deep)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">
+            <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
               {m.knowledge_taxonomy_coverage_heading()}
             </h2>
             {activeNodeId !== null && (
@@ -740,8 +740,8 @@ function TaxonomyTab() {
       {/* Tag cloud */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <Tag className="h-4 w-4 text-[var(--color-purple-deep)]" />
-          <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">
+          <Tag className="h-4 w-4 text-[var(--color-foreground)]" />
+          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
             {m.knowledge_taxonomy_tags_heading()}
           </h2>
           {activeNodeId !== null && activeNode && (
@@ -774,8 +774,8 @@ function TaxonomyTab() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <FolderTree className="h-4 w-4 text-[var(--color-purple-deep)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">{m.knowledge_taxonomy_tree_heading()}</h2>
+            <FolderTree className="h-4 w-4 text-[var(--color-foreground)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_tree_heading()}</h2>
           </div>
           <div className="flex items-center gap-2">
             {canEdit && nodes.length === 0 && suggestState === 'idle' && (
@@ -917,8 +917,8 @@ function TaxonomyTab() {
       {/* Review queue */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <BarChart2 className="h-4 w-4 text-[var(--color-purple-deep)]" />
-          <h2 className="text-sm font-semibold text-[var(--color-purple-deep)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
+          <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
+          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
           {proposals.length > 0 && (
             <Badge variant="accent">{String(proposals.length)}</Badge>
           )}

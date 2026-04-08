@@ -132,7 +132,7 @@ function KbLayout() {
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{kb.name}</h1>
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">{kb.name}</h1>
           {kb.description && (
             <p className="text-sm text-[var(--color-muted-foreground)] mt-1">{kb.description}</p>
           )}
@@ -160,7 +160,7 @@ function KbLayout() {
               to={to}
               params={{ kbSlug }}
               activeProps={{
-                className: 'border-[var(--color-accent)] text-[var(--color-purple-deep)]',
+                className: 'border-[var(--color-accent)] text-[var(--color-foreground)]',
               }}
               inactiveProps={{
                 className: 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',

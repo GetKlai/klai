@@ -77,7 +77,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       {phase === 'send' ? (
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.setup_mfa_email_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -92,7 +92,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.setup_mfa_email_code_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -116,7 +116,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-lg tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -140,7 +140,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
                   type="button"
                   onClick={handleResend}
                   disabled={sending}
-                  className="text-xs text-[var(--color-purple-muted)] hover:underline"
+                  className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
                 >
                   {m.setup_mfa_email_resend()}
                 </button>
@@ -157,7 +157,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-purple-muted)] hover:underline"
+        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
       >
         {m.setup_mfa_back()}
       </button>

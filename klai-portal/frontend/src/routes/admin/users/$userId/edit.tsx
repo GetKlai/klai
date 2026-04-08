@@ -174,7 +174,7 @@ function EditUserPage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.admin_users_edit_heading()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={() => void navigate({ to: '/admin/users' })}>
@@ -230,7 +230,7 @@ function EditUserPage() {
                 <div className="space-y-1 mb-3">
                   {currentGroups.map((group) => (
                     <div key={group.id} className="flex items-center justify-between py-1">
-                      <span className="text-sm text-[var(--color-purple-deep)]">
+                      <span className="text-sm text-[var(--color-foreground)]">
                         {group.name}
                       </span>
                       <div className="flex items-center gap-1">

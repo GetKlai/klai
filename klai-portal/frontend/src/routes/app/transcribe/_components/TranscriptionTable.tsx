@@ -49,14 +49,14 @@ function formatDate(dateStr: string): string {
 
 function StatusBadge({ status, source }: { status: string; source: Source }) {
   const config: Record<string, { label: string; classes: string }> = {
-    pending:    { label: m.app_meetings_status_pending(),    classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)]' },
-    joining:    { label: m.app_meetings_status_joining(),    classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
+    pending:    { label: m.app_meetings_status_pending(),    classes: 'bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-accent)]' },
+    joining:    { label: m.app_meetings_status_joining(),    classes: 'bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-accent)] animate-pulse' },
     recording:  { label: m.app_meetings_status_recording(),  classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)] animate-pulse' },
-    processing: { label: source === 'upload' ? m.app_transcribe_status_processing() : m.app_meetings_status_processing(), classes: 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-accent)] animate-pulse' },
+    processing: { label: source === 'upload' ? m.app_transcribe_status_processing() : m.app_meetings_status_processing(), classes: 'bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-accent)] animate-pulse' },
     done:       { label: m.app_meetings_status_done(),       classes: 'bg-[var(--color-success)]/10 text-[var(--color-success)]' },
     failed:     { label: m.app_transcribe_status_failed(),   classes: 'bg-[var(--color-destructive)]/10 text-[var(--color-destructive)]' },
   }
-  const c = config[status] ?? { label: status, classes: 'bg-[var(--color-sand-mid)] text-[var(--color-purple-deep)]' }
+  const c = config[status] ?? { label: status, classes: 'bg-[var(--color-rl-cream)] text-[var(--color-foreground)]' }
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${c.classes}`}>
       {c.label}
@@ -164,7 +164,7 @@ export function TranscriptionTable({
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <Mic className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
             <div className="space-y-1">
-              <p className="font-medium text-[var(--color-purple-deep)]">
+              <p className="font-medium text-[var(--color-foreground)]">
                 {m.app_transcribe_empty_heading()}
               </p>
               <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -237,7 +237,7 @@ export function TranscriptionTable({
                     className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
                   >
                     {/* Title / preview */}
-                    <td className="px-6 py-3 text-[var(--color-purple-deep)] max-w-xs">
+                    <td className="px-6 py-3 text-[var(--color-foreground)] max-w-xs">
                       {isEditing ? (
                         <Input
                           value={editName}
@@ -282,7 +282,7 @@ export function TranscriptionTable({
                                   )}
                                   {item.source === 'upload' && item.has_summary && (
                                     <Tooltip label={m.app_transcribe_has_summary()}>
-                                      <FileText className="h-3 w-3 shrink-0 text-[var(--color-purple-deep)]" />
+                                      <FileText className="h-3 w-3 shrink-0 text-[var(--color-foreground)]" />
                                     </Tooltip>
                                   )}
                                 </div>
@@ -313,7 +313,7 @@ export function TranscriptionTable({
                     </td>
 
                     {/* Language */}
-                    <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                    <td className="px-6 py-3 text-[var(--color-foreground)]">
                       {item.language ? (
                         <div className="flex items-center gap-1.5">
                           <img
@@ -331,14 +331,14 @@ export function TranscriptionTable({
                     </td>
 
                     {/* Duration */}
-                    <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                    <td className="px-6 py-3 text-[var(--color-foreground)]">
                       {item.duration_seconds != null
                         ? formatDuration(item.duration_seconds)
                         : <span className="text-[var(--color-muted-foreground)]">{'\u2014'}</span>}
                     </td>
 
                     {/* Date */}
-                    <td className="px-6 py-3 text-[var(--color-purple-deep)]">
+                    <td className="px-6 py-3 text-[var(--color-foreground)]">
                       {formatDate(item.created_at)}
                     </td>
 
@@ -435,7 +435,7 @@ export function TranscriptionTable({
                                 onClick={() => onRetry(item.id)}
                                 disabled={isItemRetrying}
                                 aria-label={m.app_transcribe_retry_button()}
-                                className="flex h-7 w-7 items-center justify-center text-[var(--color-purple-accent)] transition-opacity hover:opacity-70"
+                                className="flex h-7 w-7 items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
                               >
                                 {isItemRetrying ? (
                                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

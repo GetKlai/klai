@@ -93,7 +93,7 @@ export function BillingActiveView({ token, status, onCancel }: BillingActiveView
           </div>
           <div className="pt-3 border-t border-[var(--color-border)]">
             <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-            <p className="text-2xl font-bold text-[var(--color-purple-deep)]">
+            <p className="text-2xl font-bold text-[var(--color-foreground)]">
               {totalPrice(status.plan, status.billing_cycle, status.seats)}
             </p>
           </div>

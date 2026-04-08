@@ -82,7 +82,7 @@ function StartMeetingPage() {
   return (
     <div className="p-8 max-w-3xl">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.app_meetings_start_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
@@ -94,9 +94,9 @@ function StartMeetingPage() {
       {showOnboarding && (
         <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
           <div className="flex items-start gap-3">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-purple-accent)]" />
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-rl-accent)]" />
             <div className="flex-1 space-y-3 text-sm">
-              <p className="font-medium text-[var(--color-purple-deep)]">
+              <p className="font-medium text-[var(--color-foreground)]">
                 {m.app_meetings_start_onboarding_title()}
               </p>
               <div className="space-y-0.5">
@@ -117,7 +117,7 @@ function StartMeetingPage() {
               </div>
               <button
                 onClick={dismissOnboarding}
-                className="text-xs font-medium text-[var(--color-purple-accent)] hover:text-[var(--color-purple-deep)] transition-colors"
+                className="text-xs font-medium text-[var(--color-rl-accent)] hover:text-[var(--color-foreground)] transition-colors"
               >
                 {m.app_meetings_start_onboarding_dismiss()}
               </button>
@@ -153,7 +153,7 @@ function StartMeetingPage() {
               {platform && (
                 <p className="text-xs text-[var(--color-muted-foreground)]">
                   Platform:{' '}
-                  <span className="font-medium text-[var(--color-purple-deep)]">{platform}</span>
+                  <span className="font-medium text-[var(--color-foreground)]">{platform}</span>
                 </p>
               )}
               {urlError && (
@@ -185,11 +185,11 @@ function StartMeetingPage() {
                 type="checkbox"
                 checked={consentGiven}
                 onChange={(e) => setConsentGiven(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-purple-accent)]"
+                className="mt-1 h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-rl-accent)]"
               />
               <label
                 htmlFor="consent"
-                className="text-sm text-[var(--color-purple-deep)] cursor-pointer leading-relaxed"
+                className="text-sm text-[var(--color-foreground)] cursor-pointer leading-relaxed"
               >
                 {m.app_meetings_consent_label()}
               </label>

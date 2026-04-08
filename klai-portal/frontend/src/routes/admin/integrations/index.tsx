@@ -172,7 +172,7 @@ function McpServerCard({
       <CardContent className="space-y-4">
         {/* Env var fields */}
         <div className="space-y-3">
-          <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+          <p className="text-sm font-medium text-[var(--color-foreground)]">
             {m.admin_integrations_required_vars()}
           </p>
           {server.required_env_vars.map((varName) => {
@@ -255,7 +255,7 @@ function IntegrationsPage() {
   return (
     <div className="p-8 max-w-2xl">
       <div className="mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.admin_integrations_title()}
         </h1>
         <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{m.admin_integrations_subtitle()}</p>

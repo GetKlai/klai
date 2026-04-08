@@ -146,7 +146,7 @@ function BillingPage() {
   if (loadingStatus) {
     return (
       <div className="p-8">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
       </div>
     )
   }
@@ -154,7 +154,7 @@ function BillingPage() {
   return (
     <div className="p-8 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
       <div className="space-y-1">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">{m.admin_billing_heading()}</h1>
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">{m.admin_billing_heading()}</h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
           {m.admin_billing_subtitle()}
         </p>
@@ -285,13 +285,13 @@ function SetupView({
                 className={[
                   'flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition',
                   form.billing_cycle === cycle
-                    ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)]'
-                    : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-purple-muted)]',
+                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)]'
+                    : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-rl-accent-dark)]',
                 ].join(' ')}
               >
                 {getCycleLabel(cycle)}
                 {cycle === 'yearly' && (
-                  <span className="ml-2 text-xs text-[var(--color-purple-accent)]">{m.admin_billing_yearly_discount()}</span>
+                  <span className="ml-2 text-xs text-[var(--color-rl-accent)]">{m.admin_billing_yearly_discount()}</span>
                 )}
               </button>
             ))}
@@ -307,17 +307,17 @@ function SetupView({
                 className={[
                   'flex flex-col items-start rounded-xl border p-4 text-left transition',
                   form.plan === plan.id
-                    ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/10'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-purple-muted)]',
+                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent-dark)]',
                 ].join(' ')}
               >
-                <span className="text-sm font-semibold text-[var(--color-purple-deep)]">
+                <span className="text-sm font-semibold text-[var(--color-foreground)]">
                   {plan.name}
                 </span>
                 <span className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
                   {getPlanDescription(plan.id)}
                 </span>
-                <span className="mt-3 text-lg font-bold text-[var(--color-purple-deep)]">
+                <span className="mt-3 text-lg font-bold text-[var(--color-foreground)]">
                   &euro;{form.billing_cycle === 'yearly' ? plan.yearly : plan.monthly}
                   <span className="text-xs font-normal text-[var(--color-muted-foreground)]">
                     {' '}
@@ -344,12 +344,12 @@ function SetupView({
                 max={500}
                 value={form.seats}
                 onChange={(e) => set('seats', Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-24 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-24 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
             <div className="ml-auto text-right">
               <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-              <p className="text-xl font-bold text-[var(--color-purple-deep)]">
+              <p className="text-xl font-bold text-[var(--color-foreground)]">
                 {totalPrice(form.plan, form.billing_cycle, form.seats)}
               </p>
               {form.billing_cycle === 'yearly' && (
@@ -461,11 +461,11 @@ function FreeView() {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-purple-accent)]/10 p-4">
-          <CheckCircle size={24} className="text-[var(--color-purple-accent)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
+          <CheckCircle size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_free_title()}</p>
+          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_free_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
             {m.admin_billing_free_description()}
           </p>
@@ -482,11 +482,11 @@ function MandateRequestedView() {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-purple-accent)]/10 p-4">
-          <CreditCard size={24} className="text-[var(--color-purple-accent)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
+          <CreditCard size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_mandate_title()}</p>
+          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_mandate_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
             {m.admin_billing_mandate_description()}
           </p>
@@ -566,7 +566,7 @@ function ActiveView({
           </div>
           <div className="pt-3 border-t border-[var(--color-border)]">
             <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-            <p className="text-2xl font-bold text-[var(--color-purple-deep)]">
+            <p className="text-2xl font-bold text-[var(--color-foreground)]">
               {totalPrice(status.plan, status.billing_cycle, status.seats)}
             </p>
           </div>
@@ -638,7 +638,7 @@ function PaymentFailedView({ onRetry }: { onRetry: () => void }) {
           <AlertCircle size={24} className="text-[var(--color-destructive)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_payment_failed_title()}</p>
+          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_payment_failed_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
             {m.admin_billing_payment_failed_description()}
           </p>
@@ -659,11 +659,11 @@ function CancelledView({ onReactivate }: { onReactivate: () => void }) {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-sand-light)] p-4">
+        <div className="rounded-full bg-[var(--color-rl-cream)] p-4">
           <XCircle size={24} className="text-[var(--color-muted-foreground)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-purple-deep)]">{m.admin_billing_cancelled_title()}</p>
+          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_cancelled_title()}</p>
           <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
             {m.admin_billing_cancelled_description()}
           </p>

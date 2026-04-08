@@ -60,12 +60,12 @@ function VerifyEmailPage() {
 
   const leftContent = (
     <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
+      <h1 className="text-4xl font-bold leading-tight">
         {m.verify_hero_heading()}
         <br />
-        <span className="text-[var(--color-purple-accent)]">{m.verify_hero_highlight()}</span>
+        <span className="text-[var(--color-rl-accent)]">{m.verify_hero_highlight()}</span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
         {m.verify_hero_body()}
       </p>
     </>
@@ -75,7 +75,7 @@ function VerifyEmailPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {status === 'loading' && (
         <div className="space-y-4 text-center">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
           <p className="text-sm text-[var(--color-muted-foreground)]">
             {m.verify_loading()}
           </p>
@@ -86,7 +86,7 @@ function VerifyEmailPage() {
         <div className="space-y-6 text-center">
           <div className="space-y-3">
             <CheckCircle className="mx-auto h-12 w-12 text-[var(--color-success)]" />
-            <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.verify_success_heading()}
             </h1>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -104,7 +104,7 @@ function VerifyEmailPage() {
         <div className="space-y-6 text-center">
           <div className="space-y-3">
             <XCircle className="mx-auto h-12 w-12 text-[var(--color-destructive)]" />
-            <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.verify_error_heading()}
             </h1>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -113,7 +113,7 @@ function VerifyEmailPage() {
           </div>
           <p className="text-xs text-[var(--color-muted-foreground)]">
             {m.verify_error_hint()}{' '}
-            <a href="mailto:support@getklai.com" className="text-[var(--color-purple-muted)] hover:underline">
+            <a href="mailto:support@getklai.com" className="text-[var(--color-rl-accent-dark)] hover:underline">
               support@getklai.com
             </a>
             .

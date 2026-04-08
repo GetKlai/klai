@@ -11,14 +11,14 @@ export function HelpButton() {
   return (
     <>
       {showIntro && (
-        <div className="fixed bottom-20 right-6 z-[10003] w-72 rounded-xl border border-[var(--color-border)] bg-white shadow-lg">
+        <div className="fixed bottom-20 right-6 z-[10003] w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] shadow-lg">
           <div className="flex items-start justify-between p-4 pb-2">
-            <h3 className="font-semibold text-[var(--color-purple-deep)]">
+            <h3 className="font-semibold text-[var(--color-foreground)]">
               {introContent.title()}
             </h3>
             <button
               onClick={dismissIntro}
-              className="ml-2 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+              className="ml-2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
               aria-label="Sluiten"
             >
               <X className="h-4 w-4" />
@@ -44,14 +44,14 @@ export function HelpButton() {
         {/* Tooltip — absolute, centered above the button */}
         {!enabled && hovered && (
           <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 pointer-events-none">
-            <div className="relative px-2 py-1 text-xs text-white bg-[var(--color-purple-deep)] rounded whitespace-nowrap">
+            <div className="relative px-2 py-1 text-xs text-white bg-[var(--color-foreground)] rounded whitespace-nowrap">
               {m.help_btn_enable()}
               <div
                 className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0"
                 style={{
                   borderLeft: '5px solid transparent',
                   borderRight: '5px solid transparent',
-                  borderTop: '5px solid var(--color-purple-deep)',
+                  borderTop: '5px solid var(--color-foreground)',
                 }}
               />
             </div>
@@ -66,7 +66,7 @@ export function HelpButton() {
           }`}
           style={{
             backgroundColor: enabled
-              ? 'var(--color-purple-accent)'
+              ? 'var(--color-rl-accent)'
               : 'var(--color-primary)',
             color: 'white',
             border: 'none',

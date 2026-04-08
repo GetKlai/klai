@@ -136,7 +136,7 @@ export function EditorHeader({
                 Paginainstellingen
               </p>
               <button
-                className="w-full text-left px-3 py-1.5 text-sm text-[var(--color-purple-deep)] hover:bg-[var(--color-secondary)]"
+                className="w-full text-left px-3 py-1.5 text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]"
                 onClick={() => { setShowMenu(false); onToggleAccessPanel() }}
               >
                 {m.docs_access_panel_title()}…

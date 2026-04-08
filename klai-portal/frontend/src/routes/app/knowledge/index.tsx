@@ -48,16 +48,16 @@ interface GapSummary {
 function KBCard({ kb }: { kb: KnowledgeBase }) {
   return (
     <Link to="/app/knowledge/$kbSlug" params={{ kbSlug: kb.slug }}>
-      <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
+      <Card className="hover:border-[var(--color-foreground)] transition-colors cursor-pointer">
         <CardContent className="pt-4 pb-4">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-[var(--color-secondary)] p-2 shrink-0">
               {kb.owner_type === 'user'
-                ? <Lock className="h-4 w-4 text-[var(--color-purple-deep)]" />
-                : <BookOpen className="h-4 w-4 text-[var(--color-purple-deep)]" />}
+                ? <Lock className="h-4 w-4 text-[var(--color-foreground)]" />
+                : <BookOpen className="h-4 w-4 text-[var(--color-foreground)]" />}
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-[var(--color-purple-deep)] truncate">{kb.name}</h3>
+              <h3 className="font-semibold text-[var(--color-foreground)] truncate">{kb.name}</h3>
               {kb.description && (
                 <p className="text-sm text-[var(--color-muted-foreground)] truncate mt-0.5">{kb.description}</p>
               )}
@@ -134,7 +134,7 @@ function KnowledgePage() {
     <div className="p-8 max-w-2xl">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {m.knowledge_page_intro_heading()}
           </h1>
         </div>
@@ -148,14 +148,14 @@ function KnowledgePage() {
       ) : <div className="flex flex-col gap-6">
         {/* Personal knowledge base (chat RAG) */}
         <Link to="/app/knowledge/$kbSlug" params={{ kbSlug: 'personal' }}>
-        <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
+        <Card className="hover:border-[var(--color-foreground)] transition-colors cursor-pointer">
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
               <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0">
-                <MessageSquare className="h-5 w-5 text-[var(--color-purple-deep)]" />
+                <MessageSquare className="h-5 w-5 text-[var(--color-foreground)]" />
               </div>
               <div className="flex-1">
-                <h2 className="font-semibold text-[var(--color-purple-deep)] mb-1">
+                <h2 className="font-semibold text-[var(--color-foreground)] mb-1">
                   {m.knowledge_page_personal_heading()}
                 </h2>
                 <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed mb-3">
@@ -163,7 +163,7 @@ function KnowledgePage() {
                 </p>
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 text-[var(--color-muted-foreground)]" />
-                  <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+                  <p className="text-sm font-medium text-[var(--color-foreground)]">
                     {statsLoading ? (
                       <span className="inline-block h-4 w-32 rounded bg-[var(--color-secondary)] animate-pulse" />
                     ) : stats != null && stats.personal_count > 0 ? (
@@ -184,10 +184,10 @@ function KnowledgePage() {
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
               <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0">
-                <Users className="h-5 w-5 text-[var(--color-purple-deep)]" />
+                <Users className="h-5 w-5 text-[var(--color-foreground)]" />
               </div>
               <div className="flex-1">
-                <h2 className="font-semibold text-[var(--color-purple-deep)] mb-1">
+                <h2 className="font-semibold text-[var(--color-foreground)] mb-1">
                   {m.knowledge_page_org_heading()}
                 </h2>
                 <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed mb-3">
@@ -195,7 +195,7 @@ function KnowledgePage() {
                 </p>
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 text-[var(--color-muted-foreground)]" />
-                  <p className="text-sm font-medium text-[var(--color-purple-deep)]">
+                  <p className="text-sm font-medium text-[var(--color-foreground)]">
                     {statsLoading ? (
                       <span className="inline-block h-4 w-32 rounded bg-[var(--color-secondary)] animate-pulse" />
                     ) : stats != null && stats.org_count > 0 ? (
@@ -213,7 +213,7 @@ function KnowledgePage() {
         {/* Named org KBs */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-[var(--color-purple-deep)]">
+            <h2 className="font-semibold text-[var(--color-foreground)]">
               {m.knowledge_page_kbs_heading()}
             </h2>
             <Button variant="outline" size="sm" asChild>
@@ -250,7 +250,7 @@ function KnowledgePage() {
         {(personalKbs.length > 0 || !kbsLoading) && (
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold text-[var(--color-purple-deep)]">
+              <h2 className="font-semibold text-[var(--color-foreground)]">
                 {m.knowledge_page_personal_kbs_heading()}
               </h2>
             </div>
@@ -277,14 +277,14 @@ function KnowledgePage() {
         {/* Knowledge Gaps (admin only) */}
         {isAdmin && gapSummary != null && (
           <Link to="/app/gaps">
-            <Card className="hover:border-[var(--color-purple-deep)] transition-colors cursor-pointer">
+            <Card className="hover:border-[var(--color-foreground)] transition-colors cursor-pointer">
               <CardContent className="pt-6">
                 <div className="flex items-start gap-4">
                   <div className="rounded-lg bg-[var(--color-secondary)] p-2.5 shrink-0">
-                    <AlertTriangle className="h-5 w-5 text-[var(--color-purple-deep)]" />
+                    <AlertTriangle className="h-5 w-5 text-[var(--color-foreground)]" />
                   </div>
                   <div className="flex-1">
-                    <h2 className="font-semibold text-[var(--color-purple-deep)] mb-1">
+                    <h2 className="font-semibold text-[var(--color-foreground)] mb-1">
                       {m.gaps_index_card_heading()}
                     </h2>
                     <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed mb-3">
@@ -296,7 +296,7 @@ function KnowledgePage() {
                       </p>
                     ) : (
                       <div className="flex items-center gap-4">
-                        <span className="text-sm font-medium text-[var(--color-purple-deep)]">
+                        <span className="text-sm font-medium text-[var(--color-foreground)]">
                           {gapSummary.total_7d} total
                         </span>
                         {gapSummary.hard_7d > 0 && (

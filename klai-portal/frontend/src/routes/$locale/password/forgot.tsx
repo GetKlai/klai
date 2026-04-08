@@ -47,12 +47,12 @@ function ForgotPasswordPage() {
 
   const leftContent = (
     <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
+      <h1 className="text-4xl font-bold leading-tight">
         {m.forgot_hero_heading()}
         <br />
-        <span className="text-[var(--color-purple-accent)]">{m.forgot_hero_highlight()}</span>
+        <span className="text-[var(--color-rl-accent)]">{m.forgot_hero_highlight()}</span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
         {m.forgot_hero_body()}
       </p>
     </>
@@ -62,23 +62,23 @@ function ForgotPasswordPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
         <div className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-purple-deep)]">
-            <Mail size={22} className="text-[var(--color-sand-light)]" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
+            <Mail size={22} className="text-[var(--color-rl-cream)]" />
           </div>
-          <p className="font-serif text-xl font-bold text-[var(--color-purple-deep)]">
+          <p className="text-xl font-bold text-[var(--color-foreground)]">
             {m.forgot_done_heading()}
           </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
             {m.forgot_done_body()}
           </p>
-          <a href="/" className="block text-xs text-[var(--color-purple-muted)] hover:underline pt-2">
+          <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline pt-2">
             {m.forgot_back()}
           </a>
         </div>
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.forgot_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -99,7 +99,7 @@ function ForgotPasswordPage() {
                 required
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -113,7 +113,7 @@ function ForgotPasswordPage() {
           </form>
 
           <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-            <a href="/" className="text-[var(--color-purple-muted)] hover:underline">
+            <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
               {m.forgot_back()}
             </a>
           </p>

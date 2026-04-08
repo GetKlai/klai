@@ -85,8 +85,8 @@ function LoginPage() {
   // Still checking for existing SSO session — show a spinner
   if (checkingSSO) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-off-white)]">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-purple-accent)] border-t-transparent" />
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
       </div>
     )
   }
@@ -173,21 +173,21 @@ function LoginPage() {
 
   const leftContent = (
     <>
-      <h1 className="font-serif text-4xl font-bold leading-tight">
+      <h1 className="text-4xl font-bold leading-tight">
         {m.login_hero_heading()}
         <br />
-        <span className="text-[var(--color-purple-accent)]">{m.login_hero_highlight()}</span>
+        <span className="text-[var(--color-rl-accent)]">{m.login_hero_highlight()}</span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-sand-mid)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
         {m.login_hero_body()}
       </p>
       <div className="flex flex-col gap-3 pt-4">
-        <div className="flex items-center gap-3 text-sm text-[var(--color-sand-mid)]">
-          <Shield size={16} className="shrink-0 text-[var(--color-purple-accent)]" />
+        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
+          <Shield size={16} className="shrink-0 text-[var(--color-rl-accent)]" />
           {m.login_hero_bullet_eu()}
         </div>
-        <div className="flex items-center gap-3 text-sm text-[var(--color-sand-mid)]">
-          <Lock size={16} className="shrink-0 text-[var(--color-purple-accent)]" />
+        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
+          <Lock size={16} className="shrink-0 text-[var(--color-rl-accent)]" />
           {m.login_hero_bullet_open()}
         </div>
       </div>
@@ -200,7 +200,7 @@ function LoginPage() {
         /* TOTP challenge step */
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.totp_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -224,7 +224,7 @@ function LoginPage() {
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20 tracking-widest text-center text-lg font-mono"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)] tracking-widest text-center text-lg font-mono"
               />
             </div>
 
@@ -241,7 +241,7 @@ function LoginPage() {
           <p className="text-center text-xs text-[var(--color-muted-foreground)]">
             <button
               onClick={() => { setTotpStep(false); setTotpCode(''); setError(null) }}
-              className="text-[var(--color-purple-muted)] hover:underline"
+              className="text-[var(--color-rl-accent-dark)] hover:underline"
             >
               {m.totp_back()}
             </button>
@@ -251,7 +251,7 @@ function LoginPage() {
         /* Password login step */
         <>
           <div className="space-y-2">
-            <h2 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+            <h2 className="text-2xl font-bold text-[var(--color-foreground)]">
               {m.login_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -272,7 +272,7 @@ function LoginPage() {
                 required
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -287,7 +287,7 @@ function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--color-purple-accent)] focus:ring-2 focus:ring-[var(--color-purple-accent)]/20"
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
             </div>
 
@@ -306,14 +306,14 @@ function LoginPage() {
               to="/$locale/password/forgot"
               params={{ locale }}
               search={email ? { email } : {}}
-              className="text-[var(--color-purple-muted)] hover:underline"
+              className="text-[var(--color-rl-accent-dark)] hover:underline"
             >
               {m.login_forgot_password()}
             </Link>
             <Link
               to="/$locale/signup"
               params={{ locale }}
-              className="text-[var(--color-purple-muted)] hover:underline"
+              className="text-[var(--color-rl-accent-dark)] hover:underline"
             >
               {m.login_no_account()}
             </Link>

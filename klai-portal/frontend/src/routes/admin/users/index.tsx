@@ -319,7 +319,7 @@ function UsersPage() {
     <div className="p-8 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
             {m.admin_users_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -381,7 +381,7 @@ function UsersPage() {
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="px-6 py-3 text-[var(--color-purple-deep)]"
+                        className="px-6 py-3 text-[var(--color-foreground)]"
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

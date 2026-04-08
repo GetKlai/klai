@@ -13,57 +13,88 @@ paths: ["klai-portal/frontend/src/**/*.tsx", "klai-portal/frontend/src/**/*.ts"]
 
 | Token | Value | Notes |
 |---|---|---|
-| `--color-background` | `#FAFAF8` | Page background |
-| `--color-foreground` | `#1A1A1A` | Default text |
-| `--color-card` | `#FFFFFF` | Card backgrounds |
-| `--color-primary` | `#2D1B69` | shadcn primary (purple-primary) |
-| `--color-primary-foreground` | `#FAFAF8` | Text on primary |
-| `--color-secondary` | `#F5F0E8` | shadcn secondary (sand-light) |
-| `--color-secondary-foreground` | `#2D1B69` | Text on secondary |
-| `--color-muted` | `#EAE3D5` | Muted backgrounds |
-| `--color-muted-foreground` | `#6B6B6B` | Muted text |
-| `--color-accent` | `#7C6AFF` | Accent (purple-accent) |
-| `--color-accent-foreground` | `#FAFAF8` | Text on accent |
+| `--color-background` | `#fffef2` | Page background (warm ivory) |
+| `--color-foreground` | `#191918` | Default text |
+| `--color-card` | `#f3f2e7` | Card backgrounds (cream) |
+| `--color-card-foreground` | `#191918` | Text on cards |
+| `--color-primary` | `#fcaa2d` | shadcn primary (amber accent) |
+| `--color-primary-foreground` | `#191918` | Text on primary |
+| `--color-secondary` | `#f3f2e7` | shadcn secondary (cream) |
+| `--color-secondary-foreground` | `#191918` | Text on secondary |
+| `--color-muted` | `#f3f2e7` | Muted backgrounds |
+| `--color-muted-foreground` | `#19191899` | Muted text (60% opacity dark) |
+| `--color-accent` | `#fcaa2d` | Accent (amber) |
+| `--color-accent-foreground` | `#191918` | Text on accent |
 | `--color-destructive` | `#C0392B` | Error / destructive actions |
 | `--color-success` | `#27AE60` | Save confirm buttons, positive feedback icons |
-| `--color-border` | `rgba(45,27,105,0.1)` | Default border |
-| `--color-input` | `rgba(45,27,105,0.08)` | Input field background |
-| `--color-ring` | `#7C6AFF` | Focus ring |
+| `--color-border` | `#e3e2d8` | Default border (warm) |
+| `--color-input` | `#f3f2e7` | Input field background |
+| `--color-ring` | `#fcaa2d` | Focus ring (amber) |
+
+### Brand color tokens
+
+| Token | Value | Usage |
+|---|---|---|
+| `--color-rl-bg` | `#fffef2` | Page background |
+| `--color-rl-dark` | `#191918` | Primary text |
+| `--color-rl-dark-60` | `#19191899` | Body text |
+| `--color-rl-dark-30` | `#1919184d` | Placeholders |
+| `--color-rl-dark-10` | `#1919181a` | Ghost borders |
+| `--color-rl-accent` | `#fcaa2d` | Amber CTA, highlights |
+| `--color-rl-accent-dark` | `#a36404` | Text links on light bg |
+| `--color-rl-accent-hover` | `#e89a1f` | Button hover |
+| `--color-rl-cream` | `#f3f2e7` | Card backgrounds |
+| `--color-rl-border` | `#e3e2d8` | Borders, dividers |
+| `--color-rl-muted` | `#bab9b0` | Label text, icons |
 
 ---
 
-## Sidebar (dark variant)
+## Sidebar (light organic)
 
 ```
-Background:         #1A0F40  (--color-sidebar)
-Text:               #F5F0E8  (--color-sidebar-foreground)
-Border:             rgba(124, 106, 255, 0.15)
-Active/hover item:  rgba(124, 106, 255, 0.15) background
-Muted text:         rgba(245, 240, 232, 0.55)
+Background:         #f3f2e7  (--color-sidebar)
+Text:               #191918  (--color-sidebar-foreground)
+Border:             #e3e2d8  (right border + internal dividers)
+Active/hover item:  #fcaa2d1a (10% amber tint)
+Muted text:         #19191899 (60% opacity dark)
 ```
+
+Logo: uses `/klai-logo.svg` (dark logo on light sidebar).
 
 ---
 
-## Typography sizes
+## Typography
 
-### Inter (sans) - portal defaults
+### Parabole (sans) - portal defaults
 
 | Context | Size | Weight |
 |---|---|---|
-| Base body | 14px (`--text-base: 0.875rem`) | 400 |
+| Base body | 14px | 400 (Parabole Regular) |
 | Lead/intro text | `text-lg` (18px) | 400 |
 | Nav links | `text-sm` | 400 |
 | Captions / metadata | `text-xs` (10-12px) | 400 |
 | Labels in UI | `text-sm` | 500 (`font-medium`) |
+| Page headings | `text-2xl font-bold` | 700 |
 
-Line height: `leading-relaxed` (1.625). Anti-aliasing: `-webkit-font-smoothing: antialiased`.
+Font stack: `--font-sans: "Parabole Regular"`. Display: `--font-display: "Parabole Medium"`.
+Mono labels: `--font-mono: "Decima Mono"`.
 
-### Manrope (display) - prices and stats
+Line height: 1.6. Anti-aliasing: `-webkit-font-smoothing: antialiased`.
 
-| Context | Size | Weight |
-|---|---|---|
-| Price display | `text-3xl` (30px) | 700 |
-| Large stats | `text-4xl`+ | 700 or 800 |
+---
+
+## Buttons
+
+Pill-shaped, 12px uppercase with 0.04em tracking. Two variants:
+
+| Variant | Style |
+|---|---|
+| `default` | Amber bg (`rl-accent`), dark text, hover `rl-accent-hover` |
+| `ghost` | Transparent, border `rl-dark-10`, hover border darkens |
+| `secondary` | Cream bg, dark text |
+| `outline` | Border only, hover cream bg |
+| `destructive` | Red bg, white text |
+| `link` | `rl-accent-dark` text, underline on hover, normal case |
 
 ---
 
@@ -85,8 +116,8 @@ Field pattern:
 </div>
 ```
 
-- Label color: `var(--color-purple-deep)`, `block text-sm font-medium`
-- Field text color: `var(--color-purple-deep)`
+- Label color: `var(--color-foreground)`, `block text-sm font-medium`
+- Field text color: `var(--color-foreground)`
 - Border: `var(--color-border)`, `rounded-md`
 - Focus: `ring-2 ring-[var(--color-ring)]`
 - Standalone narrow selects (settings/account): add `className="max-w-xs"`

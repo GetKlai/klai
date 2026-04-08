@@ -121,7 +121,7 @@ export function TreeItem({
         />
         <button
           type="button"
-          className="shrink-0 text-[var(--color-purple-deep)] hover:opacity-70 disabled:opacity-30"
+          className="shrink-0 text-[var(--color-foreground)] hover:opacity-70 disabled:opacity-30"
           disabled={!newPageTitle.trim()}
           onClick={() => onNewPageConfirm(nodePath)}
           aria-label={m.docs_kb_create()}
@@ -156,11 +156,11 @@ export function TreeItem({
       <div
         className={`flex w-full items-center py-1 text-xs transition-colors group ${
           isInsideTarget
-            ? 'bg-[var(--color-purple-accent)]/20 ring-1 ring-[var(--color-purple-accent)] rounded'
+            ? 'bg-[var(--color-rl-accent)]/20 ring-1 ring-[var(--color-rl-accent)] rounded'
             : isSelected && !isDir
-              ? 'bg-[var(--color-purple-accent)]/10 text-[var(--color-purple-deep)] font-medium'
+              ? 'bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)] font-medium'
               : 'text-[var(--color-foreground)] hover:bg-[var(--color-muted-foreground)]/5'
-        } ${isFocused ? 'ring-1 ring-[var(--color-purple-accent)] rounded' : ''}`}
+        } ${isFocused ? 'ring-1 ring-[var(--color-rl-accent)] rounded' : ''}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -200,7 +200,7 @@ export function TreeItem({
             isDir
               ? 'font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
               : isSelected
-                ? 'text-[var(--color-purple-deep)] font-medium'
+                ? 'text-[var(--color-foreground)] font-medium'
                 : 'text-[var(--color-foreground)]'
           }`}
           onClick={() => { if (!isDir) onSelect(node) }}
@@ -215,7 +215,7 @@ export function TreeItem({
             <>
               <button
                 type="button"
-                className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+                className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
                 onClick={() => onAddSubpage(nodePath)}
                 title={m.docs_pages_add_subpage()}
                 aria-label={m.docs_pages_add_subpage()}
@@ -226,7 +226,7 @@ export function TreeItem({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-purple-deep)]"
+                    className="flex items-center justify-center w-4 h-4 rounded hover:bg-[var(--color-muted-foreground)]/15 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
                     aria-label={m.docs_tree_more_options()}
                   >
                     <MoreHorizontal size={10} />

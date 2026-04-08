@@ -92,7 +92,7 @@ function AddSourcePage() {
   return (
     <div className="p-8 max-w-lg">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-serif text-2xl font-bold text-[var(--color-purple-deep)]">
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
           {m.app_focus_add_source()}
         </h1>
         <Button
@@ -116,7 +116,7 @@ function AddSourcePage() {
                 onClick={() => { void navigate({ search: { tab: tab === 'file' ? undefined : tab } }); setAddError(null) }}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
                   addTab === tab
-                    ? 'bg-white shadow-sm text-[var(--color-purple-deep)]'
+                    ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
                     : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
                 }`}
               >
@@ -129,8 +129,8 @@ function AddSourcePage() {
             <div
               className={`cursor-pointer rounded-lg border-2 border-dashed p-6 text-center transition-colors ${
                 dragging
-                  ? 'border-[var(--color-purple-accent)] bg-[var(--color-purple-accent)]/5'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-purple-accent)]/50'
+                  ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/5'
+                  : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent)]/50'
               }`}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
@@ -162,7 +162,7 @@ function AddSourcePage() {
               ) : (
                 <div>
                   <Upload className="mx-auto mb-2 h-6 w-6 text-[var(--color-muted-foreground)]" />
-                  <p className="text-sm font-medium text-[var(--color-purple-deep)]">{m.app_focus_source_file_hint()}</p>
+                  <p className="text-sm font-medium text-[var(--color-foreground)]">{m.app_focus_source_file_hint()}</p>
                   <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">PDF, DOCX, TXT, MD</p>
                 </div>
               )}
