@@ -152,7 +152,7 @@ export function TreeItem({
       style={{ opacity: isDragging ? 0 : 1 }}
     >
       <div
-        className={`flex w-full items-center py-[3px] mx-1 rounded-[5px] text-sm transition-colors group ${
+        className={`flex w-full items-center py-1 mx-1 rounded-[5px] text-[15px] transition-colors group ${
           isInsideTarget
             ? 'bg-[var(--color-foreground)]/[0.06]'
             : isSelected && !isDir
