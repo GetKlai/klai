@@ -1,26 +1,28 @@
 model_list:
-  # Primary: Mistral Small — default for user-facing tasks
+  # Primary: Claude Haiku — default for user-facing tasks
+  # TEMPORARY: switched from Mistral Small due to Tier 1 monthly quota exhaustion
+  # (service_tier_capacity_exceeded / code 3505). Revert to Mistral after quota reset.
   # Routes through custom_router.py: may be upgraded to klai-large (tool calls)
   # or downgraded to klai-fast (web search content). Never use for internal services.
   - model_name: klai-primary
     litellm_params:
-      model: mistral/mistral-small-latest
-      api_key: os.environ/MISTRAL_API_KEY
-    rpm: 60
-    tpm: 375000
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 200000
 
-  # Fast: Mistral Small — bypasses custom_router.py routing
+  # Fast: Claude Haiku — bypasses custom_router.py routing
+  # TEMPORARY: switched from Mistral Small due to Tier 1 monthly quota exhaustion
   # Use for all internal services: enrichment, coreference, Graphiti extraction
   - model_name: klai-fast
     litellm_params:
-      model: mistral/mistral-small-latest
-      api_key: os.environ/MISTRAL_API_KEY
-    rpm: 60
-    tpm: 375000
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+    rpm: 50
+    tpm: 200000
 
   # Large: Claude Sonnet 4.6 — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
-  # Kept on Anthropic because Mistral Large monthly quota is exhausted
   - model_name: klai-large
     litellm_params:
       model: anthropic/claude-sonnet-4-6
@@ -33,9 +35,6 @@ router_settings:
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when provider budget is hit
   provider_budget_config:
-    mistral:
-      rpm_limit: 60
-      tpm_limit: 375000
     anthropic:
       rpm_limit: 50
       tpm_limit: 200000
