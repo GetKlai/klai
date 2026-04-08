@@ -393,17 +393,29 @@ class KlaiKnowledgeHook(CustomLogger):
                 "[Klai Kennisbank — gebruik dit als aanvullende context bij je antwoord. "
                 "Je mag dit aanvullen met je algemene kennis.]\n"
             )
-        lines = [header]
+        source_link_instruction = (
+            "[Wanneer een bron een URL heeft, voeg die toe als markdown-link bij de titel. "
+            "Voorbeeld: zie [Paginatitel](https://...). "
+            "Doe dit ALTIJD wanneer een source_url beschikbaar is.]\n"
+        )
+        lines = [header, source_link_instruction]
         for chunk in chunks:
-            title = chunk.get("metadata", {}).get("title", "")
+            title = chunk.get("title") or chunk.get("metadata", {}).get("title", "")
+            source_url = chunk.get("source_url", "")
             scope_label = chunk.get("scope", "org")
             label = "[persoonlijk]" if scope_label == "personal" else "[org]"
             text = chunk.get("text", "").strip()
-            if title:
+            if title and source_url:
+                lines.append(f"### [{title}]({source_url})  {label}")
+            elif title:
                 lines.append(f"### {title}  {label}")
+            elif source_url:
+                lines.append(f"### [Bron]({source_url})  {label}")
             else:
                 lines.append(f"### Kennisbank  {label}")
             lines.append(text)
+            if source_url:
+                lines.append(f"source_url: {source_url}")
             lines.append("")
         lines.append("[Einde kennisbank-context]")
         context_block = "\n".join(lines)
