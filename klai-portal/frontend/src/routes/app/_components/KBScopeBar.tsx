@@ -135,11 +135,6 @@ export function KBScopeBar() {
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-background)] px-4">
-      {/* Logo */}
-      <img src="/klai-logo.svg" alt="Klai" className="h-4 w-auto mr-1" />
-
-      <span className="h-4 w-px bg-[var(--color-border)]" />
-
       {/* KB retrieval toggle */}
       <button
         type="button"
