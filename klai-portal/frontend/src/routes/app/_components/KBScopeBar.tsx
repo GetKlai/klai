@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, ChevronDown } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
@@ -134,7 +134,12 @@ export function KBScopeBar() {
   }
 
   return (
-    <div className="flex h-9 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-card)] px-4 text-sm">
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-background)] px-4">
+      {/* Logo */}
+      <img src="/klai-logo.svg" alt="Klai" className="h-4 w-auto mr-1" />
+
+      <span className="h-4 w-px bg-[var(--color-border)]" />
+
       {/* KB retrieval toggle */}
       <button
         type="button"
@@ -142,18 +147,18 @@ export function KBScopeBar() {
         disabled={isPending}
         title={isOn ? m.chat_kb_bar_tooltip_on() : m.chat_kb_bar_tooltip_off()}
         className={[
-          'flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors',
+          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-wide uppercase transition-colors',
           isPending ? 'opacity-50' : '',
           isOn
-            ? 'bg-[var(--color-accent)]/10 text-[var(--color-rl-accent-dark)]'
+            ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
             : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
         ].join(' ')}
       >
-        <BookOpen className="h-3.5 w-3.5" />
+        <BookOpen className="h-3 w-3" />
         {m.chat_kb_bar_toggle_label()}
         <span
           className={[
-            'h-2 w-2 rounded-full',
+            'h-1.5 w-1.5 rounded-full',
             isOn ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/40',
           ].join(' ')}
         />
@@ -161,25 +166,23 @@ export function KBScopeBar() {
 
       {isOn && (
         <>
-          <span className="h-4 w-px bg-[var(--color-border)]" />
-
-          {/* Personal KB checkbox */}
-          <label
-            className={[
-              'flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]',
-              isPending ? 'cursor-not-allowed opacity-50' : '',
-            ].join(' ')}
+          {/* Personal KB pill */}
+          <button
+            type="button"
+            onClick={togglePersonal}
+            disabled={isPending}
             title={m.chat_kb_bar_personal_tooltip()}
+            className={[
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-wide uppercase transition-colors',
+              isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+              pref.kb_personal_enabled
+                ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
+                : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+            ].join(' ')}
           >
-            <input
-              type="checkbox"
-              checked={pref.kb_personal_enabled}
-              onChange={togglePersonal}
-              disabled={isPending}
-              className="h-3.5 w-3.5 accent-[var(--color-accent)]"
-            />
+            <span className={['h-1.5 w-1.5 rounded-full', pref.kb_personal_enabled ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/40'].join(' ')} />
             {m.chat_kb_bar_personal_label()}
-          </label>
+          </button>
 
           {/* Org KB filter dropdown */}
           <div ref={dropdownRef} className="relative">
@@ -188,30 +191,25 @@ export function KBScopeBar() {
               onClick={() => setDropdownOpen((v) => !v)}
               disabled={isPending}
               className={[
-                'flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted-foreground)] transition-colors',
+                'flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-medium tracking-wide uppercase transition-colors',
                 isPending
                   ? 'opacity-50'
-                  : 'hover:border-[var(--color-accent)] hover:text-[var(--color-foreground)]',
+                  : 'hover:border-[var(--color-foreground)]/30 hover:text-[var(--color-foreground)]',
+                'text-[var(--color-muted-foreground)]',
               ].join(' ')}
             >
               {filterLabel}
-              <span className="text-[10px]">▾</span>
+              <ChevronDown className="h-3 w-3" />
             </button>
 
             {dropdownOpen && (
-              <div className="absolute left-0 top-full z-50 mt-1 w-52 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] py-1 shadow-lg">
+              <div className="absolute left-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1.5 shadow-lg">
                 {orgKbs.map((kb) => (
                   <label
                     key={kb.slug}
-                    className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-[var(--color-secondary)]"
+                    className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors"
                   >
-                    <input
-                      type="checkbox"
-                      checked={currentSlugs.includes(kb.slug)}
-                      onChange={() => toggleSlug(kb.slug)}
-                      disabled={isPending}
-                      className="h-3.5 w-3.5 accent-[var(--color-accent)]"
-                    />
+                    <span className={['h-1.5 w-1.5 rounded-full shrink-0', currentSlugs.includes(kb.slug) ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'].join(' ')} />
                     <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
                   </label>
                 ))}
@@ -219,41 +217,32 @@ export function KBScopeBar() {
             )}
           </div>
 
-          {/* Narrow mode toggle */}
-          <div className={['group flex items-center gap-1.5', isPending ? 'opacity-50' : ''].join(' ')}>
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={pref.kb_narrow}
-                onChange={toggleNarrow}
-                disabled={isPending}
-                className="h-3.5 w-3.5 accent-[var(--color-accent)]"
-              />
-              <span
-                className={
-                  pref.kb_narrow
-                    ? 'text-[var(--color-foreground)]'
-                    : 'text-[var(--color-muted-foreground)]'
-                }
-              >
-                {m.chat_kb_bar_narrow_label()}
-              </span>
-            </label>
-            <span className="text-xs italic text-[var(--color-accent)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-              {m.chat_kb_bar_narrow_tooltip()}
-            </span>
-          </div>
+          {/* Narrow mode pill */}
+          <button
+            type="button"
+            onClick={toggleNarrow}
+            disabled={isPending}
+            className={[
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-wide uppercase transition-colors',
+              isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+              pref.kb_narrow
+                ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
+                : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+            ].join(' ')}
+          >
+            {m.chat_kb_bar_narrow_label()}
+          </button>
         </>
       )}
 
       {/* Status indicators */}
       {mutation.isPending && (
-        <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
+        <span className="ml-auto text-[11px] text-[var(--color-muted-foreground)]">
           {m.chat_kb_bar_saving()}
         </span>
       )}
       {mutation.isError && (
-        <span className="ml-auto text-xs text-[var(--color-destructive)]">
+        <span className="ml-auto text-[11px] text-[var(--color-destructive)]">
           {m.chat_kb_bar_save_error()}
         </span>
       )}
