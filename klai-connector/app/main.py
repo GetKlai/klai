@@ -80,6 +80,21 @@ def create_app() -> FastAPI:
         # Portal client (control plane)
         portal_client = PortalClient(settings)
 
+        # Image storage (Garage S3) — optional, skip if not configured.
+        image_store = None
+        if settings.garage_s3_endpoint:
+            from app.services.s3_storage import ImageStore
+
+            image_store = ImageStore(
+                endpoint=settings.garage_s3_endpoint,
+                access_key=settings.garage_access_key,
+                secret_key=settings.garage_secret_key,
+                bucket=settings.garage_bucket,
+                region=settings.garage_region,
+                presigned_ttl_seconds=settings.garage_presigned_ttl,
+            )
+            logger.info("Image storage enabled (endpoint=%s)", settings.garage_s3_endpoint)
+
         # Sync engine
         if _db.session_maker is None:
             raise RuntimeError("Database session maker not initialised")
@@ -88,6 +103,7 @@ def create_app() -> FastAPI:
             registry=registry,
             ingest_client=ingest_client,
             portal_client=portal_client,
+            image_store=image_store,
         )
         app.state.sync_engine = sync_engine
 
