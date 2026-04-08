@@ -399,8 +399,9 @@ class KlaiKnowledgeHook(CustomLogger):
             "1. Begin met een korte TLDR (2-3 zinnen) van het antwoord.\n"
             "2. Direct daarna een bronnenlijst met ALLEEN de echte source_url's uit de chunks:\n"
             "   📎 [Paginatitel](https://notion.so/...) | [Titel](https://...)\n"
-            "3. Daarna het uitgebreide antwoord met inline citaties.\n"
-            "   Citeer met [n] waar n het chunknummer is. ALTIJD met een spatie ervoor: '...tekst [1].' NOOIT '...tekst1' of '...tekst[1]'.\n\n"
+            "3. Indien noodzakelijk voor goede uitleg of indien de gebruiker het vraagt uitgebreide antwoord met inline citaties.\n"
+            "   Citeer met [n] waar n het chunknummer is. ALTIJD met een spatie ervoor: '...tekst [1].' NOOIT '...tekst1' of '...tekst[1]'.\n"
+            "   Wees bondig maar volledig. Geen muren van tekst — schrijf alsof je een collega helpt.\n\n"
             "STRIKT:\n"
             "- Gebruik UITSLUITEND URLs die letterlijk in de chunks staan (source_url velden).\n"
             "- Verzin NOOIT een URL. Geen portal.voys.nl, geen freedom.voys.nl, geen enkele URL die niet in de bronnen staat.\n"
@@ -428,8 +429,6 @@ class KlaiKnowledgeHook(CustomLogger):
             else:
                 lines.append(f"### Kennisbank  {label}")
             lines.append(text)
-            if source_url:
-                lines.append(f"source_url: {source_url}")
             image_urls = chunk.get("image_urls") or []
             if image_urls:
                 absolute_urls = [
