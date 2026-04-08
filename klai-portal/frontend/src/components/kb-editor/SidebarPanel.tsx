@@ -43,7 +43,7 @@ export function SidebarPanel({
   onUpload,
 }: SidebarPanelProps) {
   return (
-    <aside className="w-60 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-background)] flex flex-col">
+    <aside className="w-60 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] flex flex-col">
       <div className="px-4 py-3">
         <Link
           to="/app/docs"
