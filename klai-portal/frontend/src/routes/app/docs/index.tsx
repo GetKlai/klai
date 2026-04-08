@@ -50,7 +50,7 @@ function DocsPage() {
     <div className="p-8 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="text-base font-semibold text-[var(--color-foreground)]">
+          <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
             {m.docs_kbs_title()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -97,7 +97,7 @@ function DocsPage() {
                 {accessibleKbs.map((kb, i) => (
                   <tr
                     key={kb.id}
-                    className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+                    className="bg-[var(--color-card)]"
                   >
                     <td
                       className="px-6 py-3 text-[var(--color-foreground)] font-medium cursor-pointer hover:underline"

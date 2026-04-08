@@ -255,7 +255,7 @@ function IntegrationsPage() {
   return (
     <div className="p-8 max-w-2xl">
       <div className="mb-6">
-        <h1 className="text-base font-semibold text-[var(--color-foreground)]">
+        <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
           {m.admin_integrations_title()}
         </h1>
         <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{m.admin_integrations_subtitle()}</p>
