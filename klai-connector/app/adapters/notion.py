@@ -307,6 +307,10 @@ class NotionAdapter(BaseAdapter):
         """Return image refs extracted during the last fetch_document call."""
         return self._image_cache.pop(page_id, [])
 
+    async def post_sync(self, connector: Any) -> None:
+        """Clear the per-page image cache after sync completes."""
+        self._image_cache.clear()
+
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return cursor state based on max(last_edited_time) of accessible pages.
 

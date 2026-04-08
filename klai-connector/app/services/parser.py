@@ -30,43 +30,6 @@ class ParseResult:
     images: list[dict[str, str]] = field(default_factory=list)
 
 
-def parse_document(content: bytes, filename: str) -> str:
-    """Parse a document and return extracted text.
-
-    Text-based formats (.md, .txt, .rst, .csv) and files with no extension
-    are decoded directly as UTF-8.
-    Binary formats (.pdf, .docx, .html) use Unstructured.io.
-
-    Args:
-        content: Raw file bytes.
-        filename: Original filename (used for format detection).
-
-    Returns:
-        Extracted text content as a string.
-
-    Raises:
-        ValueError: If the file exceeds the 50 MB size limit.
-    """
-    if len(content) > MAX_FILE_SIZE:
-        raise ValueError(f"File too large: {len(content)} bytes (max {MAX_FILE_SIZE} bytes)")
-
-    suffix = Path(filename).suffix.lower()
-
-    # Files with no extension, invalid extensions (containing spaces or longer than 10 chars,
-    # e.g. Notion page titles like "3.011 Opzeggingen..."), or known text formats are decoded
-    # directly as UTF-8 without going to Unstructured.
-    if not suffix or " " in suffix or len(suffix) > 10 or suffix in _PLAIN_TEXT_SUFFIXES:
-        text = content.decode("utf-8", errors="replace")
-        logger.info("Parsed text document %s: %d characters", filename, len(text))
-        return text
-
-    elements = _partition_with_cleanup(content, filename)
-    text = "\n\n".join(str(e) for e in elements if str(e).strip())
-
-    logger.info("Parsed document %s: %d characters extracted", filename, len(text))
-    return text
-
-
 def parse_document_with_images(content: bytes, filename: str) -> ParseResult:
     """Parse a document and return extracted text plus embedded images.
 
