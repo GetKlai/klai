@@ -59,11 +59,10 @@ async def _handle_meeting_ended(meeting: VexaMeeting) -> None:
         m.status = "stopping"
         m.ended_at = m.ended_at or datetime.now(UTC)
         await db.commit()
-        await db.refresh(m)
 
         await run_transcription(m, db)
         await db.commit()
-        if m.status == "completed":
+        if m.status == "done":
             await cleanup_recording(m, db)
 
 
@@ -100,7 +99,7 @@ async def _recover_stuck_meeting(meeting: VexaMeeting) -> None:
             return
         await run_transcription(m, db)
         await db.commit()
-        if m.status == "completed":
+        if m.status == "done":
             await cleanup_recording(m, db)
 
 
