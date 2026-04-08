@@ -52,7 +52,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       {/* Logo + toggle */}
       <div className={cn(
         'flex h-12 items-center',
-        collapsed ? 'px-0' : 'pl-6 pr-3'
+        collapsed ? 'px-0' : 'pl-12 pr-3'
       )}>
         {!collapsed && (
           <div className="flex-1">
