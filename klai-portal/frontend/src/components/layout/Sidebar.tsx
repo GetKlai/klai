@@ -52,7 +52,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       {/* Logo + toggle */}
       <div className={cn(
         'flex h-12 items-center',
-        collapsed ? 'px-0' : 'pl-12 pr-12'
+        collapsed ? 'px-0' : 'pl-6 pr-3'
       )}>
         {!collapsed && (
           <div className="flex-1">
@@ -88,7 +88,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   className={cn(
                     'flex items-center rounded-md py-2 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-                    collapsed ? 'justify-center px-0 w-full' : 'mx-6 pl-6 gap-3'
+                    collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
                   )}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
@@ -102,7 +102,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   className={cn(
                     'flex items-center rounded-md py-2 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-                    collapsed ? 'justify-center px-0 w-full' : 'mx-6 pl-6 gap-3'
+                    collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
                   )}
                   activeProps={{
                     className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
@@ -149,7 +149,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             className={cn(
               'flex items-center rounded-md py-2 text-sm transition-colors',
               'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-              collapsed ? 'justify-center px-0 w-full' : 'mx-6 pl-6 gap-3'
+              collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
             )}
           >
             {inAdmin
@@ -164,7 +164,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       {/* Locale switcher */}
       <div className={cn(
         'border-t border-[var(--color-sidebar-border)] py-2',
-        collapsed ? 'flex justify-center' : 'flex items-center gap-1 pl-12'
+        collapsed ? 'flex justify-center' : 'flex items-center gap-1 px-6'
       )}>
         {collapsed ? (
           <button
@@ -206,7 +206,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       {/* User + logout */}
       <div className="border-t border-[var(--color-sidebar-border)] py-2">
         {auth.user && !collapsed && (
-          <div className="mb-1 pl-12 py-2">
+          <div className="mb-1 px-6 py-2">
             <p className="truncate text-xs font-medium text-[var(--color-sidebar-foreground)]">
               {auth.user.profile.name ?? auth.user.profile.preferred_username}
             </p>
@@ -221,7 +221,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           className={cn(
             'flex items-center rounded-md py-2 text-sm transition-colors',
             'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-            collapsed ? 'justify-center px-0 w-full' : 'mx-6 pl-6 gap-3'
+            collapsed ? 'justify-center px-0 w-full' : 'gap-3 px-6'
           )}
           activeProps={{
             className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
