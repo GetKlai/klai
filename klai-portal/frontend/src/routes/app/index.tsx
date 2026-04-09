@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 export const Route = createFileRoute('/app/')({
   component: AppHome,
@@ -16,6 +17,7 @@ function getGreeting(name: string): string {
 
 function AppHome() {
   const auth = useAuth()
+  const { user } = useCurrentUser()
   const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? m.app_home_user_fallback()
 
   const tools = [
@@ -25,6 +27,7 @@ function AppHome() {
       icon: MessageSquare,
       href: '/app/chat',
       helpId: 'home-tool-chat',
+      product: 'chat',
     },
     {
       title: m.app_tool_transcribe_title(),
@@ -32,6 +35,7 @@ function AppHome() {
       icon: Mic,
       href: '/app/transcribe',
       helpId: 'home-tool-transcribe',
+      product: 'scribe',
     },
     {
       title: m.app_tool_focus_title(),
@@ -39,6 +43,7 @@ function AppHome() {
       icon: BookOpen,
       href: '/app/focus',
       helpId: 'home-tool-focus',
+      product: 'chat',
     },
     {
       title: m.app_tool_knowledge_title(),
@@ -46,6 +51,7 @@ function AppHome() {
       icon: Brain,
       href: '/app/knowledge',
       helpId: 'home-tool-knowledge',
+      product: 'knowledge',
     },
     {
       title: m.app_tool_docs_title(),
@@ -53,8 +59,13 @@ function AppHome() {
       icon: BookMarked,
       href: '/app/docs',
       helpId: 'home-tool-docs',
+      product: 'knowledge',
     },
   ]
+
+  function hasAccess(product: string) {
+    return user?.isAdmin || user?.products.includes(product)
+  }
 
   return (
     <div className="p-8 space-y-8 max-w-3xl">
@@ -70,28 +81,54 @@ function AppHome() {
       <div>
         <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">{m.app_home_tools()}</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {tools.map((tool) => (
-            <a
-              key={tool.title}
-              href={tool.href}
-              data-help-id={tool.helpId}
-              className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
-            >
-              <tool.icon
-                size={20}
-                strokeWidth={1.5}
-                className="text-[var(--color-muted-foreground)]"
-              />
-              <div>
-                <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
-                  {tool.title}
-                </p>
-                <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                  {tool.description}
-                </p>
+          {tools.map((tool) => {
+            const accessible = hasAccess(tool.product)
+            if (accessible) {
+              return (
+                <a
+                  key={tool.title}
+                  href={tool.href}
+                  data-help-id={tool.helpId}
+                  className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
+                >
+                  <tool.icon
+                    size={20}
+                    strokeWidth={1.5}
+                    className="text-[var(--color-muted-foreground)]"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
+                      {tool.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+                      {tool.description}
+                    </p>
+                  </div>
+                </a>
+              )
+            }
+            return (
+              <div
+                key={tool.title}
+                data-help-id={tool.helpId}
+                className="flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 opacity-40 cursor-not-allowed select-none"
+              >
+                <tool.icon
+                  size={20}
+                  strokeWidth={1.5}
+                  className="text-[var(--color-muted-foreground)]"
+                />
+                <div>
+                  <p className="text-sm font-medium text-[var(--color-foreground)]">
+                    {tool.title}
+                  </p>
+                  <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+                    {tool.description}
+                  </p>
+                </div>
               </div>
-            </a>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>

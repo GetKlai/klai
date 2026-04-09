@@ -4,15 +4,15 @@ Missing DELETE policy caused all meeting deletions to silently match 0 rows.
 SELECT policy was tenant-only, blocking the bot_poller background task that
 runs without tenant context (same pattern as the existing UPDATE policy).
 
-Revision ID: a1b2c3d4e5f6
-Revises: z2a3b4c5d6e7
+Revision ID: a8f03dfa5d09
+Revises: c3d4e5f6a7b9
 Create Date: 2026-04-08
 """
 
 from alembic import op
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z2a3b4c5d6e7"
+revision = "a8f03dfa5d09"
+down_revision = "c3d4e5f6a7b9"
 branch_labels = None
 depends_on = None
 
