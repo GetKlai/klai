@@ -86,6 +86,7 @@ services:
       GRAFANA_CADDY_USER: ${GRAFANA_CADDY_USER}
       GRAFANA_CADDY_HASH: ${GRAFANA_CADDY_HASH}
       VICTORIALOGS_INGEST_TOKEN: ${VICTORIALOGS_INGEST_TOKEN}
+      VICTORIALOGS_BASIC_AUTH_B64: ${VICTORIALOGS_BASIC_AUTH_B64}
     networks:
       - klai-net
       - monitoring
@@ -485,6 +486,9 @@ services:
       - -storageDataPath=/vlogs-data
       - -retentionPeriod=30d
       - -httpListenAddr=:9428
+      - -httpAuth.username=${VICTORIALOGS_AUTH_USER}
+      - -httpAuth.password=${VICTORIALOGS_AUTH_PASSWORD}
+    env_file: .env
     networks:
       - monitoring
     deploy:
@@ -526,6 +530,9 @@ services:
       - --server.http.listen-addr=127.0.0.1:12345
       - /etc/alloy/config.alloy
     user: root   # required for Docker socket + node exporter (prometheus.exporter.unix)
+    environment:
+      VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
+      VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
     security_opt:
       - no-new-privileges:true
     depends_on:

@@ -60,7 +60,10 @@
             not header Authorization "Bearer {$VICTORIALOGS_INGEST_TOKEN}"
         }
         respond @no_token 401
-        reverse_proxy victorialogs:9428
+        # VictoriaLogs requires basic auth — pass credentials upstream
+        reverse_proxy victorialogs:9428 {
+            header_up Authorization "Basic {$VICTORIALOGS_BASIC_AUTH_B64}"
+        }
     }
 
     # Auth (Zitadel)

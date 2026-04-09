@@ -67,6 +67,11 @@ loki.write "victorialogs" {
     // _msg_field=msg: use the "msg" JSON key as the main log message field.
     // Fixes MongoDB structured logs showing "missing _msg field" in Grafana.
     url = "http://victorialogs:9428/insert/loki/api/v1/push?_msg_field=msg"
+
+    basic_auth {
+      username = sys.env("VICTORIALOGS_AUTH_USER")
+      password = sys.env("VICTORIALOGS_AUTH_PASSWORD")
+    }
   }
 }
 

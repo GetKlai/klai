@@ -71,6 +71,14 @@ It is **cross-platform** — all platform-specific settings live in local config
       "env": {
         "GRAFANA_URL": "https://grafana.getklai.com"
       }
+    },
+    "victorialogs": {
+      "type": "stdio",
+      "command": "/Users/mark/bin/mcp-victorialogs",
+      "env": {
+        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428",
+        "VL_INSTANCE_HEADERS": "Authorization=Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
+      }
     }
   }
 }
@@ -84,7 +92,8 @@ It is **cross-platform** — all platform-specific settings live in local config
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Uses a persistent browser profile so login sessions survive across Claude Code restarts. |
 | **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
-| **grafana** | Read-only access to Grafana dashboards, VictoriaLogs queries, and alerts for production debugging. Preferred over `docker logs` for investigating issues. |
+| **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
+| **victorialogs** | Production log queries via LogsQL against VictoriaLogs. Requires SSH tunnel (`./scripts/victorialogs-tunnel.sh`) and `VICTORIALOGS_BASIC_AUTH_B64` env var. Preferred over `docker logs` for investigating issues. |
 
 ## 3. Set up Playwright (per machine)
 
@@ -266,10 +275,60 @@ Or force a full re-index:
 
 For usage guidelines (when to use CodeIndex vs Serena), see `.claude/rules/klai/codeindex.md`.
 
-## 8. Install Grafana MCP
+## 8. Install VictoriaLogs MCP
 
-Grafana MCP provides read-only access to dashboards, VictoriaLogs, and alerts for production
-debugging. It runs via `uvx` (acceptable here since `mcp-grafana` is a small, fast package).
+VictoriaLogs MCP provides direct LogsQL queries against production logs. It is the primary tool
+for debugging production issues — preferred over `docker logs` for cross-service investigation.
+
+**Install the binary:**
+
+```bash
+# Download from GitHub releases (macOS ARM64 example)
+curl -sL "https://github.com/VictoriaMetrics/mcp-victorialogs/releases/download/v1.8.0/mcp-victorialogs_Darwin_arm64.tar.gz" | tar -xz -C ~/bin/
+chmod +x ~/bin/mcp-victorialogs
+```
+
+For other platforms, download the appropriate archive from the
+[releases page](https://github.com/VictoriaMetrics/mcp-victorialogs/releases).
+
+**Set the auth credentials:**
+
+VictoriaLogs requires basic auth. The base64-encoded credentials are stored in SOPS
+(`VICTORIALOGS_BASIC_AUTH_B64`). Get the value from a team member or decrypt from SOPS, then add
+to your shell profile:
+
+```bash
+# macOS / Linux — add to ~/.zshrc or ~/.bashrc
+export VICTORIALOGS_BASIC_AUTH_B64="<base64-encoded user:password>"
+```
+
+**Start the SSH tunnel:**
+
+VictoriaLogs is only accessible on Docker's internal network on core-01. The tunnel forwards
+the port to your local machine:
+
+```bash
+./scripts/victorialogs-tunnel.sh          # start (auto-reconnect, health check)
+./scripts/victorialogs-tunnel.sh --check  # verify tunnel is up
+./scripts/victorialogs-tunnel.sh --stop   # stop tunnel
+```
+
+The tunnel must be running before starting Claude Code (or before making log queries).
+
+**Verify:**
+
+```bash
+curl -s -H "Authorization: Basic $VICTORIALOGS_BASIC_AUTH_B64" \
+  "http://localhost:9428/select/logsql/query?query=_time:5m&limit=1"
+```
+
+For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observability.md`.
+
+## 9. Grafana MCP (dashboards and metrics only)
+
+Grafana MCP provides read-only access to dashboards, Prometheus/VictoriaMetrics queries, and
+alerts. It **cannot query VictoriaLogs** — the `query_loki_logs` tool speaks Loki protocol,
+not the VictoriaLogs API. Use the `victorialogs` MCP for log queries.
 
 **Prerequisites:**
 
@@ -287,9 +346,6 @@ profile:
 ```bash
 # macOS / Linux — add to ~/.zshrc or ~/.bashrc
 export GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_..."
-
-# Windows (Git Bash) — create ~/.bashrc if it doesn't exist
-echo 'export GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_..."' >> ~/.bashrc
 ```
 
 **Verify:**
@@ -297,8 +353,6 @@ echo 'export GRAFANA_SERVICE_ACCOUNT_TOKEN="glsa_..."' >> ~/.bashrc
 ```bash
 uvx mcp-grafana --help
 ```
-
-For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observability.md`.
 
 ## Common failure modes
 
@@ -315,4 +369,7 @@ For usage patterns and LogsQL queries, see `.claude/rules/klai/infra/observabili
 8. **Brave warns "unsupported command-line flag: --no-sandbox"** — Playwright injects `--no-sandbox` by default for all Chromium launches. Brave treats it as unsupported. Fix: add `"launchOptions": { "ignoreDefaultArgs": ["--no-sandbox"] }` to `config.json`.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
-11. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 8) and export the token in your shell profile. On Windows (Git Bash), `~/.bashrc` may not exist — create it manually.
+11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
+12. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
+13. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
+14. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 9) and export the token in your shell profile.
