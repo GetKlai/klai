@@ -703,22 +703,38 @@ function TaxonomyTab() {
               </button>
             )}
             {canEdit && nodes.length > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="ml-auto h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
-                onClick={() => backfillMutation.mutate()}
-                disabled={backfillMutation.isPending || suggestState === 'applying'}
-                title={backfillMutation.isPending || suggestState === 'applying'
-                  ? m.knowledge_taxonomy_retag_running()
-                  : m.knowledge_taxonomy_retag()}
-              >
-                {backfillMutation.isPending || suggestState === 'applying'
-                  ? <Loader2 className="h-3 w-3 animate-spin" />
-                  : <Sparkles className="h-3 w-3" />
-                }
-                {m.knowledge_taxonomy_retag()}
-              </Button>
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
+                  onClick={() => bootstrapMutation.mutate()}
+                  disabled={bootstrapMutation.isPending || suggestState !== 'idle'}
+                  title={m.knowledge_taxonomy_suggest_categories()}
+                >
+                  {bootstrapMutation.isPending
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Sparkles className="h-3 w-3" />
+                  }
+                  {m.knowledge_taxonomy_suggest_categories()}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
+                  onClick={() => backfillMutation.mutate()}
+                  disabled={backfillMutation.isPending || suggestState === 'applying'}
+                  title={backfillMutation.isPending || suggestState === 'applying'
+                    ? m.knowledge_taxonomy_retag_running()
+                    : m.knowledge_taxonomy_retag()}
+                >
+                  {backfillMutation.isPending || suggestState === 'applying'
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Sparkles className="h-3 w-3" />
+                  }
+                  {m.knowledge_taxonomy_retag()}
+                </Button>
+              </div>
             )}
           </div>
           {coverageQuery.isLoading && (
