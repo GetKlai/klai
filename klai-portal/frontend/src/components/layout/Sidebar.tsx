@@ -201,7 +201,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       </div>
 
       {/* User + logout */}
-      <div className="border-t border-[var(--color-sidebar-border)] py-2">
+      <div className="border-t border-[var(--color-sidebar-border)] pt-2 pb-4">
         {auth.user && !collapsed && (
           <div className="mb-2 px-6 py-2">
             <p className="truncate text-xs font-medium text-[var(--color-sidebar-foreground)]">
