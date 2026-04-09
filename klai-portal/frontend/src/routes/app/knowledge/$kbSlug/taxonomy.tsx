@@ -29,10 +29,14 @@ function CoverageWidget({
   coverage,
   activeNodeId,
   onNodeClick,
+  onSuggest,
+  isSuggesting,
 }: {
   coverage: TaxonomyCoverage
   activeNodeId: number | null
   onNodeClick: (nodeId: number) => void
+  onSuggest?: () => void
+  isSuggesting?: boolean
 }) {
   const total = coverage.total_chunks
 
@@ -118,9 +122,25 @@ function CoverageWidget({
             <span className="text-sm text-[var(--color-muted-foreground)]">
               {m.knowledge_taxonomy_coverage_untagged()}
             </span>
-            <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
-              {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
+              </span>
+              {onSuggest && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onSuggest() }}
+                  disabled={isSuggesting}
+                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  {isSuggesting
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Sparkles className="h-3 w-3" />
+                  }
+                  {m.knowledge_taxonomy_suggest_categories()}
+                </button>
+              )}
+            </div>
           </div>
           <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
             <div
@@ -703,38 +723,22 @@ function TaxonomyTab() {
               </button>
             )}
             {canEdit && nodes.length > 0 && (
-              <div className="ml-auto flex items-center gap-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
-                  onClick={() => bootstrapMutation.mutate()}
-                  disabled={bootstrapMutation.isPending || suggestState !== 'idle'}
-                  title={m.knowledge_taxonomy_suggest_categories()}
-                >
-                  {bootstrapMutation.isPending
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <Sparkles className="h-3 w-3" />
-                  }
-                  {m.knowledge_taxonomy_suggest_categories()}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
-                  onClick={() => backfillMutation.mutate()}
-                  disabled={backfillMutation.isPending || suggestState === 'applying'}
-                  title={backfillMutation.isPending || suggestState === 'applying'
-                    ? m.knowledge_taxonomy_retag_running()
-                    : m.knowledge_taxonomy_retag()}
-                >
-                  {backfillMutation.isPending || suggestState === 'applying'
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <Sparkles className="h-3 w-3" />
-                  }
-                  {m.knowledge_taxonomy_retag()}
-                </Button>
-              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
+                onClick={() => backfillMutation.mutate()}
+                disabled={backfillMutation.isPending || suggestState === 'applying'}
+                title={backfillMutation.isPending || suggestState === 'applying'
+                  ? m.knowledge_taxonomy_retag_running()
+                  : m.knowledge_taxonomy_retag()}
+              >
+                {backfillMutation.isPending || suggestState === 'applying'
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Sparkles className="h-3 w-3" />
+                }
+                {m.knowledge_taxonomy_retag()}
+              </Button>
             )}
           </div>
           {coverageQuery.isLoading && (
@@ -748,8 +752,116 @@ function TaxonomyTab() {
               coverage={coverageQuery.data}
               activeNodeId={activeNodeId}
               onNodeClick={toggleNode}
+              onSuggest={canEdit && suggestState === 'idle' ? () => bootstrapMutation.mutate() : undefined}
+              isSuggesting={bootstrapMutation.isPending}
             />
           )}
+        </div>
+      )}
+
+      {/* Review queue — shown directly after coverage for visibility */}
+      {proposals.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
+            <Badge variant="accent">{String(proposals.length)}</Badge>
+          </div>
+          <div className="space-y-3">
+            {proposals.map((proposal) => {
+              const typeInfo = proposalTypeBadge[proposal.proposal_type] ?? { label: () => proposal.proposal_type, variant: 'secondary' as const }
+              return (
+                <Card key={proposal.id}>
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
+                          {proposal.confidence_score != null && (
+                            <span className="text-xs text-[var(--color-muted-foreground)]">
+                              {m.knowledge_taxonomy_proposals_col_confidence()}: {Math.round(proposal.confidence_score * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
+                        {typeof proposal.payload?.description === 'string' && (
+                          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                            {proposal.payload.description}
+                          </p>
+                        )}
+                        <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                          {new Date(proposal.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {canEdit && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {rejectingProposalId === proposal.id ? (
+                            <form
+                              className="flex items-center gap-1.5"
+                              onSubmit={(e) => {
+                                e.preventDefault()
+                                rejectMutation.mutate({ proposalId: proposal.id, reason: rejectReason })
+                              }}
+                            >
+                              <Input
+                                value={rejectReason}
+                                onChange={(e) => setRejectReason(e.target.value)}
+                                placeholder={m.knowledge_taxonomy_proposals_reject_reason_placeholder()}
+                                className="h-7 text-xs w-48"
+                                autoFocus
+                              />
+                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2" disabled={rejectMutation.isPending}>
+                                {m.knowledge_taxonomy_proposals_reject()}
+                              </Button>
+                              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => { setRejectingProposalId(null); setRejectReason('') }}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </form>
+                          ) : (
+                            <>
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
+                                onClick={() => approveMutation.mutate(proposal.id)}
+                                disabled={approveMutation.isPending}
+                              >
+                                {m.knowledge_taxonomy_proposals_approve()}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs px-2.5 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/5"
+                                onClick={() => setRejectingProposalId(proposal.id)}
+                              >
+                                {m.knowledge_taxonomy_proposals_reject()}
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+            {canEdit && suggestState === 'proposals_ready' && (
+              <div className="pt-3">
+                <Button
+                  size="sm"
+                  onClick={() => applyAllMutation.mutate()}
+                  disabled={applyAllMutation.isPending || backfillMutation.isPending}
+                  className="bg-[var(--color-accent)] text-white hover:opacity-90"
+                >
+                  {applyAllMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 mr-1" />
+                  )}
+                  {m.knowledge_taxonomy_suggest_apply_all()}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -930,128 +1042,7 @@ function TaxonomyTab() {
         </div>
       )}
 
-      {/* Review queue */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
-          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
-          {proposals.length > 0 && (
-            <Badge variant="accent">{String(proposals.length)}</Badge>
-          )}
-        </div>
-
-        {proposalsQuery.isLoading && (
-          <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
-            <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
-            {m.admin_connectors_loading()}
-          </p>
-        )}
-
-        {!proposalsQuery.isLoading && proposals.length === 0 && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_proposals_empty()}</p>
-        )}
-
-        {proposals.length > 0 && (
-          <div className="space-y-3">
-            {proposals.map((proposal) => {
-              const typeInfo = proposalTypeBadge[proposal.proposal_type] ?? { label: () => proposal.proposal_type, variant: 'secondary' as const }
-              return (
-                <Card key={proposal.id}>
-                  <CardContent className="pt-4 pb-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
-                          {proposal.confidence_score != null && (
-                            <span className="text-xs text-[var(--color-muted-foreground)]">
-                              {m.knowledge_taxonomy_proposals_col_confidence()}: {Math.round(proposal.confidence_score * 100)}%
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
-                        {typeof proposal.payload?.description === 'string' && (
-                          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                            {proposal.payload.description}
-                          </p>
-                        )}
-                        <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                          {new Date(proposal.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-
-                      {canEdit && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {rejectingProposalId === proposal.id ? (
-                            <form
-                              className="flex items-center gap-1.5"
-                              onSubmit={(e) => {
-                                e.preventDefault()
-                                rejectMutation.mutate({ proposalId: proposal.id, reason: rejectReason })
-                              }}
-                            >
-                              <Input
-                                value={rejectReason}
-                                onChange={(e) => setRejectReason(e.target.value)}
-                                placeholder={m.knowledge_taxonomy_proposals_reject_reason_placeholder()}
-                                className="h-7 text-xs w-48"
-                                autoFocus
-                              />
-                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2" disabled={rejectMutation.isPending}>
-                                {m.knowledge_taxonomy_proposals_reject()}
-                              </Button>
-                              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => { setRejectingProposalId(null); setRejectReason('') }}>
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </form>
-                          ) : (
-                            <>
-                              <Button
-                                size="sm"
-                                className="h-7 text-xs px-2.5 bg-[var(--color-success)] text-white hover:opacity-90"
-                                onClick={() => approveMutation.mutate(proposal.id)}
-                                disabled={approveMutation.isPending}
-                              >
-                                {m.knowledge_taxonomy_proposals_approve()}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-xs px-2.5 text-[var(--color-destructive)] border-[var(--color-destructive)]/30 hover:bg-[var(--color-destructive)]/5"
-                                onClick={() => setRejectingProposalId(proposal.id)}
-                              >
-                                {m.knowledge_taxonomy_proposals_reject()}
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-
-            {/* Apply all to knowledge base */}
-            {canEdit && suggestState === 'proposals_ready' && (
-              <div className="pt-3">
-                <Button
-                  size="sm"
-                  onClick={() => applyAllMutation.mutate()}
-                  disabled={applyAllMutation.isPending || backfillMutation.isPending}
-                  className="bg-[var(--color-accent)] text-white hover:opacity-90"
-                >
-                  {applyAllMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5 mr-1" />
-                  )}
-                  {m.knowledge_taxonomy_suggest_apply_all()}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* Review queue removed — moved to after Coverage */}
     </div>
   )
 }
