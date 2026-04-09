@@ -49,20 +49,20 @@ export function Sidebar({ navItems }: SidebarProps) {
         collapsed ? 'w-14' : 'w-60'
       )}
     >
-      {/* Logo + toggle */}
-      <div className="flex h-12 items-center px-3">
+      {/* Logo + toggle — h-[66px] centers content at 33px → logo top-edge at 24px */}
+      <div className={cn(
+        'flex h-[66px] items-center',
+        collapsed ? 'justify-center' : 'justify-between px-6'
+      )}>
         {!collapsed && (
-          <div className="flex-1 px-3">
-            <img src="/klai-logo.svg" alt="Klai" className="h-[18px] w-auto block" />
-          </div>
+          <img src="/klai-logo.svg" alt="Klai" className="h-[18px] w-auto block" />
         )}
         <button
           onClick={toggle}
           title={collapsed ? m.sidebar_expand() : m.sidebar_collapse()}
           className={cn(
-            'flex items-center justify-center rounded-lg p-2 transition-colors',
+            'flex items-center justify-center rounded-lg p-1.5 transition-colors',
             'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-            collapsed && 'w-full'
           )}
         >
           {collapsed
@@ -73,7 +73,7 @@ export function Sidebar({ navItems }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2 py-4">
+      <nav className="flex-1 overflow-y-auto py-4">
         <ul className="space-y-1">
           {navItems.map((item) => (
             <li key={item.href ?? item.to}>
@@ -83,9 +83,9 @@ export function Sidebar({ navItems }: SidebarProps) {
                   rel="noopener noreferrer"
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-2 text-sm transition-colors',
+                    'flex items-center rounded-md py-2 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-                    collapsed ? 'justify-center' : 'gap-3'
+                    collapsed ? 'justify-center' : 'gap-3 px-6'
                   )}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
@@ -97,9 +97,9 @@ export function Sidebar({ navItems }: SidebarProps) {
                   activeOptions={item.end ? { exact: true } : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-md px-3 py-2 text-sm transition-colors',
+                    'flex items-center rounded-md py-2 text-sm transition-colors',
                     'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
-                    collapsed ? 'justify-center' : 'gap-3'
+                    collapsed ? 'justify-center' : 'gap-3 px-6'
                   )}
                   activeProps={{
                     className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
