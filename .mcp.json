@@ -30,12 +30,21 @@
       "env": {}
     },
     "grafana": {
-      "$comment": "AI agent access to Grafana dashboards, VictoriaLogs queries, and alerts. Read-only mode. Requires GRAFANA_SERVICE_ACCOUNT_TOKEN (create in Grafana → Admin → Service Accounts).",
+      "$comment": "AI agent access to Grafana dashboards, metrics queries, and alerts. Read-only. VictoriaLogs queries use the dedicated victorialogs MCP instead.",
       "type": "stdio",
       "command": "uvx",
       "args": ["mcp-grafana", "--disable-write"],
       "env": {
         "GRAFANA_URL": "https://grafana.getklai.com"
+      }
+    },
+    "victorialogs": {
+      "$comment": "LogsQL queries against VictoriaLogs. Requires SSH tunnel: ./scripts/victorialogs-tunnel.sh",
+      "type": "stdio",
+      "command": "/Users/mark/bin/mcp-victorialogs",
+      "env": {
+        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428",
+        "VL_INSTANCE_HEADERS": "Authorization=Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
       }
     }
   }
