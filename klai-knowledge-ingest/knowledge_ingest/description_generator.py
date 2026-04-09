@@ -20,8 +20,9 @@ _SYSTEM_PROMPT = (
     "Given a category name, its parent category, and sample document titles, "
     "write a concise description (max 200 characters) of what questions and content "
     "belong in this category. "
-    "Respond with JSON only: {\"description\": <string>}. "
     "Write in the same language as the document titles."
+    "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
+    '{"description": "<string>"}'
 )
 
 
@@ -79,10 +80,13 @@ async def _call_litellm(user_message: str) -> dict:
                 ],
                 "temperature": 0.3,
                 "max_tokens": 100,
-                "response_format": {"type": "json_object"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
+        content = (content or "").strip()
+        # Strip markdown code fences if present
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(content)

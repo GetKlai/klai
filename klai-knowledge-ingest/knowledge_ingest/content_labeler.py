@@ -32,9 +32,10 @@ _SYSTEM_PROMPT = (
     "You are a document keyword extractor. "
     "Given a document title and content preview, return 3-5 lowercase keywords "
     "that describe what this document is about. "
-    'Return JSON only: {"keywords": ["keyword1", "keyword2"]}. '
     "Do NOT use category names or organisational terms — "
-    "use only descriptive content keywords."
+    "use only descriptive content keywords.\n\n"
+    "Reply with ONLY a JSON object, no markdown, no explanation:\n"
+    '{"keywords": ["keyword1", "keyword2", "keyword3"]}'
 )
 
 
@@ -108,10 +109,12 @@ async def _call_litellm(user_message: str) -> dict:
                 ],
                 "temperature": 0.0,
                 "max_tokens": 100,
-                "response_format": {"type": "json_object"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        content = (data["choices"][0]["message"]["content"] or "").strip()
+        # Strip markdown code fences if present (e.g. ```json ... ```)
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(content)

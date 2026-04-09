@@ -34,7 +34,8 @@ _PROPOSAL_SYSTEM_PROMPT = (
     "You are a knowledge taxonomy assistant. "
     "Given a list of documents that don't fit existing categories, "
     "suggest a concise category name (2-5 words) that would cover them. "
-    "Respond with JSON only: {\"category_name\": <string>}."
+    "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
+    '{"category_name": "<string>"}'
 )
 
 
@@ -124,7 +125,8 @@ _BOOTSTRAP_SYSTEM_PROMPT = (
     "Given a list of documents from a knowledge base, identify the 3-8 most logical, "
     "non-overlapping top-level categories that together cover all documents. "
     "Each category name should be concise (2-5 words) and distinct. "
-    "Respond with JSON only: {\"categories\": [<string>, ...]}"
+    "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
+    '{"categories": ["<string>", ...]}'
 )
 
 
@@ -227,12 +229,15 @@ async def _suggest_multiple_categories(documents: list[DocumentSummary]) -> list
                 ],
                 "temperature": 0.3,
                 "max_tokens": 200,
-                "response_format": {"type": "json_object"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
+        content = (content or "").strip()
+        # Strip markdown code fences if present
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         parsed = json.loads(content)
         return [c for c in parsed.get("categories", []) if isinstance(c, str) and c.strip()]
 
@@ -260,11 +265,14 @@ async def _suggest_category_name(documents: list[DocumentSummary]) -> str | None
                 ],
                 "temperature": 0.3,
                 "max_tokens": 50,
-                "response_format": {"type": "json_object"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
+        content = (content or "").strip()
+        # Strip markdown code fences if present
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         parsed = json.loads(content)
         return parsed.get("category_name") or None

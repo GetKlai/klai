@@ -49,13 +49,13 @@ _SYSTEM_PROMPT = (
     "You are a document taxonomy classifier. "
     "Given a document title, a content preview, and a list of taxonomy categories, "
     "return ALL matching categories (multi-label) and suggest free-form tags. "
-    "Respond with JSON only: "
-    '{"nodes": [{"node_id": <int>, "confidence": <float 0-1>}], '
-    '"tags": [<string>], "reasoning": <string>}. '
     "Return nodes sorted by confidence descending. "
     "Only include nodes with confidence >= 0.5. Maximum 5 nodes and 5 tags. "
     "Return empty nodes list if no category matches with confidence >= 0.5. "
     "Tags should be lowercase, concise keywords describing the document content."
+    '\n\nReply with ONLY a JSON object, no markdown, no explanation: '
+    '{"nodes": [{"node_id": <int>, "confidence": <float 0-1>}], '
+    '"tags": ["<string>"], "reasoning": "<string>"}'
 )
 
 
@@ -157,10 +157,13 @@ async def _call_litellm(user_message: str) -> dict:
                 ],
                 "temperature": 0.0,
                 "max_tokens": 300,
-                "response_format": {"type": "json_object"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
+        content = (content or "").strip()
+        # Strip markdown code fences if present
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(content)

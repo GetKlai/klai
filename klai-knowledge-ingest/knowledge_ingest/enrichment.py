@@ -37,7 +37,8 @@ Genereer een JSON-object met:
 - "questions": 3-5 vragen die deze chunk beantwoordt. \
 {question_focus}
 
-Antwoord ALLEEN met geldig JSON."""
+Reply with ONLY a JSON object, no markdown, no explanation:
+{"context_prefix": "<string>", "questions": ["<string>", ...]}"""
 
 
 class EnrichmentError(Exception):
@@ -113,7 +114,6 @@ async def enrich_chunk(
     payload = {
         "model": settings.enrichment_model,
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"},
         "max_tokens": 300,
     }
 
@@ -139,6 +139,10 @@ async def enrich_chunk(
 
     try:
         content = data["choices"][0]["message"]["content"]
+        content = (content or "").strip()
+        # Strip markdown code fences if present
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return EnrichmentResult.model_validate_json(content)
     except (KeyError, IndexError, ValidationError, ValueError) as exc:
         logger.warning("enrichment_llm_unparseable", path=path, error=str(exc))
