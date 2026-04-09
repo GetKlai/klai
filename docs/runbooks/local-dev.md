@@ -96,11 +96,12 @@ Open `klai-portal/backend/.env` en vul in:
 # Database (wijzig alleen als je een andere poort/wachtwoord gebruikt)
 DATABASE_URL=postgresql+asyncpg://klai:klai-dev@localhost:5434/klai
 
-# Zitadel auth (VERPLICHT)
+# Zitadel auth (VERPLICHT voor productie-mode)
 ZITADEL_PAT=<zie "Zitadel configuratie" hieronder>
 
-# Genereer deze eenmalig:
-PORTAL_SECRETS_KEY=<openssl rand -hex 32>
+# Genereer deze eenmalig (beide zijn 64-char hex strings = 32 bytes):
+PORTAL_SECRETS_KEY=<python -c "import secrets; print(secrets.token_hex(32))">
+ENCRYPTION_KEY=<python -c "import secrets; print(secrets.token_hex(32))">
 SSO_COOKIE_KEY=<python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
 
 # Dev instellingen
@@ -117,15 +118,72 @@ LITELLM_MASTER_KEY=sk-litellm-dev-key
 LITELLM_BASE_URL=http://localhost:4000
 ```
 
+> **Let op:** `PORTAL_SECRETS_KEY` én `ENCRYPTION_KEY` zijn beide verplicht (beide 64-char hex / 32 bytes). Zonder een van beide crasht de backend met `AES-256 requires a 32-byte key, got 0 bytes`.
+
 ### Stap 3: Frontend (klai-portal/frontend/.env.local)
 
 Open `klai-portal/frontend/.env.local` en vul in:
 
 ```bash
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
-VITE_OIDC_CLIENT_ID=<zie "Zitadel configuratie" hieronder>
+VITE_OIDC_CLIENT_ID=362901948573220875
 VITE_API_BASE_URL=http://localhost:8010
 ```
+
+> **Let op:** De `VITE_OIDC_CLIENT_ID` is `362901948573220875` (OIDC Client ID), **niet** `362901948573155339` (dat is de App ID). Deze staan apart in Zitadel.
+
+> **Vite herstart vereist bij env-wijzigingen:** In tegenstelling tot de backend pikt Vite `.env.local` wijzigingen pas op na een volledige herstart (`Ctrl+C` → `npm run dev`). Hot reload werkt niet voor env vars.
+
+---
+
+## Auth Dev Mode (aanbevolen voor lokale dev)
+
+Als je geen Zitadel login flow wil doorlopen bij elke sessie, zet **Auth Dev Mode** aan. Dit bypast OIDC volledig — je bent direct ingelogd zonder browser redirect.
+
+### 1. Voeg je user toe aan de lokale DB
+
+Zoek je Zitadel user ID op via de Zitadel management API (of vraag een teamlid):
+
+```bash
+# Jouw Zitadel user ID ophalen (vereist ZITADEL_PAT in .env)
+curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
+  "https://auth.getklai.com/management/v1/users/_search" \
+  -d '{"query":{"limit":20}}' | grep -o '"id":"[^"]*"\|"displayName":"[^"]*"'
+```
+
+Zet daarna je user + org in de lokale DB:
+
+```bash
+docker exec -i klai-postgres-1 psql -U klai -d klai << 'EOF'
+INSERT INTO portal_orgs (zitadel_org_id, name, slug, plan, provisioning_status)
+VALUES ('<jouw_zitadel_org_id>', 'Dev Org', 'dev', 'professional', 'complete')
+ON CONFLICT (zitadel_org_id) DO NOTHING;
+
+INSERT INTO portal_users (zitadel_user_id, org_id, role, display_name, email, status)
+SELECT '<jouw_zitadel_user_id>', id, 'admin', 'Jouw Naam', 'jij@example.com', 'active'
+FROM portal_orgs WHERE zitadel_org_id = '<jouw_zitadel_org_id>'
+ON CONFLICT (zitadel_user_id) DO NOTHING;
+EOF
+```
+
+### 2. Activeer Auth Dev Mode
+
+In `klai-portal/backend/.env`:
+```bash
+AUTH_DEV_MODE=true
+AUTH_DEV_USER_ID=<jouw_zitadel_user_id>
+```
+
+In `klai-portal/frontend/.env.local`:
+```bash
+VITE_AUTH_DEV_MODE=true
+```
+
+Herstart backend én Vite. Je bent direct ingelogd als de opgegeven user.
+
+> **Vereiste:** Backend vereist `AUTH_DEV_MODE=true` én `DEBUG=true` tegelijk. Zonder `DEBUG=true` werkt de bypass niet.
+
+> **Nooit in productie:** De backend logt een grote waarschuwing als Auth Dev Mode actief is. Commit deze waarden nooit naar git.
 
 ---
 
@@ -208,22 +266,43 @@ lsof -nP -iTCP:5434 -sTCP:LISTEN
 
 > **Opmerking:** Klai dev gebruikt poort **5434** (niet de standaard 5432) om conflicten met andere lokale PostgreSQL instances te voorkomen.
 
-### Backend start mislukt: "ZITADEL_PAT required"
+### Backend start mislukt: "ZITADEL_PAT required" of "AES-256 requires a 32-byte key"
 
 De `.env` file mist verplichte velden. Controleer:
 ```bash
-grep -E '^(ZITADEL_PAT|DATABASE_URL|PORTAL_SECRETS_KEY|SSO_COOKIE_KEY)=' klai-portal/backend/.env
+grep -E '^(ZITADEL_PAT|DATABASE_URL|PORTAL_SECRETS_KEY|ENCRYPTION_KEY|SSO_COOKIE_KEY)=' klai-portal/backend/.env
 ```
 
-Alle vier moeten een waarde hebben.
+Alle vijf moeten een waarde hebben. `PORTAL_SECRETS_KEY` en `ENCRYPTION_KEY` zijn beide 64-char hex strings (32 bytes). Genereer met:
+```bash
+cd klai-portal/backend && uv run python -c "import secrets; print(secrets.token_hex(32))"
+```
 
-### Frontend login redirect mislukt
+### Frontend login redirect mislukt: "Errors.App.NotFound"
 
-**Symptoom:** Na klikken op "Inloggen" zie je een Zitadel error over ongeldige redirect URI.
+**Symptoom:** Na klikken op "Inloggen" stuurt Zitadel `{"error":"invalid_request","error_description":"Errors.App.NotFound"}`.
 
-**Oorzaak:** De redirect URIs zijn niet toegevoegd aan de Zitadel OIDC app.
+**Oorzaak:** `VITE_OIDC_CLIENT_ID` bevat de App ID in plaats van de OIDC Client ID. Beide zijn 18-cijferige nummers maar zijn **niet** hetzelfde.
 
-**Fix:** Volg de stappen onder "Redirect URIs toevoegen" hierboven.
+**Fix:** Gebruik `362901948573220875` (OIDC Client ID), niet `362901948573155339` (App ID).
+
+Verifieer via Zitadel API:
+```bash
+curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
+  "https://auth.getklai.com/management/v1/projects/362771533686374406/apps/_search" \
+  -d '{}' | grep -o '"clientId":"[^"]*"\|"name":"[^"]*"'
+```
+
+**Herstart Vite na de wijziging** — env vars worden niet hot-reloaded.
+
+### Frontend login stuurt door naar live app
+
+**Symptoom:** Na Zitadel login kom je uit op `my.getklai.com` in plaats van `localhost:5174`.
+
+**Oorzaak 1:** Vite is niet herstart na `.env.local` wijziging — de oude `client_id` is nog actief.
+**Oorzaak 2:** Zitadel gebruikte een bestaande SSO sessie van de live app met diens `redirect_uri`.
+
+**Fix:** Herstart Vite. Of gebruik Auth Dev Mode (zie sectie hierboven) om Zitadel volledig te omzeilen.
 
 ### LiteLLM start niet op
 
@@ -235,7 +314,39 @@ make dev-logs       # Bekijk LiteLLM logs
 
 Als PostgreSQL niet start, controleer of poort 5434 vrij is.
 
-### Database migratie mislukt
+### Database migratie mislukt: "Multiple head revisions"
+
+**Symptoom:** `alembic upgrade head` geeft `ERROR Multiple head revisions are present`.
+
+**Oorzaak:** Twee migratiebestanden hebben dezelfde `revision` ID.
+
+**Fix:**
+```bash
+# Zoek het duplicaat
+grep -r "^revision" klai-portal/backend/alembic/versions/ | sort | uniq -d -f1
+
+# Genereer een uniek nieuw revision ID
+cd klai-portal/backend && uv run python -c "import uuid; print(uuid.uuid4().hex[:12])"
+
+# Pas het duplicaat aan: revision + down_revision + bestandsnaam
+```
+
+### Database migratie mislukt: "column does not exist"
+
+**Symptoom:** Backend start maar geeft 500 errors. Logs tonen `UndefinedColumnError: column X does not exist`.
+
+**Oorzaak:** Het SQLAlchemy model heeft een nieuwe kolom die nog niet in een Alembic migratie zit.
+
+**Fix:**
+```bash
+# Maak een handmatige migratie
+cd klai-portal/backend
+uv run alembic revision -m "add_missing_column"
+# Vul upgrade/downgrade handmatig in — autogenerate werkt niet altijd door FK volgorde
+uv run alembic upgrade head
+```
+
+### Database migratie mislukt (algemeen)
 
 ```bash
 # Reset de database volledig
@@ -243,6 +354,25 @@ make dev-reset
 make dev-up
 # Wacht 10 seconden tot PostgreSQL healthy is
 make migrate
+```
+
+### Backend port 8010 in gebruik na crash (Windows)
+
+**Symptoom:** Nieuwe backend start maar bindt niet: `[WinError 10048] only one usage of each socket address`.
+
+**Oorzaak:** Een eerder uvicorn proces (reloader) houdt de socket vast, ook na een crash. Standaard `taskkill` werkt niet altijd.
+
+**Fix:**
+```bash
+# Zoek het PID dat poort 8010 vasthoudt
+powershell -Command "Get-NetTCPConnection -LocalPort 8010 | Select-Object State,OwningProcess"
+
+# Kill het process (vervang 12345 door het gevonden PID)
+powershell -Command "Stop-Process -Id 12345 -Force"
+
+# Als dat niet werkt — start op een andere port
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8011
+# Update VITE_API_BASE_URL in frontend/.env.local mee
 ```
 
 ### Alles resetten (nucleaire optie)
