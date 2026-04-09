@@ -8,8 +8,8 @@ model_list:
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
-    rpm: 50
-    tpm: 200000
+    rpm: 500
+    tpm: 400000
 
   # Fast: Claude Haiku — bypasses custom_router.py routing
   # TEMPORARY: switched from Mistral Small due to Tier 1 monthly quota exhaustion
@@ -18,8 +18,8 @@ model_list:
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
-    rpm: 50
-    tpm: 200000
+    rpm: 500
+    tpm: 400000
 
   # Large: Claude Sonnet 4.6 — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
@@ -27,8 +27,8 @@ model_list:
     litellm_params:
       model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
-    rpm: 50
-    tpm: 200000
+    rpm: 200
+    tpm: 400000
 
 router_settings:
   routing_strategy: simple-shuffle
@@ -36,8 +36,8 @@ router_settings:
     - enforce_model_rate_limits  # Queue requests when provider budget is hit
   provider_budget_config:
     anthropic:
-      rpm_limit: 50
-      tpm_limit: 200000
+      rpm_limit: 500
+      tpm_limit: 400000
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params
