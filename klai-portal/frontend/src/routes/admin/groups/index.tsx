@@ -227,38 +227,39 @@ function AdminGroups() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-1">
-          {!row.original.is_system && (
-            confirmDeleteId === row.original.id ? (
-              <div className="flex items-center gap-1">
-                <Button
-                  size="sm"
-                  className="h-6 text-xs px-2 bg-[var(--color-destructive)] text-white hover:opacity-90"
-                  disabled={deleteMutation.isPending}
-                  onClick={() => {
-                    deleteMutation.mutate(row.original.id)
-                    setConfirmDeleteId(null)
-                  }}
-                >
-                  {deleteMutation.isPending ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    m.admin_groups_delete()
-                  )}
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setConfirmDeleteId(null)}>
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setConfirmDeleteId(row.original.id)}
-                aria-label={`Delete ${row.original.name}`}
-                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+        <div className="relative flex items-center justify-end gap-1">
+          {!row.original.is_system && confirmDeleteId === row.original.id && (
+            <div className={`absolute inset-0 z-10 flex items-center justify-end gap-1 px-6 ${row.index % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}`}>
+              <Button
+                size="sm"
+                className="h-6 text-xs px-2 gap-1 bg-[var(--color-destructive)] text-white hover:opacity-90"
+                disabled={deleteMutation.isPending}
+                onClick={() => {
+                  deleteMutation.mutate(row.original.id)
+                  setConfirmDeleteId(null)
+                }}
               >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )
+                {deleteMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3 w-3" />
+                )}
+                {m.admin_groups_delete()} "{row.original.name}"?
+              </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-xs px-2 gap-1" onClick={() => setConfirmDeleteId(null)}>
+                <X className="h-3 w-3" />
+                {m.admin_users_cancel()}
+              </Button>
+            </div>
+          )}
+          {!row.original.is_system && (
+            <button
+              onClick={() => setConfirmDeleteId(row.original.id)}
+              aria-label={`Delete ${row.original.name}`}
+              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
           {!row.original.is_system && (
             <button
