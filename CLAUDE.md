@@ -1,5 +1,7 @@
 # Klai — Monorepo
 
+Use CodeIndex `remember`/`recall` for project-scoped memory instead of auto-memory.
+
 Open-source AI platform: self-hostable, multi-tenant, production-ready.
 
 ## Repository structure
