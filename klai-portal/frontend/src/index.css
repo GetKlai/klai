@@ -108,6 +108,17 @@ body {
   animation: slide-in-from-right 0.15s ease-out;
 }
 
+/* ─── Page title ascender trim ───────────────────────────────────────────
+   Parabole has generous ascender space above the cap height. For page
+   titles that must align with the sidebar logo (both at 24px from top),
+   we trim the visual offset so the cap-height sits on the grid line.
+   Apply via `page-title` utility class on any h1 used as a page heading.
+   ─────────────────────────────────────────────────────────────────────── */
+@utility page-title {
+  line-height: 1;
+  margin-top: -2px;
+}
+
 /* ─── BlockNote editor: calibrate heading scale to portal context ──────────
    BlockNote defaults ship with display-level sizes (H1 = 3em = 48px) which
    are appropriate for a standalone reading experience but too large for an
