@@ -32,9 +32,9 @@ function CoverageWidget({
   onNodeClick,
   onSuggest,
   isSuggesting,
-  canEdit,
-  onRename,
-  onDelete,
+  canEdit: _canEdit,
+  onRename: _onRename,
+  onDelete: _onDelete,
 }: {
   coverage: TaxonomyCoverage
   activeNodeId: number | null
