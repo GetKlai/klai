@@ -223,6 +223,7 @@ export function TranscriptionTable({
         <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
           <thead>
             <tr className="border-b border-[var(--color-border)]">
+              <th className="py-3 pr-2 w-6" />
               <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                 {m.app_transcribe_col_text()}
               </th>
@@ -251,7 +252,24 @@ export function TranscriptionTable({
                   key={`${item.source}-${item.id}`}
                   className="border-b border-[var(--color-border)] last:border-b-0"
                 >
-                  {/* Title + preview + metadata */}
+                  {/* Source icon */}
+                  <td className="py-4 pr-2 align-top w-6">
+                    <Tooltip
+                      label={
+                        item.source === 'upload'
+                          ? m.app_transcribe_source_audio()
+                          : m.app_transcribe_source_meeting()
+                      }
+                    >
+                      {item.source === 'upload' ? (
+                        <Mic className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                      ) : (
+                        <Video className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                      )}
+                    </Tooltip>
+                  </td>
+
+                  {/* Title + metadata */}
                   <td className="py-4 pr-4 align-top">
                     {isEditing ? (
                       <div className="flex items-center gap-2">
@@ -288,60 +306,40 @@ export function TranscriptionTable({
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-start gap-2.5">
-                        {/* Source icon */}
-                        <Tooltip
-                          label={
-                            item.source === 'upload'
-                              ? m.app_transcribe_source_audio()
-                              : m.app_transcribe_source_meeting()
-                          }
-                        >
-                          {item.source === 'upload' ? (
-                            <Mic className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                      <>
+                        {item.title ? (
+                          item.status === 'done' ? (
+                            <button
+                              type="button"
+                              className="truncate font-medium text-left text-[var(--color-foreground)] hover:underline cursor-pointer"
+                              onClick={() => onNavigateToDetail(item)}
+                            >
+                              {item.title}
+                            </button>
                           ) : (
-                            <Video className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
-                          )}
-                        </Tooltip>
-
-                        <div className="min-w-0 flex-1">
-                          {/* Title line */}
-                          <div className="flex items-center gap-2">
-                            {item.title ? (
-                              item.status === 'done' ? (
-                                <button
-                                  type="button"
-                                  className="truncate font-medium text-left text-[var(--color-foreground)] hover:underline cursor-pointer"
-                                  onClick={() => onNavigateToDetail(item)}
-                                >
-                                  {item.title}
-                                </button>
-                              ) : (
-                                <span className="truncate font-medium text-[var(--color-foreground)]">
-                                  {item.title}
-                                </span>
-                              )
-                            ) : (
-                              <span className="truncate text-[var(--color-muted-foreground)]">
-                                {item.meeting_url ?? '\u2014'}
-                              </span>
-                            )}
-                            {item.source === 'upload' && item.has_summary && (
-                              <Tooltip label={m.app_transcribe_has_summary()}>
-                                <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                              </Tooltip>
-                            )}
-                            {item.status !== 'done' && (
-                              <StatusBadge status={item.status} source={item.source} />
-                            )}
-                          </div>
-
-                          {/* Metadata line */}
-                          <div className="mt-1">
-                            <MetaText item={item} />
-                          </div>
+                            <span className="truncate font-medium text-[var(--color-foreground)]">
+                              {item.title}
+                            </span>
+                          )
+                        ) : (
+                          <span className="truncate text-[var(--color-muted-foreground)]">
+                            {item.meeting_url ?? '\u2014'}
+                          </span>
+                        )}
+                        {item.source === 'upload' && item.has_summary && (
+                          <Tooltip label={m.app_transcribe_has_summary()}>
+                            <FileText className="inline-block ml-1.5 h-3.5 w-3.5 align-text-bottom text-[var(--color-muted-foreground)]" />
+                          </Tooltip>
+                        )}
+                        {item.status !== 'done' && (
+                          <span className="ml-2">
+                            <StatusBadge status={item.status} source={item.source} />
+                          </span>
+                        )}
+                        <div className="mt-1">
+                          <MetaText item={item} />
                         </div>
-                      </div>
+                      </>
                     )}
                   </td>
 
@@ -378,7 +376,7 @@ export function TranscriptionTable({
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-start justify-end gap-2">
                         {/* Rename */}
                         <Tooltip label={m.app_transcribe_edit_label()}>
                           <button
@@ -386,7 +384,7 @@ export function TranscriptionTable({
                             aria-label={m.app_transcribe_edit_label()}
                             className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <Pencil className="h-4 w-4" />
                           </button>
                         </Tooltip>
 
@@ -400,9 +398,9 @@ export function TranscriptionTable({
                               className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                             >
                               {isItemStopping ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
-                                <Square className="h-3.5 w-3.5" />
+                                <Square className="h-4 w-4" />
                               )}
                             </button>
                           </Tooltip>
@@ -418,9 +416,9 @@ export function TranscriptionTable({
                               className="inline-flex items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
                             >
                               {isItemRetrying ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
-                                <RotateCcw className="h-3.5 w-3.5" />
+                                <RotateCcw className="h-4 w-4" />
                               )}
                             </button>
                           </Tooltip>
@@ -436,9 +434,9 @@ export function TranscriptionTable({
                               className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
                             >
                               {isCopied ? (
-                                <CheckCheck className="h-3.5 w-3.5 text-[var(--color-success)]" />
+                                <CheckCheck className="h-4 w-4 text-[var(--color-success)]" />
                               ) : (
-                                <Copy className="h-3.5 w-3.5" />
+                                <Copy className="h-4 w-4" />
                               )}
                             </button>
                           </Tooltip>
@@ -453,7 +451,7 @@ export function TranscriptionTable({
                               aria-label={m.app_transcribe_download_label()}
                               className="inline-flex items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
                             >
-                              <Download className="h-3.5 w-3.5" />
+                              <Download className="h-4 w-4" />
                             </button>
                           </Tooltip>
                         )}
@@ -465,7 +463,7 @@ export function TranscriptionTable({
                             aria-label={m.app_transcribe_delete_label()}
                             className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </Tooltip>
                       </div>
