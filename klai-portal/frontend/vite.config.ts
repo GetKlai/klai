@@ -45,5 +45,12 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: true,
+    proxy: {
+      // Proxy API calls to the local backend (or staging via VITE_API_BASE_URL)
+      '/api': {
+        target: process.env.VITE_API_BASE_URL || 'http://localhost:8010',
+        changeOrigin: true,
+      },
+    },
   },
 })
