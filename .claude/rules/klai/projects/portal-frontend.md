@@ -96,6 +96,19 @@ Pill-shaped, 12px uppercase with 0.04em tracking. Two variants:
 | `destructive` | Red bg, white text |
 | `link` | `rl-accent-dark` text, underline on hover, normal case |
 
+### Shadcn Button svg size override (MED)
+
+Shadcn Button applies `[&_svg]:size-4` globally via CVA variants. For compact buttons
+(`h-6 text-[10px]`), the default 16px icon is too large. Override at the usage site:
+
+```tsx
+<Button size="sm" className="h-6 text-[10px] [&_svg]:size-2.5">
+  <Check /> Confirm
+</Button>
+```
+
+**Rule:** Compact confirm/cancel buttons in table rows need `[&_svg]:size-2.5` to keep icons at 10px.
+
 ---
 
 ## Form fields
@@ -167,6 +180,27 @@ Use `InlineDeleteConfirm` from `components/ui/inline-delete-confirm`. Never use 
 - `label` uses i18n `{name}` param — never string concatenation
 - The component owns the `relative` wrapper, ghost spacer logic, and overlay styling
 - Full docs + pattern explanation: `klai-portal/docs/ui-components.md` → Deletion confirmation patterns
+
+### Confirmation hierarchy
+
+Three tiers for destructive actions — pick by severity:
+
+| Tier | Component | When to use |
+|---|---|---|
+| 1 | `AlertDialog` | Irreversible / offboarding actions (e.g. delete organization) |
+| 2 | `DeleteModal` with name input | High-stakes KB deletion where typing the name adds friction |
+| 3 | `InlineDeleteConfirm` | Table row deletions — the default case |
+
+Never use a modal for table row actions. Never swap buttons in a way that changes cell width.
+
+### Extract components at 3+ repetitions
+
+When the same UI pattern (e.g. inline delete) is copy-pasted into a third table implementation,
+extract it immediately — not after the fourth or fifth. Extracting after the fact requires hunting
+down all instances and risking divergence. The `InlineDeleteConfirm` component was extracted at
+this threshold.
+
+**Rule:** Three files with the same JSX pattern = extract a shared component before continuing.
 
 ---
 
