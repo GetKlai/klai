@@ -156,7 +156,7 @@ async def _call_litellm(user_message: str) -> dict:
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.0,
-                "max_tokens": 300,
+                "max_tokens": 500,
             },
         )
         resp.raise_for_status()
