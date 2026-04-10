@@ -112,7 +112,7 @@ async def list_mcp_servers(
         is_managed = bool(catalog_entry.get("managed", False))
         # Managed servers are always enabled — they are wired via librechat.yaml,
         # tenants cannot disable or configure them.
-        enabled = True if is_managed else tenant_entry.get("enabled", False)
+        enabled = is_managed or bool(tenant_entry.get("enabled", False))
         servers_out.append(
             McpServerOut(
                 id=server_id,

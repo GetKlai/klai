@@ -6,11 +6,11 @@ servers:
   klai-knowledge:
     display_name: "Klai Knowledge"
     description: "Zoek in je eigen kennisbanken en sla notities op."
+    # Managed entries are wired via librechat.yaml with tenant headers
+    # (X-Org-ID, X-Org-Slug, X-Internal-Secret). The portal only lists them;
+    # it never issues PUT or TEST requests so no config_template is needed.
     managed: true
     required_env_vars: []
-    config_template:
-      type: streamable-http
-      url: "http://klai-knowledge-mcp:8080/mcp"
   twenty-crm:
     display_name: "Twenty CRM"
     description: "Twenty CRM -- contacten, bedrijven, deals, taken"
