@@ -16,10 +16,15 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Browser automation for E2E spot-checks. Uses persistent Brave profile. Stop hook auto-enforces browser_close. Supports localhost (dev) and *.getklai.com (prod).",
+      "$comment": "Browser automation for E2E spot-checks. Uses persistent Brave profile for login state. CLI flags (not config.json) to avoid format drift.",
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
+      "args": [
+        "@playwright/mcp@0.0.70",
+        "--browser", "chromium",
+        "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "--user-data-dir", "/Users/mark/.claude/mcp-brave-profile"
+      ],
       "env": {}
     },
     "codeindex": {

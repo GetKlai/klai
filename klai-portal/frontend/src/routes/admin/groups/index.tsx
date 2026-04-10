@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Eye, Lock, Pencil, Plus, Trash2, Check, X } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -227,38 +227,44 @@ function AdminGroups() {
       id: 'actions',
       header: () => '',
       cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-1">
-          {!row.original.is_system && (
-            confirmDeleteId === row.original.id ? (
-              <div className="flex items-center gap-1">
-                <Button
-                  size="sm"
-                  className="bg-[var(--color-destructive)] text-white hover:opacity-90"
-                  disabled={deleteMutation.isPending}
-                  onClick={() => {
-                    deleteMutation.mutate(row.original.id)
-                    setConfirmDeleteId(null)
-                  }}
-                >
-                  {deleteMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    m.admin_groups_delete()
-                  )}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
-                  {m.admin_users_cancel()}
-                </Button>
-              </div>
-            ) : (
+        <div className="relative flex items-center justify-end gap-1">
+          {!row.original.is_system && confirmDeleteId === row.original.id && (
+            <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1.5 rounded bg-inherit pl-2">
+              <span className="text-xs text-[var(--color-foreground)] whitespace-nowrap">
+                {m.admin_groups_delete()}?
+              </span>
               <button
-                onClick={() => setConfirmDeleteId(row.original.id)}
-                aria-label={`Delete ${row.original.name}`}
-                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                disabled={deleteMutation.isPending}
+                onClick={() => {
+                  deleteMutation.mutate(row.original.id)
+                  setConfirmDeleteId(null)
+                }}
+                aria-label={m.admin_groups_delete()}
+                className="flex h-6 w-6 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-opacity hover:opacity-80 disabled:opacity-50"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                {deleteMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3" />
+                )}
               </button>
-            )
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                aria-label={m.admin_users_cancel()}
+                className="flex h-6 w-6 items-center justify-center rounded bg-[var(--color-muted)] text-[var(--color-foreground)] transition-opacity hover:opacity-80"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+          {!row.original.is_system && (
+            <button
+              onClick={() => setConfirmDeleteId(row.original.id)}
+              aria-label={`Delete ${row.original.name}`}
+              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
           {!row.original.is_system && (
             <button
