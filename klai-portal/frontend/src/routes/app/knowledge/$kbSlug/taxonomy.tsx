@@ -116,7 +116,7 @@ function CoverageWidget({
                   <input
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
-                    className="text-sm font-medium text-[var(--color-foreground)] bg-transparent border border-[var(--color-border)] py-0.5 px-1 -ml-[5px] flex-1 min-w-0 outline-none focus:border-[var(--color-accent)]"
+                    className="text-sm font-medium text-[var(--color-foreground)] bg-[var(--color-card)] border-0 ring-1 ring-[var(--color-accent)] rounded-none py-0.5 px-1 -ml-[5px] flex-1 min-w-0 outline-none"
                     autoFocus
                     onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
                   />
@@ -150,12 +150,12 @@ function CoverageWidget({
                     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <Button
                         size="sm"
-                        className="h-6 text-xs px-2 bg-[var(--color-destructive)] text-white hover:opacity-90"
+                        className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
                         onClick={() => { onDelete?.(node.taxonomy_node_id); setConfirmDeleteId(null) }}
                       >
                         {m.knowledge_taxonomy_node_delete()}
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setConfirmDeleteId(null)}>
+                      <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setConfirmDeleteId(null)}>
                         {m.knowledge_taxonomy_node_add_cancel()}
                       </Button>
                     </div>
@@ -181,7 +181,7 @@ function CoverageWidget({
                 <textarea
                   value={editingDescription}
                   onChange={(e) => setEditingDescription(e.target.value)}
-                  className="text-xs text-[var(--color-muted-foreground)] bg-transparent border border-[var(--color-border)] py-0.5 px-1 mb-1 -ml-[5px] w-[calc(100%+10px)] outline-none focus:border-[var(--color-accent)] resize-none"
+                  className="text-xs text-[var(--color-muted-foreground)] bg-[var(--color-card)] border-0 ring-1 ring-[var(--color-accent)] rounded-none py-0.5 px-1 mb-1 -ml-[5px] w-[calc(100%+10px)] outline-none resize-none"
                   rows={2}
                   placeholder={m.knowledge_taxonomy_node_description_placeholder()}
                   onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
