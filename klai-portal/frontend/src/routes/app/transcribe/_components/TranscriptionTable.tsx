@@ -226,7 +226,7 @@ export function TranscriptionTable({
               <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
                 {m.app_transcribe_col_text()}
               </th>
-              <th className="py-3 pr-2 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-28">
+              <th className="py-3 pr-2 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-28">
                 {m.app_transcribe_col_date()}
               </th>
               <th className="py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-32" />
@@ -336,13 +336,6 @@ export function TranscriptionTable({
                             )}
                           </div>
 
-                          {/* Preview text */}
-                          {item.text && item.title && (
-                            <p className="mt-0.5 truncate text-[var(--color-muted-foreground)]">
-                              {item.text}
-                            </p>
-                          )}
-
                           {/* Metadata line */}
                           <div className="mt-1">
                             <MetaText item={item} />
@@ -353,7 +346,7 @@ export function TranscriptionTable({
                   </td>
 
                   {/* Date */}
-                  <td className="py-4 pr-2 align-top text-right whitespace-nowrap w-28">
+                  <td className="py-4 pr-2 align-top text-left whitespace-nowrap w-28">
                     <span className="text-sm text-[var(--color-muted-foreground)] tabular-nums">
                       {formatDate(item.created_at)}
                     </span>
