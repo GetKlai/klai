@@ -71,6 +71,7 @@ export interface TaxonomyNode {
   parent_id: number | null
   name: string
   slug: string
+  description?: string | null
   doc_count: number
   sort_order: number
   created_at: string
@@ -109,6 +110,7 @@ export interface PersonalItemsResponse {
 export interface TaxonomyCoverageNode {
   taxonomy_node_id: number
   taxonomy_node_name: string
+  description?: string | null
   chunk_count: number
   gap_count: number
   health: 'healthy' | 'attention_needed' | 'empty'
