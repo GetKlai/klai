@@ -232,7 +232,7 @@ function AdminGroups() {
             <div className={`absolute inset-0 z-10 flex items-center justify-end gap-1 px-6 ${row.index % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}`}>
               <Button
                 size="sm"
-                className="h-6 text-[10px] px-2 gap-1 bg-[var(--color-destructive)] text-white hover:opacity-70"
+                className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
                 disabled={deleteMutation.isPending}
                 onClick={() => {
                   deleteMutation.mutate(row.original.id)
@@ -246,7 +246,7 @@ function AdminGroups() {
                 )}
                 {m.admin_groups_delete()} "{row.original.name}"?
               </Button>
-              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1" onClick={() => setConfirmDeleteId(null)}>
+              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5" onClick={() => setConfirmDeleteId(null)}>
                 <X className="h-2.5 w-2.5" />
                 {m.admin_users_cancel()}
               </Button>
