@@ -235,8 +235,11 @@ class SyncEngine:
                             content_bytes, ref.path.split("/")[-1],
                         )
                         text = parse_result.text
-                        if not text.strip():
-                            logger.info("Skipping empty document (path=%s)", ref.path)
+                        if len(text.strip()) < 50:
+                            logger.info(
+                                "Skipping short document (path=%s, chars=%d)",
+                                ref.path, len(text.strip()),
+                            )
                             documents_ok += 1
                             resume_ingested_refs.add(ref_key)
                             continue
