@@ -152,7 +152,7 @@ function AdminGroupDetail() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
             {groupData.name}
           </h1>
           {groupData.description && (

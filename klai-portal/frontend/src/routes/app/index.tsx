@@ -70,7 +70,7 @@ function AppHome() {
   return (
     <div className="p-8 space-y-8 max-w-3xl">
       <div className="space-y-1" data-help-id="home-greeting">
-        <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
           {getGreeting(userName)}
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
