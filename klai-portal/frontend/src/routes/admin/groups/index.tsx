@@ -244,7 +244,7 @@ function AdminGroups() {
                 ) : (
                   <Trash2 className="h-2.5 w-2.5" />
                 )}
-                {m.admin_groups_delete()} "{row.original.name}"?
+                {m.admin_groups_delete_confirm({ name: row.original.name })}
               </Button>
               <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5" onClick={() => setConfirmDeleteId(null)}>
                 <X className="h-2.5 w-2.5" />
