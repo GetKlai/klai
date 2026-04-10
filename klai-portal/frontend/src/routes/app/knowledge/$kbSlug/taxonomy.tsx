@@ -107,90 +107,91 @@ function CoverageWidget({
             tabIndex={0}
             onKeyDown={(e) => { if (e.key === 'Enter' && !isEditing) onNodeClick(node.taxonomy_node_id) }}
           >
-            <div className="flex items-center justify-between mb-1.5 gap-2">
-              {isEditing ? (
-                <div className="flex-1" onClick={(e) => e.stopPropagation()}>
-                  <form
-                    className="space-y-1.5"
-                    onSubmit={(e) => { e.preventDefault(); submitEdit() }}
-                  >
-                    <Input
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="h-7 text-sm"
-                      autoFocus
-                      placeholder={m.knowledge_taxonomy_node_name_placeholder()}
-                      onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
-                    />
-                    <Input
-                      value={editingDescription}
-                      onChange={(e) => setEditingDescription(e.target.value)}
-                      className="h-7 text-xs"
-                      placeholder={m.knowledge_taxonomy_node_description_placeholder()}
-                      onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
-                    />
-                    <div className="flex items-center gap-1">
-                      <Button type="submit" size="sm" className="h-6 text-xs px-2" disabled={!editingName.trim()}>
-                        {m.knowledge_taxonomy_node_add_submit()}
+            <form
+              onSubmit={(e) => { e.preventDefault(); if (isEditing) submitEdit() }}
+              onClick={(e) => { if (isEditing) e.stopPropagation() }}
+            >
+              <div className="flex items-center justify-between mb-1.5 gap-2">
+                {isEditing ? (
+                  <input
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    className="text-sm font-medium text-[var(--color-foreground)] bg-transparent border border-[var(--color-border)] rounded px-1 -mx-1 flex-1 min-w-0 outline-none focus:border-[var(--color-accent)]"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
+                  />
+                ) : (
+                  <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
+                    {node.taxonomy_node_name}
+                  </span>
+                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {canEdit && !isEditing && !isConfirmingDelete && (
+                    <span className="hidden group-hover/row:inline-flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); startEdit(node.taxonomy_node_id, node.taxonomy_node_name, node.description ?? '') }}
+                        className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                        aria-label={m.knowledge_taxonomy_node_rename()}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(node.taxonomy_node_id) }}
+                        className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                        aria-label={m.knowledge_taxonomy_node_delete()}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </span>
+                  )}
+                  {isConfirmingDelete && (
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="sm"
+                        className="h-6 text-xs px-2 bg-[var(--color-destructive)] text-white hover:opacity-90"
+                        onClick={() => { onDelete?.(node.taxonomy_node_id); setConfirmDeleteId(null) }}
+                      >
+                        {m.knowledge_taxonomy_node_delete()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={cancelEdit}>
-                        <X className="h-3 w-3" />
+                      <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setConfirmDeleteId(null)}>
+                        {m.knowledge_taxonomy_node_add_cancel()}
                       </Button>
                     </div>
-                  </form>
+                  )}
+                  {!isConfirmingDelete && (
+                    <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                      {pct}%
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
-                  {node.taxonomy_node_name}
-                </span>
-              )}
-              <div className="flex items-center gap-1.5 shrink-0">
-                {canEdit && !isEditing && !isConfirmingDelete && (
-                  <span className="hidden group-hover/row:inline-flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); startEdit(node.taxonomy_node_id, node.taxonomy_node_name, node.description ?? '') }}
-                      className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
-                      aria-label={m.knowledge_taxonomy_node_rename()}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(node.taxonomy_node_id) }}
-                      className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                      aria-label={m.knowledge_taxonomy_node_delete()}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </span>
-                )}
-                {isConfirmingDelete && (
-                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      size="sm"
-                      className="h-6 text-xs px-2 bg-[var(--color-destructive)] text-white hover:opacity-90"
-                      onClick={() => { onDelete?.(node.taxonomy_node_id); setConfirmDeleteId(null) }}
-                    >
-                      {m.knowledge_taxonomy_node_delete()}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setConfirmDeleteId(null)}>
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                )}
-                {!isConfirmingDelete && (
-                  <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
-                    {pct}%
-                  </span>
-                )}
               </div>
-            </div>
-            {node.description && !isEditing && (
-              <p className="text-xs text-[var(--color-muted-foreground)] mb-1.5 line-clamp-2">
-                {node.description}
-              </p>
-            )}
+              {isEditing ? (
+                <>
+                  <textarea
+                    value={editingDescription}
+                    onChange={(e) => setEditingDescription(e.target.value)}
+                    className="text-xs text-[var(--color-muted-foreground)] bg-transparent border border-[var(--color-border)] rounded px-1 -mx-1 mb-1.5 w-full outline-none focus:border-[var(--color-accent)] resize-none"
+                    rows={2}
+                    placeholder={m.knowledge_taxonomy_node_description_placeholder()}
+                    onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
+                  />
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <button type="submit" disabled={!editingName.trim()} className="text-xs font-medium text-[var(--color-accent)] hover:opacity-80 disabled:opacity-40">
+                      {m.knowledge_taxonomy_node_add_submit()}
+                    </button>
+                    <button type="button" onClick={cancelEdit} className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]">
+                      {m.knowledge_taxonomy_node_add_cancel()}
+                    </button>
+                  </div>
+                </>
+              ) : node.description ? (
+                <p className="text-xs text-[var(--color-muted-foreground)] mb-1.5 line-clamp-2">
+                  {node.description}
+                </p>
+              ) : null}
+            </form>
             <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${barColor(pct)}`}
