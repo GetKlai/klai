@@ -347,12 +347,12 @@ export function TranscriptionTable({
 
                   {/* Date */}
                   <td className="py-4 pr-2 align-top text-left whitespace-nowrap w-28">
-                    <span className="text-sm text-[var(--color-muted-foreground)] tabular-nums">
+                    <span className="text-sm text-[var(--color-foreground)] tabular-nums">
                       {formatDate(item.created_at)}
                     </span>
                   </td>
 
-                  {/* Actions - always visible, muted until hover */}
+                  {/* Actions */}
                   <td className="py-4 align-top text-right w-40">
                     {isEditing ? null : isConfirmingDelete ? (
                       <div className="flex items-center justify-end gap-1">
