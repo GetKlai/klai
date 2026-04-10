@@ -10,10 +10,11 @@ import {
 } from '@tanstack/react-table'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, Eye, Lock, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -229,8 +230,15 @@ function AdminGroups() {
       cell: ({ row }) => {
         const isConfirming = !row.original.is_system && confirmDeleteId === row.original.id
         return (
-          <div className="relative">
-            <div className={`flex items-center justify-end gap-1 ${isConfirming ? 'opacity-0 pointer-events-none' : ''}`}>
+          <InlineDeleteConfirm
+            isConfirming={isConfirming}
+            isPending={deleteMutation.isPending}
+            label={m.admin_groups_delete_confirm({ name: row.original.name })}
+            cancelLabel={m.admin_users_cancel()}
+            onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
+            onCancel={() => setConfirmDeleteId(null)}
+          >
+            <div className="flex items-center justify-end gap-1">
               {!row.original.is_system && (
                 <button
                   onClick={() => setConfirmDeleteId(row.original.id)}
@@ -267,27 +275,7 @@ function AdminGroups() {
                 <Eye className="h-3.5 w-3.5" />
               </button>
             </div>
-            {isConfirming && (
-              <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
-                <Button
-                  size="sm"
-                  className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
-                  disabled={deleteMutation.isPending}
-                  onClick={() => {
-                    deleteMutation.mutate(row.original.id)
-                    setConfirmDeleteId(null)
-                  }}
-                >
-                  {deleteMutation.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                  {m.admin_groups_delete_confirm({ name: row.original.name })}
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5" onClick={() => setConfirmDeleteId(null)}>
-                  <X />
-                  {m.admin_users_cancel()}
-                </Button>
-              </div>
-            )}
-          </div>
+          </InlineDeleteConfirm>
         )
       },
     }),

@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { ArrowLeft, Loader2, Pencil, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
@@ -270,43 +271,24 @@ function AdminGroupDetail() {
                           {formatDate(member.joined_at)}
                         </td>
                         <td className="px-6 py-3 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            {isConfirming ? (
-                              <>
-                                <Button
-                                  size="sm"
-                                  className="bg-[var(--color-destructive)] text-white hover:opacity-90"
-                                  disabled={isRemoving}
-                                  onClick={() =>
-                                    removeMemberMutation.mutate(member.zitadel_user_id)
-                                  }
-                                >
-                                  {isRemoving ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    m.admin_groups_members_remove()
-                                  )}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setConfirmRemoveId(null)}
-                                >
-                                  {m.admin_users_cancel()}
-                                </Button>
-                              </>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setConfirmRemoveId(member.zitadel_user_id)
-                                }
+                          <InlineDeleteConfirm
+                            isConfirming={isConfirming}
+                            isPending={isRemoving}
+                            label={m.admin_groups_members_remove_confirm({ name: displayName(user, member) })}
+                            cancelLabel={m.admin_users_cancel()}
+                            onConfirm={() => removeMemberMutation.mutate(member.zitadel_user_id)}
+                            onCancel={() => setConfirmRemoveId(null)}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => setConfirmRemoveId(member.zitadel_user_id)}
+                                aria-label={m.admin_groups_members_remove()}
+                                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                               >
-                                <Trash2 className="h-4 w-4 text-[var(--color-destructive)]" />
-                              </Button>
-                            )}
-                          </div>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </InlineDeleteConfirm>
                         </td>
                       </tr>
                     )

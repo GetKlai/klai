@@ -5,9 +5,10 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { Input } from '@/components/ui/input'
-import { Plus, Loader2, Trash2, Check, X, BookOpen, Pencil } from 'lucide-react'
+import { Plus, Loader2, Trash2, BookOpen, Pencil } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { getLocale } from '@/paraglide/runtime'
@@ -238,56 +239,42 @@ function FocusPage() {
                             {formatDate(nb.created_at)}
                           </td>
                           <td className="px-3 py-3 w-20 text-right">
-                            {(nb.scope !== 'org' || isOrgAdmin || nb.owner_user_id === currentUserId) && (isConfirmingDelete ? (
-                              <div className="flex items-center justify-end gap-1">
-                                {isDeleting ? (
-                                  <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                                ) : (
-                                  <>
+                            {(nb.scope !== 'org' || isOrgAdmin || nb.owner_user_id === currentUserId) && (
+                              <InlineDeleteConfirm
+                                isConfirming={isConfirmingDelete}
+                                isPending={isDeleting}
+                                label={m.app_focus_delete_confirm({ name: nb.name })}
+                                cancelLabel={m.app_focus_delete_cancel_action()}
+                                onConfirm={() => deleteMutation.mutate(nb.id)}
+                                onCancel={() => setConfirmingDeleteId(null)}
+                              >
+                                <div className="flex items-center justify-end gap-1">
+                                  <Tooltip label={m.app_focus_edit_label()}>
                                     <button
-                                      onClick={() => deleteMutation.mutate(nb.id)}
-                                      aria-label={m.app_focus_delete_confirm_action()}
-                                      className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
+                                      onClick={() =>
+                                        navigate({
+                                          to: '/app/focus/$notebookId/edit',
+                                          params: { notebookId: nb.id },
+                                        })
+                                      }
+                                      aria-label={m.app_focus_edit_label()}
+                                      className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                                     >
-                                      <Check className="h-3.5 w-3.5" />
+                                      <Pencil className="h-3.5 w-3.5" />
                                     </button>
+                                  </Tooltip>
+                                  <Tooltip label={m.app_focus_delete_label()}>
                                     <button
-                                      onClick={() => setConfirmingDeleteId(null)}
-                                      aria-label={m.app_focus_delete_cancel_action()}
-                                      className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
+                                      onClick={() => setConfirmingDeleteId(nb.id)}
+                                      aria-label={m.app_focus_delete_label()}
+                                      className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                                     >
-                                      <X className="h-3.5 w-3.5" />
+                                      <Trash2 className="h-3.5 w-3.5" />
                                     </button>
-                                  </>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-end gap-1">
-                                <Tooltip label={m.app_focus_edit_label()}>
-                                  <button
-                                    onClick={() =>
-                                      navigate({
-                                        to: '/app/focus/$notebookId/edit',
-                                        params: { notebookId: nb.id },
-                                      })
-                                    }
-                                    aria-label={m.app_focus_edit_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </button>
-                                </Tooltip>
-                                <Tooltip label={m.app_focus_delete_label()}>
-                                  <button
-                                    onClick={() => setConfirmingDeleteId(nb.id)}
-                                    aria-label={m.app_focus_delete_label()}
-                                    className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                </Tooltip>
-                              </div>
-                            ))}
+                                  </Tooltip>
+                                </div>
+                              </InlineDeleteConfirm>
+                            )}
                           </td>
                         </tr>
                       )

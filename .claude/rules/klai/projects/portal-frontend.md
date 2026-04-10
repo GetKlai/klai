@@ -145,6 +145,29 @@ Field pattern:
 - `<tbody>` rows: zebra striping with `var(--color-card)` / `var(--color-secondary)`
 - Action controls in table rows: `px-2 py-1 text-xs`
 
+### Inline delete confirmation
+
+Use `InlineDeleteConfirm` from `components/ui/inline-delete-confirm`. Never use a modal, popover, or button swap that changes cell content (causes layout shift).
+
+```tsx
+<InlineDeleteConfirm
+  isConfirming={confirmDeleteId === row.original.id}
+  isPending={deleteMutation.isPending}
+  label={m.delete_confirm({ name: row.original.name })}
+  cancelLabel={m.cancel()}
+  onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
+  onCancel={() => setConfirmDeleteId(null)}
+>
+  <div className="flex items-center justify-end gap-1">
+    <button onClick={() => setConfirmDeleteId(row.original.id)} ...><Trash2 /></button>
+  </div>
+</InlineDeleteConfirm>
+```
+
+- `label` uses i18n `{name}` param — never string concatenation
+- The component owns the `relative` wrapper, ghost spacer logic, and overlay styling
+- Full docs + pattern explanation: `klai-portal/docs/ui-components.md` → Deletion confirmation patterns
+
 ---
 
 ## Multi-step wizard password fields (MED)
