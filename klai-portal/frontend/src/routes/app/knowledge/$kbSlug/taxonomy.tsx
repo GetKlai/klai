@@ -32,9 +32,9 @@ function CoverageWidget({
   onNodeClick,
   onSuggest,
   isSuggesting,
-  canEdit: _canEdit,
-  onRename: _onRename,
-  onDelete: _onDelete,
+  canEdit,
+  onRename,
+  onDelete,
 }: {
   coverage: TaxonomyCoverage
   activeNodeId: number | null
@@ -46,10 +46,27 @@ function CoverageWidget({
   onDelete?: (nodeId: number) => void
 }) {
   const total = coverage.total_chunks
+  const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const barColor = (pct: number) => {
     if (pct >= 5) return 'bg-[var(--color-success)]'
     return 'bg-amber-400'
+  }
+
+  function startRename(nodeId: number, currentName: string): void {
+    setEditingNodeId(nodeId)
+    setEditingName(currentName)
+    setConfirmDeleteId(null)
+  }
+
+  function submitRename(): void {
+    if (editingNodeId !== null && editingName.trim() && onRename) {
+      onRename(editingNodeId, editingName.trim())
+    }
+    setEditingNodeId(null)
+    setEditingName('')
   }
 
   if (coverage.nodes.length === 0) {
@@ -65,62 +82,86 @@ function CoverageWidget({
       {coverage.nodes.map((node) => {
         const pct = total > 0 ? Math.round((node.chunk_count / total) * 100) : 0
         const isActive = activeNodeId === node.taxonomy_node_id
+        const isEditing = editingNodeId === node.taxonomy_node_id
+        const isConfirmingDelete = confirmDeleteId === node.taxonomy_node_id
         return (
-          <button
+          <div
             key={node.taxonomy_node_id}
-            type="button"
-            onClick={() => onNodeClick(node.taxonomy_node_id)}
             className={[
-              'group/row w-full text-left rounded-lg border p-3 transition-colors',
+              'group/row w-full text-left rounded-lg border p-3 transition-colors cursor-pointer',
               isActive
                 ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
                 : 'border-[var(--color-border)] hover:bg-[var(--color-secondary)]',
             ].join(' ')}
+            onClick={() => { if (!isEditing && !isConfirmingDelete) onNodeClick(node.taxonomy_node_id) }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !isEditing) onNodeClick(node.taxonomy_node_id) }}
           >
             <div className="flex items-center justify-between mb-1.5 gap-2">
-              <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
-                {node.taxonomy_node_name}
-              </span>
+              {isEditing ? (
+                <form
+                  className="flex items-center gap-1.5 flex-1"
+                  onSubmit={(e) => { e.preventDefault(); submitRename() }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Input
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    className="h-7 text-sm flex-1"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Escape') { setEditingNodeId(null); setEditingName('') } }}
+                    onBlur={submitRename}
+                  />
+                </form>
+              ) : (
+                <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
+                  {node.taxonomy_node_name}
+                </span>
+              )}
               <div className="flex items-center gap-1.5 shrink-0">
-                {_canEdit && (
+                {canEdit && !isEditing && !isConfirmingDelete && (
                   <span className="hidden group-hover/row:inline-flex items-center gap-0.5">
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        const newName = prompt(m.knowledge_taxonomy_node_rename_prompt(), node.taxonomy_node_name)
-                        if (newName && newName.trim() && newName.trim() !== node.taxonomy_node_name) {
-                          _onRename?.(node.taxonomy_node_id, newName.trim())
-                        }
-                      }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
-                      className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70 cursor-pointer"
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); startRename(node.taxonomy_node_id, node.taxonomy_node_name) }}
+                      className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                       aria-label={m.knowledge_taxonomy_node_rename()}
                     >
                       <Pencil className="h-3 w-3" />
-                    </span>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        _onDelete?.(node.taxonomy_node_id)
-                      }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
-                      className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70 cursor-pointer"
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(node.taxonomy_node_id) }}
+                      className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
                       aria-label={m.knowledge_taxonomy_node_delete()}
                     >
                       <Trash2 className="h-3 w-3" />
-                    </span>
+                    </button>
                   </span>
                 )}
-                <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
-                  {pct}%
-                </span>
+                {isConfirmingDelete && (
+                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      size="sm"
+                      className="h-6 text-xs px-2 bg-[var(--color-destructive)] text-white hover:opacity-90"
+                      onClick={() => { onDelete?.(node.taxonomy_node_id); setConfirmDeleteId(null) }}
+                    >
+                      {m.knowledge_taxonomy_node_delete()}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setConfirmDeleteId(null)}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+                {!isConfirmingDelete && (
+                  <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                    {pct}%
+                  </span>
+                )}
               </div>
             </div>
-            {node.description && (
+            {node.description && !isEditing && (
               <p className="text-xs text-[var(--color-muted-foreground)] mb-1.5 line-clamp-2">
                 {node.description}
               </p>
@@ -141,7 +182,7 @@ function CoverageWidget({
                 </span>
               )}
             </div>
-          </button>
+          </div>
         )
       })}
 
