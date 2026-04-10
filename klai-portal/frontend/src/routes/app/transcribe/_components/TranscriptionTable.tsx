@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import {
@@ -255,6 +256,7 @@ export function TranscriptionTable({
                   {/* Source icon */}
                   <td className="py-4 pr-2 align-top w-6">
                     <Tooltip
+                      className="leading-none mt-1"
                       label={
                         item.source === 'upload'
                           ? m.app_transcribe_source_audio()
@@ -352,31 +354,9 @@ export function TranscriptionTable({
 
                   {/* Actions */}
                   <td className="py-4 align-top text-right w-36">
-                    {isEditing ? null : isConfirmingDelete ? (
-                      <div className="flex items-center justify-end gap-1">
-                        {isDeleting ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => handleDelete(item)}
-                              aria-label={m.app_transcribe_delete_confirm()}
-                              className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => setConfirmingDeleteId(null)}
-                              aria-label={m.app_transcribe_delete_cancel()}
-                              className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-start justify-end gap-2">
+                    {isEditing ? null : (
+                      <div className="relative">
+                        <div className={`flex items-start justify-end gap-2 mt-1 ${isConfirmingDelete ? 'opacity-0 pointer-events-none' : ''}`}>
                         {/* Rename */}
                         <Tooltip label={m.app_transcribe_edit_label()}>
                           <button
@@ -466,6 +446,29 @@ export function TranscriptionTable({
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </Tooltip>
+                        </div>
+                        {isConfirmingDelete && (
+                          <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
+                            <Button
+                              size="sm"
+                              className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
+                              disabled={isDeleting}
+                              onClick={() => handleDelete(item)}
+                            >
+                              {isDeleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                              {m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
+                              onClick={() => setConfirmingDeleteId(null)}
+                            >
+                              <X />
+                              {m.app_transcribe_delete_cancel()}
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </td>

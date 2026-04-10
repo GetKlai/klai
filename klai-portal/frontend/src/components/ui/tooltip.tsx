@@ -3,15 +3,17 @@ import { useState, useRef, type ReactNode } from 'react'
 interface TooltipProps {
   label: string
   children: ReactNode
+  className?: string
 }
 
-export function Tooltip({ label, children }: TooltipProps) {
+export function Tooltip({ label, children, className }: TooltipProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
 
   return (
     <div
       ref={ref}
+      className={className}
       onMouseEnter={() => {
         const rect = ref.current?.getBoundingClientRect()
         if (rect) setPos({ top: rect.top, left: rect.left + rect.width / 2 })
