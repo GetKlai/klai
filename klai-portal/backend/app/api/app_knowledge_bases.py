@@ -343,8 +343,7 @@ async def knowledge_bases_stats_summary(
     kbs_result = await db.execute(
         select(PortalKnowledgeBase).where(
             PortalKnowledgeBase.org_id == org.id,
-            (PortalKnowledgeBase.owner_type == "org")
-            | (PortalKnowledgeBase.owner_user_id == zitadel_user_id),
+            (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == zitadel_user_id),
         )
     )
     kbs = kbs_result.scalars().all()
@@ -405,9 +404,7 @@ async def knowledge_bases_stats_summary(
         *(_qdrant_count_for_kb(org.zitadel_org_id, kb.slug) for kb in kbs),
         return_exceptions=False,
     )
-    items_by_slug: dict[str, int] = {
-        kb.slug: (count or 0) for kb, count in zip(kbs, item_counts, strict=True)
-    }
+    items_by_slug: dict[str, int] = {kb.slug: (count or 0) for kb, count in zip(kbs, item_counts, strict=True)}
 
     stats: dict[str, KBStatsSummary] = {
         kb.slug: KBStatsSummary(

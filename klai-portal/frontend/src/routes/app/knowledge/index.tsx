@@ -308,7 +308,7 @@ function KnowledgePage() {
                     <div className="flex items-start justify-end gap-2 mt-px">
                       <Tooltip label={m.docs_kb_edit_label()}>
                         <button
-                          onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/edit', params: { kbSlug: defaultPersonalKb.slug } })}
+                          onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/settings', params: { kbSlug: defaultPersonalKb.slug } })}
                           aria-label={m.docs_kb_edit_label()}
                           className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                         >
@@ -387,7 +387,7 @@ function KnowledgePage() {
                       <div className="flex items-start justify-end gap-2 mt-px">
                         <Tooltip label={m.docs_kb_edit_label()}>
                           <button
-                            onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/edit', params: { kbSlug: kb.slug } })}
+                            onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/settings', params: { kbSlug: kb.slug } })}
                             aria-label={m.docs_kb_edit_label()}
                             className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                           >
