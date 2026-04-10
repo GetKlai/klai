@@ -17,6 +17,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Apply security patches to base image OS packages
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --upgrade pip
 
 # Copy installed packages from builder
