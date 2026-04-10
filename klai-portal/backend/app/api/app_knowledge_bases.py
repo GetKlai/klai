@@ -1,5 +1,6 @@
 """App-facing API for Knowledge Bases (any org member, not admin-only)."""
 
+import asyncio
 import datetime as dt
 from datetime import datetime, timedelta
 from typing import Literal
@@ -16,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.audit import PortalAuditLog
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
+from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import get_user_role_for_kb
 from app.services.zitadel import zitadel
@@ -115,6 +118,25 @@ class AppKBOut(BaseModel):
 
 class AppKBsResponse(BaseModel):
     knowledge_bases: list[AppKBOut]
+
+
+class KBStatsSummary(BaseModel):
+    """Cheap, aggregate per-KB stats used to enrich the KB list view.
+
+    Kept intentionally small so the bulk endpoint stays fast. Expensive
+    stats (docs count, graph entity count, Neo4j) still live on the
+    per-KB detail endpoint.
+    """
+
+    items: int  # vector chunks in Qdrant
+    connectors: int  # portal_connectors rows for this KB
+    gaps_7d: int  # open retrieval gaps pointing at this KB (7 days)
+    usage_30d: int  # kb_query audit events for this KB (30 days)
+
+
+class KBStatsSummaryResponse(BaseModel):
+    # Keyed by kb_slug — matches the slug the frontend already has in hand.
+    stats: dict[str, KBStatsSummary]
 
 
 # Members schemas
@@ -299,6 +321,104 @@ async def list_app_knowledge_bases(
     result = await db.execute(query.order_by(PortalKnowledgeBase.name))
     kbs = result.scalars().all()
     return AppKBsResponse(knowledge_bases=[_kb_out(kb) for kb in kbs])
+
+
+@router.get("/knowledge-bases/stats-summary", response_model=KBStatsSummaryResponse)
+async def knowledge_bases_stats_summary(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> KBStatsSummaryResponse:
+    """Return cheap aggregate stats per KB for the caller's org.
+
+    Used to enrich the knowledge base list view with item counts,
+    connector counts, gap counts, and recent usage. Expensive stats
+    (docs count, Neo4j) stay on the per-KB detail endpoint.
+
+    Scope: all org-owned KBs plus the caller's own personal KBs — the
+    same set the app-facing list endpoint returns by default.
+    """
+    zitadel_user_id, org, _ = await _get_caller_org(credentials, db)
+
+    # Fetch all KBs visible to this caller (org-owned + caller's personal KBs).
+    kbs_result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == org.id,
+            (PortalKnowledgeBase.owner_type == "org")
+            | (PortalKnowledgeBase.owner_user_id == zitadel_user_id),
+        )
+    )
+    kbs = kbs_result.scalars().all()
+    if not kbs:
+        return KBStatsSummaryResponse(stats={})
+
+    kb_ids = [kb.id for kb in kbs]
+    kb_slugs = [kb.slug for kb in kbs]
+    slug_by_id = {kb.id: kb.slug for kb in kbs}
+
+    gap_cutoff = datetime.now(tz=dt.UTC) - timedelta(days=7)
+    usage_cutoff = datetime.now(tz=dt.UTC) - timedelta(days=30)
+
+    # Connectors per KB (org-scoped, grouped).
+    connectors_result = await db.execute(
+        select(PortalConnector.kb_id, func.count(PortalConnector.id))
+        .where(
+            PortalConnector.org_id == org.id,
+            PortalConnector.kb_id.in_(kb_ids),
+        )
+        .group_by(PortalConnector.kb_id)
+    )
+    connectors_by_slug: dict[str, int] = {}
+    for kb_id, count in connectors_result.all():
+        slug = slug_by_id.get(kb_id)
+        if slug is not None:
+            connectors_by_slug[slug] = count
+
+    # Open gaps per KB in the last 7 days (best-effort via nearest_kb_slug).
+    gaps_result = await db.execute(
+        select(PortalRetrievalGap.nearest_kb_slug, func.count(PortalRetrievalGap.id))
+        .where(
+            PortalRetrievalGap.org_id == org.id,
+            PortalRetrievalGap.nearest_kb_slug.in_(kb_slugs),
+            PortalRetrievalGap.resolved_at.is_(None),
+            PortalRetrievalGap.occurred_at >= gap_cutoff,
+        )
+        .group_by(PortalRetrievalGap.nearest_kb_slug)
+    )
+    gaps_by_slug: dict[str, int] = {slug: count for slug, count in gaps_result.all()}
+
+    # Usage (kb_query audit events) per KB in the last 30 days.
+    usage_result = await db.execute(
+        select(PortalAuditLog.resource_id, func.count(PortalAuditLog.id))
+        .where(
+            PortalAuditLog.org_id == org.id,
+            PortalAuditLog.resource_type == "kb_query",
+            PortalAuditLog.resource_id.in_(kb_slugs),
+            PortalAuditLog.created_at >= usage_cutoff,
+        )
+        .group_by(PortalAuditLog.resource_id)
+    )
+    usage_by_slug: dict[str, int] = {slug: count for slug, count in usage_result.all()}
+
+    # Qdrant item counts — N parallel calls, one per KB. Each call is
+    # a single filtered count query against the shared collection.
+    item_counts = await asyncio.gather(
+        *(_qdrant_count_for_kb(org.zitadel_org_id, kb.slug) for kb in kbs),
+        return_exceptions=False,
+    )
+    items_by_slug: dict[str, int] = {
+        kb.slug: (count or 0) for kb, count in zip(kbs, item_counts, strict=True)
+    }
+
+    stats: dict[str, KBStatsSummary] = {
+        kb.slug: KBStatsSummary(
+            items=items_by_slug.get(kb.slug, 0),
+            connectors=connectors_by_slug.get(kb.slug, 0),
+            gaps_7d=gaps_by_slug.get(kb.slug, 0),
+            usage_30d=usage_by_slug.get(kb.slug, 0),
+        )
+        for kb in kbs
+    }
+    return KBStatsSummaryResponse(stats=stats)
 
 
 @router.get("/knowledge-bases/{kb_slug}", response_model=AppKBOut)
