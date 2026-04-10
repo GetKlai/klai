@@ -125,6 +125,8 @@ _BOOTSTRAP_SYSTEM_PROMPT = (
     "Given a list of documents from a knowledge base, identify the 3-8 most logical, "
     "non-overlapping top-level categories that together cover all documents. "
     "Each category name should be concise (2-5 words) and distinct. "
+    "If existing categories are listed, do NOT repeat them — only propose NEW categories "
+    "that cover documents not fitting the existing ones. Return an empty list if no new categories are needed."
     "\n\nReply with ONLY a JSON object, no markdown, no explanation: "
     '{"categories": ["<string>", ...]}'
 )
@@ -134,6 +136,7 @@ async def generate_bootstrap_proposals(
     org_id: str,
     kb_slug: str,
     documents: list[DocumentSummary],
+    existing_category_names: list[str] | None = None,
 ) -> int:
     """Scan existing documents and generate bootstrap taxonomy proposals.
 
@@ -155,7 +158,7 @@ async def generate_bootstrap_proposals(
 
     try:
         categories = await asyncio.wait_for(
-            _suggest_multiple_categories(documents[:50]),
+            _suggest_multiple_categories(documents[:50], existing_category_names or []),
             timeout=30.0,
         )
     except (TimeoutError, Exception) as exc:
@@ -167,6 +170,15 @@ async def generate_bootstrap_proposals(
         return 0
 
     if not categories:
+        return 0
+
+    # Filter out names that already exist (case-insensitive) as a safety net,
+    # even though the prompt tells the LLM not to propose them.
+    existing_lower = {n.lower() for n in (existing_category_names or [])}
+    categories = [c for c in categories if c.lower() not in existing_lower]
+
+    if not categories:
+        logger.info("bootstrap_proposals_all_filtered", kb_slug=kb_slug, reason="all proposed categories already exist")
         return 0
 
     # Generate descriptions for each proposed category in parallel
@@ -206,13 +218,21 @@ async def generate_bootstrap_proposals(
     return submitted
 
 
-async def _suggest_multiple_categories(documents: list[DocumentSummary]) -> list[str]:
+async def _suggest_multiple_categories(
+    documents: list[DocumentSummary],
+    existing_names: list[str],
+) -> list[str]:
     """Use klai-fast to suggest multiple category names for a set of documents."""
     doc_summaries = "\n".join(
         f"- {doc.title}: {doc.content_preview[:150]}"
         for doc in documents
     )
     user_message = f"Documents in this knowledge base:\n{doc_summaries}"
+    if existing_names:
+        user_message += (
+            f"\n\nExisting categories (do NOT propose these again): "
+            f"{', '.join(existing_names)}"
+        )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(

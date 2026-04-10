@@ -1261,6 +1261,8 @@
   "knowledge_taxonomy_suggest_applying": "Bestaande documenten categoriseren...",
   "knowledge_taxonomy_suggest_done": "Klaar! Alle documenten zijn gecategoriseerd.",
   "knowledge_taxonomy_suggest_error": "Kon geen suggesties genereren",
+  "knowledge_taxonomy_proposals_conflict": "Deze categorie bestaat al \u2014 voorstel overgeslagen.",
+  "knowledge_taxonomy_proposals_approve_error": "Kon dit voorstel niet goedkeuren. Probeer het opnieuw.",
 
   "gaps_page_title": "Kennishiaten",
   "gaps_index_card_heading": "Kennishiaten",
