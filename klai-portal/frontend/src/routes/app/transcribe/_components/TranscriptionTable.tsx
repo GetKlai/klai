@@ -156,249 +156,209 @@ export function TranscriptionTable({
     }
   }
 
+  function wordCount(text: string | null | undefined): string | null {
+    if (!text) return null
+    return text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()
+  }
+
+  function metaLine(item: UnifiedItem): string {
+    const parts: string[] = []
+    if (item.language) parts.push(item.language.toUpperCase())
+    const wc = wordCount(item.text)
+    if (wc) parts.push(`${wc} words`)
+    if (item.duration_seconds != null) parts.push(formatDuration(item.duration_seconds))
+    parts.push(
+      item.source === 'upload'
+        ? m.app_transcribe_source_audio()
+        : m.app_transcribe_source_meeting(),
+    )
+    return parts.join(' \u00b7 ')
+  }
+
   if (allItems.length === 0) {
     return (
-      <Card data-help-id="transcribe-list">
-        <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <Mic className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
-            <div className="space-y-1">
-              <p className="font-medium text-[var(--color-foreground)]">
-                {m.app_transcribe_empty_heading()}
-              </p>
-              <p className="text-sm text-[var(--color-muted-foreground)]">
-                {m.app_transcribe_empty_body()}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <div data-help-id="transcribe-list" className="flex flex-col items-center gap-3 py-16 text-center">
+        <Mic className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
+        <div className="space-y-1">
+          <p className="font-medium text-[var(--color-foreground)]">
+            {m.app_transcribe_empty_heading()}
+          </p>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.app_transcribe_empty_body()}
+          </p>
+        </div>
+      </div>
     )
   }
 
   return (
-    <Card data-help-id="transcribe-list">
-      <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-        <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]">
-          <Input
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={m.app_transcribe_search_placeholder()}
-            className="h-8 text-sm max-w-xs"
-          />
-        </div>
-        {filteredItems.length === 0 ? (
-          <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-            {m.app_transcribe_search_empty()}
-          </p>
-        ) : (
-          <table className="w-full text-sm table-fixed">
-            <thead>
-              <tr className="border-b border-[var(--color-border)]">
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-2/5">
-                  {m.app_transcribe_col_text()}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                  {m.app_transcribe_col_words()}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                  {m.app_transcribe_col_language()}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                  {m.app_transcribe_col_duration()}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                  {m.app_transcribe_col_date()}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                  {m.app_transcribe_col_source()}
-                </th>
-                <th className="px-6 py-3 w-36" />
-              </tr>
-            </thead>
-            <tbody>
-              {filteredItems.map((item) => {
-                const isEditing = editingId === item.id
-                const isConfirmingDelete = confirmingDeleteId === item.id
-                const isSaving = isRenaming && renamingId === item.id
-                const isDeleting =
-                  (isDeletingUpload && deletingUploadId === item.id) ||
-                  (isDeletingMeeting && deletingMeetingId === item.id)
-                const isCopied = copiedId === item.id
-                const isActive = item.source === 'meeting' && ACTIVE_MEETING_STATUSES.includes(item.status)
-                const isItemStopping = isStopping && stoppingId === item.id
-                const isFailed = item.source === 'upload' && item.status === 'failed'
-                const isItemRetrying = isRetrying && retryingId === item.id
+    <div data-help-id="transcribe-list">
+      <div className="pb-4">
+        <Input
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder={m.app_transcribe_search_placeholder()}
+          className="h-8 text-sm max-w-xs"
+        />
+      </div>
 
-                return (
-                  <tr
-                    key={`${item.source}-${item.id}`}
-                    className="bg-[var(--color-card)]"
-                  >
-                    {/* Title / preview */}
-                    <td className="px-6 py-3 text-[var(--color-foreground)] max-w-xs">
-                      {isEditing ? (
-                        <Input
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveEdit(item.id)
-                            if (e.key === 'Escape') cancelEdit()
-                          }}
-                          disabled={isSaving}
-                          autoFocus
-                          className="h-7 text-sm"
-                        />
+      {filteredItems.length === 0 ? (
+        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+          {m.app_transcribe_search_empty()}
+        </p>
+      ) : (
+        <div className="divide-y divide-[var(--color-border)]">
+          {filteredItems.map((item) => {
+            const isEditing = editingId === item.id
+            const isConfirmingDelete = confirmingDeleteId === item.id
+            const isSaving = isRenaming && renamingId === item.id
+            const isDeleting =
+              (isDeletingUpload && deletingUploadId === item.id) ||
+              (isDeletingMeeting && deletingMeetingId === item.id)
+            const isCopied = copiedId === item.id
+            const isActive = item.source === 'meeting' && ACTIVE_MEETING_STATUSES.includes(item.status)
+            const isItemStopping = isStopping && stoppingId === item.id
+            const isFailed = item.source === 'upload' && item.status === 'failed'
+            const isItemRetrying = isRetrying && retryingId === item.id
+
+            return (
+              <div
+                key={`${item.source}-${item.id}`}
+                className="group relative flex items-start gap-3 py-4"
+              >
+                {/* Source icon */}
+                <Tooltip
+                  label={
+                    item.source === 'upload'
+                      ? m.app_transcribe_source_audio()
+                      : m.app_transcribe_source_meeting()
+                  }
+                >
+                  {item.source === 'upload' ? (
+                    <Mic className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                  ) : (
+                    <Video className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                  )}
+                </Tooltip>
+
+                {/* Content */}
+                <div className="min-w-0 flex-1">
+                  {isEditing ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEdit(item.id)
+                          if (e.key === 'Escape') cancelEdit()
+                        }}
+                        disabled={isSaving}
+                        autoFocus
+                        className="h-7 text-sm max-w-sm"
+                      />
+                      {isSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
                       ) : (
-                        <div className="flex items-start gap-1.5">
-                          <Tooltip
-                            label={
-                              item.source === 'upload'
-                                ? m.app_transcribe_source_audio()
-                                : m.app_transcribe_source_meeting()
-                            }
+                        <>
+                          <button
+                            onClick={() => saveEdit(item.id)}
+                            aria-label={m.app_transcribe_edit_save()}
+                            className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90"
                           >
-                            {item.source === 'upload' ? (
-                              <Mic className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                            ) : (
-                              <Video className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                            )}
-                          </Tooltip>
-                          <div className="min-w-0">
-                            {item.title ? (
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  {item.status === 'done' ? (
-                                    <button
-                                      type="button"
-                                      className="block truncate font-medium text-left hover:underline cursor-pointer"
-                                      onClick={() => onNavigateToDetail(item)}
-                                    >
-                                      {item.title}
-                                    </button>
-                                  ) : (
-                                    <span className="block truncate font-medium">{item.title}</span>
-                                  )}
-                                  {item.source === 'upload' && item.has_summary && (
-                                    <Tooltip label={m.app_transcribe_has_summary()}>
-                                      <FileText className="h-3 w-3 shrink-0 text-[var(--color-foreground)]" />
-                                    </Tooltip>
-                                  )}
-                                </div>
-                                {item.text && (
-                                  <span className="block truncate text-xs text-[var(--color-muted-foreground)]">
-                                    {item.text}
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="block truncate">{item.text ?? item.meeting_url ?? '\u2014'}</span>
-                            )}
-                            {item.status !== 'done' && (
-                              <div className="mt-1">
-                                <StatusBadge status={item.status} source={item.source} />
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            aria-label={m.app_transcribe_edit_cancel()}
+                            className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </>
                       )}
-                    </td>
-
-                    {/* Words */}
-                    <td className="px-6 py-3 text-[var(--color-muted-foreground)] tabular-nums">
-                      {item.text
-                        ? item.text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()
-                        : '\u2014'}
-                    </td>
-
-                    {/* Language */}
-                    <td className="px-6 py-3 text-[var(--color-foreground)]">
-                      {item.language ? (
-                        <div className="flex items-center gap-1.5">
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        {item.title ? (
+                          item.status === 'done' ? (
+                            <button
+                              type="button"
+                              className="truncate font-medium text-left text-[var(--color-foreground)] hover:underline cursor-pointer"
+                              onClick={() => onNavigateToDetail(item)}
+                            >
+                              {item.title}
+                            </button>
+                          ) : (
+                            <span className="truncate font-medium text-[var(--color-foreground)]">{item.title}</span>
+                          )
+                        ) : (
+                          <span className="truncate text-[var(--color-foreground)]">{item.text ?? item.meeting_url ?? '\u2014'}</span>
+                        )}
+                        {item.source === 'upload' && item.has_summary && (
+                          <Tooltip label={m.app_transcribe_has_summary()}>
+                            <FileText className="h-3 w-3 shrink-0 text-[var(--color-foreground)]" />
+                          </Tooltip>
+                        )}
+                        {item.status !== 'done' && (
+                          <StatusBadge status={item.status} source={item.source} />
+                        )}
+                      </div>
+                      {item.text && item.title && (
+                        <p className="mt-0.5 truncate text-sm text-[var(--color-muted-foreground)]">
+                          {item.text}
+                        </p>
+                      )}
+                      <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+                        {item.language && (
                           <img
                             src={`https://flagcdn.com/16x12/${languageToCountryCode(item.language)}.png`}
                             width="16"
                             height="12"
                             alt={item.language.toUpperCase()}
-                            className="rounded-sm shrink-0"
+                            className="inline-block rounded-sm mr-1.5 align-text-bottom"
                           />
-                          <span>{item.language.toUpperCase()}</span>
-                        </div>
+                        )}
+                        {metaLine(item)}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {/* Date + actions (right side) */}
+                <div className="shrink-0 flex items-start gap-3">
+                  <span className="mt-0.5 text-sm text-[var(--color-muted-foreground)] tabular-nums">
+                    {formatDate(item.created_at)}
+                  </span>
+
+                  {/* Actions - visible on hover */}
+                  {!isEditing && (
+                    <div className={`flex items-center gap-0.5 transition-opacity ${
+                      isConfirmingDelete ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    }`}>
+                      {isConfirmingDelete ? (
+                        isDeleting ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleDelete(item)}
+                              aria-label={m.app_transcribe_delete_confirm()}
+                              className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setConfirmingDeleteId(null)}
+                              aria-label={m.app_transcribe_delete_cancel()}
+                              className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )
                       ) : (
-                        <span className="text-[var(--color-muted-foreground)]">{'\u2014'}</span>
-                      )}
-                    </td>
-
-                    {/* Duration */}
-                    <td className="px-6 py-3 text-[var(--color-foreground)]">
-                      {item.duration_seconds != null
-                        ? formatDuration(item.duration_seconds)
-                        : <span className="text-[var(--color-muted-foreground)]">{'\u2014'}</span>}
-                    </td>
-
-                    {/* Date */}
-                    <td className="px-6 py-3 text-[var(--color-foreground)]">
-                      {formatDate(item.created_at)}
-                    </td>
-
-                    {/* Source */}
-                    <td className="px-6 py-3 text-[var(--color-muted-foreground)] text-xs">
-                      {item.source === 'upload'
-                        ? m.app_transcribe_source_audio()
-                        : m.app_transcribe_source_meeting()}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-6 py-3 w-36 text-right">
-                      {isEditing ? (
-                        <div className="flex items-center justify-end gap-1">
-                          {isSaving ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => saveEdit(item.id)}
-                                aria-label={m.app_transcribe_edit_save()}
-                                className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90"
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={cancelEdit}
-                                aria-label={m.app_transcribe_edit_cancel()}
-                                className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      ) : isConfirmingDelete ? (
-                        <div className="flex items-center justify-end gap-1">
-                          {isDeleting ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => handleDelete(item)}
-                                aria-label={m.app_transcribe_delete_confirm()}
-                                className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setConfirmingDeleteId(null)}
-                                aria-label={m.app_transcribe_delete_cancel()}
-                                className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-end gap-1">
-                          {/* Rename */}
+                        <>
                           <Tooltip label={m.app_transcribe_edit_label()}>
                             <button
                               onClick={() => startEdit(item)}
@@ -409,7 +369,6 @@ export function TranscriptionTable({
                             </button>
                           </Tooltip>
 
-                          {/* Active meeting: stop button */}
                           {isActive && (
                             <Tooltip label={m.app_meetings_stop_button()}>
                               <button
@@ -427,7 +386,6 @@ export function TranscriptionTable({
                             </Tooltip>
                           )}
 
-                          {/* Retry failed transcription */}
                           {isFailed && (
                             <Tooltip label={m.app_transcribe_retry_button()}>
                               <button
@@ -445,7 +403,6 @@ export function TranscriptionTable({
                             </Tooltip>
                           )}
 
-                          {/* Copy transcript */}
                           {item.text && (
                             <Tooltip label={m.app_transcribe_copy_label()}>
                               <button
@@ -463,7 +420,6 @@ export function TranscriptionTable({
                             </Tooltip>
                           )}
 
-                          {/* Download transcript */}
                           {item.text && (
                             <Tooltip label={m.app_transcribe_download_label()}>
                               <button
@@ -477,7 +433,6 @@ export function TranscriptionTable({
                             </Tooltip>
                           )}
 
-                          {/* Delete */}
                           <Tooltip label={m.app_transcribe_delete_label()}>
                             <button
                               onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
@@ -487,16 +442,16 @@ export function TranscriptionTable({
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
-                        </div>
+                        </>
                       )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </CardContent>
-    </Card>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
