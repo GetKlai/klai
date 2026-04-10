@@ -229,7 +229,7 @@ export function TranscriptionTable({
               <th className="py-3 pr-2 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-28">
                 {m.app_transcribe_col_date()}
               </th>
-              <th className="py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-32" />
+              <th className="py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-40" />
             </tr>
           </thead>
           <tbody>
@@ -353,7 +353,7 @@ export function TranscriptionTable({
                   </td>
 
                   {/* Actions - always visible, muted until hover */}
-                  <td className="py-4 align-top text-right w-32">
+                  <td className="py-4 align-top text-right w-40">
                     {isEditing ? null : isConfirmingDelete ? (
                       <div className="flex items-center justify-end gap-1">
                         {isDeleting ? (
