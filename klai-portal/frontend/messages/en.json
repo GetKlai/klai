@@ -952,6 +952,7 @@
 
   "admin_groups_edit": "Edit group",
   "admin_groups_delete": "Delete group",
+  "admin_groups_delete_confirm": "Delete {name} group?",
   "admin_groups_confirm_delete_title": "Delete group",
   "admin_groups_confirm_delete_description": "All memberships will be removed. This cannot be undone.",
   "admin_groups_success_updated": "Group updated",

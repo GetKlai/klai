@@ -952,6 +952,7 @@
 
   "admin_groups_edit": "Groep bewerken",
   "admin_groups_delete": "Groep verwijderen",
+  "admin_groups_delete_confirm": "Verwijder {name} groep?",
   "admin_groups_confirm_delete_title": "Groep verwijderen",
   "admin_groups_confirm_delete_description": "Alle lidmaatschappen worden verwijderd. Dit kan niet ongedaan worden gemaakt.",
   "admin_groups_success_updated": "Groep bijgewerkt",
