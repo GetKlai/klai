@@ -8,6 +8,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { TranscriptionTable } from './_components/TranscriptionTable'
+import { DEV_TRANSCRIPTIONS, DEV_MEETINGS } from './_dev-fixtures'
 import type {
   TranscriptionItem,
   TranscriptionListResponse,
@@ -15,6 +16,8 @@ import type {
   MeetingListResponse,
   UnifiedItem,
 } from './_types'
+
+const IS_DEV = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
 type TranscribeSearch = { search?: string }
 
@@ -84,13 +87,27 @@ function TranscribePage() {
 
   const { data: transcriptionsData, isLoading: transcriptionsLoading, error: transcriptionsError, refetch: refetchTranscriptions } = useQuery<TranscriptionListResponse>({
     queryKey: ['transcriptions'],
-    queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token),
+    queryFn: async () => {
+      try {
+        return await apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token)
+      } catch (e) {
+        if (IS_DEV) return DEV_TRANSCRIPTIONS
+        throw e
+      }
+    },
     enabled: !!token,
   })
 
   const { data: meetingsData, isLoading: meetingsLoading, error: meetingsError, refetch: refetchMeetings } = useQuery<MeetingListResponse>({
     queryKey: ['meetings'],
-    queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token),
+    queryFn: async () => {
+      try {
+        return await apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token)
+      } catch (e) {
+        if (IS_DEV) return DEV_MEETINGS
+        throw e
+      }
+    },
     enabled: !!token,
     refetchInterval: (query) => {
       const data = query.state.data
