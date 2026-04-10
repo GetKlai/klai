@@ -182,23 +182,55 @@ Use CSS variables for all semantic colors. Never use raw Tailwind color classes 
 
 ## Deletion confirmation patterns
 
-### Standard: inline row confirmation (Check / X)
+### Standard: `InlineDeleteConfirm` component (table rows)
 
-For single-item deletion where the action is reversible or low-impact (e.g. a transcription, a notebook):
+`components/ui/inline-delete-confirm.tsx`
+
+For any deletion in a table row. Uses the ghost spacer + absolute overlay pattern: action icons stay in the DOM as an invisible spacer (holding column width), while an absolutely-positioned confirm/cancel overlay appears without layout shift.
 
 ```tsx
-// Row switches to confirmation state on delete click
-isConfirmingDelete ? (
-  <>
-    <button onClick={() => deleteMutation.mutate(item.id)}
-      className="... bg-[var(--color-destructive)] text-white"><Check /></button>
-    <button onClick={() => setConfirmingDeleteId(null)}
-      className="... border border-[var(--color-border)]"><X /></button>
-  </>
-) : (
-  <button onClick={() => setConfirmingDeleteId(item.id)}><Trash2 /></button>
-)
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+
+// State
+const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+
+// In the cell renderer
+cell: ({ row }) => {
+  const isConfirming = confirmDeleteId === row.original.id
+  return (
+    <InlineDeleteConfirm
+      isConfirming={isConfirming}
+      isPending={deleteMutation.isPending}
+      label={m.some_delete_confirm({ name: row.original.name })}
+      cancelLabel={m.cancel()}
+      onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
+      onCancel={() => setConfirmDeleteId(null)}
+    >
+      <div className="flex items-center justify-end gap-1">
+        <button
+          onClick={() => setConfirmDeleteId(row.original.id)}
+          className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+        {/* other action icons */}
+      </div>
+    </InlineDeleteConfirm>
+  )
+}
 ```
+
+Rules:
+- `label` takes a `ReactNode` — use an i18n string with `{name}` param, never string concatenation
+- `children` is the spacer: always provide a flex div with the row's action icons
+- The component owns `relative`, `opacity-0 pointer-events-none`, `absolute inset-y-0 right-0`, `[&_svg]:size-2.5`, `whitespace-nowrap` — do NOT add these in the call site
+
+**Uses:**
+- `routes/admin/groups/index.tsx` — delete group
+- `routes/admin/groups/$groupId/index.tsx` — remove member
+- `routes/admin/users/index.tsx` — remove invited user
+- `routes/app/focus/index.tsx` — delete notebook
+- `routes/app/transcribe/_components/TranscriptionTable.tsx` — delete transcription
 
 ### Exception: name-confirmation modal
 

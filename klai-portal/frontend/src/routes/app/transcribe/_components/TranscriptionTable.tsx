@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import {
@@ -355,8 +355,15 @@ export function TranscriptionTable({
                   {/* Actions */}
                   <td className="py-4 align-top text-right w-36">
                     {isEditing ? null : (
-                      <div className="relative">
-                        <div className={`flex items-start justify-end gap-2 mt-1 ${isConfirmingDelete ? 'opacity-0 pointer-events-none' : ''}`}>
+                      <InlineDeleteConfirm
+                        isConfirming={isConfirmingDelete}
+                        isPending={isDeleting}
+                        label={m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
+                        cancelLabel={m.app_transcribe_delete_cancel()}
+                        onConfirm={() => handleDelete(item)}
+                        onCancel={() => setConfirmingDeleteId(null)}
+                      >
+                        <div className="flex items-start justify-end gap-2 mt-1">
                         {/* Rename */}
                         <Tooltip label={m.app_transcribe_edit_label()}>
                           <button
@@ -447,29 +454,7 @@ export function TranscriptionTable({
                           </button>
                         </Tooltip>
                         </div>
-                        {isConfirmingDelete && (
-                          <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
-                            <Button
-                              size="sm"
-                              className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
-                              disabled={isDeleting}
-                              onClick={() => handleDelete(item)}
-                            >
-                              {isDeleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                              {m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
-                              onClick={() => setConfirmingDeleteId(null)}
-                            >
-                              <X />
-                              {m.app_transcribe_delete_cancel()}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
+                      </InlineDeleteConfirm>
                     )}
                   </td>
                 </tr>

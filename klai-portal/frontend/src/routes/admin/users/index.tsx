@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -29,7 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Trash2, Send, Loader2, Pencil, Check, X, MoreHorizontal, Pause, Play, UserX } from 'lucide-react'
+import { Trash2, Send, Loader2, Pencil, MoreHorizontal, Pause, Play, UserX } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime, plural } from '@/paraglide/registry'
@@ -198,111 +199,93 @@ function UsersPage() {
           deleteMutation.isPending &&
           deleteMutation.variables?.zitadel_user_id === user.zitadel_user_id
 
-        if (isConfirmingDelete) {
-          return (
-            <div className="flex items-center gap-1">
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-              ) : (
-                <>
+        return (
+          <InlineDeleteConfirm
+            isConfirming={isConfirmingDelete}
+            isPending={isDeleting}
+            label={m.admin_users_delete_confirm({ name: `${user.first_name} ${user.last_name}`.trim() || user.email })}
+            cancelLabel={m.admin_users_cancel()}
+            onConfirm={() => { setConfirmingDeleteId(null); deleteMutation.mutate(user) }}
+            onCancel={() => setConfirmingDeleteId(null)}
+          >
+            <div className="flex items-center gap-2">
+              {user.invite_pending && (
+                <Tooltip label={m.admin_users_resend_invite()}>
                   <button
-                    onClick={() => { setConfirmingDeleteId(null); deleteMutation.mutate(user) }}
+                    disabled={isResending}
+                    onClick={() => resendInviteMutation.mutate(user)}
+                    aria-label={m.admin_users_resend_invite()}
+                    className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
+                  >
+                    {isResending
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Send className="h-3.5 w-3.5" />
+                    }
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip label={m.admin_users_edit()}>
+                <button
+                  onClick={() => navigate({ to: '/admin/users/$userId/edit', params: { userId: user.zitadel_user_id } })}
+                  aria-label={m.admin_users_edit()}
+                  className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              {user.invite_pending && (
+                <Tooltip label={m.admin_users_delete()}>
+                  <button
+                    onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
                     aria-label={m.admin_users_delete()}
-                    className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
+                    className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                   >
-                    <Check className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    onClick={() => setConfirmingDeleteId(null)}
-                    aria-label={m.admin_users_col_actions()}
-                    className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </>
+                </Tooltip>
+              )}
+              {!user.invite_pending && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      aria-label={m.admin_users_col_actions()}
+                      className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {user.status === 'active' && (
+                      <DropdownMenuItem
+                        onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
+                        disabled={isSelf}
+                      >
+                        <Pause className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_suspend()}
+                      </DropdownMenuItem>
+                    )}
+                    {user.status === 'suspended' && (
+                      <DropdownMenuItem
+                        onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
+                      >
+                        <Play className="mr-2 h-4 w-4" />
+                        {m.admin_users_action_reactivate()}
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
+                      disabled={isSelf}
+                      className="text-[var(--color-destructive)]"
+                    >
+                      <UserX className="mr-2 h-4 w-4" />
+                      {m.admin_users_action_offboard()}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
-          )
-        }
-
-        return (
-          <div className="flex items-center gap-2">
-            {user.invite_pending && (
-              <Tooltip label={m.admin_users_resend_invite()}>
-                <button
-                  disabled={isResending}
-                  onClick={() => resendInviteMutation.mutate(user)}
-                  aria-label={m.admin_users_resend_invite()}
-                  className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
-                >
-                  {isResending
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <Send className="h-3.5 w-3.5" />
-                  }
-                </button>
-              </Tooltip>
-            )}
-            <Tooltip label={m.admin_users_edit()}>
-              <button
-                onClick={() => navigate({ to: '/admin/users/$userId/edit', params: { userId: user.zitadel_user_id } })}
-                aria-label={m.admin_users_edit()}
-                className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            {user.invite_pending && (
-              <Tooltip label={m.admin_users_delete()}>
-                <button
-                  onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
-                  aria-label={m.admin_users_delete()}
-                  className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </Tooltip>
-            )}
-            {!user.invite_pending && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    aria-label={m.admin_users_col_actions()}
-                    className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {user.status === 'active' && (
-                    <DropdownMenuItem
-                      onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
-                      disabled={isSelf}
-                    >
-                      <Pause className="mr-2 h-4 w-4" />
-                      {m.admin_users_action_suspend()}
-                    </DropdownMenuItem>
-                  )}
-                  {user.status === 'suspended' && (
-                    <DropdownMenuItem
-                      onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
-                    >
-                      <Play className="mr-2 h-4 w-4" />
-                      {m.admin_users_action_reactivate()}
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
-                    disabled={isSelf}
-                    className="text-[var(--color-destructive)]"
-                  >
-                    <UserX className="mr-2 h-4 w-4" />
-                    {m.admin_users_action_offboard()}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
+          </InlineDeleteConfirm>
         )
       },
     }),
