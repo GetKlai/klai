@@ -285,10 +285,15 @@ async def taxonomy_bootstrap_proposals(
         logger.info("bootstrap_proposals_no_documents", kb_slug=req.kb_slug, org_id=req.org_id)
         return BootstrapResponse(documents_scanned=0, proposals_submitted=0)
 
+    # Fetch existing category names so the LLM doesn't propose duplicates.
+    existing_nodes = await fetch_taxonomy_nodes(req.kb_slug, req.org_id)
+    existing_names = [n.name for n in existing_nodes]
+
     proposals_submitted = await generate_bootstrap_proposals(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         documents=documents,
+        existing_category_names=existing_names,
     )
 
     logger.info(

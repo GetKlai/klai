@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { taxonomyLogger } from '@/lib/logger'
+import { toast } from 'sonner'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type {
   KnowledgeBase, MembersResponse, TaxonomyNode, TaxonomyProposal,
@@ -518,6 +519,17 @@ function TaxonomyTab() {
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposalId}/approve`, token, { method: 'POST' })
     },
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+    },
+    onError: (err) => {
+      const is409 = err instanceof Error && err.message.includes('409')
+      taxonomyLogger.warn('Proposal approve failed', { error: String(err), is409 })
+      if (is409) {
+        toast.error(m.knowledge_taxonomy_proposals_conflict())
+      } else {
+        toast.error(m.knowledge_taxonomy_proposals_approve_error())
+      }
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-proposals', kbSlug] })
       void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
     },

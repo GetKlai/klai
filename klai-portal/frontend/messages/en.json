@@ -1261,6 +1261,8 @@
   "knowledge_taxonomy_suggest_applying": "Tagging existing documents...",
   "knowledge_taxonomy_suggest_done": "Done! All documents have been categorised.",
   "knowledge_taxonomy_suggest_error": "Could not generate suggestions",
+  "knowledge_taxonomy_proposals_conflict": "This category already exists — proposal skipped.",
+  "knowledge_taxonomy_proposals_approve_error": "Could not approve this proposal. Please try again.",
 
   "gaps_page_title": "Knowledge Gaps",
   "gaps_index_card_heading": "Knowledge Gaps",
