@@ -55,7 +55,7 @@ _SYSTEM_PROMPT = (
     "Tags should be lowercase, concise keywords describing the document content."
     '\n\nReply with ONLY a JSON object, no markdown, no explanation: '
     '{"nodes": [{"node_id": <int>, "confidence": <float 0-1>}], '
-    '"tags": ["<string>"], "reasoning": "<string>"}'
+    '"tags": ["<string>"]}'
 )
 
 
@@ -156,7 +156,7 @@ async def _call_litellm(user_message: str) -> dict:
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.0,
-                "max_tokens": 500,
+                "max_tokens": 300,
             },
         )
         resp.raise_for_status()
