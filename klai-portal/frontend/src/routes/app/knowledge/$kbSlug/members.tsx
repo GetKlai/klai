@@ -3,7 +3,6 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { Globe, Lock, Users, Search, X } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
   AlertDialog,
@@ -223,252 +222,231 @@ function MembersTab() {
   ]
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Visibility selector — owners only */}
       {kb && kb.owner_type === 'org' && isOwner && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">{m.knowledge_sharing_who_can_access()}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex flex-col gap-2">
-              {visibilityOptions.map(({ mode, icon: Icon, label, description }) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => handleVisibilityChange(mode)}
-                  className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                    visibilityMode === mode
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
-                      : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/50'
-                  }`}
-                >
-                  <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${
-                    visibilityMode === mode ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted-foreground)]'
-                  }`} />
-                  <div>
-                    <span className={`text-sm font-medium ${
-                      visibilityMode === mode ? 'text-[var(--color-foreground)]' : 'text-[var(--color-foreground)]'
-                    }`}>
-                      {label}
-                    </span>
-                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                      {description}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-          </CardContent>
-        </Card>
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+            {m.knowledge_sharing_who_can_access()}
+          </h2>
+          <div className="flex flex-col gap-2">
+            {visibilityOptions.map(({ mode, icon: Icon, label, description }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => handleVisibilityChange(mode)}
+                className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+                  visibilityMode === mode
+                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/50'
+                }`}
+              >
+                <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${
+                  visibilityMode === mode ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted-foreground)]'
+                }`} />
+                <div>
+                  <span className="text-sm font-medium text-[var(--color-foreground)]">
+                    {label}
+                  </span>
+                  <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                    {description}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
-      {/* Contribute toggle — separate card, only for public/org, owners only */}
+      {/* Contribute toggle — only for public/org, owners only */}
       {kb && kb.owner_type === 'org' && isOwner && visibilityMode !== 'restricted' && (
-        <Card>
-          <CardContent className="pt-4">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allowContribute}
-                onChange={handleContributeToggle}
-                className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
-              />
-              <div>
-                <span className="text-sm font-medium text-[var(--color-foreground)]">
-                  {m.knowledge_sharing_contributor_toggle()}
-                </span>
-                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                  {m.knowledge_sharing_contributor_toggle_description()}
-                </p>
-              </div>
-            </label>
-          </CardContent>
-        </Card>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allowContribute}
+            onChange={handleContributeToggle}
+            className="mt-1 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-ring)]"
+          />
+          <div>
+            <span className="text-sm font-medium text-[var(--color-foreground)]">
+              {m.knowledge_sharing_contributor_toggle()}
+            </span>
+            <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+              {m.knowledge_sharing_contributor_toggle_description()}
+            </p>
+          </div>
+        </label>
       )}
 
       {/* Non-owner visibility display */}
       {kb && kb.owner_type === 'org' && !isOwner && (
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-              {visibilityMode === 'public' && <Globe className="h-4 w-4" />}
-              {visibilityMode === 'org' && <Users className="h-4 w-4" />}
-              {visibilityMode === 'restricted' && <Lock className="h-4 w-4" />}
-              <span>
-                {visibilityMode === 'public' && m.knowledge_sharing_visibility_public()}
-                {visibilityMode === 'org' && m.knowledge_sharing_visibility_org()}
-                {visibilityMode === 'restricted' && m.knowledge_sharing_visibility_restricted()}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+          {visibilityMode === 'public' && <Globe className="h-4 w-4" />}
+          {visibilityMode === 'org' && <Users className="h-4 w-4" />}
+          {visibilityMode === 'restricted' && <Lock className="h-4 w-4" />}
+          <span>
+            {visibilityMode === 'public' && m.knowledge_sharing_visibility_public()}
+            {visibilityMode === 'org' && m.knowledge_sharing_visibility_org()}
+            {visibilityMode === 'restricted' && m.knowledge_sharing_visibility_restricted()}
+          </span>
+        </div>
       )}
 
       {/* Groups — MemberPicker style */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">
-            {visibilityMode !== 'restricted' ? m.knowledge_sharing_groups_extra() : m.knowledge_sharing_groups()}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {/* Group search combobox — owners only */}
-          {isOwner && (
-            <div
-              className="relative"
-              ref={groupRef}
-              onFocusCapture={() => setGroupFocused(true)}
-              onBlurCapture={(e) => {
-                if (!groupRef.current?.contains(e.relatedTarget as Node)) {
-                  setGroupFocused(false)
-                }
-              }}
-            >
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
-              <Input
-                value={groupSearch}
-                onChange={(e) => setGroupSearch(e.target.value)}
-                placeholder={m.knowledge_sharing_search_group()}
-                className="pl-9"
-              />
-              {groupFocused && filteredGroups.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
-                  {filteredGroups.map((g) => (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        inviteGroupMutation.mutate({ groupId: g.id, role: 'viewer' })
-                      }}
-                      className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
-                    >
-                      {g.name}
-                    </button>
-                  ))}
-                </div>
+      <div className="space-y-2">
+        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+          {visibilityMode !== 'restricted' ? m.knowledge_sharing_groups_extra() : m.knowledge_sharing_groups()}
+        </h2>
+        {/* Group search combobox — owners only */}
+        {isOwner && (
+          <div
+            className="relative"
+            ref={groupRef}
+            onFocusCapture={() => setGroupFocused(true)}
+            onBlurCapture={(e) => {
+              if (!groupRef.current?.contains(e.relatedTarget as Node)) {
+                setGroupFocused(false)
+              }
+            }}
+          >
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+            <Input
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+              placeholder={m.knowledge_sharing_search_group()}
+              className="pl-9"
+            />
+            {groupFocused && filteredGroups.length > 0 && (
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+                {filteredGroups.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      inviteGroupMutation.mutate({ groupId: g.id, role: 'viewer' })
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
+                  >
+                    {g.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {inviteGroupMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">{String(inviteGroupMutation.error)}</p>
+        )}
+
+        {/* Existing group members as cards */}
+        {members?.groups.map((g) => (
+          <div
+            key={g.id}
+            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+          >
+            <span className="text-sm text-[var(--color-foreground)]">{g.group_name}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[var(--color-muted-foreground)]">{g.role}</span>
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRemoveGroup(g.id)}
+                  className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
-          )}
+          </div>
+        ))}
 
-          {inviteGroupMutation.error && (
-            <p className="text-sm text-[var(--color-destructive)]">{String(inviteGroupMutation.error)}</p>
-          )}
-
-          {/* Existing group members as cards */}
-          {members?.groups.map((g) => (
-            <div
-              key={g.id}
-              className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
-            >
-              <span className="text-sm text-[var(--color-foreground)]">{g.group_name}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[var(--color-muted-foreground)]">{g.role}</span>
-                {isOwner && (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingRemoveGroup(g.id)}
-                    className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-
-          {(!members?.groups || members.groups.length === 0) && !isOwner && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_groups()}</p>
-          )}
-        </CardContent>
-      </Card>
+        {(!members?.groups || members.groups.length === 0) && !isOwner && (
+          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_groups()}</p>
+        )}
+      </div>
 
       {/* Persons — MemberPicker style */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">
-            {visibilityMode !== 'restricted' ? m.knowledge_sharing_persons_extra() : m.knowledge_sharing_persons()}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {/* Person search combobox — owners only */}
-          {isOwner && (
-            <div
-              className="relative"
-              ref={userRef}
-              onFocusCapture={() => setUserFocused(true)}
-              onBlurCapture={(e) => {
-                if (!userRef.current?.contains(e.relatedTarget as Node)) {
-                  setUserFocused(false)
-                }
-              }}
-            >
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
-              <Input
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                placeholder={m.knowledge_sharing_search_person()}
-                className="pl-9"
-              />
-              {userFocused && filteredUsers.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
-                  {filteredUsers.map((u) => (
-                    <button
-                      key={u.zitadel_user_id}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        inviteUserMutation.mutate({ email: u.email, role: 'viewer' })
-                      }}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
-                    >
-                      <span className="text-[var(--color-foreground)]">{u.display_name}</span>
-                      <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
-                    </button>
-                  ))}
-                </div>
+      <div className="space-y-2">
+        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+          {visibilityMode !== 'restricted' ? m.knowledge_sharing_persons_extra() : m.knowledge_sharing_persons()}
+        </h2>
+        {/* Person search combobox — owners only */}
+        {isOwner && (
+          <div
+            className="relative"
+            ref={userRef}
+            onFocusCapture={() => setUserFocused(true)}
+            onBlurCapture={(e) => {
+              if (!userRef.current?.contains(e.relatedTarget as Node)) {
+                setUserFocused(false)
+              }
+            }}
+          >
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+            <Input
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder={m.knowledge_sharing_search_person()}
+              className="pl-9"
+            />
+            {userFocused && filteredUsers.length > 0 && (
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+                {filteredUsers.map((u) => (
+                  <button
+                    key={u.zitadel_user_id}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      inviteUserMutation.mutate({ email: u.email, role: 'viewer' })
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
+                  >
+                    <span className="text-[var(--color-foreground)]">{u.display_name}</span>
+                    <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {inviteUserMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">{String(inviteUserMutation.error)}</p>
+        )}
+
+        {/* Existing user members as cards */}
+        {members?.users.map((u) => (
+          <div
+            key={u.id}
+            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+          >
+            <div>
+              <span className="text-sm text-[var(--color-foreground)]">{u.display_name ?? u.email ?? u.user_id}</span>
+              {u.display_name && u.email && (
+                <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
               )}
             </div>
-          )}
-
-          {inviteUserMutation.error && (
-            <p className="text-sm text-[var(--color-destructive)]">{String(inviteUserMutation.error)}</p>
-          )}
-
-          {/* Existing user members as cards */}
-          {members?.users.map((u) => (
-            <div
-              key={u.id}
-              className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
-            >
-              <div>
-                <span className="text-sm text-[var(--color-foreground)]">{u.display_name ?? u.email ?? u.user_id}</span>
-                {u.display_name && u.email && (
-                  <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[var(--color-muted-foreground)]">{u.role}</span>
-                {isOwner && u.user_id !== myUserId && (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingRemoveUser(u.id)}
-                    className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[var(--color-muted-foreground)]">{u.role}</span>
+              {isOwner && u.user_id !== myUserId && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRemoveUser(u.id)}
+                  className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
-          ))}
+          </div>
+        ))}
 
-          {(!members?.users || members.users.length === 0) && !isOwner && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_users()}</p>
-          )}
-        </CardContent>
-      </Card>
+        {(!members?.users || members.users.length === 0) && !isOwner && (
+          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_members_empty_users()}</p>
+        )}
+      </div>
 
       <p className="text-xs text-[var(--color-muted-foreground)] italic">
         {m.knowledge_sharing_creator_note({ name: '' })}

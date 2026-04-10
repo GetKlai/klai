@@ -52,8 +52,10 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 class McpServerOut(BaseModel):
     id: str
+    display_name: str
     description: str
     enabled: bool
+    managed: bool
     required_env_vars: list[str]
     configured_env_vars: list[str]
 
@@ -107,11 +109,17 @@ async def list_mcp_servers(
     for server_id, catalog_entry in catalog_servers.items():
         tenant_entry = tenant_config.get(server_id, {})
         configured_vars = list(tenant_entry.get("env", {}).keys()) if tenant_entry else []
+        is_managed = bool(catalog_entry.get("managed", False))
+        # Managed servers are always enabled — they are wired via librechat.yaml,
+        # tenants cannot disable or configure them.
+        enabled = True if is_managed else tenant_entry.get("enabled", False)
         servers_out.append(
             McpServerOut(
                 id=server_id,
+                display_name=catalog_entry.get("display_name", server_id),
                 description=catalog_entry.get("description", ""),
-                enabled=tenant_entry.get("enabled", False),
+                enabled=enabled,
+                managed=is_managed,
                 required_env_vars=catalog_entry.get("required_env_vars", []),
                 configured_env_vars=configured_vars,
             )
@@ -148,6 +156,14 @@ async def update_mcp_server(
         )
 
     catalog_entry = catalog_servers[server_id]
+
+    # Managed servers (wired via librechat.yaml) cannot be configured by tenants.
+    if catalog_entry.get("managed", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"MCP server '{server_id}' is managed and cannot be modified",
+        )
+
     required_vars = catalog_entry.get("required_env_vars", [])
 
     # Validate all required vars are present when enabling
@@ -230,6 +246,14 @@ async def test_mcp_server(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"MCP server '{server_id}' not found in catalog",
+        )
+
+    # Managed servers are wired via librechat.yaml; testing requires headers
+    # that only LibreChat injects (X-Org-Slug, X-Internal-Secret, etc).
+    if catalog_servers[server_id].get("managed", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"MCP server '{server_id}' is managed and cannot be tested from the portal",
         )
 
     tenant_config: dict[str, Any] = org.mcp_servers or {}

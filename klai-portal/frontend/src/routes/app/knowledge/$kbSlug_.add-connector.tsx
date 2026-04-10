@@ -4,10 +4,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles,
+  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles, Globe, FileText,
 } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
+import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
+import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -50,12 +51,17 @@ const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
   { value: 'unknown',     label: 'Unknown',     description: 'Type not specified' },
 ]
 
-const CONNECTOR_TYPES: { type: ConnectorType; label: () => string; available: boolean }[] = [
-  { type: 'github', label: m.admin_connectors_type_github, available: true },
-  { type: 'web_crawler', label: m.admin_connectors_type_website, available: true },
-  { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: false },
-  { type: 'notion', label: m.admin_connectors_type_notion, available: true },
-  { type: 'ms_docs', label: m.admin_connectors_type_ms_docs, available: false },
+const CONNECTOR_TYPES: {
+  type: ConnectorType
+  label: () => string
+  available: boolean
+  Icon: React.ComponentType<{ className?: string }>
+}[] = [
+  { type: 'github',       label: m.admin_connectors_type_github,       available: true,  Icon: SiGithub },
+  { type: 'web_crawler',  label: m.admin_connectors_type_website,      available: true,  Icon: Globe },
+  { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: false, Icon: SiGoogledrive },
+  { type: 'notion',       label: m.admin_connectors_type_notion,       available: true,  Icon: SiNotion },
+  { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,      available: false, Icon: FileText },
 ]
 
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
@@ -169,9 +175,9 @@ function AddConnectorPage() {
   })
 
   return (
-    <div className="p-6 max-w-lg">
+    <div className="p-6 max-w-xl">
       {/* Page header */}
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex items-center justify-between mb-6">
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
           {m.admin_connectors_add_title()}
         </h1>
@@ -181,58 +187,39 @@ function AddConnectorPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="space-y-4">
+      {/* Step indicator — shared component */}
+      {(() => {
+        const isSimple = selectedType === 'github' || selectedType === 'notion'
 
-            {/* Unified step breadcrumb — always shows all steps */}
-            {(() => {
-              type StepKey = 'type' | 'details' | 'preview' | 'settings' | 'configure'
-              const wcSteps: { key: StepKey; label: string; onClick?: () => void }[] = [
-                { key: 'type',     label: `1. ${m.admin_connectors_step_type()}`,                     onClick: () => setSelectedType(null) },
-                { key: 'details',  label: `2. ${m.admin_connectors_webcrawler_step_details()}`,        onClick: () => setWcStep('details') },
-                { key: 'preview',  label: `3. ${m.admin_connectors_webcrawler_step_preview()}`,        onClick: () => setWcStep('preview') },
-                { key: 'settings', label: `4. ${m.admin_connectors_webcrawler_step_settings()}` },
-              ]
-              const ghSteps: { key: StepKey; label: string; onClick?: () => void }[] = [
-                { key: 'type',      label: `1. ${m.admin_connectors_step_type()}`,      onClick: () => setSelectedType(null) },
-                { key: 'configure', label: `2. ${m.admin_connectors_step_configure()}` },
-              ]
-              const notionSteps: { key: StepKey; label: string; onClick?: () => void }[] = [
-                { key: 'type',      label: `1. ${m.admin_connectors_step_type()}`,      onClick: () => setSelectedType(null) },
-                { key: 'configure', label: `2. ${m.admin_connectors_step_configure()}` },
-              ]
-              const steps = selectedType === 'github' ? ghSteps : selectedType === 'notion' ? notionSteps : wcSteps
-              const currentKey: StepKey = !selectedType ? 'type' : (selectedType === 'github' || selectedType === 'notion') ? 'configure' : wcStep
-              const currentIdx = steps.findIndex((s) => s.key === currentKey)
-              return (
-                <div className="flex items-center gap-1.5 text-xs flex-wrap">
-                  {steps.map((step, i) => {
-                    const isPast = i < currentIdx
-                    const isActive = step.key === currentKey
-                    return (
-                      <span key={step.key} className="flex items-center gap-1.5">
-                        {i > 0 && <ChevronRight className="h-3 w-3 text-[var(--color-muted-foreground)]" />}
-                        {isPast && step.onClick ? (
-                          <button type="button" className="text-[var(--color-accent)] hover:underline" onClick={step.onClick}>
-                            {step.label}
-                          </button>
-                        ) : (
-                          <span className={isActive ? 'font-medium text-[var(--color-foreground)]' : 'text-[var(--color-muted-foreground)]'}>
-                            {step.label}
-                          </span>
-                        )}
-                      </span>
-                    )
-                  })}
-                </div>
-              )
-            })()}
+        const steps: StepItem[] = isSimple
+          ? [
+              { label: m.admin_connectors_step_type(),      onClick: () => setSelectedType(null) },
+              { label: m.admin_connectors_step_configure() },
+            ]
+          : [
+              { label: m.admin_connectors_step_type(),                onClick: () => setSelectedType(null) },
+              { label: m.admin_connectors_webcrawler_step_details(),  onClick: () => setWcStep('details') },
+              { label: m.admin_connectors_webcrawler_step_preview(),  onClick: () => setWcStep('preview') },
+              { label: m.admin_connectors_webcrawler_step_settings() },
+            ]
+
+        const WC_STEP_INDEX: Record<WcStep, number> = { details: 1, preview: 2, settings: 3 }
+        const currentIndex = !selectedType
+          ? 0
+          : isSimple
+            ? 1
+            : WC_STEP_INDEX[wcStep]
+
+        return <StepIndicator steps={steps} currentIndex={currentIndex} />
+      })()}
+
+      <div className="mt-6">
+        <div className="space-y-4">
 
             {/* Step 1: Type selection */}
             {!selectedType && (
               <div className="grid grid-cols-2 gap-3">
-                {CONNECTOR_TYPES.map(({ type, label, available }) => (
+                {CONNECTOR_TYPES.map(({ type, label, available, Icon }) => (
                   <button
                     key={type}
                     type="button"
@@ -252,6 +239,7 @@ function AddConnectorPage() {
                       !available ? 'cursor-not-allowed opacity-50' : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-accent)]/50',
                     ].join(' ')}
                   >
+                    <Icon className="h-4 w-4 text-[var(--color-accent)]" />
                     <span className="text-sm font-medium text-[var(--color-foreground)]">{label()}</span>
                     {!available && <Badge variant="outline" className="text-xs">{m.admin_connectors_coming_soon()}</Badge>}
                   </button>
@@ -603,9 +591,8 @@ function AddConnectorPage() {
               </div>
             )}
 
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }

@@ -3,7 +3,16 @@ version: "1.0"
 # Alleen entries in dit bestand kunnen door tenants worden geactiveerd via de Portal.
 # config_template bevat ${VAR} placeholders die LibreChat bij startup expandeert.
 servers:
+  klai-knowledge:
+    display_name: "Klai Knowledge"
+    description: "Zoek in je eigen kennisbanken en sla notities op."
+    managed: true
+    required_env_vars: []
+    config_template:
+      type: streamable-http
+      url: "http://klai-knowledge-mcp:8080/mcp"
   twenty-crm:
+    display_name: "Twenty CRM"
     description: "Twenty CRM -- contacten, bedrijven, deals, taken"
     required_env_vars:
       - TWENTY_API_KEY

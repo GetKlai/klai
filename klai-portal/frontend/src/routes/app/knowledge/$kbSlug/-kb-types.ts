@@ -1,6 +1,6 @@
 // Shared types for knowledge base detail routes
 
-export type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings'
+export type KBTab = 'overview' | 'connectors' | 'members' | 'items' | 'taxonomy' | 'settings' | 'advanced'
 
 export interface KnowledgeBase {
   id: number

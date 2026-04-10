@@ -23,7 +23,7 @@ function AdminLayout() {
     { to: '/admin/users', label: m.admin_nav_users(), icon: Users },
     { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban },
     { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
-    { to: '/admin/integrations', label: m.admin_nav_integrations(), icon: Puzzle },
+    { to: '/admin/mcps', label: m.admin_nav_integrations(), icon: Puzzle },
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
   ]
 

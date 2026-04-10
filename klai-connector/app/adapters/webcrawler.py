@@ -296,6 +296,7 @@ class WebCrawlerAdapter(BaseAdapter):
                     size=len(content_bytes),
                     content_type=ingest_content_type,
                     source_ref=url,
+                    source_url=url,
                 )
             )
 

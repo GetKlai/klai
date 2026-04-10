@@ -123,7 +123,7 @@ function FocusPage() {
             {!isLoading && countLabel}
           </p>
         </div>
-        <Button data-help-id="focus-add" onClick={() => navigate({ to: '/app/focus/new' })}>
+        <Button size="sm" data-help-id="focus-add" onClick={() => navigate({ to: '/app/focus/new' })}>
           <Plus className="mr-2 h-4 w-4" />
           {m.app_focus_new_notebook()}
         </Button>

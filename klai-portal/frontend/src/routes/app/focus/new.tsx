@@ -3,7 +3,6 @@ import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -88,83 +87,79 @@ function NewFocusPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="name">{m.app_focus_notebook_name_label()}</Label>
-              <Input
-                id="name"
-                type="text"
-                required
-                value={form.name}
-                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              />
-            </div>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="name">{m.app_focus_notebook_name_label()}</Label>
+          <Input
+            id="name"
+            type="text"
+            required
+            value={form.name}
+            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+          />
+        </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="description">
-                {m.app_focus_notebook_description_label()}
-              </Label>
-              <Input
-                id="description"
-                type="text"
-                placeholder={m.app_focus_notebook_description_optional()}
-                value={form.description}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, description: e.target.value }))
-                }
-              />
-            </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="description">
+            {m.app_focus_notebook_description_label()}
+          </Label>
+          <Input
+            id="description"
+            type="text"
+            placeholder={m.app_focus_notebook_description_optional()}
+            value={form.description}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, description: e.target.value }))
+            }
+          />
+        </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="default_mode">{m.app_focus_notebook_mode_label()}</Label>
-                <Select
-                  id="default_mode"
-                  value={form.default_mode}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, default_mode: e.target.value as Mode }))
-                  }
-                >
-                  <option value="narrow">{m.app_focus_notebook_mode_narrow()}</option>
-                  <option value="broad">{m.app_focus_notebook_mode_broad()}</option>
-                  <option value="web">{m.app_focus_notebook_mode_web()}</option>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="scope">{m.app_focus_notebook_scope_label()}</Label>
-                <Select
-                  id="scope"
-                  value={form.scope}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, scope: e.target.value as Scope }))
-                  }
-                >
-                  <option value="personal">{m.app_focus_notebook_scope_personal()}</option>
-                  <option value="org">{m.app_focus_notebook_scope_org()}</option>
-                </Select>
-              </div>
-            </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="default_mode">{m.app_focus_notebook_mode_label()}</Label>
+            <Select
+              id="default_mode"
+              value={form.default_mode}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, default_mode: e.target.value as Mode }))
+              }
+            >
+              <option value="narrow">{m.app_focus_notebook_mode_narrow()}</option>
+              <option value="broad">{m.app_focus_notebook_mode_broad()}</option>
+              <option value="web">{m.app_focus_notebook_mode_web()}</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="scope">{m.app_focus_notebook_scope_label()}</Label>
+            <Select
+              id="scope"
+              value={form.scope}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, scope: e.target.value as Scope }))
+              }
+            >
+              <option value="personal">{m.app_focus_notebook_scope_personal()}</option>
+              <option value="org">{m.app_focus_notebook_scope_org()}</option>
+            </Select>
+          </div>
+        </div>
 
-            {createMutation.error && (
-              <p className="text-sm text-[var(--color-destructive)]">
-                {createMutation.error instanceof Error
-                  ? createMutation.error.message
-                  : m.app_focus_create_submit() + ' mislukt'}
-              </p>
-            )}
+        {createMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {createMutation.error instanceof Error
+              ? createMutation.error.message
+              : m.app_focus_create_submit() + ' mislukt'}
+          </p>
+        )}
 
-            <div className="pt-2">
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending
-                  ? m.app_focus_loading()
-                  : m.app_focus_create_submit()}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+        <div className="pt-2">
+          <Button type="submit" disabled={createMutation.isPending}>
+            {createMutation.isPending
+              ? m.app_focus_loading()
+              : m.app_focus_create_submit()}
+          </Button>
+        </div>
+      </form>
     </div>
   )
 }
