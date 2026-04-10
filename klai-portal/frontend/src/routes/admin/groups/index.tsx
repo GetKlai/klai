@@ -13,8 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, Eye, Lock, Pencil, Plus } from 'lucide-react'
-import { DeleteConfirmButton } from '@/components/ui/delete-confirm-button'
+import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
 const AVATAR_COLORS = [
@@ -113,7 +112,7 @@ function AdminGroups() {
   const { create } = Route.useSearch()
   const showCreate = create === true
   const [newGroupName, setNewGroupName] = useState('')
-  const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-groups'],
@@ -174,13 +173,11 @@ function AdminGroups() {
       })
     },
     onSuccess: () => {
-      setDeletingGroupId(null)
       void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
       void queryClient.invalidateQueries({ queryKey: ['admin-group-memberships'] })
       toast.success(m.admin_groups_success_deleted())
     },
     onError: (err: Error) => {
-      setDeletingGroupId(null)
       toast.error(err.message)
     },
   })
@@ -232,16 +229,36 @@ function AdminGroups() {
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
           {!row.original.is_system && (
-            <DeleteConfirmButton
-              label={`${m.admin_groups_delete()} "${row.original.name}"?`}
-              confirmLabel={m.admin_groups_delete()}
-              cancelLabel={m.admin_users_cancel()}
-              isDeleting={deletingGroupId === row.original.id && deleteMutation.isPending}
-              onConfirm={() => {
-                setDeletingGroupId(row.original.id)
-                deleteMutation.mutate(row.original.id)
-              }}
-            />
+            confirmDeleteId === row.original.id ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  className="bg-[var(--color-destructive)] text-white hover:opacity-90"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.mutate(row.original.id)
+                    setConfirmDeleteId(null)
+                  }}
+                >
+                  {deleteMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    m.admin_groups_delete()
+                  )}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                  {m.admin_users_cancel()}
+                </Button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDeleteId(row.original.id)}
+                aria-label={`Delete ${row.original.name}`}
+                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )
           )}
           {!row.original.is_system && (
             <button
