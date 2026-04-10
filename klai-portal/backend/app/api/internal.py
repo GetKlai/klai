@@ -554,6 +554,7 @@ async def create_gap_event(
 
     # SPEC-KB-022 R6 + SPEC-KB-026 R4: async gap classification via knowledge-ingest
     if payload.taxonomy_node_ids is None and payload.nearest_kb_slug:
+
         async def _classify_gap(gap_id: int, org_zitadel_id: str, query_text: str, kb_slug: str) -> None:
             """Classify gap query against KB taxonomy via knowledge-ingest. Best-effort."""
             try:
@@ -620,9 +621,7 @@ async def regenerate_librechat_configs(
             detail=f"Base config not found at {base_yaml_path}",
         )
 
-    result = await db.execute(
-        select(PortalOrg).where(PortalOrg.provisioning_status == "ready")
-    )
+    result = await db.execute(select(PortalOrg).where(PortalOrg.provisioning_status == "ready"))
     tenants = result.scalars().all()
 
     updated: list[str] = []
