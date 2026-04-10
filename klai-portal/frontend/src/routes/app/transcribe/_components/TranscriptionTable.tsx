@@ -378,13 +378,13 @@ export function TranscriptionTable({
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-center justify-end gap-1 -mt-1">
+                      <div className="flex items-center justify-end gap-1">
                         {/* Rename */}
                         <Tooltip label={m.app_transcribe_edit_label()}>
                           <button
                             onClick={() => startEdit(item)}
                             aria-label={m.app_transcribe_edit_label()}
-                            className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                            className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -397,7 +397,7 @@ export function TranscriptionTable({
                               onClick={() => onStop(item.id)}
                               disabled={isItemStopping}
                               aria-label={m.app_meetings_stop_button()}
-                              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                              className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                             >
                               {isItemStopping ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -415,7 +415,7 @@ export function TranscriptionTable({
                               onClick={() => onRetry(item.id)}
                               disabled={isItemRetrying}
                               aria-label={m.app_transcribe_retry_button()}
-                              className="flex h-7 w-7 items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
+                              className="flex h-5 w-5 items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
                             >
                               {isItemRetrying ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -433,7 +433,7 @@ export function TranscriptionTable({
                               data-help-id="transcribe-copy"
                               onClick={() => void copyText(item)}
                               aria-label={m.app_transcribe_copy_label()}
-                              className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+                              className="flex h-5 w-5 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
                             >
                               {isCopied ? (
                                 <CheckCheck className="h-3.5 w-3.5 text-[var(--color-success)]" />
@@ -451,7 +451,7 @@ export function TranscriptionTable({
                               data-help-id="transcribe-download"
                               onClick={() => downloadText(item)}
                               aria-label={m.app_transcribe_download_label()}
-                              className="flex h-7 w-7 items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
+                              className="flex h-5 w-5 items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
                             >
                               <Download className="h-3.5 w-3.5" />
                             </button>
@@ -463,7 +463,7 @@ export function TranscriptionTable({
                           <button
                             onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
                             aria-label={m.app_transcribe_delete_label()}
-                            className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                            className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
