@@ -1202,6 +1202,7 @@
   "knowledge_taxonomy_node_add_child": "Subcategorie toevoegen",
   "knowledge_taxonomy_node_name_label": "Naam",
   "knowledge_taxonomy_node_name_placeholder": "Categorienaam",
+  "knowledge_taxonomy_node_description_placeholder": "Beschrijving (optioneel)",
   "knowledge_taxonomy_node_add_submit": "Toevoegen",
   "knowledge_taxonomy_node_add_cancel": "Annuleren",
   "knowledge_taxonomy_node_rename": "Hernoemen",

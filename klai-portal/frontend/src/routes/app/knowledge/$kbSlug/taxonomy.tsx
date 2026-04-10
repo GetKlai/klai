@@ -42,12 +42,13 @@ function CoverageWidget({
   onSuggest?: () => void
   isSuggesting?: boolean
   canEdit?: boolean
-  onRename?: (nodeId: number, newName: string) => void
+  onRename?: (nodeId: number, newName: string, description?: string) => void
   onDelete?: (nodeId: number) => void
 }) {
   const total = coverage.total_chunks
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [editingDescription, setEditingDescription] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const barColor = (pct: number) => {
@@ -55,18 +56,26 @@ function CoverageWidget({
     return 'bg-amber-400'
   }
 
-  function startRename(nodeId: number, currentName: string): void {
+  function startEdit(nodeId: number, currentName: string, currentDescription: string): void {
     setEditingNodeId(nodeId)
     setEditingName(currentName)
+    setEditingDescription(currentDescription)
     setConfirmDeleteId(null)
   }
 
-  function submitRename(): void {
+  function submitEdit(): void {
     if (editingNodeId !== null && editingName.trim() && onRename) {
-      onRename(editingNodeId, editingName.trim())
+      onRename(editingNodeId, editingName.trim(), editingDescription.trim())
     }
     setEditingNodeId(null)
     setEditingName('')
+    setEditingDescription('')
+  }
+
+  function cancelEdit(): void {
+    setEditingNodeId(null)
+    setEditingName('')
+    setEditingDescription('')
   }
 
   if (coverage.nodes.length === 0) {
@@ -100,20 +109,36 @@ function CoverageWidget({
           >
             <div className="flex items-center justify-between mb-1.5 gap-2">
               {isEditing ? (
-                <form
-                  className="flex items-center gap-1.5 flex-1"
-                  onSubmit={(e) => { e.preventDefault(); submitRename() }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Input
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    className="h-7 text-sm flex-1"
-                    autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Escape') { setEditingNodeId(null); setEditingName('') } }}
-                    onBlur={submitRename}
-                  />
-                </form>
+                <div className="flex-1" onClick={(e) => e.stopPropagation()}>
+                  <form
+                    className="space-y-1.5"
+                    onSubmit={(e) => { e.preventDefault(); submitEdit() }}
+                  >
+                    <Input
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      className="h-7 text-sm"
+                      autoFocus
+                      placeholder={m.knowledge_taxonomy_node_name_placeholder()}
+                      onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
+                    />
+                    <Input
+                      value={editingDescription}
+                      onChange={(e) => setEditingDescription(e.target.value)}
+                      className="h-7 text-xs"
+                      placeholder={m.knowledge_taxonomy_node_description_placeholder()}
+                      onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
+                    />
+                    <div className="flex items-center gap-1">
+                      <Button type="submit" size="sm" className="h-6 text-xs px-2" disabled={!editingName.trim()}>
+                        {m.knowledge_taxonomy_node_add_submit()}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={cancelEdit}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </form>
+                </div>
               ) : (
                 <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
                   {node.taxonomy_node_name}
@@ -124,7 +149,7 @@ function CoverageWidget({
                   <span className="hidden group-hover/row:inline-flex items-center gap-0.5">
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); startRename(node.taxonomy_node_id, node.taxonomy_node_name) }}
+                      onClick={(e) => { e.stopPropagation(); startEdit(node.taxonomy_node_id, node.taxonomy_node_name, node.description ?? '') }}
                       className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                       aria-label={m.knowledge_taxonomy_node_rename()}
                     >
@@ -394,13 +419,18 @@ function TaxonomyTab() {
   })
 
   const renameNodeMutation = useMutation({
-    mutationFn: async ({ nodeId, name }: { nodeId: number; name: string }) => {
+    mutationFn: async ({ nodeId, name, description }: { nodeId: number; name: string; description?: string }) => {
+      const body: Record<string, string> = { name }
+      if (description !== undefined) body.description = description
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, token, {
         method: 'PATCH',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(body),
       })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
+    },
   })
 
   const deleteNodeMutation = useMutation({
@@ -660,7 +690,7 @@ function TaxonomyTab() {
               onSuggest={canEdit && suggestState === 'idle' ? () => bootstrapMutation.mutate() : undefined}
               isSuggesting={bootstrapMutation.isPending}
               canEdit={canEdit}
-              onRename={(nodeId, newName) => renameNodeMutation.mutate({ nodeId, name: newName })}
+              onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}
               onDelete={(nodeId) => deleteNodeMutation.mutate(nodeId)}
             />
           )}
