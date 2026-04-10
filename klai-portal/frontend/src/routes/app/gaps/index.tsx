@@ -97,7 +97,7 @@ function GapsPage() {
 
   if (!isAdmin) {
     return (
-      <div className="p-8 max-w-2xl">
+      <div className="p-6 max-w-2xl">
         <p className="text-[var(--color-muted-foreground)]">Admin access required.</p>
       </div>
     )
@@ -106,7 +106,7 @@ function GapsPage() {
   const gaps = data?.gaps ?? []
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-6 max-w-4xl">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />

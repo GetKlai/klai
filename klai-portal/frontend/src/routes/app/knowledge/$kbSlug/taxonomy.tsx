@@ -32,25 +32,24 @@ function CoverageWidget({
   onNodeClick,
   onSuggest,
   isSuggesting,
+  canEdit,
+  onRename,
+  onDelete,
 }: {
   coverage: TaxonomyCoverage
   activeNodeId: number | null
   onNodeClick: (nodeId: number) => void
   onSuggest?: () => void
   isSuggesting?: boolean
+  canEdit?: boolean
+  onRename?: (nodeId: number, newName: string) => void
+  onDelete?: (nodeId: number) => void
 }) {
   const total = coverage.total_chunks
 
-  const healthColor = (health: string) => {
-    if (health === 'healthy') return 'bg-[var(--color-success)]'
-    if (health === 'attention_needed') return 'bg-amber-400'
-    return 'bg-[var(--color-border)]'
-  }
-
-  const healthLabel = (health: string) => {
-    if (health === 'healthy') return m.knowledge_taxonomy_coverage_health_healthy()
-    if (health === 'attention_needed') return m.knowledge_taxonomy_coverage_health_attention()
-    return m.knowledge_taxonomy_coverage_health_empty()
+  const barColor = (pct: number) => {
+    if (pct >= 5) return 'bg-[var(--color-success)]'
+    return 'bg-amber-400'
   }
 
   if (coverage.nodes.length === 0) {
@@ -82,24 +81,13 @@ function CoverageWidget({
               <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
                 {node.taxonomy_node_name}
               </span>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
-                  {pct}%
-                </span>
-                <span
-                  className="text-xs px-1.5 py-0.5 rounded-full font-medium"
-                  style={{
-                    background: node.health === 'healthy' ? 'var(--color-success)' : node.health === 'attention_needed' ? '#F59E0B' : 'var(--color-border)',
-                    color: node.health === 'empty' ? 'var(--color-muted-foreground)' : '#fff',
-                  }}
-                >
-                  {healthLabel(node.health)}
-                </span>
-              </div>
+              <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                {pct}%
+              </span>
             </div>
             <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${healthColor(node.health)}`}
+                className={`h-full rounded-full transition-all ${barColor(pct)}`}
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -127,7 +115,7 @@ function CoverageWidget({
               <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
                 {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
               </span>
-              {onSuggest && (
+              {onSuggest && coverage.untagged_count >= 10 && total > 0 && Math.round((coverage.untagged_count / total) * 100) > 5 && (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onSuggest() }}
