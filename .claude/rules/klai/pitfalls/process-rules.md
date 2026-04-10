@@ -95,6 +95,16 @@ yourself first. If the user edited it, extract their text and pass it
 verbatim in the prompt as content to preserve. Subagents have no
 context about prior user edits — they will overwrite silently.
 
+## extract-repeated-ui-patterns
+When the same UI pattern is copy-pasted into a third file, extract a shared
+component immediately — not after the fourth or fifth instance. Extracting
+after the fact requires hunting down all existing instances and risks silent
+divergence between copies. The threshold is three: two repetitions is a
+coincidence, three is a pattern that warrants a component.
+
+**Prevention:** At the start of the second copy, note the pattern. At the
+third, stop and extract before continuing.
+
 ## worktree-agent-isolation
 When a subagent runs inside a git worktree (`.claude/worktrees/<id>/`),
 its file writes land in that worktree, not the main working tree. After the
