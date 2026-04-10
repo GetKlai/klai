@@ -46,10 +46,12 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
-      // Proxy API calls to the local backend (or staging via VITE_API_BASE_URL)
+      // Proxy /api to the backend. Default: production (for frontend-only dev).
+      // Set VITE_API_PROXY_TARGET=http://localhost:8010 to use the local backend.
       '/api': {
-        target: process.env.VITE_API_BASE_URL || 'http://localhost:8010',
+        target: process.env.VITE_API_PROXY_TARGET || 'https://getklai.getklai.com',
         changeOrigin: true,
+        secure: true,
       },
     },
   },
