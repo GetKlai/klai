@@ -116,8 +116,7 @@ function CoverageWidget({
                   <input
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
-                    className="text-sm font-medium text-[var(--color-foreground)] bg-transparent border border-[var(--color-border)] rounded-md py-[1px] px-0 flex-1 min-w-0 outline-none focus:border-[var(--color-accent)]"
-                    style={{ marginLeft: '-1px' }}
+                    className="text-sm font-medium text-[var(--color-foreground)] bg-transparent border border-[var(--color-border)] py-0.5 px-1 -ml-[5px] flex-1 min-w-0 outline-none focus:border-[var(--color-accent)]"
                     autoFocus
                     onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
                   />
@@ -132,7 +131,7 @@ function CoverageWidget({
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); startEdit(node.taxonomy_node_id, node.taxonomy_node_name, node.description ?? '') }}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                        className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70 transition-opacity"
                         aria-label={m.knowledge_taxonomy_node_rename()}
                       >
                         <Pencil className="h-3 w-3" />
@@ -140,7 +139,7 @@ function CoverageWidget({
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(node.taxonomy_node_id) }}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                        className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70 transition-opacity"
                         aria-label={m.knowledge_taxonomy_node_delete()}
                       >
                         <Trash2 className="h-3 w-3" />
@@ -164,7 +163,7 @@ function CoverageWidget({
                   {isEditing && (
                     <span className="inline-flex items-center gap-1">
                       <Button type="submit" size="sm" className="h-6 text-xs px-2" disabled={!editingName.trim()}>
-                        {m.knowledge_taxonomy_node_add_submit()}
+                        {m.knowledge_taxonomy_node_edit_submit()}
                       </Button>
                       <Button type="button" size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={cancelEdit}>
                         {m.knowledge_taxonomy_node_add_cancel()}
@@ -182,14 +181,13 @@ function CoverageWidget({
                 <textarea
                   value={editingDescription}
                   onChange={(e) => setEditingDescription(e.target.value)}
-                  className="text-xs text-[var(--color-muted-foreground)] bg-transparent border border-[var(--color-border)] rounded-md py-[1px] px-0 mb-1.5 w-full outline-none focus:border-[var(--color-accent)] resize-none"
-                  style={{ marginLeft: '-1px' }}
+                  className="text-xs text-[var(--color-muted-foreground)] bg-transparent border border-[var(--color-border)] py-0.5 px-1 mb-1 -ml-[5px] w-[calc(100%+10px)] outline-none focus:border-[var(--color-accent)] resize-none"
                   rows={2}
                   placeholder={m.knowledge_taxonomy_node_description_placeholder()}
                   onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
                 />
               ) : node.description ? (
-                <p className="text-xs text-[var(--color-muted-foreground)] mb-1.5 line-clamp-2">
+                <p className="text-xs text-[var(--color-muted-foreground)] mb-1 line-clamp-2">
                   {node.description}
                 </p>
               ) : null}
