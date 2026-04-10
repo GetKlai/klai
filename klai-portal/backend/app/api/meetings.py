@@ -521,10 +521,21 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                     segments_fetched = filter_segments(raw_segments)
                     break
                 if seg_attempt < 5:
-                    logger.info("No transcript segments yet, retrying", meeting_id=str(meeting.id), attempt=seg_attempt + 1, max_attempts=6)
+                    logger.info(
+                        "No transcript segments yet, retrying",
+                        meeting_id=str(meeting.id),
+                        attempt=seg_attempt + 1,
+                        max_attempts=6,
+                    )
                     await asyncio.sleep(15)
             except Exception as exc:
-                logger.warning("Segment fetch failed", meeting_id=str(meeting.id), attempt=seg_attempt + 1, max_attempts=6, error=str(exc))
+                logger.warning(
+                    "Segment fetch failed",
+                    meeting_id=str(meeting.id),
+                    attempt=seg_attempt + 1,
+                    max_attempts=6,
+                    error=str(exc),
+                )
                 if seg_attempt < 5:
                     await asyncio.sleep(15)
 
@@ -549,12 +560,20 @@ async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
                 break
             except ValueError:
                 if attempt < 4:
-                    logger.info("Recording not ready, retrying", vexa_meeting_id=meeting.vexa_meeting_id, attempt=attempt + 1, max_attempts=5)
+                    logger.info(
+                        "Recording not ready, retrying",
+                        vexa_meeting_id=meeting.vexa_meeting_id,
+                        attempt=attempt + 1,
+                        max_attempts=5,
+                    )
                     await asyncio.sleep(5)
                 else:
                     # No recording available (recording_enabled=False or meeting too short).
                     # Complete with empty transcript rather than failing.
-                    logger.info("No recording and no segments, completing with empty transcript", vexa_meeting_id=meeting.vexa_meeting_id)
+                    logger.info(
+                        "No recording and no segments, completing with empty transcript",
+                        vexa_meeting_id=meeting.vexa_meeting_id,
+                    )
                     meeting.status = "done"
                     meeting.error_message = None
                     return
@@ -615,14 +634,21 @@ async def vexa_webhook(
         .order_by(VexaMeeting.created_at.desc())
     )
     if meeting is None:
-        logger.warning("Vexa webhook: no matching meeting", platform=payload.platform, native_meeting_id=payload.native_meeting_id)
+        logger.warning(
+            "Vexa webhook: no matching meeting", platform=payload.platform, native_meeting_id=payload.native_meeting_id
+        )
         return {"status": "ignored"}
 
     if payload.status is not None and payload.status != "completed":
         if portal_status and meeting.status != portal_status and meeting.status != "stopping":
             meeting.status = portal_status
             await db.commit()
-            logger.info("Vexa webhook: synced status", vexa_status=payload.status, portal_status=portal_status, meeting_id=str(meeting.id))
+            logger.info(
+                "Vexa webhook: synced status",
+                vexa_status=payload.status,
+                portal_status=portal_status,
+                meeting_id=str(meeting.id),
+            )
         return {"status": "synced"}
 
     meeting.status = "stopping"
