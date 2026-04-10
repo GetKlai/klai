@@ -292,7 +292,7 @@ function NotebookDetailPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div>
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-start justify-between mb-1">
           <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
             {notebook?.name ?? m.app_focus_loading()}
           </h1>

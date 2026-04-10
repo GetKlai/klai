@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import {
