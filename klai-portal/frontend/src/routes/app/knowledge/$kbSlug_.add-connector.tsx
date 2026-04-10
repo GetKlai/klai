@@ -213,8 +213,7 @@ function AddConnectorPage() {
         return <StepIndicator steps={steps} currentIndex={currentIndex} />
       })()}
 
-      <div className="mt-6">
-        <div className="space-y-4">
+      <div className="mt-6 space-y-4">
 
             {/* Step 1: Type selection */}
             {!selectedType && (
@@ -591,7 +590,6 @@ function AddConnectorPage() {
               </div>
             )}
 
-        </div>
       </div>
     </div>
   )
