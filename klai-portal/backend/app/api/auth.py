@@ -128,11 +128,19 @@ _pending_totp = TTLCache(_TOTP_PENDING_TTL)
 
 
 def _validate_callback_url(url: str) -> str:
-    """Ensure callback_url points to a trusted domain, not an attacker-controlled one."""
+    """Ensure callback_url points to a trusted domain, not an attacker-controlled one.
+
+    localhost/127.0.0.1 are allowed because they are registered as valid redirect URIs
+    in the Zitadel OIDC app (dev mode). Zitadel itself validates the redirect_uri against
+    the registered list before returning the callback_url, so this is defense-in-depth only.
+    """
     try:
         hostname = urlparse(url).hostname or ""
     except Exception:
         hostname = ""
+    # Allow localhost for local development — Zitadel validates redirect URIs at the OIDC layer
+    if hostname in ("localhost", "127.0.0.1"):
+        return url
     trusted = settings.domain  # getklai.com
     if not (hostname == trusted or hostname.endswith(f".{trusted}")):
         logger.error("callback_url failed validation: %r", url)

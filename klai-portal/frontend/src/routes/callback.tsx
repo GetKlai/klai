@@ -36,13 +36,16 @@ function CallbackPage() {
           }
 
           // Provisioning done — ensure user is on their tenant subdomain
+          // Skip workspace redirect in local dev (localhost/127.0.0.1)
           if (me.workspace_url) {
             const currentHost = window.location.hostname
-            const workspaceHost = new URL(me.workspace_url).hostname
-            if (currentHost !== workspaceHost) {
-              // User logged in from my.getklai.com — send them to their subdomain
-              window.location.replace(me.workspace_url)
-              return
+            const isLocalDev = currentHost === 'localhost' || currentHost === '127.0.0.1'
+            if (!isLocalDev) {
+              const workspaceHost = new URL(me.workspace_url).hostname
+              if (currentHost !== workspaceHost) {
+                window.location.replace(me.workspace_url)
+                return
+              }
             }
           }
 
