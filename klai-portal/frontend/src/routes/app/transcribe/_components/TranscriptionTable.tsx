@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Tooltip } from '@/components/ui/tooltip'
+import { InlineEdit } from '@/components/ui/inline-edit'
 import { Input } from '@/components/ui/input'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   Loader2,
   Pencil,
@@ -18,6 +20,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
+import { getLocale } from '@/paraglide/runtime'
 import type { UnifiedItem, Source } from '../_types'
 
 const ACTIVE_MEETING_STATUSES = ['pending', 'joining', 'recording', 'stopping', 'processing']
@@ -40,7 +43,7 @@ function languageToCountryCode(lang: string): string {
 }
 
 function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('nl-NL', {
+  return new Date(dateStr).toLocaleDateString(getLocale(), {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -67,7 +70,8 @@ function StatusBadge({ status, source }: { status: string; source: Source }) {
 function MetaText({ item }: { item: UnifiedItem }) {
   const parts: string[] = []
   if (item.text) {
-    parts.push(`${item.text.trim().split(/\s+/).filter(Boolean).length.toLocaleString()} words`)
+    const count = item.text.trim().split(/\s+/).filter(Boolean).length
+    parts.push(m.app_transcribe_meta_word_count({ count: count.toLocaleString(getLocale()) }))
   }
   if (item.duration_seconds != null) parts.push(formatDuration(item.duration_seconds))
   parts.push(
@@ -145,6 +149,16 @@ export function TranscriptionTable({
   const [editName, setEditName] = useState<string>('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const wasRenaming = useRef(false)
+
+  // Close edit mode when the rename mutation completes (success or error)
+  useEffect(() => {
+    if (wasRenaming.current && !isRenaming) {
+      setEditingId(null)
+      setEditName('')
+    }
+    wasRenaming.current = isRenaming
+  }, [isRenaming])
 
   function startEdit(item: UnifiedItem) {
     setConfirmingDeleteId(null)
@@ -159,7 +173,7 @@ export function TranscriptionTable({
 
   function saveEdit(id: string) {
     onRename(id, editName.trim() || null)
-    setEditingId(null)
+    // Edit closes via useEffect when isRenaming transitions false
   }
 
   function downloadText(item: UnifiedItem) {
@@ -225,13 +239,13 @@ export function TranscriptionTable({
           <thead>
             <tr className="border-b border-[var(--color-border)]">
               <th className="py-3 pr-2 w-6" />
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
                 {m.app_transcribe_col_text()}
               </th>
-              <th className="py-3 pr-2 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-28">
+              <th className="py-3 pr-2 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
                 {m.app_transcribe_col_date()}
               </th>
-              <th className="py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide w-36" />
+              <th className="py-3 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-36" />
             </tr>
           </thead>
           <tbody>
@@ -256,7 +270,7 @@ export function TranscriptionTable({
                   {/* Source icon */}
                   <td className="py-4 pr-2 align-top w-6">
                     <Tooltip
-                      className="leading-none mt-1"
+                      className="leading-none mt-px"
                       label={
                         item.source === 'upload'
                           ? m.app_transcribe_source_audio()
@@ -273,42 +287,16 @@ export function TranscriptionTable({
 
                   {/* Title + metadata */}
                   <td className="py-4 pr-4 align-top">
-                    {isEditing ? (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveEdit(item.id)
-                            if (e.key === 'Escape') cancelEdit()
-                          }}
-                          disabled={isSaving}
-                          autoFocus
-                          className="h-7 text-sm max-w-sm"
-                        />
-                        {isSaving ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => saveEdit(item.id)}
-                              aria-label={m.app_transcribe_edit_save()}
-                              className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90"
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={cancelEdit}
-                              aria-label={m.app_transcribe_edit_cancel()}
-                              className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-border)]"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <>
+                    <InlineEdit
+                      isEditing={isEditing}
+                      value={editName}
+                      onValueChange={setEditName}
+                      onSave={() => saveEdit(item.id)}
+                      onCancel={cancelEdit}
+                      isSaving={isSaving}
+                      inputClassName="font-medium text-sm"
+                    >
+                      <div>
                         {item.title ? (
                           item.status === 'done' ? (
                             <button
@@ -338,11 +326,11 @@ export function TranscriptionTable({
                             <StatusBadge status={item.status} source={item.source} />
                           </span>
                         )}
-                        <div className="mt-1">
-                          <MetaText item={item} />
-                        </div>
-                      </>
-                    )}
+                      </div>
+                    </InlineEdit>
+                    <div className="mt-1">
+                      <MetaText item={item} />
+                    </div>
                   </td>
 
                   {/* Date */}
@@ -354,108 +342,132 @@ export function TranscriptionTable({
 
                   {/* Actions */}
                   <td className="py-4 align-top text-right w-36">
-                    {isEditing ? null : (
-                      <InlineDeleteConfirm
-                        isConfirming={isConfirmingDelete}
-                        isPending={isDeleting}
-                        label={m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
-                        cancelLabel={m.app_transcribe_delete_cancel()}
-                        onConfirm={() => handleDelete(item)}
-                        onCancel={() => setConfirmingDeleteId(null)}
-                      >
-                        <div className="flex items-start justify-end gap-2 mt-1">
-                        {/* Rename */}
-                        <Tooltip label={m.app_transcribe_edit_label()}>
-                          <button
-                            onClick={() => startEdit(item)}
-                            aria-label={m.app_transcribe_edit_label()}
-                            className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                    <div className="relative">
+                      <div className={isEditing ? 'opacity-0 pointer-events-none' : undefined}>
+                        <InlineDeleteConfirm
+                          isConfirming={isConfirmingDelete}
+                          isPending={isDeleting}
+                          label={m.app_transcribe_delete_confirm_name({ name: item.title ?? '' })}
+                          cancelLabel={m.app_transcribe_delete_cancel()}
+                          onConfirm={() => handleDelete(item)}
+                          onCancel={() => setConfirmingDeleteId(null)}
+                        >
+                          <div className="flex items-start justify-end gap-2 mt-px">
+                            {/* Rename */}
+                            <Tooltip label={m.app_transcribe_edit_label()}>
+                              <button
+                                onClick={() => startEdit(item)}
+                                aria-label={m.app_transcribe_edit_label()}
+                                className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            </Tooltip>
+
+                            {/* Active meeting: stop */}
+                            {isActive && (
+                              <Tooltip label={m.app_meetings_stop_button()}>
+                                <button
+                                  onClick={() => onStop(item.id)}
+                                  disabled={isItemStopping}
+                                  aria-label={m.app_meetings_stop_button()}
+                                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                                >
+                                  {isItemStopping ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Square className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </Tooltip>
+                            )}
+
+                            {/* Retry failed */}
+                            {isFailed && (
+                              <Tooltip label={m.app_transcribe_retry_button()}>
+                                <button
+                                  onClick={() => onRetry(item.id)}
+                                  disabled={isItemRetrying}
+                                  aria-label={m.app_transcribe_retry_button()}
+                                  className="inline-flex items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
+                                >
+                                  {isItemRetrying ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </Tooltip>
+                            )}
+
+                            {/* Copy */}
+                            {item.text && (
+                              <Tooltip label={m.app_transcribe_copy_label()}>
+                                <button
+                                  data-help-id="transcribe-copy"
+                                  onClick={() => void copyText(item)}
+                                  aria-label={m.app_transcribe_copy_label()}
+                                  className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+                                >
+                                  {isCopied ? (
+                                    <CheckCheck className="h-4 w-4 text-[var(--color-success)]" />
+                                  ) : (
+                                    <Copy className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </Tooltip>
+                            )}
+
+                            {/* Download */}
+                            {item.text && (
+                              <Tooltip label={m.app_transcribe_download_label()}>
+                                <button
+                                  data-help-id="transcribe-download"
+                                  onClick={() => downloadText(item)}
+                                  aria-label={m.app_transcribe_download_label()}
+                                  className="inline-flex items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
+                                >
+                                  <Download className="h-4 w-4" />
+                                </button>
+                              </Tooltip>
+                            )}
+
+                            {/* Delete */}
+                            <Tooltip label={m.app_transcribe_delete_label()}>
+                              <button
+                                onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
+                                aria-label={m.app_transcribe_delete_label()}
+                                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </Tooltip>
+                          </div>
+                        </InlineDeleteConfirm>
+                      </div>
+                      {isEditing && (
+                        <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
+                          <Button
+                            size="sm"
+                            className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+                            disabled={isSaving}
+                            onClick={() => saveEdit(item.id)}
                           >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        </Tooltip>
-
-                        {/* Active meeting: stop */}
-                        {isActive && (
-                          <Tooltip label={m.app_meetings_stop_button()}>
-                            <button
-                              onClick={() => onStop(item.id)}
-                              disabled={isItemStopping}
-                              aria-label={m.app_meetings_stop_button()}
-                              className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-                            >
-                              {isItemStopping ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Square className="h-4 w-4" />
-                              )}
-                            </button>
-                          </Tooltip>
-                        )}
-
-                        {/* Retry failed */}
-                        {isFailed && (
-                          <Tooltip label={m.app_transcribe_retry_button()}>
-                            <button
-                              onClick={() => onRetry(item.id)}
-                              disabled={isItemRetrying}
-                              aria-label={m.app_transcribe_retry_button()}
-                              className="inline-flex items-center justify-center text-[var(--color-rl-accent)] transition-opacity hover:opacity-70"
-                            >
-                              {isItemRetrying ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <RotateCcw className="h-4 w-4" />
-                              )}
-                            </button>
-                          </Tooltip>
-                        )}
-
-                        {/* Copy */}
-                        {item.text && (
-                          <Tooltip label={m.app_transcribe_copy_label()}>
-                            <button
-                              data-help-id="transcribe-copy"
-                              onClick={() => void copyText(item)}
-                              aria-label={m.app_transcribe_copy_label()}
-                              className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-                            >
-                              {isCopied ? (
-                                <CheckCheck className="h-4 w-4 text-[var(--color-success)]" />
-                              ) : (
-                                <Copy className="h-4 w-4" />
-                              )}
-                            </button>
-                          </Tooltip>
-                        )}
-
-                        {/* Download */}
-                        {item.text && (
-                          <Tooltip label={m.app_transcribe_download_label()}>
-                            <button
-                              data-help-id="transcribe-download"
-                              onClick={() => downloadText(item)}
-                              aria-label={m.app_transcribe_download_label()}
-                              className="inline-flex items-center justify-center text-[var(--color-success)] transition-opacity hover:opacity-70"
-                            >
-                              <Download className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
-                        )}
-
-                        {/* Delete */}
-                        <Tooltip label={m.app_transcribe_delete_label()}>
-                          <button
-                            onClick={() => { cancelEdit(); setConfirmingDeleteId(item.id) }}
-                            aria-label={m.app_transcribe_delete_label()}
-                            className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                            {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
+                            {m.app_transcribe_edit_save()}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5"
+                            onClick={cancelEdit}
                           >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </Tooltip>
+                            <X />
+                            {m.app_transcribe_edit_cancel()}
+                          </Button>
                         </div>
-                      </InlineDeleteConfirm>
-                    )}
+                      )}
+                    </div>
                   </td>
                 </tr>
               )

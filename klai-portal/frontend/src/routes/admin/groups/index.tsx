@@ -238,14 +238,14 @@ function AdminGroups() {
             onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
             onCancel={() => setConfirmDeleteId(null)}
           >
-            <div className="flex items-center justify-end gap-1">
+            <div className="flex items-start justify-end gap-2 mt-px">
               {!row.original.is_system && (
                 <button
                   onClick={() => setConfirmDeleteId(row.original.id)}
                   aria-label={`Delete ${row.original.name}`}
-                  className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                  className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               )}
               {!row.original.is_system && (
@@ -257,9 +257,9 @@ function AdminGroups() {
                     })
                   }
                   aria-label={`Edit ${row.original.name}`}
-                  className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                  className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="h-4 w-4" />
                 </button>
               )}
               <button
@@ -270,9 +270,9 @@ function AdminGroups() {
                   })
                 }
                 aria-label={row.original.name}
-                className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+                className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
               >
-                <Eye className="h-3.5 w-3.5" />
+                <Eye className="h-4 w-4" />
               </button>
             </div>
           </InlineDeleteConfirm>
@@ -289,7 +289,7 @@ function AdminGroups() {
   })
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 max-w-4xl">
       <div className="flex items-start justify-between">
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
           {m.admin_groups_title()}
@@ -339,65 +339,61 @@ function AdminGroups() {
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
-      ) : <Card>
-        <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-          {isLoading ? (
-            <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-              Loading...
-            </p>
-          ) : groups.length === 0 ? (
-            <div className="px-6 py-12 text-center space-y-3">
-              <p className="text-sm font-medium text-[var(--color-foreground)]">
-                {m.admin_groups_empty()}
-              </p>
-              <p className="text-sm text-[var(--color-muted-foreground)]">
-                {m.admin_groups_empty_description()}
-              </p>
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <tr
-                    key={headerGroup.id}
-                    className="border-b border-[var(--color-border)]"
+      ) : isLoading ? (
+        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+          <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
+          Loading...
+        </p>
+      ) : groups.length === 0 ? (
+        <div className="py-12 text-center space-y-3">
+          <p className="text-sm font-medium text-[var(--color-foreground)]">
+            {m.admin_groups_empty()}
+          </p>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            {m.admin_groups_empty_description()}
+          </p>
+        </div>
+      ) : (
+        <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr
+                key={headerGroup.id}
+                className="border-b border-[var(--color-border)]"
+              >
+                {headerGroup.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]"
                   >
-                    {headerGroup.headers.map((header) => (
-                      <th
-                        key={header.id}
-                        className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide"
-                      >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                      </th>
-                    ))}
-                  </tr>
+                    {flexRender(
+                      header.column.columnDef.header,
+                      header.getContext(),
+                    )}
+                  </th>
                 ))}
-              </thead>
-              <tbody>
-                {table.getRowModel().rows.map((row, i) => (
-                  <tr
-                    key={row.id}
-                    className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row) => (
+              <tr
+                key={row.id}
+                className="border-b border-[var(--color-border)] last:border-b-0"
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td
+                    key={cell.id}
+                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <td
-                        key={cell.id}
-                        className="px-6 py-3 text-[var(--color-foreground)]"
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
                 ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

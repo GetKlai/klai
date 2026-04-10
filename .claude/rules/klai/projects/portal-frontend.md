@@ -153,52 +153,156 @@ Field pattern:
 
 ## Tables
 
-- Inside `<Card>` with `<CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">`
-- `<thead>` rows: `px-6 py-3 text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide`
-- `<tbody>` rows: zebra striping with `var(--color-card)` / `var(--color-secondary)`
-- Action controls in table rows: `px-2 py-1 text-xs`
+**Standard: section-style, no card wrapper.** Reference implementation: `routes/app/transcribe/_components/TranscriptionTable.tsx`.
+
+```tsx
+<table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+  <thead>
+    <tr className="border-b border-[var(--color-border)]">
+      <th className="py-3 pr-2 w-6" />  {/* icon column */}
+      <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+        Label
+      </th>
+      <th className="py-3 pr-2 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+        Date
+      </th>
+      <th className="py-3 text-right w-36" />  {/* actions column */}
+    </tr>
+  </thead>
+  <tbody>
+    {items.map((item) => (
+      <tr key={item.id} className="border-b border-[var(--color-border)] last:border-b-0">
+        <td className="py-4 pr-2 align-top w-6">...</td>
+        <td className="py-4 pr-4 align-top">...</td>
+        <td className="py-4 pr-2 align-top whitespace-nowrap w-28">
+          <span className="text-sm tabular-nums">{formatDate(item.created_at)}</span>
+        </td>
+        <td className="py-4 align-top text-right w-36">...</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+```
+
+Rules:
+- `table-fixed` with explicit `w-*` on all fixed columns; fluid column gets no width
+- `align-top` on every `<td>` — rows with multi-line content stay top-aligned
+- `border-t border-b` on the table, `border-b last:border-b-0` on rows — no card wrapper
+- Header: `text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]`
+- Date: `whitespace-nowrap tabular-nums` + `w-28`
+- Actions: `text-right w-36`
+
+### Action icon buttons
+
+Wrap each icon in a `<Tooltip>`. The flex container sits in `align-top` so use `items-start mt-px`:
+
+```tsx
+<div className="flex items-start justify-end gap-2 mt-px">
+  <Tooltip label={m.action_label()}>
+    <button
+      onClick={...}
+      aria-label={m.action_label()}
+      className="inline-flex items-center justify-center text-[var(--color-xxx)] transition-opacity hover:opacity-70"
+    >
+      <Icon className="h-4 w-4" />
+    </button>
+  </Tooltip>
+</div>
+```
+
+### Inline rename (InlineEdit)
+
+Use `InlineEdit` from `components/ui/inline-edit`. Wrap only the title element — not metadata below it. Put save/cancel in the actions column as the same `h-6 text-[10px]` Button pattern as delete confirmation.
+
+```tsx
+{/* Title cell */}
+<td className="py-4 pr-4 align-top">
+  <InlineEdit
+    isEditing={editingId === item.id}
+    value={editName}
+    onValueChange={setEditName}
+    onSave={() => onRename(item.id, editName.trim() || null)}
+    onCancel={cancelEdit}
+    isSaving={isRenaming && renamingId === item.id}
+    inputClassName="font-medium text-sm"
+  >
+    <div>
+      <span className="font-medium">{item.name}</span>
+      {/* inline badges stay inside the spacer */}
+    </div>
+  </InlineEdit>
+  <div className="mt-1"><MetaText /></div>  {/* always visible */}
+</td>
+
+{/* Actions cell */}
+<td className="py-4 align-top text-right w-36">
+  <div className="relative">
+    <div className={isEditing ? 'opacity-0 pointer-events-none' : undefined}>
+      <InlineDeleteConfirm ...>
+        <div className="flex items-start justify-end gap-2 mt-px">
+          {/* action icons */}
+        </div>
+      </InlineDeleteConfirm>
+    </div>
+    {isEditing && (
+      <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
+        <Button size="sm" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-success)] text-white hover:opacity-70"
+          disabled={isSaving} onClick={() => onRename(item.id, editName.trim() || null)}>
+          {isSaving ? <Loader2 className="animate-spin" /> : <Check />}
+          {m.save()}
+        </Button>
+        <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5" onClick={cancelEdit}>
+          <X />{m.cancel()}
+        </Button>
+      </div>
+    )}
+  </div>
+</td>
+```
+
+Close edit on mutation complete via `useRef` — never `setEditingId(null)` inside `saveEdit`:
+
+```tsx
+const wasRenaming = useRef(false)
+useEffect(() => {
+  if (wasRenaming.current && !isRenaming) { setEditingId(null); setEditName('') }
+  wasRenaming.current = isRenaming
+}, [isRenaming])
+```
 
 ### Inline delete confirmation
 
-Use `InlineDeleteConfirm` from `components/ui/inline-delete-confirm`. Never use a modal, popover, or button swap that changes cell content (causes layout shift).
+Use `InlineDeleteConfirm` from `components/ui/inline-delete-confirm`. Never use a modal or button swap that changes cell width.
 
 ```tsx
 <InlineDeleteConfirm
-  isConfirming={confirmDeleteId === row.original.id}
-  isPending={deleteMutation.isPending}
-  label={m.delete_confirm({ name: row.original.name })}
+  isConfirming={confirmingDeleteId === item.id}
+  isPending={isDeleting}
+  label={m.delete_confirm({ name: item.name })}
   cancelLabel={m.cancel()}
-  onConfirm={() => { deleteMutation.mutate(row.original.id); setConfirmDeleteId(null) }}
-  onCancel={() => setConfirmDeleteId(null)}
+  onConfirm={() => { handleDelete(item); setConfirmingDeleteId(null) }}
+  onCancel={() => setConfirmingDeleteId(null)}
 >
-  <div className="flex items-center justify-end gap-1">
-    <button onClick={() => setConfirmDeleteId(row.original.id)} ...><Trash2 /></button>
+  <div className="flex items-start justify-end gap-2 mt-px">
+    <button onClick={() => setConfirmingDeleteId(item.id)} ...><Trash2 /></button>
   </div>
 </InlineDeleteConfirm>
 ```
 
 - `label` uses i18n `{name}` param — never string concatenation
-- The component owns the `relative` wrapper, ghost spacer logic, and overlay styling
-- Full docs + pattern explanation: `klai-portal/docs/ui-components.md` → Deletion confirmation patterns
+- Full docs: `klai-portal/docs/ui-components.md` → Deletion confirmation patterns
 
 ### Confirmation hierarchy
 
-Three tiers for destructive actions — pick by severity:
-
 | Tier | Component | When to use |
 |---|---|---|
-| 1 | `AlertDialog` | Irreversible / offboarding actions (e.g. delete organization) |
-| 2 | `DeleteModal` with name input | High-stakes KB deletion where typing the name adds friction |
-| 3 | `InlineDeleteConfirm` | Table row deletions — the default case |
+| 1 | `AlertDialog` | Irreversible / offboarding (e.g. delete organization) |
+| 2 | `DeleteModal` with name input | High-stakes KB deletion |
+| 3 | `InlineDeleteConfirm` | Table row deletions — the default |
 
-Never use a modal for table row actions. Never swap buttons in a way that changes cell width.
+Never use a modal for table row actions.
 
 ### Extract components at 3+ repetitions
-
-When the same UI pattern (e.g. inline delete) is copy-pasted into a third table implementation,
-extract it immediately — not after the fourth or fifth. Extracting after the fact requires hunting
-down all instances and risking divergence. The `InlineDeleteConfirm` component was extracted at
-this threshold.
 
 **Rule:** Three files with the same JSX pattern = extract a shared component before continuing.
 

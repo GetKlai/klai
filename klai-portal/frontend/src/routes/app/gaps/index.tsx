@@ -175,108 +175,104 @@ function GapsPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--color-border)]">
-                  <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.gaps_column_query()}
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.gaps_column_type()}
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.gaps_column_nearest_kb()}
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.gaps_column_count()}
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                    {m.gaps_column_last()}
-                  </th>
-                  <th className="px-4 py-3 w-10" />
+        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+          <thead>
+            <tr className="border-b border-[var(--color-border)]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                {m.gaps_column_query()}
+              </th>
+              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
+                {m.gaps_column_type()}
+              </th>
+              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-36">
+                {m.gaps_column_nearest_kb()}
+              </th>
+              <th className="py-3 pr-4 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-20">
+                {m.gaps_column_count()}
+              </th>
+              <th className="py-3 pr-4 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                {m.gaps_column_last()}
+              </th>
+              <th className="py-3 text-right w-12" />
+            </tr>
+          </thead>
+          <tbody>
+            {gaps.map((gap) => {
+              const rowKey = `${gap.query_text}-${gap.gap_type}`
+              return (
+                <tr
+                  key={rowKey}
+                  className="border-b border-[var(--color-border)] last:border-b-0"
+                >
+                  <td className="py-4 pr-4 align-top text-[var(--color-foreground)] truncate max-w-xs">
+                    {gap.query_text}
+                  </td>
+                  <td className="py-4 pr-4 align-top w-24">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${GAP_TYPE_CLASSES[gap.gap_type] ?? ''}`}>
+                      {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
+                    </span>
+                  </td>
+                  <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)] w-36">
+                    {gap.nearest_kb_slug ?? '\u2014'}
+                  </td>
+                  <td className="py-4 pr-4 align-top text-right font-medium text-[var(--color-foreground)] tabular-nums w-20">
+                    {gap.occurrence_count}
+                  </td>
+                  <td className="py-4 pr-4 align-top text-right text-[var(--color-muted-foreground)] whitespace-nowrap tabular-nums w-28">
+                    {new Date(gap.last_occurred).toLocaleDateString()}
+                  </td>
+                  <td className="py-4 align-top text-right w-12">
+                    {gap.gap_type === 'soft' && gap.nearest_kb_slug ? (
+                      <button
+                        onClick={() =>
+                          void navigate({
+                            to: '/app/docs/$kbSlug',
+                            params: { kbSlug: gap.nearest_kb_slug! },
+                          })
+                        }
+                        aria-label={m.gaps_action_add()}
+                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
+                      >
+                        <PlusCircle className="h-4 w-4" />
+                      </button>
+                    ) : activePicker === rowKey ? (
+                      <Select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            void navigate({
+                              to: '/app/docs/$kbSlug',
+                              params: { kbSlug: e.target.value },
+                            })
+                            setActivePicker(null)
+                          }
+                        }}
+                        onBlur={() => setActivePicker(null)}
+                        className="w-32 text-xs"
+                        autoFocus
+                      >
+                        <option value="">{m.gaps_action_pick_kb()}</option>
+                        {orgKbs.map((kb) => (
+                          <option key={kb.id} value={kb.slug}>
+                            {kb.name}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <button
+                        onClick={() => setActivePicker(rowKey)}
+                        aria-label={m.gaps_action_pick_kb()}
+                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
+                      >
+                        <BookOpen className="h-4 w-4" />
+                      </button>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {gaps.map((gap) => {
-                  const rowKey = `${gap.query_text}-${gap.gap_type}`
-                  return (
-                    <tr
-                      key={rowKey}
-                      className="bg-[var(--color-card)]"
-                    >
-                      <td className="px-6 py-3 text-[var(--color-foreground)] max-w-xs truncate">
-                        {gap.query_text}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${GAP_TYPE_CLASSES[gap.gap_type] ?? ''}`}>
-                          {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-[var(--color-muted-foreground)]">
-                        {gap.nearest_kb_slug ?? '\u2014'}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-[var(--color-foreground)]">
-                        {gap.occurrence_count}
-                      </td>
-                      <td className="px-4 py-3 text-right text-[var(--color-muted-foreground)]">
-                        {new Date(gap.last_occurred).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {gap.gap_type === 'soft' && gap.nearest_kb_slug ? (
-                          <button
-                            onClick={() =>
-                              void navigate({
-                                to: '/app/docs/$kbSlug',
-                                params: { kbSlug: gap.nearest_kb_slug! },
-                              })
-                            }
-                            aria-label={m.gaps_action_add()}
-                            className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
-                          >
-                            <PlusCircle className="h-3.5 w-3.5" />
-                          </button>
-                        ) : activePicker === rowKey ? (
-                          <Select
-                            value=""
-                            onChange={(e) => {
-                              if (e.target.value) {
-                                void navigate({
-                                  to: '/app/docs/$kbSlug',
-                                  params: { kbSlug: e.target.value },
-                                })
-                                setActivePicker(null)
-                              }
-                            }}
-                            onBlur={() => setActivePicker(null)}
-                            className="w-32 text-xs"
-                            autoFocus
-                          >
-                            <option value="">{m.gaps_action_pick_kb()}</option>
-                            {orgKbs.map((kb) => (
-                              <option key={kb.id} value={kb.slug}>
-                                {kb.name}
-                              </option>
-                            ))}
-                          </Select>
-                        ) : (
-                          <button
-                            onClick={() => setActivePicker(rowKey)}
-                            aria-label={m.gaps_action_pick_kb()}
-                            className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
-                          >
-                            <BookOpen className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+              )
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   )

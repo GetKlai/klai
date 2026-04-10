@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ArrowLeft, Loader2, Pencil, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import * as m from '@/paraglide/messages'
@@ -178,10 +179,10 @@ function AdminGroupDetail() {
                   params: { groupId },
                 })
               }
-              className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+              className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
               aria-label={m.admin_groups_edit()}
             >
-              <Pencil className="h-3.5 w-3.5" />
+              <Pencil className="h-4 w-4" />
             </button>
           )}
           <Button
@@ -226,76 +227,72 @@ function AdminGroupDetail() {
               {m.admin_groups_members_empty()}
             </p>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--color-border)]">
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                      {m.admin_groups_name()}
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                      Email
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                      {m.admin_groups_members_joined_at()}
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide">
-                      {/* Actions */}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((member, i) => {
-                    const user = usersMap.get(member.zitadel_user_id)
-                    const isRemoving =
-                      removeMemberMutation.isPending &&
-                      removeMemberMutation.variables === member.zitadel_user_id
-                    const isConfirming = confirmRemoveId === member.zitadel_user_id
+            <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+              <thead>
+                <tr className="border-b border-[var(--color-border)]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                    {m.admin_groups_name()}
+                  </th>
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                    Email
+                  </th>
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                    {m.admin_groups_members_joined_at()}
+                  </th>
+                  <th className="py-3 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-16">
+                    {/* Actions */}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((member) => {
+                  const user = usersMap.get(member.zitadel_user_id)
+                  const isRemoving =
+                    removeMemberMutation.isPending &&
+                    removeMemberMutation.variables === member.zitadel_user_id
+                  const isConfirming = confirmRemoveId === member.zitadel_user_id
 
-                    return (
-                      <tr
-                        key={member.zitadel_user_id}
-                        className={
-                          i % 2 === 0
-                            ? 'bg-[var(--color-card)]'
-                            : 'bg-[var(--color-secondary)]'
-                        }
-                      >
-                        <td className="px-6 py-3 text-[var(--color-foreground)]">
-                          {displayName(user, member)}
-                        </td>
-                        <td className="px-6 py-3 text-[var(--color-muted-foreground)]">
-                          {displayEmail(user)}
-                        </td>
-                        <td className="px-6 py-3 text-[var(--color-foreground)]">
-                          {formatDate(member.joined_at)}
-                        </td>
-                        <td className="px-6 py-3 text-right">
-                          <InlineDeleteConfirm
-                            isConfirming={isConfirming}
-                            isPending={isRemoving}
-                            label={m.admin_groups_members_remove_confirm({ name: displayName(user, member) })}
-                            cancelLabel={m.admin_users_cancel()}
-                            onConfirm={() => removeMemberMutation.mutate(member.zitadel_user_id)}
-                            onCancel={() => setConfirmRemoveId(null)}
-                          >
-                            <div className="flex items-center justify-end gap-1">
+                  return (
+                    <tr
+                      key={member.zitadel_user_id}
+                      className="border-b border-[var(--color-border)] last:border-b-0"
+                    >
+                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)]">
+                        {displayName(user, member)}
+                      </td>
+                      <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)]">
+                        {displayEmail(user)}
+                      </td>
+                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)] whitespace-nowrap tabular-nums w-28">
+                        {formatDate(member.joined_at)}
+                      </td>
+                      <td className="py-4 align-top text-right w-16">
+                        <InlineDeleteConfirm
+                          isConfirming={isConfirming}
+                          isPending={isRemoving}
+                          label={m.admin_groups_members_remove_confirm({ name: displayName(user, member) })}
+                          cancelLabel={m.admin_users_cancel()}
+                          onConfirm={() => removeMemberMutation.mutate(member.zitadel_user_id)}
+                          onCancel={() => setConfirmRemoveId(null)}
+                        >
+                          <div className="flex items-start justify-end gap-2 mt-px">
+                            <Tooltip label={m.admin_groups_members_remove()}>
                               <button
                                 onClick={() => setConfirmRemoveId(member.zitadel_user_id)}
                                 aria-label={m.admin_groups_members_remove()}
-                                className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-4 w-4" />
                               </button>
-                            </div>
-                          </InlineDeleteConfirm>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                            </Tooltip>
+                          </div>
+                        </InlineDeleteConfirm>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           )}
         </CardContent>
       </Card>
