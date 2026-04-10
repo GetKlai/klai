@@ -78,7 +78,7 @@ function AccountPage() {
   const email = auth.user?.profile?.email ?? ''
 
   return (
-    <div className="p-8 space-y-6 max-w-2xl">
+    <div className="p-6 space-y-6 max-w-2xl">
       <div className="space-y-1">
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
           {m.account_heading()}

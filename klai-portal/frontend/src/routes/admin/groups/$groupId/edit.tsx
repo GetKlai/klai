@@ -153,7 +153,7 @@ function EditGroupPage() {
 
   if (groupLoading) {
     return (
-      <div className="p-8">
+      <div className="p-6">
         <p className="text-sm text-[var(--color-muted-foreground)]">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
@@ -164,14 +164,14 @@ function EditGroupPage() {
 
   if (!group) {
     return (
-      <div className="p-8">
+      <div className="p-6">
         <p className="text-sm text-[var(--color-destructive)]">Group not found</p>
       </div>
     )
   }
 
   return (
-    <div className="p-8 max-w-lg">
+    <div className="p-6 max-w-lg">
       <div className="flex items-center justify-between mb-6">
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
           {m.admin_groups_edit()}

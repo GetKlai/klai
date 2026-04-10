@@ -229,7 +229,7 @@ function MeetingDetailPage() {
   const hasTranscript = meeting.status === 'done' && !!(meeting.transcript_text || meeting.transcript_segments?.length)
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-6 max-w-3xl">
       <Button
         variant="ghost"
         size="sm"
