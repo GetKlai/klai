@@ -226,69 +226,70 @@ function AdminGroups() {
     columnHelper.display({
       id: 'actions',
       header: () => '',
-      cell: ({ row }) => (
-        <div className="relative flex items-center justify-end gap-1">
-          {!row.original.is_system && confirmDeleteId === row.original.id && (
-            <div className={`absolute inset-0 z-10 flex items-center justify-end gap-1 px-6 ${row.index % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}`}>
-              <Button
-                size="sm"
-                className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
-                disabled={deleteMutation.isPending}
-                onClick={() => {
-                  deleteMutation.mutate(row.original.id)
-                  setConfirmDeleteId(null)
-                }}
+      cell: ({ row }) => {
+        const isConfirming = !row.original.is_system && confirmDeleteId === row.original.id
+        return (
+          <div className="relative">
+            <div className={`flex items-center justify-end gap-1 ${isConfirming ? 'opacity-0 pointer-events-none' : ''}`}>
+              {!row.original.is_system && (
+                <button
+                  onClick={() => setConfirmDeleteId(row.original.id)}
+                  aria-label={`Delete ${row.original.name}`}
+                  className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {!row.original.is_system && (
+                <button
+                  onClick={() =>
+                    navigate({
+                      to: '/admin/groups/$groupId/edit',
+                      params: { groupId: String(row.original.id) },
+                    })
+                  }
+                  aria-label={`Edit ${row.original.name}`}
+                  className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <button
+                onClick={() =>
+                  navigate({
+                    to: '/admin/groups/$groupId',
+                    params: { groupId: String(row.original.id) },
+                  })
+                }
+                aria-label={row.original.name}
+                className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
               >
-                {deleteMutation.isPending ? (
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                ) : (
-                  <Trash2 className="h-2.5 w-2.5" />
-                )}
-                {m.admin_groups_delete_confirm({ name: row.original.name })}
-              </Button>
-              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5" onClick={() => setConfirmDeleteId(null)}>
-                <X className="h-2.5 w-2.5" />
-                {m.admin_users_cancel()}
-              </Button>
+                <Eye className="h-3.5 w-3.5" />
+              </button>
             </div>
-          )}
-          {!row.original.is_system && (
-            <button
-              onClick={() => setConfirmDeleteId(row.original.id)}
-              aria-label={`Delete ${row.original.name}`}
-              className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {!row.original.is_system && (
-            <button
-              onClick={() =>
-                navigate({
-                  to: '/admin/groups/$groupId/edit',
-                  params: { groupId: String(row.original.id) },
-                })
-              }
-              aria-label={`Edit ${row.original.name}`}
-              className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-          )}
-          <button
-            onClick={() =>
-              navigate({
-                to: '/admin/groups/$groupId',
-                params: { groupId: String(row.original.id) },
-              })
-            }
-            aria-label={row.original.name}
-            className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
-          >
-            <Eye className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ),
+            {isConfirming && (
+              <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 whitespace-nowrap">
+                <Button
+                  size="sm"
+                  className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5 bg-[var(--color-destructive)] text-white hover:opacity-70"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.mutate(row.original.id)
+                    setConfirmDeleteId(null)
+                  }}
+                >
+                  {deleteMutation.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                  {m.admin_groups_delete_confirm({ name: row.original.name })}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 gap-1 [&_svg]:size-2.5" onClick={() => setConfirmDeleteId(null)}>
+                  <X />
+                  {m.admin_users_cancel()}
+                </Button>
+              </div>
+            )}
+          </div>
+        )
+      },
     }),
   ]
 
@@ -392,11 +393,7 @@ function AdminGroups() {
                 {table.getRowModel().rows.map((row, i) => (
                   <tr
                     key={row.id}
-                    className={
-                      i % 2 === 0
-                        ? 'bg-[var(--color-card)]'
-                        : 'bg-[var(--color-secondary)]'
-                    }
+                    className={i % 2 === 0 ? 'bg-[var(--color-card)]' : 'bg-[var(--color-secondary)]'}
                   >
                     {row.getVisibleCells().map((cell) => (
                       <td
