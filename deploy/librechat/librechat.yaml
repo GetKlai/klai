@@ -5,8 +5,6 @@ cache: true
 registration:
   socialLogins: []
 
-appTitle: "Klai AI"
-
 interface:
   webSearch: true
   # Stripped-down UI for new tenants — disable all non-essential features

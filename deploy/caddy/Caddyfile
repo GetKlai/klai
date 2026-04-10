@@ -75,19 +75,6 @@
         reverse_proxy h2c://zitadel:8080
     }
 
-    # Tenant: klai (chat.${DOMAIN})
-    @chat host chat.{$DOMAIN}
-    handle @chat {
-        rate_limit {
-            zone chat_per_ip {
-                key {remote_host}
-                events 120
-                window 1m
-            }
-        }
-        reverse_proxy librechat-klai:3080
-    }
-
     # LiteLLM model proxy — /health only (for uptime monitoring)
     @llm host llm.{$DOMAIN}
     handle @llm {

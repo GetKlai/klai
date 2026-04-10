@@ -1,0 +1,70 @@
+name: Sync LibreChat base config to core-01
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/librechat/librechat.yaml'
+      - 'deploy/librechat/mcp_catalog.yaml'
+      - 'deploy/librechat/patches/**'
+      - '.github/workflows/deploy-librechat-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-librechat-config:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Sync base config and patches to core-01
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+
+            # Sparse-checkout the librechat config directory
+            cd /tmp && rm -rf klai-librechat-sync
+            git clone --depth=1 --filter=blob:none --sparse \
+              https://github.com/GetKlai/klai.git klai-librechat-sync
+            cd klai-librechat-sync
+            git sparse-checkout set --skip-checks deploy/librechat
+
+            # Sync base config (template for all tenants)
+            cp deploy/librechat/librechat.yaml /opt/klai/librechat/librechat.yaml
+            cp deploy/librechat/mcp_catalog.yaml /opt/klai/librechat/mcp_catalog.yaml
+
+            # Sync patches (entrypoint, format.cjs, etc.)
+            rsync -a --delete deploy/librechat/patches/ /opt/klai/librechat/patches/
+
+            rm -rf /tmp/klai-librechat-sync
+
+            echo "LibreChat base config synced to /opt/klai/librechat/"
+
+            # Regenerate per-tenant configs from the updated base template.
+            # portal-api exposes an internal endpoint that re-runs _generate_librechat_yaml
+            # for each tenant, writes the result, flushes Redis, and restarts containers.
+            # Read the internal secret from .env (mapped as INTERNAL_SECRET in portal-api container)
+            REGEN_SECRET=$(grep '^PORTAL_API_INTERNAL_SECRET=' /opt/klai/.env | cut -d= -f2-)
+
+            echo "Triggering tenant config regeneration via portal-api..."
+            HTTP_CODE=$(curl -s -o /tmp/regen-response.txt -w '%{http_code}' \
+              --connect-timeout 5 --max-time 120 \
+              -X POST http://localhost:8010/internal/librechat/regenerate \
+              -H "Authorization: Bearer ${REGEN_SECRET}" \
+              -H "Content-Type: application/json")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Tenant configs regenerated successfully"
+              cat /tmp/regen-response.txt
+            else
+              echo "WARNING: Regeneration returned HTTP $HTTP_CODE — manual restart may be needed"
+              cat /tmp/regen-response.txt
+              # Don't fail the workflow — config is synced, just not hot-reloaded
+            fi

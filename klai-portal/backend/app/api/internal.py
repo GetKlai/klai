@@ -11,8 +11,10 @@ Used by the LiteLLM knowledge hook (KB-010) to check knowledge product entitleme
 and perform lazy LibreChat MongoDB ObjectId → Zitadel user ID mapping.
 """
 
+import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 from bson import ObjectId
@@ -552,8 +554,6 @@ async def create_gap_event(
 
     # SPEC-KB-022 R6 + SPEC-KB-026 R4: async gap classification via knowledge-ingest
     if payload.taxonomy_node_ids is None and payload.nearest_kb_slug:
-        import asyncio as _asyncio
-
         async def _classify_gap(gap_id: int, org_zitadel_id: str, query_text: str, kb_slug: str) -> None:
             """Classify gap query against KB taxonomy via knowledge-ingest. Best-effort."""
             try:
@@ -584,8 +584,105 @@ async def create_gap_event(
                     str(exc),
                 )
 
-        _task = _asyncio.create_task(  # noqa: RUF006
+        _task = asyncio.create_task(  # noqa: RUF006
             _classify_gap(gap.id, payload.org_id, payload.query_text, payload.nearest_kb_slug)
         )
 
     return {"ok": True}
+
+
+class RegenerateResponse(BaseModel):
+    tenants_updated: list[str]
+    errors: list[str]
+
+
+@router.post("/librechat/regenerate", response_model=RegenerateResponse)
+async def regenerate_librechat_configs(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> RegenerateResponse:
+    """Regenerate per-tenant librechat.yaml from the base template for all active tenants.
+
+    Called by CI after syncing a new base librechat.yaml to the server.
+    For each tenant: re-runs _generate_librechat_yaml with the tenant's MCP servers,
+    writes the result, flushes Redis, and restarts the container.
+    """
+    _require_internal_token(request)
+
+    import docker
+
+    from app.services.provisioning.generators import _generate_librechat_yaml
+
+    base_yaml_path = Path(settings.librechat_container_data_path) / "librechat.yaml"
+    if not base_yaml_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Base config not found at {base_yaml_path}",
+        )
+
+    result = await db.execute(
+        select(PortalOrg).where(PortalOrg.provisioning_status == "ready")
+    )
+    tenants = result.scalars().all()
+
+    updated: list[str] = []
+    errors: list[str] = []
+    loop = asyncio.get_running_loop()
+
+    # Step 1: Regenerate all tenant configs from the updated base template
+    slugs_to_restart: list[str] = []
+    for org in tenants:
+        slug = org.slug
+        if not slug:
+            continue
+        try:
+            tenant_yaml_content = _generate_librechat_yaml(base_yaml_path, org.mcp_servers)
+            tenant_yaml_dir = Path(settings.librechat_container_data_path) / slug
+            tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
+            (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
+            slugs_to_restart.append(slug)
+            updated.append(slug)
+            logger.info("Regenerated config for tenant %s", slug)
+        except Exception as exc:
+            errors.append(f"{slug}: {exc}")
+            logger.warning("Config regeneration failed for %s: %s", slug, exc)
+
+    if not slugs_to_restart:
+        return RegenerateResponse(tenants_updated=updated, errors=errors)
+
+    # Step 2: Flush Redis once (clears cached config for all tenants)
+    def _flush_and_restart_all(slugs: list[str]) -> list[str]:
+        client = docker.from_env()
+        restart_errors: list[str] = []
+
+        try:
+            redis_ctr = client.containers.get(settings.redis_container_name)
+            redis_cmd = ["redis-cli"]
+            if settings.redis_password:
+                redis_cmd += ["-a", settings.redis_password]
+            redis_cmd.append("FLUSHALL")
+            exit_code, output = redis_ctr.exec_run(redis_cmd)
+            if exit_code != 0:
+                logger.warning("Redis FLUSHALL failed (exit %d): %s", exit_code, output.decode())
+            else:
+                logger.info("Redis FLUSHALL completed")
+        except docker.errors.NotFound:  # type: ignore[attr-defined]
+            logger.warning("Redis container '%s' not found", settings.redis_container_name)
+
+        # Step 3: Restart all tenant containers
+        for slug in slugs:
+            container_name = f"librechat-{slug}"
+            try:
+                ctr = client.containers.get(container_name)
+                ctr.restart(timeout=10)
+                logger.info("Restarted container %s", container_name)
+            except Exception as exc:
+                restart_errors.append(f"{slug}: {exc}")
+                logger.warning("Restart failed for %s: %s", container_name, exc)
+
+        return restart_errors
+
+    restart_errors = await loop.run_in_executor(None, _flush_and_restart_all, slugs_to_restart)
+    errors.extend(restart_errors)
+
+    return RegenerateResponse(tenants_updated=updated, errors=errors)

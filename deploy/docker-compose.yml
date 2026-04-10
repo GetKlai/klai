@@ -46,7 +46,6 @@ volumes:
   postgres-data:
   redis-data:
   meilisearch-data:
-  librechat-klai-images:
   glitchtip-data:
   victoriametrics-data:
   victorialogs-data:
@@ -230,55 +229,6 @@ services:
       - klai-net
       - inference
       - net-postgres
-      - net-redis
-
-  # ─── LibreChat (tenant: klai) ────────────────────────────────────────────
-  librechat-klai:
-    image: ghcr.io/danny-avila/librechat:latest
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "/klai-patches/entrypoint.sh"]
-    volumes:
-      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
-      - librechat-klai-images:/app/client/public/images
-      - ./librechat/patches:/klai-patches:ro
-    environment:
-      MONGO_URI: mongodb://librechat-klai:${LIBRECHAT_KLAI_MONGO_PASSWORD}@mongodb:27017/librechat-klai?authSource=librechat-klai
-      DOMAIN_CLIENT: https://chat.${DOMAIN}
-      DOMAIN_SERVER: https://chat.${DOMAIN}
-      JWT_SECRET: ${LIBRECHAT_KLAI_JWT_SECRET}
-      JWT_REFRESH_SECRET: ${LIBRECHAT_KLAI_JWT_REFRESH_SECRET}
-      MEILI_HOST: http://meilisearch:7700
-      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
-      REDIS_URI: ${REDIS_URI}
-      OPENID_ISSUER: https://auth.${DOMAIN}
-      OPENID_CLIENT_ID: ${LIBRECHAT_KLAI_OIDC_CLIENT_ID}
-      OPENID_CLIENT_SECRET: ${LIBRECHAT_KLAI_OIDC_CLIENT_SECRET}
-      OPENID_SESSION_SECRET: ${LIBRECHAT_KLAI_OIDC_SESSION_SECRET}
-      OPENID_CALLBACK_URL: /oauth/openid/callback
-      OPENID_SCOPE: "openid profile email"
-      OPENID_USE_END_SESSION_ENDPOINT: "true"
-      LITELLM_API_KEY: ${LITELLM_LIBRECHAT_KEY}
-      ALLOW_EMAIL_LOGIN: "false"
-      ALLOW_REGISTRATION: "false"
-      ALLOW_SOCIAL_LOGIN: "true"
-      ALLOW_SOCIAL_REGISTRATION: "true"
-      SEARXNG_INSTANCE_URL: "http://searxng:8080"
-      FIRECRAWL_API_URL: "http://firecrawl-api:3002"
-      FIRECRAWL_API_KEY: ${FIRECRAWL_INTERNAL_KEY}
-      JINA_API_URL: "http://172.18.0.1:7998/v1/rerank"
-      JINA_API_KEY: "klai-internal"
-      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
-      PORTAL_INTERNAL_URL: http://portal-api:8010
-      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - klai-net
-      - net-mongodb
-      - net-meilisearch
       - net-redis
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
