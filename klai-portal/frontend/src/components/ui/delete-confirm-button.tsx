@@ -1,12 +1,15 @@
 import { useState } from 'react'
-import { Trash2, Check, X, Loader2 } from 'lucide-react'
+import { Trash2, Loader2 } from 'lucide-react'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface DeleteConfirmButtonProps {
   onConfirm: () => void | Promise<void>
   isDeleting?: boolean
   disabled?: boolean
-  deleteLabel?: string
+  /** Short description shown in the popover, e.g. "Delete group Admins" */
+  label?: string
   confirmLabel?: string
   cancelLabel?: string
   className?: string
@@ -16,12 +19,12 @@ export function DeleteConfirmButton({
   onConfirm,
   isDeleting = false,
   disabled = false,
-  deleteLabel = 'Delete',
-  confirmLabel = 'Confirm',
+  label,
+  confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
   className,
 }: DeleteConfirmButtonProps) {
-  const [confirming, setConfirming] = useState(false)
+  const [open, setOpen] = useState(false)
 
   if (isDeleting) {
     return (
@@ -31,41 +34,48 @@ export function DeleteConfirmButton({
     )
   }
 
-  if (confirming) {
-    return (
-      <div className={cn('flex items-center gap-1 animate-slide-in-from-right', className)}>
-        <button
-          onClick={async () => {
-            setConfirming(false)
-            await onConfirm()
-          }}
-          aria-label={confirmLabel}
-          className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-success)] text-white transition-colors hover:opacity-90"
-        >
-          <Check className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={() => setConfirming(false)}
-          aria-label={cancelLabel}
-          className="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-destructive)] text-white transition-colors hover:opacity-90"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    )
-  }
-
   return (
-    <button
-      onClick={() => setConfirming(true)}
-      disabled={disabled}
-      aria-label={deleteLabel}
-      className={cn(
-        'p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)] disabled:pointer-events-none disabled:opacity-50',
-        className,
-      )}
-    >
-      <Trash2 className="h-4 w-4" />
-    </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          disabled={disabled}
+          className={cn(
+            'flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70 disabled:pointer-events-none disabled:opacity-50',
+            className,
+          )}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        side="bottom"
+        className="w-auto max-w-56 p-3"
+      >
+        {label && (
+          <p className="mb-2 text-sm text-[var(--color-foreground)]">{label}</p>
+        )}
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            className="h-7 bg-[var(--color-destructive)] px-2.5 text-xs text-white hover:opacity-90"
+            onClick={() => {
+              setOpen(false)
+              void onConfirm()
+            }}
+          >
+            {confirmLabel}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setOpen(false)}
+          >
+            {cancelLabel}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
