@@ -165,7 +165,7 @@ function TranscribePage() {
     <div className="p-6 space-y-6">
       <div className="flex justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
             {m.app_tool_transcribe_title()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">

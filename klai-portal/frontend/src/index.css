@@ -115,7 +115,6 @@ body {
    Apply via `page-title` utility class on any h1 used as a page heading.
    ─────────────────────────────────────────────────────────────────────── */
 @utility page-title {
-  line-height: 1;
   margin-top: -2px;
 }
 
