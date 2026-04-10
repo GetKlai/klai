@@ -508,18 +508,7 @@ function TaxonomyTab() {
     mutationFn: handleApplyAll,
   })
 
-  function _handleAddChild(parentId: number) {
-    setAddParentId(parentId)
-    setShowAddRoot(false)
-    setNewNodeName('')
-  }
-
-  function _handleRename(node: TaxonomyNode, newName: string) {
-    renameNodeMutation.mutate({ nodeId: node.id, name: newName })
-  }
-
   const canEdit = isContributor || isAdmin
-  const _canDelete = isOwner || isAdmin
   const nodes = nodesQuery.data?.nodes ?? []
   const proposals = proposalsQuery.data?.proposals ?? []
 
