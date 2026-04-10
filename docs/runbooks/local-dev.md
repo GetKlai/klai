@@ -6,6 +6,35 @@ Stap-voor-stap handleiding om de Klai portal lokaal te draaien voor development.
 
 ## Architectuuroverzicht
 
+Er zijn twee modi voor lokale development:
+
+### Modus A: Frontend-only (aanbevolen)
+
+Alleen de frontend draait lokaal. API calls gaan via Vite proxy naar productie. Echte data, echte auth, geen lokale backend/Docker nodig.
+
+```
+┌───────────────────────┐          ┌──────────────────────────┐
+│  Lokaal                │          │  Productie (core-01)     │
+│                       │          │                          │
+│  ┌──────────────┐     │  proxy   │  ┌────────────────────┐  │
+│  │  Frontend     │────────/api──▶│  │  portal-api        │  │
+│  │  Vite :5174   │     │          │  │  PostgreSQL, etc.  │  │
+│  └──────┬───────┘     │          │  └────────────────────┘  │
+│         │ OIDC        │          │                          │
+│         ▼             │          │  ┌────────────────────┐  │
+│  ┌──────────────┐     │          │  │  Zitadel           │  │
+│  │  auth.get-   │◀────────────────  │  auth.getklai.com  │  │
+│  │  klai.com    │     │          │  └────────────────────┘  │
+│  └──────────────┘     │          │                          │
+└───────────────────────┘          └──────────────────────────┘
+```
+
+**Start:** `make frontend` — klaar. Geen Docker, geen backend setup.
+
+### Modus B: Full-stack (voor backend development)
+
+Frontend + backend lokaal, databases in Docker.
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Lokaal (native, hot reload)                        │
@@ -30,8 +59,7 @@ Stap-voor-stap handleiding om de Klai portal lokaal te draaien voor development.
 └─────────────────────────────────────────────────────┘
 ```
 
-**Wat lokaal draait:** Frontend (Vite), Backend (FastAPI), databases en LiteLLM in Docker.
-**Wat NIET lokaal draait:** Zitadel (productie), Caddy, LibreChat, monitoring stack.
+**Start:** `make dev-up && make migrate && make backend` + `make frontend`
 
 ---
 
@@ -51,7 +79,9 @@ Stap-voor-stap handleiding om de Klai portal lokaal te draaien voor development.
 
 ---
 
-## Snelle start
+## Snelle start (frontend-only)
+
+De snelste manier om te beginnen — geen Docker, geen backend setup:
 
 ```bash
 # 1. Clone de repo (als je dat nog niet hebt)
@@ -60,12 +90,24 @@ git clone https://github.com/GetKlai/klai.git && cd klai
 # 2. Eerste setup: kopieert env files, installeert dependencies
 make setup
 
-# 3. Vul de configuratie in (zie sectie hieronder)
-#    - .env.dev
-#    - klai-portal/backend/.env
-#    - klai-portal/frontend/.env.local
+# 3. Vul frontend/.env.local in:
+#    VITE_OIDC_AUTHORITY=https://auth.getklai.com
+#    VITE_OIDC_CLIENT_ID=362901948573220875
 
-# 4. Start alles
+# 4. Start de frontend
+make frontend
+```
+
+Open [http://localhost:5174](http://localhost:5174) — je wordt doorgestuurd naar Zitadel login. Na inloggen werk je met echte productie data via de Vite proxy.
+
+## Snelle start (full-stack)
+
+Als je ook aan de backend werkt:
+
+```bash
+make setup
+# Vul in: .env.dev, klai-portal/backend/.env, klai-portal/frontend/.env.local
+# Voeg VITE_API_PROXY_TARGET=http://localhost:8010 toe aan frontend/.env.local
 make dev-up          # Docker services
 make migrate         # Database migraties
 make backend         # Backend (in terminal 1)
@@ -125,9 +167,16 @@ LITELLM_BASE_URL=http://localhost:4000
 Open `klai-portal/frontend/.env.local` en vul in:
 
 ```bash
+# Echte Zitadel authenticatie
 VITE_OIDC_AUTHORITY=https://auth.getklai.com
 VITE_OIDC_CLIENT_ID=362901948573220875
-VITE_API_BASE_URL=http://localhost:8010
+```
+
+De Vite proxy stuurt `/api` calls standaard door naar productie (`getklai.getklai.com`). Om tegen de lokale backend te ontwikkelen (Modus B), voeg toe:
+
+```bash
+# Alleen voor full-stack mode: stuur /api naar lokale backend
+VITE_API_PROXY_TARGET=http://localhost:8010
 ```
 
 > **Let op:** De `VITE_OIDC_CLIENT_ID` is `362901948573220875` (OIDC Client ID), **niet** `362901948573155339` (dat is de App ID). Deze staan apart in Zitadel.
@@ -297,12 +346,17 @@ curl -s -H "Authorization: Bearer $ZITADEL_PAT" \
 
 ### Frontend login stuurt door naar live app
 
-**Symptoom:** Na Zitadel login kom je uit op `my.getklai.com` in plaats van `localhost:5174`.
+**Symptoom:** Na Zitadel login kom je uit op `getklai.getklai.com` in plaats van `localhost:5174`.
 
-**Oorzaak 1:** Vite is niet herstart na `.env.local` wijziging — de oude `client_id` is nog actief.
-**Oorzaak 2:** Zitadel gebruikte een bestaande SSO sessie van de live app met diens `redirect_uri`.
+**Oorzaak 1:** Vite is niet herstart na `.env.local` wijziging — de oude config is nog actief.
+**Oorzaak 2:** `VITE_AUTH_DEV_MODE=true` staat nog aan — zet deze uit voor echte OIDC.
 
-**Fix:** Herstart Vite. Of gebruik Auth Dev Mode (zie sectie hierboven) om Zitadel volledig te omzeilen.
+**Fix:** Zorg dat `.env.local` er zo uitziet en herstart Vite:
+```bash
+# VITE_AUTH_DEV_MODE=true    ← uitgecommentarieerd
+VITE_OIDC_AUTHORITY=https://auth.getklai.com
+VITE_OIDC_CLIENT_ID=362901948573220875
+```
 
 ### LiteLLM start niet op
 
