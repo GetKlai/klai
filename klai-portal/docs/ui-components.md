@@ -140,6 +140,38 @@ import { Select } from '@/components/ui/select'
 
 ---
 
+## Tooltip
+
+`components/ui/tooltip.tsx`
+
+Custom hover tooltip. Accepts a `className` prop that is passed to the wrapper `<div>`.
+
+```tsx
+import { Tooltip } from '@/components/ui/tooltip'
+
+<Tooltip label="Copy to clipboard">
+  <button>...</button>
+</Tooltip>
+```
+
+**Alignment in table cells:** The wrapper renders as `display:block`. When placed in an `align-top` table cell adjacent to a text column, the SVG icon sits slightly above the text cap height due to font metrics. Fix with `leading-none mt-px`:
+
+```tsx
+// Table cell with source icon next to a title text column (Parabole font, text-sm)
+<td className="py-4 pr-2 align-top w-6">
+  <Tooltip className="leading-none mt-px" label="...">
+    <Mic className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+  </Tooltip>
+</td>
+```
+
+- `leading-none` — collapses line-height on the wrapper div, removing baseline offset
+- `mt-px` — 1px top margin aligns with Parabole's cap height at `text-sm` (14px)
+
+This offset is font-specific. If the base font changes, re-measure by asking the user to test `margin-top: Xpx` in DevTools.
+
+---
+
 ## Color tokens
 
 Use CSS variables for all semantic colors. Never use raw Tailwind color classes for these purposes.
@@ -177,6 +209,45 @@ Use CSS variables for all semantic colors. Never use raw Tailwind color classes 
 - `<Label>` always has `htmlFor` matching the field `id`
 - Never use `text-red-*`, `bg-red-*`, `text-green-*`, `bg-green-*` for semantic states — use `--color-destructive` / `--color-success`
 - See `klai-claude/docs/patterns/frontend.md` for the full portal-ui-components pattern
+
+---
+
+## InlineEdit
+
+`components/ui/inline-edit.tsx`
+
+Inline rename field with amber ring and zero layout shift. The view-mode content (`children`) stays in the DOM as an `invisible` spacer when editing, so the input overlays it absolutely — row height never changes.
+
+```tsx
+import { InlineEdit } from '@/components/ui/inline-edit'
+
+// State
+const [editingId, setEditingId] = useState<string | null>(null)
+const [editName, setEditName] = useState('')
+
+// In the cell
+<InlineEdit
+  isEditing={editingId === item.id}
+  value={editName}
+  onValueChange={setEditName}
+  onSave={() => { save(item.id); setEditingId(null) }}
+  onCancel={() => setEditingId(null)}
+  isSaving={isSaving}
+  inputClassName="font-medium text-sm"
+>
+  <span className="font-medium text-sm">{item.name}</span>
+</InlineEdit>
+```
+
+Rules:
+- `inputClassName` must match the view-mode text style (font weight, size) — the input renders at the same visual size as the text it replaces
+- `children` is the spacer: provide the exact same element(s) shown in view mode
+- Save/cancel triggers belong in a separate actions column or below the cell — do NOT put them inside InlineEdit
+- Enter → save, Escape → cancel
+- The component owns `relative`, `invisible pointer-events-none`, `absolute inset-0`, `ring-1 ring-[var(--color-accent)]`, `rounded-none` — do NOT add these at the call site
+
+**Uses:**
+- `routes/app/transcribe/_components/TranscriptionTable.tsx` — rename transcription title
 
 ---
 

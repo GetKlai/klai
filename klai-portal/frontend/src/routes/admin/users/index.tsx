@@ -8,7 +8,6 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table'
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
@@ -208,18 +207,18 @@ function UsersPage() {
             onConfirm={() => { setConfirmingDeleteId(null); deleteMutation.mutate(user) }}
             onCancel={() => setConfirmingDeleteId(null)}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-start justify-end gap-2 mt-px">
               {user.invite_pending && (
                 <Tooltip label={m.admin_users_resend_invite()}>
                   <button
                     disabled={isResending}
                     onClick={() => resendInviteMutation.mutate(user)}
                     aria-label={m.admin_users_resend_invite()}
-                    className="flex h-7 w-7 items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
+                    className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 disabled:opacity-40"
                   >
                     {isResending
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      : <Send className="h-3.5 w-3.5" />
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Send className="h-4 w-4" />
                     }
                   </button>
                 </Tooltip>
@@ -228,9 +227,9 @@ function UsersPage() {
                 <button
                   onClick={() => navigate({ to: '/admin/users/$userId/edit', params: { userId: user.zitadel_user_id } })}
                   aria-label={m.admin_users_edit()}
-                  className="flex h-7 w-7 items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
+                  className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="h-4 w-4" />
                 </button>
               </Tooltip>
               {user.invite_pending && (
@@ -238,9 +237,9 @@ function UsersPage() {
                   <button
                     onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
                     aria-label={m.admin_users_delete()}
-                    className="flex h-7 w-7 items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+                    className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </Tooltip>
               )}
@@ -249,7 +248,7 @@ function UsersPage() {
                   <DropdownMenuTrigger asChild>
                     <button
                       aria-label={m.admin_users_col_actions()}
-                      className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
+                      className="inline-flex items-center justify-center rounded text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-secondary)]"
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
@@ -299,7 +298,7 @@ function UsersPage() {
   })
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 max-w-6xl">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
@@ -325,57 +324,49 @@ function UsersPage() {
         <p className="text-sm text-[var(--color-destructive)]">{mutationError}</p>
       )}
 
-      <Card data-help-id="admin-users-table">
-        <CardContent className="pt-0 px-0 pb-0 overflow-hidden rounded-xl">
-          {isLoading ? (
-            <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_users_loading()}
-            </p>
-          ) : users.length === 0 ? (
-            <p className="px-6 py-8 text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_users_empty()}
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <tr key={headerGroup.id} className="border-b border-[var(--color-border)]">
-                    {headerGroup.headers.map((header) => (
-                      <th
-                        key={header.id}
-                        className="px-6 py-3 text-left text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wide"
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
-              </thead>
-              <tbody>
-                {table.getRowModel().rows.map((row, i) => (
-                  <tr
-                    key={row.id}
-                    className={
-                      i % 2 === 0
-                        ? 'bg-[var(--color-card)]'
-                        : 'bg-[var(--color-secondary)]'
-                    }
+      {isLoading ? (
+        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+          {m.admin_users_loading()}
+        </p>
+      ) : users.length === 0 ? (
+        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+          {m.admin_users_empty()}
+        </p>
+      ) : (
+        <table data-help-id="admin-users-table" className="w-full text-sm border-t border-b border-[var(--color-border)]">
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id} className="border-b border-[var(--color-border)]">
+                {headerGroup.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]"
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <td
-                        key={cell.id}
-                        className="px-6 py-3 text-[var(--color-foreground)]"
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </th>
                 ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row) => (
+              <tr
+                key={row.id}
+                className="border-b border-[var(--color-border)] last:border-b-0"
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td
+                    key={cell.id}
+                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       <AlertDialog
         open={confirmingOffboardId !== null}
