@@ -45,14 +45,17 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: true,
-    proxy: {
-      // Proxy /api to the backend. Default: production (for frontend-only dev).
-      // Set VITE_API_PROXY_TARGET=http://localhost:8010 to use the local backend.
-      '/api': {
-        target: process.env.VITE_API_PROXY_TARGET || 'https://getklai.getklai.com',
-        changeOrigin: true,
-        secure: true,
-      },
-    },
+    proxy: Object.fromEntries(
+      // Proxy all backend paths. Default: production (for frontend-only dev).
+      // Set VITE_API_PROXY_TARGET=http://localhost:8010 to use local backends.
+      ['/api', '/research', '/scribe', '/docs/api'].map((path) => [
+        path,
+        {
+          target: process.env.VITE_API_PROXY_TARGET || 'https://getklai.getklai.com',
+          changeOrigin: true,
+          secure: true,
+        },
+      ]),
+    ),
   },
 })
