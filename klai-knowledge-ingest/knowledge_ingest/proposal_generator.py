@@ -69,7 +69,7 @@ async def maybe_generate_proposal(
             _suggest_category_name(unmatched_documents),
             timeout=settings.taxonomy_classification_timeout,
         )
-    except (TimeoutError, Exception) as exc:
+    except Exception as exc:
         logger.warning(
             "taxonomy_proposal_generation_failed",
             kb_slug=kb_slug,
@@ -161,7 +161,7 @@ async def generate_bootstrap_proposals(
             _suggest_multiple_categories(documents[:50], existing_category_names or []),
             timeout=30.0,
         )
-    except (TimeoutError, Exception) as exc:
+    except Exception as exc:
         logger.warning(
             "bootstrap_proposals_generation_failed",
             kb_slug=kb_slug,
@@ -190,8 +190,7 @@ async def generate_bootstrap_proposals(
     descriptions = await asyncio.gather(*desc_tasks, return_exceptions=True)
 
     submitted = 0
-    valid_categories = [name for name in categories if name]
-    for i, name in enumerate(valid_categories):
+    for i, name in enumerate(categories):
         desc = descriptions[i] if i < len(descriptions) and isinstance(descriptions[i], str) else ""
         proposal = TaxonomyProposal(
             proposal_type="new_node",
