@@ -1202,6 +1202,7 @@
   "knowledge_taxonomy_node_add_child": "Add subcategory",
   "knowledge_taxonomy_node_name_label": "Name",
   "knowledge_taxonomy_node_name_placeholder": "Category name",
+  "knowledge_taxonomy_node_description_placeholder": "Description (optional)",
   "knowledge_taxonomy_node_add_submit": "Add",
   "knowledge_taxonomy_node_add_cancel": "Cancel",
   "knowledge_taxonomy_node_rename": "Rename",
