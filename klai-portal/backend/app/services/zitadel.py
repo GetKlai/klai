@@ -183,7 +183,10 @@ class ZitadelClient:
         In auth dev mode, returns mock userinfo without calling Zitadel.
         """
         if settings.is_auth_dev_mode:
-            return {"sub": settings.auth_dev_user_id}
+            return {
+                "sub": settings.auth_dev_user_id,
+                "urn:zitadel:iam:org:project:roles": {"org:owner": {}},
+            }
 
         now = time.monotonic()
         cached = self._userinfo_cache.get(access_token)
