@@ -84,27 +84,13 @@ function TranscribePage() {
 
   const { data: transcriptionsData, isLoading: transcriptionsLoading, error: transcriptionsError, refetch: refetchTranscriptions } = useQuery<TranscriptionListResponse>({
     queryKey: ['transcriptions'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token)
-      } catch (e) {
-        if (import.meta.env.DEV) return (await import('./_dev-fixtures')).DEV_TRANSCRIPTIONS
-        throw e
-      }
-    },
+    queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token),
     enabled: !!token,
   })
 
   const { data: meetingsData, isLoading: meetingsLoading, error: meetingsError, refetch: refetchMeetings } = useQuery<MeetingListResponse>({
     queryKey: ['meetings'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token)
-      } catch (e) {
-        if (import.meta.env.DEV) return (await import('./_dev-fixtures')).DEV_MEETINGS
-        throw e
-      }
-    },
+    queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token),
     enabled: !!token,
     refetchInterval: (query) => {
       const data = query.state.data
