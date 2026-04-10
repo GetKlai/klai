@@ -3,8 +3,8 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import {
-  Plus, Pencil, Trash2, Loader2, FolderTree, BarChart2,
-  ChevronRight, ChevronDown, Check, X, Tag, Filter, Sparkles,
+  Plus, Pencil, Trash2, Loader2, BarChart2,
+  X, Tag, Filter, Sparkles,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -71,7 +71,7 @@ function CoverageWidget({
             type="button"
             onClick={() => onNodeClick(node.taxonomy_node_id)}
             className={[
-              'w-full text-left rounded-lg border p-3 transition-colors',
+              'group/row w-full text-left rounded-lg border p-3 transition-colors',
               isActive
                 ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
                 : 'border-[var(--color-border)] hover:bg-[var(--color-secondary)]',
@@ -81,10 +81,50 @@ function CoverageWidget({
               <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
                 {node.taxonomy_node_name}
               </span>
-              <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
-                {pct}%
-              </span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {_canEdit && (
+                  <span className="hidden group-hover/row:inline-flex items-center gap-0.5">
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const newName = prompt(m.knowledge_taxonomy_node_rename_prompt(), node.taxonomy_node_name)
+                        if (newName && newName.trim() && newName.trim() !== node.taxonomy_node_name) {
+                          _onRename?.(node.taxonomy_node_id, newName.trim())
+                        }
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
+                      className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70 cursor-pointer"
+                      aria-label={m.knowledge_taxonomy_node_rename()}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        _onDelete?.(node.taxonomy_node_id)
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
+                      className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70 cursor-pointer"
+                      aria-label={m.knowledge_taxonomy_node_delete()}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </span>
+                  </span>
+                )}
+                <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                  {pct}%
+                </span>
+              </div>
             </div>
+            {node.description && (
+              <p className="text-xs text-[var(--color-muted-foreground)] mb-1.5 line-clamp-2">
+                {node.description}
+              </p>
+            )}
             <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${barColor(pct)}`}
@@ -183,178 +223,6 @@ function TagCloud({
             <span>{tag}</span>
             <span className="text-xs opacity-60 tabular-nums">{count}</span>
           </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// -- Recursive tree component -------------------------------------------------
-
-function TaxonomyTree({
-  nodes,
-  parentId,
-  depth,
-  canEdit,
-  canDelete,
-  onAddChild,
-  onRename,
-  onDelete,
-}: {
-  nodes: TaxonomyNode[]
-  parentId: number | null
-  depth: number
-  canEdit: boolean
-  canDelete: boolean
-  onAddChild: (parentId: number) => void
-  onRename: (node: TaxonomyNode, newName: string) => void
-  onDelete: (nodeId: number) => void
-}) {
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [editName, setEditName] = useState('')
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
-
-  const children = nodes.filter((n) => n.parent_id === parentId).sort((a, b) => a.sort_order - b.sort_order)
-  if (children.length === 0) return null
-
-  function toggleExpand(id: number) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function startRename(node: TaxonomyNode) {
-    setEditingId(node.id)
-    setEditName(node.name)
-  }
-
-  function submitRename(node: TaxonomyNode) {
-    if (editName.trim() && editName.trim() !== node.name) {
-      onRename(node, editName.trim())
-    }
-    setEditingId(null)
-  }
-
-  const hasChildren = (id: number) => nodes.some((n) => n.parent_id === id)
-
-  return (
-    <div>
-      {children.map((node) => {
-        const isExpanded = expandedIds.has(node.id)
-        const hasKids = hasChildren(node.id)
-        return (
-          <div key={node.id}>
-            <div
-              className="group flex items-center gap-1 py-1.5 pr-2 rounded hover:bg-[var(--color-secondary)] transition-colors"
-              style={{ paddingLeft: depth * 20 + 4 }}
-            >
-              <button
-                type="button"
-                onClick={() => toggleExpand(node.id)}
-                className="flex h-5 w-5 items-center justify-center shrink-0"
-                aria-label={isExpanded ? 'Collapse' : 'Expand'}
-              >
-                {hasKids ? (
-                  isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" /> : <ChevronRight className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
-                ) : (
-                  <span className="h-3.5 w-3.5" />
-                )}
-              </button>
-
-              {editingId === node.id ? (
-                <form
-                  className="flex items-center gap-1 flex-1"
-                  onSubmit={(e) => { e.preventDefault(); submitRename(node) }}
-                >
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="h-6 text-sm py-0 px-1.5 flex-1"
-                    autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null) }}
-                  />
-                  <button type="submit" className="flex h-5 w-5 items-center justify-center rounded bg-[var(--color-success)] text-white hover:opacity-90">
-                    <Check className="h-3 w-3" />
-                  </button>
-                  <button type="button" onClick={() => setEditingId(null)} className="flex h-5 w-5 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)]">
-                    <X className="h-3 w-3" />
-                  </button>
-                </form>
-              ) : (
-                <>
-                  <span className="text-sm text-[var(--color-foreground)] truncate flex-1">{node.name}</span>
-                  <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums shrink-0">
-                    {node.doc_count > 0 && m.knowledge_taxonomy_node_doc_count({ count: String(node.doc_count) })}
-                  </span>
-
-                  {canEdit && (
-                    <div className="hidden group-hover:flex items-center gap-0.5 ml-1">
-                      <button
-                        type="button"
-                        onClick={() => onAddChild(node.id)}
-                        aria-label={m.knowledge_taxonomy_node_add_child()}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-accent)] hover:opacity-70"
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => startRename(node)}
-                        aria-label={m.knowledge_taxonomy_node_rename()}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      {canDelete && (confirmDeleteId === node.id ? (
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            type="button"
-                            onClick={() => { onDelete(node.id); setConfirmDeleteId(null) }}
-                            className="flex h-5 w-5 items-center justify-center rounded bg-[var(--color-destructive)] text-white hover:opacity-90"
-                          >
-                            <Check className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(null)}
-                            className="flex h-5 w-5 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)]"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(node.id)}
-                          aria-label={m.knowledge_taxonomy_node_delete()}
-                          className="flex h-5 w-5 items-center justify-center text-[var(--color-destructive)] hover:opacity-70"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {hasKids && isExpanded && (
-              <TaxonomyTree
-                nodes={nodes}
-                parentId={node.id}
-                depth={depth + 1}
-                canEdit={canEdit}
-                canDelete={canDelete}
-                onAddChild={onAddChild}
-                onRename={onRename}
-                onDelete={onDelete}
-              />
-            )}
-          </div>
         )
       })}
     </div>
@@ -640,18 +508,18 @@ function TaxonomyTab() {
     mutationFn: handleApplyAll,
   })
 
-  function handleAddChild(parentId: number) {
+  function _handleAddChild(parentId: number) {
     setAddParentId(parentId)
     setShowAddRoot(false)
     setNewNodeName('')
   }
 
-  function handleRename(node: TaxonomyNode, newName: string) {
+  function _handleRename(node: TaxonomyNode, newName: string) {
     renameNodeMutation.mutate({ nodeId: node.id, name: newName })
   }
 
   const canEdit = isContributor || isAdmin
-  const canDelete = isOwner || isAdmin
+  const _canDelete = isOwner || isAdmin
   const nodes = nodesQuery.data?.nodes ?? []
   const proposals = proposalsQuery.data?.proposals ?? []
 
@@ -711,7 +579,7 @@ function TaxonomyTab() {
           <div className="flex items-center gap-2 mb-3">
             <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
             <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
-              {m.knowledge_taxonomy_coverage_heading()}
+              {m.knowledge_taxonomy_categories_coverage_heading()}
             </h2>
             {activeNodeId !== null && (
               <button
@@ -722,24 +590,32 @@ function TaxonomyTab() {
                 {m.knowledge_taxonomy_coverage_filter_clear()}
               </button>
             )}
-            {canEdit && nodes.length > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="ml-auto h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
-                onClick={() => backfillMutation.mutate()}
-                disabled={backfillMutation.isPending || suggestState === 'applying'}
-                title={backfillMutation.isPending || suggestState === 'applying'
-                  ? m.knowledge_taxonomy_retag_running()
-                  : m.knowledge_taxonomy_retag()}
-              >
-                {backfillMutation.isPending || suggestState === 'applying'
-                  ? <Loader2 className="h-3 w-3 animate-spin" />
-                  : <Sparkles className="h-3 w-3" />
-                }
-                {m.knowledge_taxonomy_retag()}
-              </Button>
-            )}
+            <div className="flex items-center gap-2 ml-auto">
+              {canEdit && !showAddRoot && !isAddingChild && (
+                <Button size="sm" variant="outline" className="h-6 text-xs px-2" onClick={() => { setShowAddRoot(true); setAddParentId(null) }}>
+                  <Plus className="h-3 w-3 mr-1" />
+                  {m.knowledge_taxonomy_node_add_root()}
+                </Button>
+              )}
+              {canEdit && nodes.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
+                  onClick={() => backfillMutation.mutate()}
+                  disabled={backfillMutation.isPending || suggestState === 'applying'}
+                  title={backfillMutation.isPending || suggestState === 'applying'
+                    ? m.knowledge_taxonomy_retag_running()
+                    : m.knowledge_taxonomy_retag()}
+                >
+                  {backfillMutation.isPending || suggestState === 'applying'
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Sparkles className="h-3 w-3" />
+                  }
+                  {m.knowledge_taxonomy_retag()}
+                </Button>
+              )}
+            </div>
           </div>
           {coverageQuery.isLoading && (
             <p className="py-3 text-sm text-[var(--color-muted-foreground)]">
@@ -754,7 +630,43 @@ function TaxonomyTab() {
               onNodeClick={toggleNode}
               onSuggest={canEdit && suggestState === 'idle' ? () => bootstrapMutation.mutate() : undefined}
               isSuggesting={bootstrapMutation.isPending}
+              canEdit={canEdit}
+              onRename={(nodeId, newName) => renameNodeMutation.mutate({ nodeId, name: newName })}
+              onDelete={(nodeId) => deleteNodeMutation.mutate(nodeId)}
             />
+          )}
+
+          {/* Inline add form (root or child) */}
+          {(showAddRoot || isAddingChild) && (
+            <form
+              className="mt-2 flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (newNodeName.trim()) {
+                  createNodeMutation.mutate({ name: newNodeName.trim(), parentId: addParentId })
+                }
+              }}
+            >
+              <Input
+                value={newNodeName}
+                onChange={(e) => setNewNodeName(e.target.value)}
+                placeholder={m.knowledge_taxonomy_node_name_placeholder()}
+                className="h-8 text-sm max-w-xs"
+                autoFocus
+              />
+              <Button type="submit" size="sm" disabled={createNodeMutation.isPending || !newNodeName.trim()}>
+                {m.knowledge_taxonomy_node_add_submit()}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAddRoot(false); setAddParentId(null); setNewNodeName('') }}>
+                {m.knowledge_taxonomy_node_add_cancel()}
+              </Button>
+            </form>
+          )}
+
+          {createNodeMutation.error && (
+            <p className="text-sm text-[var(--color-destructive)] mt-1">
+              {createNodeMutation.error instanceof Error ? createNodeMutation.error.message : m.knowledge_taxonomy_error_create()}
+            </p>
           )}
         </div>
       )}
@@ -895,126 +807,6 @@ function TaxonomyTab() {
             activeTags={activeTags}
             onTagClick={toggleTag}
           />
-        )}
-      </div>
-
-      {/* Category tree */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <FolderTree className="h-4 w-4 text-[var(--color-foreground)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_tree_heading()}</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {canEdit && nodes.length === 0 && suggestState === 'idle' && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => bootstrapMutation.mutate()}
-                disabled={bootstrapMutation.isPending}
-              >
-                <Sparkles className="h-3.5 w-3.5 mr-1" />
-                {m.knowledge_taxonomy_suggest_categories()}
-              </Button>
-            )}
-            {canEdit && !showAddRoot && !isAddingChild && (
-              <Button size="sm" variant="outline" onClick={() => { setShowAddRoot(true); setAddParentId(null) }}>
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                {m.knowledge_taxonomy_node_add_root()}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {nodes.length === 0 && !nodesQuery.isLoading && (
-          <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
-            {suggestState === 'generating' ? (
-              <>
-                <Loader2 className="mx-auto h-8 w-8 text-[var(--color-accent)] mb-2 animate-spin" />
-                <p className="text-sm text-[var(--color-foreground)]">{m.knowledge_taxonomy_suggest_generating()}</p>
-              </>
-            ) : (
-              <>
-                <FolderTree className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)] mb-2" />
-                <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_tree_empty()}</p>
-                <p className="text-xs text-[var(--color-muted-foreground)] mt-1">{m.knowledge_taxonomy_tree_empty_hint()}</p>
-                {canEdit && suggestState === 'idle' && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-3"
-                    onClick={() => bootstrapMutation.mutate()}
-                    disabled={bootstrapMutation.isPending}
-                  >
-                    <Sparkles className="h-3.5 w-3.5 mr-1" />
-                    {m.knowledge_taxonomy_suggest_categories()}
-                  </Button>
-                )}
-              </>
-            )}
-            {bootstrapMutation.isError && (
-              <p className="text-sm text-[var(--color-destructive)] mt-2">
-                {m.knowledge_taxonomy_suggest_error()}
-              </p>
-            )}
-          </div>
-        )}
-
-        {nodes.length > 0 && (
-          <Card>
-            <CardContent className="pt-3 pb-3 px-2">
-              <TaxonomyTree
-                nodes={nodes}
-                parentId={null}
-                depth={0}
-                canEdit={canEdit}
-                canDelete={canDelete}
-                onAddChild={handleAddChild}
-                onRename={handleRename}
-                onDelete={(id) => deleteNodeMutation.mutate(id)}
-              />
-            </CardContent>
-          </Card>
-        )}
-
-        {nodesQuery.isLoading && (
-          <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
-            <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
-            {m.admin_connectors_loading()}
-          </p>
-        )}
-
-        {/* Inline add form (root or child) */}
-        {(showAddRoot || isAddingChild) && (
-          <form
-            className="mt-2 flex items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (newNodeName.trim()) {
-                createNodeMutation.mutate({ name: newNodeName.trim(), parentId: addParentId })
-              }
-            }}
-          >
-            <Input
-              value={newNodeName}
-              onChange={(e) => setNewNodeName(e.target.value)}
-              placeholder={m.knowledge_taxonomy_node_name_placeholder()}
-              className="h-8 text-sm max-w-xs"
-              autoFocus
-            />
-            <Button type="submit" size="sm" disabled={createNodeMutation.isPending || !newNodeName.trim()}>
-              {m.knowledge_taxonomy_node_add_submit()}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAddRoot(false); setAddParentId(null); setNewNodeName('') }}>
-              {m.knowledge_taxonomy_node_add_cancel()}
-            </Button>
-          </form>
-        )}
-
-        {createNodeMutation.error && (
-          <p className="text-sm text-[var(--color-destructive)] mt-1">
-            {createNodeMutation.error instanceof Error ? createNodeMutation.error.message : m.knowledge_taxonomy_error_create()}
-          </p>
         )}
       </div>
 

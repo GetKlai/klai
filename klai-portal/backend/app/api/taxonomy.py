@@ -812,6 +812,7 @@ _COVERAGE_CACHE_TTL = 300.0  # 5 minutes
 class CoverageNodeOut(BaseModel):
     taxonomy_node_id: int
     taxonomy_node_name: str
+    description: str | None = None
     chunk_count: int
     gap_count: int
     health: str  # "healthy", "attention_needed", "empty"
@@ -856,6 +857,7 @@ def _make_coverage_response(
     ingest_data: dict,
     gap_counts: dict[int, int],
     node_names: dict[int, str],
+    node_descriptions: dict[int, str | None] | None = None,
 ) -> CoverageResponse:
     """Merge ingest chunk data with gap counts to build coverage response."""
     total_chunks = ingest_data.get("total_chunks", 0)
@@ -879,6 +881,7 @@ def _make_coverage_response(
             CoverageNodeOut(
                 taxonomy_node_id=nid,
                 taxonomy_node_name=node_names.get(nid, f"Node {nid}"),
+                description=(node_descriptions or {}).get(nid),
                 chunk_count=chunk_count,
                 gap_count=gap_count,
                 health=health,
@@ -932,6 +935,7 @@ async def taxonomy_coverage(
     nodes_result = await db.execute(select(PortalTaxonomyNode).where(PortalTaxonomyNode.kb_id == kb.id))
     nodes = nodes_result.scalars().all()
     node_names = {n.id: n.name for n in nodes}
+    node_descriptions = {n.id: n.description for n in nodes}
 
     # Count open gaps per taxonomy node (last 30 days)
     cutoff = datetime.now(tz=UTC) - timedelta(days=30)
@@ -950,7 +954,7 @@ async def taxonomy_coverage(
             for nid in gap.taxonomy_node_ids:
                 gap_counts[nid] = gap_counts.get(nid, 0) + 1
 
-    response = _make_coverage_response(ingest_data, gap_counts, node_names)
+    response = _make_coverage_response(ingest_data, gap_counts, node_names, node_descriptions)
 
     # Cache the response
     _coverage_cache[cache_key] = (time.monotonic(), response.model_dump())
