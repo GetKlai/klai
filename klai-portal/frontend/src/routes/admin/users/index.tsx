@@ -312,7 +312,7 @@ function UsersPage() {
             )}
           </p>
         </div>
-        <Button data-help-id="admin-users-invite" onClick={() => navigate({ to: '/admin/users/invite' })}>
+        <Button size="sm" data-help-id="admin-users-invite" onClick={() => navigate({ to: '/admin/users/invite' })}>
           {m.admin_users_invite_button()}
         </Button>
       </div>

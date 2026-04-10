@@ -3,7 +3,6 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -93,88 +92,84 @@ function InviteUserPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <form id="invite-form" onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="first-name">{m.admin_users_field_first_name()}</Label>
-                <Input
-                  id="first-name"
-                  type="text"
-                  required
-                  value={form.first_name}
-                  onChange={(e) => setForm((prev) => ({ ...prev, first_name: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="last-name">{m.admin_users_field_last_name()}</Label>
-                <Input
-                  id="last-name"
-                  type="text"
-                  required
-                  value={form.last_name}
-                  onChange={(e) => setForm((prev) => ({ ...prev, last_name: e.target.value }))}
-                />
-              </div>
-            </div>
+      <form id="invite-form" onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="first-name">{m.admin_users_field_first_name()}</Label>
+            <Input
+              id="first-name"
+              type="text"
+              required
+              value={form.first_name}
+              onChange={(e) => setForm((prev) => ({ ...prev, first_name: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="last-name">{m.admin_users_field_last_name()}</Label>
+            <Input
+              id="last-name"
+              type="text"
+              required
+              value={form.last_name}
+              onChange={(e) => setForm((prev) => ({ ...prev, last_name: e.target.value }))}
+            />
+          </div>
+        </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="email">{m.admin_users_field_email()}</Label>
-              <Input
-                id="email"
-                type="email"
-                required
-                value={form.email}
-                onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-              />
-            </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="email">{m.admin_users_field_email()}</Label>
+          <Input
+            id="email"
+            type="email"
+            required
+            value={form.email}
+            onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+          />
+        </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="role">{m.admin_users_field_role()}</Label>
-                <Select
-                  id="role"
-                  value={form.role}
-                  onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value as Role }))}
-                >
-                  <option value="member">{m.admin_users_role_member()}</option>
-                  <option value="admin">{m.admin_users_role_admin()}</option>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="language">{m.admin_users_field_language()}</Label>
-                <Select
-                  id="language"
-                  value={form.preferred_language}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
-                  }
-                >
-                  <option value="nl">{m.admin_users_language_nl()}</option>
-                  <option value="en">{m.admin_users_language_en()}</option>
-                </Select>
-              </div>
-            </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="role">{m.admin_users_field_role()}</Label>
+            <Select
+              id="role"
+              value={form.role}
+              onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value as Role }))}
+            >
+              <option value="member">{m.admin_users_role_member()}</option>
+              <option value="admin">{m.admin_users_role_admin()}</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="language">{m.admin_users_field_language()}</Label>
+            <Select
+              id="language"
+              value={form.preferred_language}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, preferred_language: e.target.value as Language }))
+              }
+            >
+              <option value="nl">{m.admin_users_language_nl()}</option>
+              <option value="en">{m.admin_users_language_en()}</option>
+            </Select>
+          </div>
+        </div>
 
-            {inviteMutation.error && (
-              <p className="text-sm text-[var(--color-destructive)]">
-                {inviteMutation.error instanceof Error
-                  ? inviteMutation.error.message
-                  : m.admin_users_error_invite_generic()}
-              </p>
-            )}
+        {inviteMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {inviteMutation.error instanceof Error
+              ? inviteMutation.error.message
+              : m.admin_users_error_invite_generic()}
+          </p>
+        )}
 
-            <div className="pt-2">
-              <Button type="submit" disabled={inviteMutation.isPending}>
-                {inviteMutation.isPending
-                  ? m.admin_users_invite_submit_loading()
-                  : m.admin_users_invite_submit()}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+        <div className="pt-2">
+          <Button type="submit" disabled={inviteMutation.isPending}>
+            {inviteMutation.isPending
+              ? m.admin_users_invite_submit_loading()
+              : m.admin_users_invite_submit()}
+          </Button>
+        </div>
+      </form>
     </div>
   )
 }

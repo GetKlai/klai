@@ -105,6 +105,23 @@ coincidence, three is a pattern that warrants a component.
 **Prevention:** At the start of the second copy, note the pattern. At the
 third, stop and extract before continuing.
 
+## pixel-perfect-alignment (HIGH)
+For sub-pixel CSS alignment, Playwright measurements are unreliable:
+headless Chromium runs at 1x CSS pixels while the user has a 2x HiDPI
+display. A 1px offset invisible in a screenshot is clearly visible on
+screen. `getBoundingClientRect()` measures bounding boxes, not glyph
+positions. Theoretical corrections on top of measurements compound the error.
+
+**Rule:**
+1. Calculate the target offset in px first — do not start with a Tailwind class
+2. Convert to Tailwind last: `mt-px`=1px, `mt-0.5`=2px, `mt-1`=4px, `mt-2`=8px
+3. For sub-pixel work, ask the user to test directly in DevTools:
+   "Select the element, add `style='margin-top:Xpx'`, try 1/2/3px — which works?"
+   Their browser is the ground truth, not Playwright
+4. Do not commit visual alignment until the user explicitly confirms it is correct
+
+Never iterate through Tailwind spacing classes by feel. One measurement, one value.
+
 ## worktree-agent-isolation
 When a subagent runs inside a git worktree (`.claude/worktrees/<id>/`),
 its file writes land in that worktree, not the main working tree. After the

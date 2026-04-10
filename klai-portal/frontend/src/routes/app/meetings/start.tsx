@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -133,85 +132,80 @@ function StartMeetingPage() {
         </div>
       )}
 
-      <Card>
-        <CardContent className="pt-6">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="meeting-url">{m.app_meetings_url_label()}</Label>
-              <Input
-                id="meeting-url"
-                type="url"
-                value={meetingUrl}
-                onChange={(e) => {
-                  setMeetingUrl(e.target.value)
-                  setUrlError(null)
-                }}
-                placeholder={m.app_meetings_url_placeholder()}
-                required
-                className={urlError ? 'border-[var(--color-destructive)]' : ''}
-              />
-              {platform && (
-                <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Platform:{' '}
-                  <span className="font-medium text-[var(--color-foreground)]">{platform}</span>
-                </p>
-              )}
-              {urlError && (
-                <p className="text-xs text-[var(--color-destructive)]">{urlError}</p>
-              )}
-            </div>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor="meeting-url">{m.app_meetings_url_label()}</Label>
+          <Input
+            id="meeting-url"
+            type="url"
+            value={meetingUrl}
+            onChange={(e) => {
+              setMeetingUrl(e.target.value)
+              setUrlError(null)
+            }}
+            placeholder={m.app_meetings_url_placeholder()}
+            required
+            className={urlError ? 'border-[var(--color-destructive)]' : ''}
+          />
+          {platform && (
+            <p className="text-xs text-[var(--color-muted-foreground)]">
+              Platform:{' '}
+              <span className="font-medium text-[var(--color-foreground)]">{platform}</span>
+            </p>
+          )}
+          {urlError && (
+            <p className="text-xs text-[var(--color-destructive)]">{urlError}</p>
+          )}
+        </div>
 
-            {isTeams && (
-              <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{m.app_meetings_teams_warning()}</span>
-              </div>
-            )}
+        {isTeams && (
+          <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{m.app_meetings_teams_warning()}</span>
+          </div>
+        )}
 
-            <div className="space-y-2">
-              <Label htmlFor="meeting-title">{m.app_meetings_title_label()}</Label>
-              <Input
-                id="meeting-title"
-                type="text"
-                value={meetingTitle}
-                onChange={(e) => setMeetingTitle(e.target.value)}
-                placeholder={m.app_meetings_title_placeholder()}
-              />
-            </div>
+        <div className="space-y-2">
+          <Label htmlFor="meeting-title">{m.app_meetings_title_label()}</Label>
+          <Input
+            id="meeting-title"
+            type="text"
+            value={meetingTitle}
+            onChange={(e) => setMeetingTitle(e.target.value)}
+            placeholder={m.app_meetings_title_placeholder()}
+          />
+        </div>
 
-            <div className="flex items-start gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
-              <input
-                id="consent"
-                type="checkbox"
-                checked={consentGiven}
-                onChange={(e) => setConsentGiven(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-rl-accent)]"
-              />
-              <label
-                htmlFor="consent"
-                className="text-sm text-[var(--color-foreground)] cursor-pointer leading-relaxed"
-              >
-                {m.app_meetings_consent_label()}
-              </label>
-            </div>
+        <div className="flex items-start gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
+          <input
+            id="consent"
+            type="checkbox"
+            checked={consentGiven}
+            onChange={(e) => setConsentGiven(e.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-rl-accent)]"
+          />
+          <label
+            htmlFor="consent"
+            className="text-sm text-[var(--color-foreground)] cursor-pointer leading-relaxed"
+          >
+            {m.app_meetings_consent_label()}
+          </label>
+        </div>
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={!consentGiven || startMutation.isPending}
-            >
-              {startMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {m.app_meetings_submitting()}
-                </>
-              ) : (
-                m.app_meetings_submit()
-              )}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+        <Button
+          type="submit"
+          disabled={!consentGiven || startMutation.isPending}
+        >
+          {startMutation.isPending ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {m.app_meetings_submitting()}
+            </>
+          ) : (
+            m.app_meetings_submit()
+          )}
+        </Button>
+      </form>
     </div>
   )
 }

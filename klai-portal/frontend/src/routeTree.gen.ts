@@ -37,7 +37,7 @@ import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
-import { Route as AdminIntegrationsIndexRouteImport } from './routes/admin/integrations/index'
+import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
@@ -49,6 +49,8 @@ import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$note
 import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
 import { Route as AppDocsKbSlugRouteImport } from './routes/app/docs/$kbSlug'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
+import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
+import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
@@ -61,6 +63,7 @@ import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/kno
 import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
 import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
 import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
+import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
 import { Route as AppFocusNotebookIdEditRouteImport } from './routes/app/focus/$notebookId_.edit'
 import { Route as AppFocusNotebookIdAddSourceRouteImport } from './routes/app/focus/$notebookId_.add-source'
 import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
@@ -209,9 +212,9 @@ const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminIntegrationsIndexRoute = AdminIntegrationsIndexRouteImport.update({
-  id: '/integrations/',
-  path: '/integrations/',
+const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
+  id: '/mcps/',
+  path: '/mcps/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
@@ -272,6 +275,16 @@ const AppDocsKbSlugRoute = AppDocsKbSlugRouteImport.update({
 const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   id: '/users/invite',
   path: '/users/invite',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
+  id: '/mcps/new',
+  path: '/mcps/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminMcpsServerIdRoute = AdminMcpsServerIdRouteImport.update({
+  id: '/mcps/$serverId',
+  path: '/mcps/$serverId',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
@@ -340,6 +353,12 @@ const AppKnowledgeKbSlugConnectorsRoute =
     path: '/connectors',
     getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
   } as any)
+const AppKnowledgeKbSlugAdvancedRoute =
+  AppKnowledgeKbSlugAdvancedRouteImport.update({
+    id: '/advanced',
+    path: '/advanced',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
 const AppFocusNotebookIdEditRoute = AppFocusNotebookIdEditRouteImport.update({
   id: '/focus/$notebookId_/edit',
   path: '/focus/$notebookId/edit',
@@ -405,6 +424,8 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
+  '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
   '/app/docs/new': typeof AppDocsNewRoute
@@ -416,7 +437,7 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
-  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
+  '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
@@ -429,6 +450,7 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
@@ -463,6 +485,8 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
+  '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
   '/app/docs/new': typeof AppDocsNewRoute
@@ -474,7 +498,7 @@ export interface FileRoutesByTo {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
-  '/admin/integrations': typeof AdminIntegrationsIndexRoute
+  '/admin/mcps': typeof AdminMcpsIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
@@ -487,6 +511,7 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
@@ -525,6 +550,8 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
+  '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugRoute
   '/app/docs/new': typeof AppDocsNewRoute
@@ -536,7 +563,7 @@ export interface FileRoutesById {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
-  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
+  '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
@@ -549,6 +576,7 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug_/edit': typeof AppDocsKbSlugEditRoute
   '/app/focus/$notebookId_/add-source': typeof AppFocusNotebookIdAddSourceRoute
   '/app/focus/$notebookId_/edit': typeof AppFocusNotebookIdEditRoute
+  '/app/knowledge/$kbSlug/advanced': typeof AppKnowledgeKbSlugAdvancedRoute
   '/app/knowledge/$kbSlug/connectors': typeof AppKnowledgeKbSlugConnectorsRoute
   '/app/knowledge/$kbSlug/items': typeof AppKnowledgeKbSlugItemsRoute
   '/app/knowledge/$kbSlug/members': typeof AppKnowledgeKbSlugMembersRoute
@@ -588,6 +616,8 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
+    | '/admin/mcps/$serverId'
+    | '/admin/mcps/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
     | '/app/docs/new'
@@ -599,7 +629,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups/'
-    | '/admin/integrations/'
+    | '/admin/mcps/'
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
@@ -612,6 +642,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/knowledge/$kbSlug/advanced'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
@@ -646,6 +677,8 @@ export interface FileRouteTypes {
     | '/app'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
+    | '/admin/mcps/$serverId'
+    | '/admin/mcps/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
     | '/app/docs/new'
@@ -657,7 +690,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups'
-    | '/admin/integrations'
+    | '/admin/mcps'
     | '/admin/users'
     | '/app/docs'
     | '/app/focus'
@@ -670,6 +703,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/edit'
     | '/app/focus/$notebookId/add-source'
     | '/app/focus/$notebookId/edit'
+    | '/app/knowledge/$kbSlug/advanced'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
@@ -707,6 +741,8 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
+    | '/admin/mcps/$serverId'
+    | '/admin/mcps/new'
     | '/admin/users/invite'
     | '/app/docs/$kbSlug'
     | '/app/docs/new'
@@ -718,7 +754,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups/'
-    | '/admin/integrations/'
+    | '/admin/mcps/'
     | '/admin/users/'
     | '/app/docs/'
     | '/app/focus/'
@@ -731,6 +767,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug_/edit'
     | '/app/focus/$notebookId_/add-source'
     | '/app/focus/$notebookId_/edit'
+    | '/app/knowledge/$kbSlug/advanced'
     | '/app/knowledge/$kbSlug/connectors'
     | '/app/knowledge/$kbSlug/items'
     | '/app/knowledge/$kbSlug/members'
@@ -958,11 +995,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/integrations/': {
-      id: '/admin/integrations/'
-      path: '/integrations'
-      fullPath: '/admin/integrations/'
-      preLoaderRoute: typeof AdminIntegrationsIndexRouteImport
+    '/admin/mcps/': {
+      id: '/admin/mcps/'
+      path: '/mcps'
+      fullPath: '/admin/mcps/'
+      preLoaderRoute: typeof AdminMcpsIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/': {
@@ -1040,6 +1077,20 @@ declare module '@tanstack/react-router' {
       path: '/users/invite'
       fullPath: '/admin/users/invite'
       preLoaderRoute: typeof AdminUsersInviteRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/mcps/new': {
+      id: '/admin/mcps/new'
+      path: '/mcps/new'
+      fullPath: '/admin/mcps/new'
+      preLoaderRoute: typeof AdminMcpsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/mcps/$serverId': {
+      id: '/admin/mcps/$serverId'
+      path: '/mcps/$serverId'
+      fullPath: '/admin/mcps/$serverId'
+      preLoaderRoute: typeof AdminMcpsServerIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/new': {
@@ -1126,6 +1177,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
       parentRoute: typeof AppKnowledgeKbSlugRouteRoute
     }
+    '/app/knowledge/$kbSlug/advanced': {
+      id: '/app/knowledge/$kbSlug/advanced'
+      path: '/advanced'
+      fullPath: '/app/knowledge/$kbSlug/advanced'
+      preLoaderRoute: typeof AppKnowledgeKbSlugAdvancedRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
     '/app/focus/$notebookId_/edit': {
       id: '/app/focus/$notebookId_/edit'
       path: '/focus/$notebookId/edit'
@@ -1197,9 +1255,11 @@ interface AdminRouteRouteChildren {
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
+  AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
+  AdminMcpsNewRoute: typeof AdminMcpsNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
-  AdminIntegrationsIndexRoute: typeof AdminIntegrationsIndexRoute
+  AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
@@ -1212,9 +1272,11 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminGroupsNewRoute: AdminGroupsNewRoute,
+  AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
+  AdminMcpsNewRoute: AdminMcpsNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
-  AdminIntegrationsIndexRoute: AdminIntegrationsIndexRoute,
+  AdminMcpsIndexRoute: AdminMcpsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
@@ -1227,6 +1289,7 @@ const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
 )
 
 interface AppKnowledgeKbSlugRouteRouteChildren {
+  AppKnowledgeKbSlugAdvancedRoute: typeof AppKnowledgeKbSlugAdvancedRoute
   AppKnowledgeKbSlugConnectorsRoute: typeof AppKnowledgeKbSlugConnectorsRoute
   AppKnowledgeKbSlugItemsRoute: typeof AppKnowledgeKbSlugItemsRoute
   AppKnowledgeKbSlugMembersRoute: typeof AppKnowledgeKbSlugMembersRoute
@@ -1238,6 +1301,7 @@ interface AppKnowledgeKbSlugRouteRouteChildren {
 
 const AppKnowledgeKbSlugRouteRouteChildren: AppKnowledgeKbSlugRouteRouteChildren =
   {
+    AppKnowledgeKbSlugAdvancedRoute: AppKnowledgeKbSlugAdvancedRoute,
     AppKnowledgeKbSlugConnectorsRoute: AppKnowledgeKbSlugConnectorsRoute,
     AppKnowledgeKbSlugItemsRoute: AppKnowledgeKbSlugItemsRoute,
     AppKnowledgeKbSlugMembersRoute: AppKnowledgeKbSlugMembersRoute,

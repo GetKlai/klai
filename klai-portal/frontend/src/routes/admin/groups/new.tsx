@@ -4,7 +4,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -77,50 +76,46 @@ function NewGroupPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="group-name">{m.admin_groups_name()}</Label>
-              <Input
-                id="group-name"
-                value={name}
-                onChange={(e) => { setName(e.target.value); setDuplicateError(false) }}
-                placeholder={m.admin_groups_name_placeholder()}
-                required
-                autoFocus
-              />
-              {duplicateError && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {m.admin_groups_error_duplicate()}
-                </p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="group-description">{m.admin_groups_description()}</Label>
-              <textarea
-                id="group-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={m.admin_groups_description_placeholder()}
-                rows={3}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </div>
-            {createMutation.error && createMutation.error.message !== 'duplicate' && (
-              <p className="text-sm text-[var(--color-destructive)]">
-                {createMutation.error.message}
-              </p>
-            )}
-            <div className="pt-2">
-              <Button type="submit" disabled={createMutation.isPending || !name.trim()}>
-                {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {m.admin_groups_create()}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="group-name">{m.admin_groups_name()}</Label>
+          <Input
+            id="group-name"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setDuplicateError(false) }}
+            placeholder={m.admin_groups_name_placeholder()}
+            required
+            autoFocus
+          />
+          {duplicateError && (
+            <p className="text-sm text-[var(--color-destructive)]">
+              {m.admin_groups_error_duplicate()}
+            </p>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="group-description">{m.admin_groups_description()}</Label>
+          <textarea
+            id="group-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={m.admin_groups_description_placeholder()}
+            rows={3}
+            className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        </div>
+        {createMutation.error && createMutation.error.message !== 'duplicate' && (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {createMutation.error.message}
+          </p>
+        )}
+        <div className="pt-2">
+          <Button type="submit" disabled={createMutation.isPending || !name.trim()}>
+            {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {m.admin_groups_create()}
+          </Button>
+        </div>
+      </form>
     </div>
   )
 }

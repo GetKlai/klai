@@ -163,7 +163,7 @@ function TranscribePage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl">
-      <div className="flex justify-between">
+      <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
             {m.app_tool_transcribe_title()}
@@ -175,12 +175,14 @@ function TranscribePage() {
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
+            size="sm"
             onClick={() => void navigate({ to: '/app/meetings/start' })}
           >
             <Video className="mr-2 h-4 w-4" />
             {m.app_transcribe_new_meeting()}
           </Button>
           <Button
+            size="sm"
             data-help-id="transcribe-add"
             onClick={() => void navigate({ to: '/app/transcribe/add' })}
           >

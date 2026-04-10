@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, ArrowLeft
+  Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, SlidersHorizontal, ArrowLeft
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -12,7 +12,7 @@ import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse, TaxonomyProposal } from './-kb-types'
 
-const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings'])
+const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings', 'advanced'])
 
 const TAB_PATH_MAP: Record<string, string> = {
   overview: '/app/knowledge/$kbSlug/overview',
@@ -21,6 +21,7 @@ const TAB_PATH_MAP: Record<string, string> = {
   members: '/app/knowledge/$kbSlug/members',
   taxonomy: '/app/knowledge/$kbSlug/taxonomy',
   settings: '/app/knowledge/$kbSlug/settings',
+  advanced: '/app/knowledge/$kbSlug/advanced',
 }
 
 type KBSearch = {
@@ -123,12 +124,13 @@ function KbLayout() {
     { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: m.knowledge_detail_tab_members() },
     { id: 'taxonomy', to: '/app/knowledge/$kbSlug/taxonomy', icon: FolderTree, label: m.knowledge_detail_tab_taxonomy(), badge: pendingCount > 0 ? pendingCount : undefined },
     ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: m.knowledge_detail_tab_settings() }] : []),
+    ...(isOwner ? [{ id: 'advanced' as KBTab, to: '/app/knowledge/$kbSlug/advanced', icon: SlidersHorizontal, label: m.knowledge_detail_tab_advanced() }] : []),
   ]
 
   void stats // keep query alive for child routes
 
   return (
-    <div className="p-6 max-w-2xl space-y-8">
+    <div className="p-6 max-w-4xl space-y-8">
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">

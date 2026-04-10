@@ -8,7 +8,6 @@ import {
   Lock,
   ArrowLeft,
   ArrowRight,
-  Check,
   User,
   Brain,
 } from 'lucide-react'
@@ -16,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import * as m from '@/paraglide/messages'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
@@ -156,12 +156,6 @@ function NewKnowledgeBasePage() {
     }
   }
 
-  function handleStepClick(target: Step) {
-    if (target >= step) return
-    if (isPersonal && (target === 2 || target === 3)) return
-    setStep(target)
-  }
-
   // Validation
   const isRestrictedEmpty =
     data.visibilityMode === 'restricted' &&
@@ -203,12 +197,21 @@ function NewKnowledgeBasePage() {
         )}
       </div>
 
-      {/* Step indicator */}
-      <StepIndicator
-        currentStep={step}
-        isPersonal={isPersonal}
-        onStepClick={handleStepClick}
-      />
+      {/* Step indicator — shared component */}
+      {(() => {
+        const allSteps: StepItem[] = [
+          { label: m.knowledge_wizard_step_name(),        onClick: () => setStep(1) },
+          { label: m.knowledge_wizard_step_access(),      onClick: () => setStep(2) },
+          { label: m.knowledge_wizard_step_permissions(), onClick: () => setStep(3) },
+          { label: m.knowledge_wizard_step_confirm() },
+        ]
+        // Personal scope skips access + permissions; only step 1 and step 4 are shown.
+        const steps = isPersonal ? [allSteps[0], allSteps[3]] : allSteps
+        const currentIndex = isPersonal
+          ? (step === 1 ? 0 : 1)
+          : step - 1
+        return <StepIndicator steps={steps} currentIndex={currentIndex} />
+      })()}
 
       {/* Step content */}
       <div className="mt-6">
@@ -238,81 +241,13 @@ function NewKnowledgeBasePage() {
 
       {/* Navigation buttons (steps 1-3) */}
       {step < 4 && (
-        <div className="flex justify-end pt-6">
+        <div className="flex pt-6">
           <Button onClick={handleNext} disabled={!canAdvance()}>
             {m.knowledge_wizard_next()}
             <ArrowRight className="h-4 w-4 ml-2" />
           </Button>
         </div>
       )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Step indicator
-// ---------------------------------------------------------------------------
-
-function StepIndicator({
-  currentStep,
-  isPersonal,
-  onStepClick,
-}: {
-  currentStep: Step
-  isPersonal: boolean
-  onStepClick: (step: Step) => void
-}) {
-  const steps: { step: Step; label: string; skipped: boolean }[] = [
-    { step: 1, label: m.knowledge_wizard_step_name(), skipped: false },
-    { step: 2, label: m.knowledge_wizard_step_access(), skipped: isPersonal },
-    { step: 3, label: m.knowledge_wizard_step_permissions(), skipped: isPersonal },
-    { step: 4, label: m.knowledge_wizard_step_confirm(), skipped: false },
-  ]
-
-  return (
-    <div className="flex items-center gap-2">
-      {steps.map(({ step, label, skipped }, i) => {
-        if (skipped) return null
-
-        const isActive = currentStep === step
-        const isCompleted = currentStep > step || (isPersonal && step === 1 && currentStep === 4)
-        const isClickable = isCompleted
-
-        return (
-          <div key={step} className="flex items-center gap-2">
-            {i > 0 && !steps[i - 1].skipped && (
-              <div
-                className={[
-                  'h-px w-6',
-                  isCompleted || isActive
-                    ? 'bg-[var(--color-accent)]'
-                    : 'bg-[var(--color-border)]',
-                ].join(' ')}
-              />
-            )}
-            <button
-              type="button"
-              onClick={() => isClickable && onStepClick(step)}
-              disabled={!isClickable}
-              className={[
-                'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors',
-                isActive
-                  ? 'bg-[var(--color-accent)] text-white'
-                  : isCompleted
-                    ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)] cursor-pointer hover:bg-[var(--color-accent)]/20'
-                    : 'bg-[var(--color-secondary)] text-[var(--color-muted-foreground)] cursor-default',
-              ].join(' ')}
-            >
-              {isCompleted && !isActive ? (
-                <Check className="h-3 w-3" />
-              ) : (
-                <span>{step}</span>
-              )}
-              {label}
-            </button>
-          </div>
-        )
-      })}
     </div>
   )
 }

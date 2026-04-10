@@ -27,6 +27,18 @@
       ],
       "env": {}
     },
+    "playwright-isolated": {
+      "$comment": "Isolated headless browser for CSS debugging and visual verification. No profile conflicts with open Brave. Ephemeral — all tabs auto-close.",
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@0.0.70",
+        "--browser", "chromium",
+        "--isolated",
+        "--headless"
+      ],
+      "env": {}
+    },
     "codeindex": {
       "$comment": "Graph-powered code intelligence. Install: npm i -g klai-private/tools/codeindex-1.3.56.tgz && codeindex analyze",
       "type": "stdio",

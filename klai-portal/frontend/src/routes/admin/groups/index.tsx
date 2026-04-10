@@ -8,12 +8,9 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Loader2, Eye, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 
 // Avatar colors: decorative differentiation, not semantic states — raw Tailwind allowed per frontend.md
@@ -34,12 +31,7 @@ import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
 
-type GroupsSearch = { create?: true }
-
 export const Route = createFileRoute('/admin/groups/')({
-  validateSearch: (search: Record<string, unknown>): GroupsSearch => ({
-    create: search.create === true || search.create === 'true' ? true : undefined,
-  }),
   component: AdminGroups,
 })
 
@@ -110,9 +102,6 @@ function AdminGroups() {
   const token = auth.user?.access_token
   const navigate = useNavigate({ from: '/admin/groups/' })
   const queryClient = useQueryClient()
-  const { create } = Route.useSearch()
-  const showCreate = create === true
-  const [newGroupName, setNewGroupName] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -148,24 +137,6 @@ function AdminGroups() {
       }
     }
   }
-
-  const createMutation = useMutation({
-    mutationFn: async (name: string) => {
-      return apiFetch('/api/admin/groups', token, {
-        method: 'POST',
-        body: JSON.stringify({ name }),
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
-      void navigate({ search: {} })
-      setNewGroupName('')
-      toast.success(m.admin_groups_success_created())
-    },
-    onError: (err: Error) => {
-      toast.error(err.message)
-    },
-  })
 
   const deleteMutation = useMutation({
     mutationFn: async (groupId: number) => {
@@ -294,48 +265,11 @@ function AdminGroups() {
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
           {m.admin_groups_title()}
         </h1>
-        <Button size="sm" onClick={() => void navigate({ search: { create: true } })}>
+        <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
           <Plus className="h-4 w-4 mr-2" />
           {m.admin_groups_create()}
         </Button>
       </div>
-
-      {showCreate && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex gap-2 items-end">
-              <div className="flex-1 space-y-1">
-                <Label htmlFor="new-group-name">{m.admin_groups_name()}</Label>
-                <Input
-                  id="new-group-name"
-                  value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder={m.admin_groups_name_placeholder()}
-                />
-              </div>
-              <Button
-                onClick={() => createMutation.mutate(newGroupName)}
-                disabled={!newGroupName.trim() || createMutation.isPending}
-              >
-                {createMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  m.admin_groups_create()
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  void navigate({ search: {} })
-                  setNewGroupName('')
-                }}
-              >
-                {m.admin_users_cancel()}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
