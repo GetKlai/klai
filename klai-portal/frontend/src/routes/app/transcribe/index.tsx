@@ -8,7 +8,6 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { TranscriptionTable } from './_components/TranscriptionTable'
-import { DEV_TRANSCRIPTIONS, DEV_MEETINGS } from './_dev-fixtures'
 import type {
   TranscriptionItem,
   TranscriptionListResponse,
@@ -16,8 +15,6 @@ import type {
   MeetingListResponse,
   UnifiedItem,
 } from './_types'
-
-const IS_DEV = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
 type TranscribeSearch = { search?: string }
 
@@ -91,7 +88,7 @@ function TranscribePage() {
       try {
         return await apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token)
       } catch (e) {
-        if (IS_DEV) return DEV_TRANSCRIPTIONS
+        if (import.meta.env.DEV) return (await import('./_dev-fixtures')).DEV_TRANSCRIPTIONS
         throw e
       }
     },
@@ -104,7 +101,7 @@ function TranscribePage() {
       try {
         return await apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token)
       } catch (e) {
-        if (IS_DEV) return DEV_MEETINGS
+        if (import.meta.env.DEV) return (await import('./_dev-fixtures')).DEV_MEETINGS
         throw e
       }
     },
