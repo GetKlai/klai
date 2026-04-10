@@ -69,7 +69,9 @@ function KbLayout() {
     retry: false,
   })
 
-  const { data: stats } = useQuery<KBStats>({
+  // Prefetch KB stats into the TanStack Query cache so child routes
+  // (overview, settings, advanced) render immediately without an extra fetch.
+  useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
     queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
     enabled: !!token && !!kb,
@@ -126,8 +128,6 @@ function KbLayout() {
     ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: m.knowledge_detail_tab_settings() }] : []),
     ...(isOwner ? [{ id: 'advanced' as KBTab, to: '/app/knowledge/$kbSlug/advanced', icon: SlidersHorizontal, label: m.knowledge_detail_tab_advanced() }] : []),
   ]
-
-  void stats // keep query alive for child routes
 
   return (
     <div className="p-6 max-w-4xl space-y-8">
