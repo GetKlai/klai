@@ -47,6 +47,11 @@ jobs:
 
             echo "LibreChat base config synced to /opt/klai/librechat/"
 
+            # The previous rm -rf left us in a deleted directory. docker compose
+            # calls getwd() and crashes if cwd no longer exists, so jump to the
+            # compose project dir before invoking it.
+            cd /opt/klai
+
             # Regenerate per-tenant configs from the updated base template.
             # portal-api exposes an internal endpoint that re-runs _generate_librechat_yaml
             # for each tenant, writes the result, flushes Redis, and restarts containers.
