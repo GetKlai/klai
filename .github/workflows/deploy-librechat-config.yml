@@ -50,21 +50,46 @@ jobs:
             # Regenerate per-tenant configs from the updated base template.
             # portal-api exposes an internal endpoint that re-runs _generate_librechat_yaml
             # for each tenant, writes the result, flushes Redis, and restarts containers.
-            # Read the internal secret from .env (mapped as INTERNAL_SECRET in portal-api container)
-            REGEN_SECRET=$(grep '^PORTAL_API_INTERNAL_SECRET=' /opt/klai/.env | cut -d= -f2-)
-
+            #
+            # portal-api has no host port mapping — it only listens on portal-api:8010
+            # inside the klai-net Docker network. We therefore run the request *inside*
+            # the portal-api container itself, where localhost:8010 is the API. We use
+            # Python's httpx (already installed) instead of curl because the python:slim
+            # base image does not ship curl. The INTERNAL_SECRET env var is already set
+            # inside the container from .env.
             echo "Triggering tenant config regeneration via portal-api..."
-            HTTP_CODE=$(curl -s -o /tmp/regen-response.txt -w '%{http_code}' \
-              --connect-timeout 5 --max-time 120 \
-              -X POST http://localhost:8010/internal/librechat/regenerate \
-              -H "Authorization: Bearer ${REGEN_SECRET}" \
-              -H "Content-Type: application/json")
+            set +e
+            RESPONSE=$(docker exec portal-api python -c '
+            import os, sys, httpx
+            secret = os.environ["INTERNAL_SECRET"]
+            try:
+                r = httpx.post(
+                    "http://localhost:8010/internal/librechat/regenerate",
+                    headers={
+                        "Authorization": f"Bearer {secret}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=120.0,
+                )
+                print(r.status_code)
+                print(r.text)
+            except Exception as exc:
+                print("ERROR")
+                print(f"Request failed: {exc}", file=sys.stderr)
+                sys.exit(1)
+            ')
+            EXIT=$?
+            set -e
 
-            if [ "$HTTP_CODE" = "200" ]; then
+            HTTP_CODE=$(echo "$RESPONSE" | head -n1)
+            BODY=$(echo "$RESPONSE" | tail -n +2)
+
+            if [ "$EXIT" = "0" ] && [ "$HTTP_CODE" = "200" ]; then
               echo "Tenant configs regenerated successfully"
-              cat /tmp/regen-response.txt
+              echo "$BODY"
             else
-              echo "WARNING: Regeneration returned HTTP $HTTP_CODE — manual restart may be needed"
-              cat /tmp/regen-response.txt
-              # Don't fail the workflow — config is synced, just not hot-reloaded
+              echo "ERROR: Regeneration failed (exit=$EXIT, http=$HTTP_CODE)"
+              echo "$BODY"
+              # Fail the workflow — without regeneration the YAML change is not live.
+              exit 1
             fi
