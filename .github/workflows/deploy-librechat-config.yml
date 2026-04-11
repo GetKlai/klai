@@ -59,7 +59,7 @@ jobs:
             # inside the container from .env.
             echo "Triggering tenant config regeneration via portal-api..."
             set +e
-            RESPONSE=$(docker exec portal-api python -c '
+            RESPONSE=$(docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
             import os, sys, httpx
             secret = os.environ["INTERNAL_SECRET"]
             try:
