@@ -1,5 +1,19 @@
 # Research: SPEC-API-001 — Partner API
 
+## 0. Plan Phase Decisions (v0.2.0)
+
+Four decisions were made during Phase 1 planning after manager-strategy reviewed the original draft against the real codebase:
+
+1. **KB scope uses portal integer IDs via junction table**, not slugs or UUIDs. Reason: KBs use integer primary keys in `portal_knowledge_bases`; slugs are only unique within an org and not stable across rename/delete/recreate. UUIDs don't exist for KBs at all. Junction table allows per-KB access levels.
+
+2. **Append-only semantics — no delete operations via Partner API.** Reason: destructive actions belong to authenticated portal admin UI, not programmatic API keys. No `DELETE` endpoint is exposed for documents, KBs, or connectors. This also avoids the problem that `klai-knowledge-ingest` has no per-document delete endpoint today.
+
+3. **Knowledge append goes directly to the knowledge layer**, equivalent to `save_org_knowledge()` in the MCP. It does NOT go via Klai Docs / Gitea. Reason: partners want kennis toegevoegd, not markdown pages on a docs site.
+
+4. **Feedback correlation uses the existing 60s-before / 10s-after window**, not a new 2-minute window. Reason: consistency with LibreChat feedback handler in `find_correlated_log`. No concrete reason a partner API would need a different window.
+
+5. **Admin layer in scope now** — new `/admin/integrations` section in the portal, accessible to admins and owners. Reason: forcing the admin flow early forces the backend to be well-designed, avoids the "how do we create keys in production" gap, and keeps the feature complete for launch.
+
 ## 1. Architecture Analysis
 
 ### Current Knowledge Layer Architecture
