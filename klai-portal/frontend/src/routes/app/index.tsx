@@ -150,7 +150,6 @@ function ChatHome() {
 
   return (
     <div className="flex h-full w-full flex-col" data-help-id="chat-page">
-      <KBScopeBar />
       <div className="relative flex-1">
         {/* Loading overlay */}
         {showOverlay && (
@@ -198,6 +197,13 @@ function ChatHome() {
             title="Chat"
             allow="clipboard-write; microphone; screen-wake-lock"
           />
+        )}
+
+        {/* Knowledge pill — floating over iframe, near the chat input */}
+        {phase === 'ready' && (
+          <div className="absolute bottom-[18px] left-1/2 z-20 -translate-x-1/2 pointer-events-auto">
+            <KBScopeBar />
+          </div>
         )}
       </div>
     </div>

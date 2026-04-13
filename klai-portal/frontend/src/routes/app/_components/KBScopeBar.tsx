@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Brain, ChevronDown } from 'lucide-react'
+import { Brain, ChevronUp } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
@@ -122,104 +122,79 @@ export function KBScopeBar() {
   }
 
   return (
-    <div className="flex h-10 shrink-0 items-center border-b border-[var(--color-border)] bg-[var(--color-background)] px-4">
-      {/* Invisible overlay — iframe swallows mousedown */}
-      {open && (
-        <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-      )}
+    <div ref={ref} className="relative">
+      {/* Pill trigger */}
+      <button
+        type="button"
+        onClick={() => isOn ? setOpen((v) => !v) : toggleRetrieval()}
+        disabled={isPending}
+        className={[
+          'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium shadow-md border transition-all',
+          isPending ? 'opacity-50' : '',
+          isOn
+            ? 'bg-white border-[var(--color-border)] text-[var(--color-foreground)] hover:shadow-lg'
+            : 'bg-white/80 border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+        ].join(' ')}
+      >
+        <Brain className="h-3.5 w-3.5" />
+        {m.chat_kb_bar_toggle_label()}
+        {isOn && <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />}
+        <ChevronUp className={`h-3 w-3 opacity-40 transition-transform ${open ? '' : 'rotate-180'}`} />
+      </button>
 
-      <div ref={ref} className="relative z-50">
-        {/* Single pill */}
-        <button
-          type="button"
-          onClick={() => isOn ? setOpen((v) => !v) : toggleRetrieval()}
-          disabled={isPending}
-          className={[
-            'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-            isPending ? 'opacity-50' : '',
-            isOn
-              ? 'bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)] hover:bg-[var(--color-rl-accent)]/20'
-              : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]',
-          ].join(' ')}
-        >
-          <Brain className="h-3.5 w-3.5" />
-          {isOn ? (
-            <>
-              {m.chat_kb_bar_toggle_label()}
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
-              <ChevronDown className="h-3 w-3 opacity-50" />
-            </>
-          ) : (
-            m.chat_kb_bar_toggle_label()
-          )}
-        </button>
+      {/* Dropdown — opens upward */}
+      {open && isOn && (
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-xl border border-[var(--color-border)] bg-white py-1 shadow-xl">
+          {/* Personal KB */}
+          <button
+            type="button"
+            onClick={togglePersonal}
+            disabled={isPending}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
+          >
+            <Checkbox checked={pref.kb_personal_enabled} />
+            <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_personal_label()}</span>
+          </button>
 
-        {/* Dropdown */}
-        {open && isOn && (
-          <div className="absolute left-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1 shadow-lg">
-            {/* Personal KB */}
+          {/* Org KBs */}
+          {orgKbs.map((kb) => (
             <button
+              key={kb.slug}
               type="button"
-              onClick={togglePersonal}
+              onClick={() => toggleSlug(kb.slug)}
               disabled={isPending}
               className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
             >
-              <Checkbox checked={pref.kb_personal_enabled} />
-              <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_personal_label()}</span>
+              <Checkbox checked={currentSlugs.includes(kb.slug)} />
+              <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
             </button>
+          ))}
 
-            {/* Org KBs */}
-            {orgKbs.map((kb) => (
-              <button
-                key={kb.slug}
-                type="button"
-                onClick={() => toggleSlug(kb.slug)}
-                disabled={isPending}
-                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
-              >
-                <Checkbox checked={currentSlugs.includes(kb.slug)} />
-                <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
-              </button>
-            ))}
+          <div className="my-1 border-t border-[var(--color-border)]" />
 
-            {/* Separator */}
-            <div className="my-1 border-t border-[var(--color-border)]" />
+          {/* Narrow mode */}
+          <button
+            type="button"
+            onClick={toggleNarrow}
+            disabled={isPending}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
+          >
+            <Checkbox checked={pref.kb_narrow} />
+            <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_narrow_label()}</span>
+          </button>
 
-            {/* Narrow mode */}
-            <button
-              type="button"
-              onClick={toggleNarrow}
-              disabled={isPending}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
-            >
-              <Checkbox checked={pref.kb_narrow} />
-              <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_narrow_label()}</span>
-            </button>
+          <div className="my-1 border-t border-[var(--color-border)]" />
 
-            {/* Separator + disable */}
-            <div className="my-1 border-t border-[var(--color-border)]" />
-            <button
-              type="button"
-              onClick={() => { toggleRetrieval(); setOpen(false) }}
-              disabled={isPending}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--color-destructive)] hover:bg-[var(--color-destructive-bg)] transition-colors text-left"
-            >
-              {m.chat_kb_bar_tooltip_off()}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Status */}
-      {mutation.isPending && (
-        <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
-          {m.chat_kb_bar_saving()}
-        </span>
-      )}
-      {mutation.isError && (
-        <span className="ml-auto text-xs text-[var(--color-destructive)]">
-          {m.chat_kb_bar_save_error()}
-        </span>
+          {/* Disable */}
+          <button
+            type="button"
+            onClick={() => { toggleRetrieval(); setOpen(false) }}
+            disabled={isPending}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] transition-colors text-left"
+          >
+            {m.chat_kb_bar_tooltip_off()}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -228,13 +203,13 @@ export function KBScopeBar() {
 function Checkbox({ checked }: { checked: boolean }) {
   return (
     <span className={[
-      'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+      'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors',
       checked
         ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]'
         : 'border-[var(--color-border)]',
     ].join(' ')}>
       {checked && (
-        <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="none">
+        <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">
           <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
