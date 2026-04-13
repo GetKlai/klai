@@ -65,7 +65,7 @@ function AppLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar navItems={appNav} />
-      <main className="flex-1 overflow-y-auto bg-white">
+      <main className="flex-1 overflow-y-auto bg-white" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
         <SessionBanner />
         <Outlet />
       </main>

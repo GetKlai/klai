@@ -27,14 +27,14 @@ function RulesPage() {
         <button
           type="button"
           disabled
-          className="flex items-center gap-1.5 rounded-full border border-gray-200 px-4 py-2 text-sm text-gray-300 cursor-not-allowed"
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-300 cursor-not-allowed"
         >
           {m.rules_new_button()}
         </button>
       </div>
 
       {/* Empty state */}
-      <div className="flex flex-col items-center gap-5 rounded-2xl border border-gray-100 py-20 px-6">
+      <div className="flex flex-col items-center gap-5 rounded-lg border border-gray-200 py-20 px-6">
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-50">
           <Shield size={28} strokeWidth={1.5} className="text-gray-300" />
         </div>
@@ -49,7 +49,7 @@ function RulesPage() {
         <button
           type="button"
           disabled
-          className="rounded-full border border-gray-200 px-5 py-2.5 text-sm text-gray-300 cursor-not-allowed"
+          className="rounded-lg border border-gray-200 px-5 py-2.5 text-sm text-gray-300 cursor-not-allowed"
         >
           {m.rules_empty_cta()}
         </button>
@@ -61,21 +61,21 @@ function RulesPage() {
           {m.rules_enforced_title()}
         </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="flex flex-col gap-2.5 rounded-xl border border-gray-100 p-5">
+          <div className="flex flex-col gap-2.5 rounded-lg border border-gray-200 p-5">
             <MessageSquare size={20} strokeWidth={1.5} className="text-gray-300" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Chat</p>
             <p className="text-xs text-gray-400 leading-relaxed">
               {m.rules_enforced_chat()}
             </p>
           </div>
-          <div className="flex flex-col gap-2.5 rounded-xl border border-gray-100 p-5">
+          <div className="flex flex-col gap-2.5 rounded-lg border border-gray-200 p-5">
             <BookOpen size={20} strokeWidth={1.5} className="text-gray-300" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Kennis</p>
             <p className="text-xs text-gray-400 leading-relaxed">
               {m.rules_enforced_knowledge()}
             </p>
           </div>
-          <div className="flex flex-col gap-2.5 rounded-xl border border-gray-100 p-5">
+          <div className="flex flex-col gap-2.5 rounded-lg border border-gray-200 p-5">
             <Lock size={20} strokeWidth={1.5} className="text-gray-300" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Privacy</p>
             <p className="text-xs text-gray-400 leading-relaxed">
