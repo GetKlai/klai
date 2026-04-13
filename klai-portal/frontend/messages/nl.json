@@ -1367,5 +1367,66 @@
   "admin_billing_placeholder_zipcode": "1234 AB",
   "admin_billing_placeholder_city": "Amsterdam",
   "admin_billing_placeholder_tax_number": "NL123456789B01",
-  "session_token_expiring": "Sessie wordt verlengd..."
+  "session_token_expiring": "Sessie wordt verlengd...",
+
+  "admin_nav_integrations": "Integraties",
+  "admin_section_integrations_title": "Integraties",
+  "admin_section_integrations_description": "Beheer partner API-sleutels en externe integraties.",
+
+  "admin_integrations_title": "Integraties",
+  "admin_integrations_create": "Nieuwe integratie",
+  "admin_integrations_create_submit": "Integratie aanmaken",
+  "admin_integrations_loading": "Laden...",
+  "admin_integrations_empty": "Nog geen integraties",
+  "admin_integrations_empty_description": "Maak een integratie aan zodat externe partners via API toegang krijgen tot je kennisbanken.",
+  "admin_integrations_error_generic": "Er is iets misgegaan. Probeer het opnieuw.",
+
+  "admin_integrations_col_name": "Naam",
+  "admin_integrations_col_key_prefix": "Sleutelprefix",
+  "admin_integrations_col_status": "Status",
+  "admin_integrations_col_kb_access": "KB-toegang",
+  "admin_integrations_col_last_used": "Laatst gebruikt",
+  "admin_integrations_view_detail": "Bekijk",
+
+  "admin_integrations_status_active": "Actief",
+  "admin_integrations_status_revoked": "Ingetrokken",
+
+  "admin_integrations_section_basics": "Basisgegevens",
+  "admin_integrations_section_permissions": "Rechten",
+  "admin_integrations_section_kb_access": "Kennisbanktoegang",
+  "admin_integrations_section_rate_limit": "Limiet",
+
+  "admin_integrations_field_name": "Naam",
+  "admin_integrations_field_description": "Beschrijving",
+  "admin_integrations_field_rate_limit": "Verzoeken per minuut",
+  "admin_integrations_rate_limit_unit": "verzoeken/min",
+
+  "admin_integrations_perm_chat": "Chatvervolledigingen",
+  "admin_integrations_perm_feedback": "Feedback",
+  "admin_integrations_perm_knowledge_append": "Kennis toevoegen",
+
+  "admin_integrations_kb_name": "Kennisbank",
+  "admin_integrations_kb_none": "Geen",
+  "admin_integrations_kb_read": "Lezen",
+  "admin_integrations_kb_read_write": "Lezen + Schrijven",
+  "admin_integrations_kb_read_write_disabled_hint": "Schakel de toestemming Kennis toevoegen in om schrijftoegang toe te staan",
+  "admin_integrations_kb_empty": "Geen kennisbanken gevonden in deze organisatie.",
+
+  "admin_integrations_key_modal_title": "API-sleutel aangemaakt",
+  "admin_integrations_key_modal_warning": "Deze sleutel wordt slechts eenmaal getoond. Kopieer hem nu.",
+  "admin_integrations_key_modal_description": "Bewaar deze sleutel op een veilige plek. Je kunt hem niet meer bekijken na het sluiten van dit venster.",
+  "admin_integrations_key_modal_confirm": "Ik heb de sleutel opgeslagen",
+
+  "admin_integrations_save": "Wijzigingen opslaan",
+  "admin_integrations_success_updated": "Integratie bijgewerkt",
+  "admin_integrations_success_revoked": "Integratie ingetrokken",
+
+  "admin_integrations_revoke_section_title": "Gevarenzone",
+  "admin_integrations_revoke_section_description": "Het intrekken van deze integratie maakt de API-sleutel onmiddellijk ongeldig. Dit kan niet ongedaan worden gemaakt.",
+  "admin_integrations_revoke_button": "Integratie intrekken",
+  "admin_integrations_revoke_title": "Integratie intrekken",
+  "admin_integrations_revoke_description": "Weet je het zeker? De API-sleutel stopt onmiddellijk met werken. Deze actie kan niet ongedaan worden gemaakt.",
+  "admin_integrations_revoke_confirm": "Intrekken",
+
+  "admin_integrations_view_logs": "Logs bekijken in Grafana"
 }

@@ -38,6 +38,7 @@ import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
+import { Route as AdminIntegrationsIndexRouteImport } from './routes/admin/integrations/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
@@ -51,6 +52,8 @@ import { Route as AppDocsKbSlugRouteImport } from './routes/app/docs/$kbSlug'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
+import { Route as AdminIntegrationsNewRouteImport } from './routes/admin/integrations/new'
+import { Route as AdminIntegrationsIdRouteImport } from './routes/admin/integrations/$id'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
@@ -217,6 +220,11 @@ const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
   path: '/mcps/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminIntegrationsIndexRoute = AdminIntegrationsIndexRouteImport.update({
+  id: '/integrations/',
+  path: '/integrations/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
   id: '/groups/',
   path: '/groups/',
@@ -285,6 +293,16 @@ const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
 const AdminMcpsServerIdRoute = AdminMcpsServerIdRouteImport.update({
   id: '/mcps/$serverId',
   path: '/mcps/$serverId',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminIntegrationsNewRoute = AdminIntegrationsNewRouteImport.update({
+  id: '/integrations/new',
+  path: '/integrations/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminIntegrationsIdRoute = AdminIntegrationsIdRouteImport.update({
+  id: '/integrations/$id',
+  path: '/integrations/$id',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
@@ -424,6 +442,8 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
+  '/admin/integrations/new': typeof AdminIntegrationsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
@@ -437,6 +457,7 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
+  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -485,6 +506,8 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
+  '/admin/integrations/new': typeof AdminIntegrationsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
@@ -498,6 +521,7 @@ export interface FileRoutesByTo {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
+  '/admin/integrations': typeof AdminIntegrationsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
@@ -550,6 +574,8 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
+  '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
+  '/admin/integrations/new': typeof AdminIntegrationsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
@@ -563,6 +589,7 @@ export interface FileRoutesById {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
+  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -616,6 +643,8 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
+    | '/admin/integrations/$id'
+    | '/admin/integrations/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/users/invite'
@@ -629,6 +658,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups/'
+    | '/admin/integrations/'
     | '/admin/mcps/'
     | '/admin/users/'
     | '/app/docs/'
@@ -677,6 +707,8 @@ export interface FileRouteTypes {
     | '/app'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
+    | '/admin/integrations/$id'
+    | '/admin/integrations/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/users/invite'
@@ -690,6 +722,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups'
+    | '/admin/integrations'
     | '/admin/mcps'
     | '/admin/users'
     | '/app/docs'
@@ -741,6 +774,8 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/admin/groups/new'
+    | '/admin/integrations/$id'
+    | '/admin/integrations/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/users/invite'
@@ -754,6 +789,7 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/admin/groups/'
+    | '/admin/integrations/'
     | '/admin/mcps/'
     | '/admin/users/'
     | '/app/docs/'
@@ -1002,6 +1038,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMcpsIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/integrations/': {
+      id: '/admin/integrations/'
+      path: '/integrations'
+      fullPath: '/admin/integrations/'
+      preLoaderRoute: typeof AdminIntegrationsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/groups/': {
       id: '/admin/groups/'
       path: '/groups'
@@ -1091,6 +1134,20 @@ declare module '@tanstack/react-router' {
       path: '/mcps/$serverId'
       fullPath: '/admin/mcps/$serverId'
       preLoaderRoute: typeof AdminMcpsServerIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/integrations/new': {
+      id: '/admin/integrations/new'
+      path: '/integrations/new'
+      fullPath: '/admin/integrations/new'
+      preLoaderRoute: typeof AdminIntegrationsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/integrations/$id': {
+      id: '/admin/integrations/$id'
+      path: '/integrations/$id'
+      fullPath: '/admin/integrations/$id'
+      preLoaderRoute: typeof AdminIntegrationsIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/new': {
@@ -1255,10 +1312,13 @@ interface AdminRouteRouteChildren {
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
+  AdminIntegrationsIdRoute: typeof AdminIntegrationsIdRoute
+  AdminIntegrationsNewRoute: typeof AdminIntegrationsNewRoute
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
+  AdminIntegrationsIndexRoute: typeof AdminIntegrationsIndexRoute
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
@@ -1272,10 +1332,13 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminGroupsNewRoute: AdminGroupsNewRoute,
+  AdminIntegrationsIdRoute: AdminIntegrationsIdRoute,
+  AdminIntegrationsNewRoute: AdminIntegrationsNewRoute,
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
+  AdminIntegrationsIndexRoute: AdminIntegrationsIndexRoute,
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,

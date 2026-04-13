@@ -1367,5 +1367,66 @@
   "admin_billing_placeholder_zipcode": "1234 AB",
   "admin_billing_placeholder_city": "Amsterdam",
   "admin_billing_placeholder_tax_number": "NL123456789B01",
-  "session_token_expiring": "Session is being renewed..."
+  "session_token_expiring": "Session is being renewed...",
+
+  "admin_nav_integrations": "Integrations",
+  "admin_section_integrations_title": "Integrations",
+  "admin_section_integrations_description": "Manage partner API keys and external integrations.",
+
+  "admin_integrations_title": "Integrations",
+  "admin_integrations_create": "New integration",
+  "admin_integrations_create_submit": "Create integration",
+  "admin_integrations_loading": "Loading...",
+  "admin_integrations_empty": "No integrations yet",
+  "admin_integrations_empty_description": "Create an integration to let external partners access your knowledge bases via API.",
+  "admin_integrations_error_generic": "Something went wrong. Please try again.",
+
+  "admin_integrations_col_name": "Name",
+  "admin_integrations_col_key_prefix": "Key prefix",
+  "admin_integrations_col_status": "Status",
+  "admin_integrations_col_kb_access": "KB access",
+  "admin_integrations_col_last_used": "Last used",
+  "admin_integrations_view_detail": "View",
+
+  "admin_integrations_status_active": "Active",
+  "admin_integrations_status_revoked": "Revoked",
+
+  "admin_integrations_section_basics": "Basics",
+  "admin_integrations_section_permissions": "Permissions",
+  "admin_integrations_section_kb_access": "Knowledge base access",
+  "admin_integrations_section_rate_limit": "Rate limit",
+
+  "admin_integrations_field_name": "Name",
+  "admin_integrations_field_description": "Description",
+  "admin_integrations_field_rate_limit": "Requests per minute",
+  "admin_integrations_rate_limit_unit": "requests/min",
+
+  "admin_integrations_perm_chat": "Chat completions",
+  "admin_integrations_perm_feedback": "Feedback",
+  "admin_integrations_perm_knowledge_append": "Knowledge append",
+
+  "admin_integrations_kb_name": "Knowledge base",
+  "admin_integrations_kb_none": "None",
+  "admin_integrations_kb_read": "Read",
+  "admin_integrations_kb_read_write": "Read + Write",
+  "admin_integrations_kb_read_write_disabled_hint": "Enable the Knowledge append permission to allow write access",
+  "admin_integrations_kb_empty": "No knowledge bases found in this organisation.",
+
+  "admin_integrations_key_modal_title": "API key created",
+  "admin_integrations_key_modal_warning": "This key will only be shown once. Copy it now.",
+  "admin_integrations_key_modal_description": "Store this key in a safe place. You will not be able to view it again after closing this dialog.",
+  "admin_integrations_key_modal_confirm": "I have saved the key",
+
+  "admin_integrations_save": "Save changes",
+  "admin_integrations_success_updated": "Integration updated",
+  "admin_integrations_success_revoked": "Integration revoked",
+
+  "admin_integrations_revoke_section_title": "Danger zone",
+  "admin_integrations_revoke_section_description": "Revoking this integration will immediately invalidate the API key. This cannot be undone.",
+  "admin_integrations_revoke_button": "Revoke integration",
+  "admin_integrations_revoke_title": "Revoke integration",
+  "admin_integrations_revoke_description": "Are you sure? The API key will stop working immediately. This action cannot be undone.",
+  "admin_integrations_revoke_confirm": "Revoke",
+
+  "admin_integrations_view_logs": "View logs in Grafana"
 }
