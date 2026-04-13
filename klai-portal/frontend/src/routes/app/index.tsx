@@ -150,8 +150,7 @@ function ChatHome() {
   const showError = phase === 'error' || phase === 'stuck'
 
   return (
-    <div className="flex h-full w-full flex-col" data-help-id="chat-page">
-      <KBScopeBar />
+    <div className="flex h-full w-full flex-col bg-[var(--color-background)]" data-help-id="chat-page">
       <div className="relative flex-1">
         {/* Loading overlay */}
         {showOverlay && (
@@ -193,12 +192,21 @@ function ChatHome() {
           <iframe
             src={iframeSrc}
             onLoad={handleIframeLoad}
-            className={`h-full w-full border-none transition-opacity duration-200 ${
+            className={`h-full w-full border-none bg-[var(--color-background)] transition-opacity duration-200 ${
               phase === 'ready' ? 'opacity-100' : 'opacity-0'
             }`}
             title="Chat"
             allow="clipboard-write; microphone; screen-wake-lock"
           />
+        )}
+
+        {/* Knowledge scope pills — floating at bottom, above LibreChat input */}
+        {phase === 'ready' && (
+          <div className="absolute bottom-16 left-1/2 z-20 -translate-x-1/2">
+            <div className="rounded-full border border-[var(--color-border)] bg-[var(--color-background)]/90 px-1 py-1 shadow-lg backdrop-blur-sm">
+              <KBScopeBar />
+            </div>
+          </div>
         )}
       </div>
     </div>
