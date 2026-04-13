@@ -9,8 +9,6 @@ SPEC-API-001 REQ-1.1, non-functional privacy:
 
 import re
 
-import pytest
-
 
 def test_generate_key_format():
     """Key format is pk_live_ followed by 40 hex characters."""
@@ -18,7 +16,7 @@ def test_generate_key_format():
 
     plaintext, _hash = generate_partner_key()
     assert plaintext.startswith("pk_live_")
-    hex_part = plaintext[len("pk_live_"):]
+    hex_part = plaintext[len("pk_live_") :]
     assert len(hex_part) == 40
     assert re.fullmatch(r"[0-9a-f]{40}", hex_part), f"Not valid hex: {hex_part}"
 

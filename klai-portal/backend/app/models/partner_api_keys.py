@@ -43,9 +43,7 @@ class PartnerAPIKey(Base):
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 

@@ -121,9 +121,7 @@ class TestCreateIntegration:
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_create_happy_path_returns_plaintext_key(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_create_happy_path_returns_plaintext_key(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.2: Create returns plaintext key + metadata."""
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
@@ -164,9 +162,7 @@ class TestCreateIntegration:
         assert len(result.key_prefix) == 12
 
     @pytest.mark.asyncio
-    async def test_create_with_out_of_org_kb_returns_400(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_create_with_out_of_org_kb_returns_400(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.2: KB not in org -> 400."""
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
@@ -209,9 +205,7 @@ class TestCreateIntegration:
             assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_create_emits_product_event(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_create_emits_product_event(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.7: integration.created event emitted."""
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
@@ -264,9 +258,7 @@ class TestListIntegrations:
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_list_returns_entries_without_plaintext_key(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_list_returns_entries_without_plaintext_key(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.3: List returns metadata without plaintext key."""
         from app.api.admin_integrations import list_integrations
 
@@ -319,9 +311,7 @@ class TestGetIntegrationDetail:
     """GET /api/integrations/{id} — REQ-6.4."""
 
     @pytest.mark.asyncio
-    async def test_detail_returns_full_kb_list_with_names(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_detail_returns_full_kb_list_with_names(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.4: Detail returns per-KB access list with KB names."""
         from app.api.admin_integrations import get_integration_detail
 
@@ -359,9 +349,7 @@ class TestGetIntegrationDetail:
         )
 
         with patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)):
-            result = await get_integration_detail(
-                integration_id="uuid-1", credentials=mock_credentials, db=mock_db
-            )
+            result = await get_integration_detail(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
 
         assert result.name == "Partner A"
         assert len(result.kb_access) == 1
@@ -370,9 +358,7 @@ class TestGetIntegrationDetail:
         assert result.kb_access[0]["access_level"] == "read"
 
     @pytest.mark.asyncio
-    async def test_detail_not_found_returns_404(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_detail_not_found_returns_404(self, mock_db, mock_credentials, admin_user, mock_org):
         """Integration not in org -> 404."""
         from app.api.admin_integrations import get_integration_detail
 
@@ -380,9 +366,7 @@ class TestGetIntegrationDetail:
 
         with patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)):
             with pytest.raises(HTTPException) as exc_info:
-                await get_integration_detail(
-                    integration_id="nonexistent", credentials=mock_credentials, db=mock_db
-                )
+                await get_integration_detail(integration_id="nonexistent", credentials=mock_credentials, db=mock_db)
             assert exc_info.value.status_code == 404
 
 
@@ -395,9 +379,7 @@ class TestUpdateIntegration:
     """PATCH /api/integrations/{id} — REQ-6.5."""
 
     @pytest.mark.asyncio
-    async def test_patch_partial_fields_works(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_patch_partial_fields_works(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.5: Partial update of name/description."""
         from app.api.admin_integrations import UpdateIntegrationRequest, update_integration
 
@@ -422,18 +404,14 @@ class TestUpdateIntegration:
             patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
             patch("app.api.admin_integrations.emit_event") as mock_emit,
         ):
-            await update_integration(
-                integration_id="uuid-1", body=body, credentials=mock_credentials, db=mock_db
-            )
+            await update_integration(integration_id="uuid-1", body=body, credentials=mock_credentials, db=mock_db)
 
         assert key_row.name == "New Name"
         mock_emit.assert_called_once()
         assert mock_emit.call_args[0][0] == "integration.updated"
 
     @pytest.mark.asyncio
-    async def test_patch_kb_access_replaces_rows_atomically(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_patch_kb_access_replaces_rows_atomically(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.5: kb_access update deletes old rows and inserts new ones."""
         from app.api.admin_integrations import UpdateIntegrationRequest, update_integration
 
@@ -465,25 +443,19 @@ class TestUpdateIntegration:
             ]
         )
 
-        body = UpdateIntegrationRequest(
-            kb_access=[{"kb_id": 2, "access_level": "read_write"}]
-        )
+        body = UpdateIntegrationRequest(kb_access=[{"kb_id": 2, "access_level": "read_write"}])
 
         with (
             patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
             patch("app.api.admin_integrations.emit_event"),
         ):
-            await update_integration(
-                integration_id="uuid-1", body=body, credentials=mock_credentials, db=mock_db
-            )
+            await update_integration(integration_id="uuid-1", body=body, credentials=mock_credentials, db=mock_db)
 
         # db.add should have been called for the new kb_access row
         mock_db.add.assert_called()
 
     @pytest.mark.asyncio
-    async def test_patch_revoked_key_active_true_returns_400(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_patch_revoked_key_active_true_returns_400(self, mock_db, mock_credentials, admin_user, mock_org):
         """Cannot set active=true on a revoked key -> 400."""
         from app.api.admin_integrations import UpdateIntegrationRequest, update_integration
 
@@ -501,9 +473,7 @@ class TestUpdateIntegration:
 
         with patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)):
             with pytest.raises(HTTPException) as exc_info:
-                await update_integration(
-                    integration_id="uuid-1", body=body, credentials=mock_credentials, db=mock_db
-                )
+                await update_integration(integration_id="uuid-1", body=body, credentials=mock_credentials, db=mock_db)
             assert exc_info.value.status_code == 400
 
 
@@ -516,9 +486,7 @@ class TestRevokeIntegration:
     """POST /api/integrations/{id}/revoke — REQ-6.6."""
 
     @pytest.mark.asyncio
-    async def test_revoke_sets_active_false(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_revoke_sets_active_false(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.6: Revoke sets active=false."""
         from app.api.admin_integrations import revoke_integration
 
@@ -541,18 +509,14 @@ class TestRevokeIntegration:
             patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
             patch("app.api.admin_integrations.emit_event") as mock_emit,
         ):
-            await revoke_integration(
-                integration_id="uuid-1", credentials=mock_credentials, db=mock_db
-            )
+            await revoke_integration(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
 
         assert key_row.active is False
         mock_emit.assert_called_once()
         assert mock_emit.call_args[0][0] == "integration.revoked"
 
     @pytest.mark.asyncio
-    async def test_revoke_already_revoked_returns_400(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_revoke_already_revoked_returns_400(self, mock_db, mock_credentials, admin_user, mock_org):
         """Revoking an already-revoked key -> 400."""
         from app.api.admin_integrations import revoke_integration
 
@@ -565,15 +529,11 @@ class TestRevokeIntegration:
 
         with patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)):
             with pytest.raises(HTTPException) as exc_info:
-                await revoke_integration(
-                    integration_id="uuid-1", credentials=mock_credentials, db=mock_db
-                )
+                await revoke_integration(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
             assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_revoke_emits_product_event(
-        self, mock_db, mock_credentials, admin_user, mock_org
-    ):
+    async def test_revoke_emits_product_event(self, mock_db, mock_credentials, admin_user, mock_org):
         """REQ-6.7: integration.revoked event emitted."""
         from app.api.admin_integrations import revoke_integration
 
@@ -596,9 +556,7 @@ class TestRevokeIntegration:
             patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
             patch("app.api.admin_integrations.emit_event") as mock_emit,
         ):
-            await revoke_integration(
-                integration_id="uuid-1", credentials=mock_credentials, db=mock_db
-            )
+            await revoke_integration(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
 
         mock_emit.assert_called_once()
         assert mock_emit.call_args[0][0] == "integration.revoked"

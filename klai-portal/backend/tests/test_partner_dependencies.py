@@ -95,7 +95,7 @@ async def test_malformed_prefix_returns_401():
     """Key without pk_live_ prefix -> 401."""
     from app.api.partner_dependencies import get_partner_key
 
-    request = _make_request(token="sk_test_badprefix")
+    request = _make_request(token="sk_test_badprefix")  # noqa: S106
     db = AsyncMock()
 
     with pytest.raises(HTTPException) as exc_info:
@@ -250,9 +250,12 @@ def test_require_permission_granted():
     from app.api.partner_dependencies import PartnerAuthContext, require_permission
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": True, "feedback": False, "knowledge_append": False},
-        kb_access={}, rate_limit_rpm=60,
+        kb_access={},
+        rate_limit_rpm=60,
     )
     require_permission(auth, "chat")  # should not raise
 
@@ -262,9 +265,12 @@ def test_require_permission_denied():
     from app.api.partner_dependencies import PartnerAuthContext, require_permission
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": False, "feedback": True, "knowledge_append": False},
-        kb_access={}, rate_limit_rpm=60,
+        kb_access={},
+        rate_limit_rpm=60,
     )
     with pytest.raises(HTTPException) as exc_info:
         require_permission(auth, "chat")
@@ -276,9 +282,12 @@ def test_validate_kb_access_all_in_scope():
     from app.api.partner_dependencies import PartnerAuthContext, validate_kb_access
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": True, "feedback": True, "knowledge_append": False},
-        kb_access={10: "read", 20: "read_write"}, rate_limit_rpm=60,
+        kb_access={10: "read", 20: "read_write"},
+        rate_limit_rpm=60,
     )
     result = validate_kb_access(auth, [10, 20], required_level="read")
     assert result == [10, 20]
@@ -289,9 +298,12 @@ def test_validate_kb_access_out_of_scope_returns_403():
     from app.api.partner_dependencies import PartnerAuthContext, validate_kb_access
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": True, "feedback": True, "knowledge_append": False},
-        kb_access={10: "read"}, rate_limit_rpm=60,
+        kb_access={10: "read"},
+        rate_limit_rpm=60,
     )
     with pytest.raises(HTTPException) as exc_info:
         validate_kb_access(auth, [10, 999], required_level="read")
@@ -307,9 +319,12 @@ def test_validate_kb_access_none_falls_back_to_key_defaults():
     from app.api.partner_dependencies import PartnerAuthContext, validate_kb_access
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": True, "feedback": True, "knowledge_append": False},
-        kb_access={10: "read", 20: "read_write", 30: "read"}, rate_limit_rpm=60,
+        kb_access={10: "read", 20: "read_write", 30: "read"},
+        rate_limit_rpm=60,
     )
     result = validate_kb_access(auth, None, required_level="read")
     assert set(result) == {10, 20, 30}
@@ -320,9 +335,12 @@ def test_validate_kb_access_read_write_level_check():
     from app.api.partner_dependencies import PartnerAuthContext, validate_kb_access
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": True, "feedback": True, "knowledge_append": True},
-        kb_access={10: "read", 20: "read_write"}, rate_limit_rpm=60,
+        kb_access={10: "read", 20: "read_write"},
+        rate_limit_rpm=60,
     )
     # KB 10 has only 'read', but 'read_write' is required
     with pytest.raises(HTTPException) as exc_info:
@@ -335,9 +353,12 @@ def test_validate_kb_access_none_filters_by_level():
     from app.api.partner_dependencies import PartnerAuthContext, validate_kb_access
 
     auth = PartnerAuthContext(
-        key_id="k1", org_id=1, zitadel_org_id="z1",
+        key_id="k1",
+        org_id=1,
+        zitadel_org_id="z1",
         permissions={"chat": True, "feedback": True, "knowledge_append": True},
-        kb_access={10: "read", 20: "read_write", 30: "read"}, rate_limit_rpm=60,
+        kb_access={10: "read", 20: "read_write", 30: "read"},
+        rate_limit_rpm=60,
     )
     result = validate_kb_access(auth, None, required_level="read_write")
     assert result == [20]

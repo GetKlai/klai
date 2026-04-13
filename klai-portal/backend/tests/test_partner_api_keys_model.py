@@ -4,7 +4,6 @@ SPEC-API-001 REQ-1.2, REQ-1.3:
 - Table names, column types, PKs, nullability, defaults, FK targets, indexes.
 """
 
-import pytest
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
@@ -104,7 +103,6 @@ def test_partner_api_keys_indexes():
     from app.models.partner_api_keys import PartnerAPIKey
 
     table = PartnerAPIKey.__table__
-    index_names = {idx.name for idx in table.indexes}
     index_columns = {}
     for idx in table.indexes:
         cols = [c.name for c in idx.columns]
@@ -112,14 +110,14 @@ def test_partner_api_keys_indexes():
 
     # key_hash unique index
     found_key_hash = False
-    for name, (cols, unique) in index_columns.items():
+    for _name, (cols, unique) in index_columns.items():
         if "key_hash" in cols and unique:
             found_key_hash = True
     assert found_key_hash, f"No unique index on key_hash. Indexes: {index_columns}"
 
     # org_id index
     found_org_id = False
-    for name, (cols, _unique) in index_columns.items():
+    for _name, (cols, _unique) in index_columns.items():
         if "org_id" in cols:
             found_org_id = True
     assert found_org_id, f"No index on org_id. Indexes: {index_columns}"

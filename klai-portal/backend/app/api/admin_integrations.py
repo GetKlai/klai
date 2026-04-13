@@ -101,9 +101,7 @@ def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> IntegrationRes
     )
 
 
-async def _get_integration_or_404(
-    integration_id: str, org_id: int, db: AsyncSession
-) -> PartnerAPIKey:
+async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSession) -> PartnerAPIKey:
     """Fetch integration scoped to org, raise 404 if not found."""
     result = await db.execute(
         select(PartnerAPIKey).where(
@@ -120,9 +118,7 @@ async def _get_integration_or_404(
     return key
 
 
-async def _validate_kb_ids(
-    kb_ids: list[int], org_id: int, db: AsyncSession
-) -> list[PortalKnowledgeBase]:
+async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[PortalKnowledgeBase]:
     """Validate that all kb_ids belong to the org. Returns matching KB rows."""
     if not kb_ids:
         return []
@@ -247,9 +243,7 @@ async def list_integrations(
     _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    result = await db.execute(
-        select(PartnerAPIKey).where(PartnerAPIKey.org_id == org.id)
-    )
+    result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == org.id))
     keys = result.scalars().all()
 
     if not keys:
@@ -258,9 +252,7 @@ async def list_integrations(
     # Load KB access counts for all keys in one query
     key_ids = [k.id for k in keys]
     kb_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(
-            PartnerApiKeyKbAccess.partner_api_key_id.in_(key_ids)
-        )
+        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id.in_(key_ids))
     )
     kb_rows = kb_result.scalars().all()
 
@@ -291,9 +283,7 @@ async def get_integration_detail(
 
     # Load KB access entries
     kb_access_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(
-            PartnerApiKeyKbAccess.partner_api_key_id == key.id
-        )
+        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
     )
     kb_access_rows = kb_access_result.scalars().all()
 
@@ -301,9 +291,7 @@ async def get_integration_detail(
     kb_ids = [row.kb_id for row in kb_access_rows]
     kb_details: dict[int, PortalKnowledgeBase] = {}
     if kb_ids:
-        kb_result = await db.execute(
-            select(PortalKnowledgeBase).where(PortalKnowledgeBase.id.in_(kb_ids))
-        )
+        kb_result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.id.in_(kb_ids)))
         for kb in kb_result.scalars().all():
             kb_details[kb.id] = kb
 
@@ -376,11 +364,7 @@ async def update_integration(
         await _validate_kb_ids(kb_ids, org.id, db)
 
         # Delete existing rows
-        await db.execute(
-            delete(PartnerApiKeyKbAccess).where(
-                PartnerApiKeyKbAccess.partner_api_key_id == key.id
-            )
-        )
+        await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
 
         # Insert new rows
         for entry in body.kb_access:
@@ -398,9 +382,9 @@ async def update_integration(
     # If we didn't update kb_access, count the existing ones
     if kb_access_count is None:
         count_result = await db.execute(
-            select(func.count()).select_from(PartnerApiKeyKbAccess).where(
-                PartnerApiKeyKbAccess.partner_api_key_id == key.id
-            )
+            select(func.count())
+            .select_from(PartnerApiKeyKbAccess)
+            .where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
         )
         kb_access_count = count_result.scalar() or 0
 
@@ -457,9 +441,9 @@ async def revoke_integration(
 
     # Count KB access for response
     count_result = await db.execute(
-        select(func.count()).select_from(PartnerApiKeyKbAccess).where(
-            PartnerApiKeyKbAccess.partner_api_key_id == key.id
-        )
+        select(func.count())
+        .select_from(PartnerApiKeyKbAccess)
+        .where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
     )
     kb_access_count = count_result.scalar() or 0
 

@@ -8,7 +8,7 @@ SPEC-API-001 TASK-010:
 - Idempotent duplicate -> 200 without new row
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
