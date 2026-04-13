@@ -347,7 +347,7 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
   return (
     <div className="border-t border-[var(--color-sidebar-border)] pt-3 px-3">
       <p className="px-3 mb-2 text-[10px] font-medium text-[var(--color-sidebar-muted-foreground)] uppercase tracking-wider">
-        Je kennis
+        Praat met
       </p>
       <ul className="space-y-0.5">
         {personalKb && (
