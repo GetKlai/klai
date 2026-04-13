@@ -7,7 +7,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
-import { KBScopeBar } from './_components/KBScopeBar'
+import { useQuery } from '@tanstack/react-query'
 
 // Threshold: 25 days (conservative — LibreChat refresh tokens are 30d)
 const LC_AUTH_KEY = 'lc_authed_at'
@@ -197,13 +197,6 @@ function ChatHome() {
             title="Chat"
             allow="clipboard-write; microphone; screen-wake-lock"
           />
-        )}
-
-        {/* Knowledge pill — floating over iframe, aligned with LibreChat input footer */}
-        {phase === 'ready' && (
-          <div className="absolute bottom-[52px] z-20 pointer-events-auto" style={{ left: 'calc(50% - 80px)' }}>
-            <KBScopeBar />
-          </div>
         )}
       </div>
     </div>
