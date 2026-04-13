@@ -59,7 +59,7 @@ interface GapSummary {
 }
 
 // ---------------------------------------------------------------------------
-// Visibility helpers
+// Visibility
 // ---------------------------------------------------------------------------
 
 type VisibilityMode = 'public' | 'org' | 'restricted'
@@ -93,7 +93,7 @@ function VisibilityIcon({ mode, className }: { mode: VisibilityMode; className?:
 }
 
 // ---------------------------------------------------------------------------
-// KBMetaText — compact stats line under KB name
+// KBMetaText
 // ---------------------------------------------------------------------------
 
 function KBMetaText({
@@ -112,15 +112,9 @@ function KBMetaText({
         : m.knowledge_page_meta_items({ count: String(stats.items) }),
     )
   }
-  if (stats.connectors > 0) {
-    parts.push(m.knowledge_page_meta_connectors({ count: String(stats.connectors) }))
-  }
-  if (stats.usage_30d > 0) {
-    parts.push(m.knowledge_page_meta_usage({ count: String(stats.usage_30d) }))
-  }
-  if (stats.gaps_7d > 0) {
-    parts.push(m.knowledge_page_meta_gaps({ count: String(stats.gaps_7d) }))
-  }
+  if (stats.connectors > 0) parts.push(m.knowledge_page_meta_connectors({ count: String(stats.connectors) }))
+  if (stats.usage_30d > 0) parts.push(m.knowledge_page_meta_usage({ count: String(stats.usage_30d) }))
+  if (stats.gaps_7d > 0) parts.push(m.knowledge_page_meta_gaps({ count: String(stats.gaps_7d) }))
   if (parts.length === 0) return null
   return (
     <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5 truncate">
@@ -130,7 +124,7 @@ function KBMetaText({
 }
 
 // ---------------------------------------------------------------------------
-// KbRow — single table row for a knowledge base
+// KbRow
 // ---------------------------------------------------------------------------
 
 function KbRow({
@@ -138,29 +132,24 @@ function KbRow({
   stats,
   isDefault,
   variant,
-  descriptionOverride,
+  subtitle,
 }: {
   kb: KnowledgeBase
   stats: KBStatsSummary | undefined
   isDefault: boolean
   variant: 'regular' | 'personal'
-  descriptionOverride?: string
+  subtitle?: string
 }) {
-  const navigate = useNavigate()
   const isPersonal = variant === 'personal'
   const mode: VisibilityMode = isPersonal ? 'restricted' : deriveVisibilityMode(kb)
-  const label = isPersonal ? m.docs_kb_visibility_private() : visibilityLabel(mode)
+  const label = visibilityLabel(mode)
+  const description = subtitle ?? kb.description
 
   return (
     <tr className="border-b border-[var(--color-border)] last:border-b-0">
-      <td
-        className={`py-4 pr-4 align-top ${isDefault ? 'pl-4 shadow-[inset_3px_0_0_0_var(--color-rl-accent)]' : ''}`}
-      >
+      <td className={`py-4 pr-4 align-top ${isDefault ? 'pl-4 shadow-[inset_3px_0_0_0_var(--color-rl-accent)]' : ''}`}>
         <div className="flex items-start gap-2">
-          <VisibilityIcon
-            mode={mode}
-            className="h-4 w-4 mt-0.5 text-[var(--color-muted-foreground)] shrink-0"
-          />
+          <VisibilityIcon mode={mode} className="h-4 w-4 mt-0.5 text-[var(--color-muted-foreground)] shrink-0" />
           <div className="min-w-0">
             <Link
               to="/app/knowledge/$kbSlug/overview"
@@ -169,18 +158,12 @@ function KbRow({
             >
               {kb.name}
             </Link>
-            {descriptionOverride && (
-              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                {descriptionOverride}
-              </p>
-            )}
-            {!descriptionOverride && kb.description && (
+            {description && (
               <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5 truncate">
-                {kb.description}
+                {description}
               </p>
             )}
             <KBMetaText stats={stats} variant={variant} />
-            {/* Mobile: visibility inline below name when column is hidden */}
             <span className="md:hidden inline-block mt-1 text-xs text-[var(--color-muted-foreground)]">
               {label}
             </span>
@@ -191,22 +174,16 @@ function KbRow({
         <span className="text-xs text-[var(--color-muted-foreground)]">{label}</span>
       </td>
       <td className="py-4 align-top text-right w-12">
-        <div className="flex items-start justify-end gap-2 mt-px">
-          <Tooltip label={m.docs_kb_view_label()}>
-            <button
-              onClick={() =>
-                void navigate({
-                  to: '/app/knowledge/$kbSlug/overview',
-                  params: { kbSlug: kb.slug },
-                })
-              }
-              aria-label={m.docs_kb_view_label()}
-              className="inline-flex items-center justify-center text-[var(--color-muted-foreground)] transition-opacity hover:opacity-70"
-            >
-              <Eye className="h-4 w-4" />
-            </button>
-          </Tooltip>
-        </div>
+        <Tooltip label={m.docs_kb_view_label()}>
+          <Link
+            to="/app/knowledge/$kbSlug/overview"
+            params={{ kbSlug: kb.slug }}
+            aria-label={m.docs_kb_view_label()}
+            className="inline-flex items-center justify-center text-[var(--color-muted-foreground)] transition-opacity hover:opacity-70"
+          >
+            <Eye className="h-4 w-4" />
+          </Link>
+        </Tooltip>
       </td>
     </tr>
   )
@@ -229,91 +206,59 @@ function KnowledgePage() {
 
   const { data: gapSummary } = useQuery<GapSummary>({
     queryKey: ['gap-summary'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<GapSummary>(`/api/app/gaps/summary`, token)
-      } catch (err) {
-        queryLogger.warn('Gap summary fetch failed', { err })
-        throw err
-      }
-    },
+    queryFn: () => apiFetch<GapSummary>('/api/app/gaps/summary', token),
     enabled: !!token && isAdmin,
     retry: false,
   })
 
-  const { data: kbsData, isLoading: kbsLoading, error: kbsError, refetch: refetchKbs } = useQuery<KBsResponse>({
+  const {
+    data: kbsData,
+    isLoading: kbsLoading,
+    error: kbsError,
+    refetch: refetchKbs,
+  } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<KBsResponse>(`/api/app/knowledge-bases`, token)
-      } catch (err) {
-        queryLogger.warn('Knowledge bases fetch failed', { err })
-        throw err
-      }
-    },
+    queryFn: () => apiFetch<KBsResponse>('/api/app/knowledge-bases', token),
     enabled: !!token,
     retry: false,
   })
 
   const { data: statsData } = useQuery<KBStatsSummaryResponse>({
     queryKey: ['app-knowledge-bases-stats-summary'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<KBStatsSummaryResponse>(
-          `/api/app/knowledge-bases/stats-summary`,
-          token,
-        )
-      } catch (err) {
-        queryLogger.warn('Knowledge bases stats summary fetch failed', { err })
-        throw err
-      }
-    },
+    queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary', token),
     enabled: !!token,
     retry: false,
   })
 
   const statsBySlug = statsData?.stats ?? {}
-
   const allKbs = kbsData?.knowledge_bases ?? []
 
-  // Identify the two default KBs by slug convention.
-  const personalKb = allKbs.find(
-    (kb) => kb.slug === `personal-${myUserId}` && kb.owner_type === 'user',
-  )
-  const orgKb = allKbs.find(
-    (kb) => kb.slug === 'org' && kb.owner_type === 'org',
-  )
+  const personalKb = allKbs.find((kb) => kb.slug === `personal-${myUserId}` && kb.owner_type === 'user')
+  const orgKb = allKbs.find((kb) => kb.slug === 'org' && kb.owner_type === 'org')
   const defaultSlugs = new Set([personalKb?.slug, orgKb?.slug].filter(Boolean))
 
-  // All other KBs form the searchable list.
   const createdKbs = allKbs.filter((kb) => !defaultSlugs.has(kb.slug))
   const filteredCreatedKbs = search.trim()
     ? createdKbs.filter((kb) => {
         const q = search.toLowerCase()
-        return (
-          kb.name.toLowerCase().includes(q) ||
-          (kb.description?.toLowerCase().includes(q) ?? false)
-        )
+        return kb.name.toLowerCase().includes(q) || (kb.description?.toLowerCase().includes(q) ?? false)
       })
     : createdKbs
 
   return (
     <div className="p-6 space-y-6 max-w-5xl">
-      {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
             {m.knowledge_page_intro_heading()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
-            {!kbsLoading &&
-              createdKbs.length > 0 &&
-              m.knowledge_page_stat_org({ count: String(createdKbs.length) })}
-          </p>
+          {!kbsLoading && createdKbs.length > 0 && (
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {m.knowledge_page_stat_org({ count: String(createdKbs.length) })}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Gaps button — admin only, always visible.
-              Count badge appears only when open gaps exist. */}
           {isAdmin && (
             <Button
               variant="outline"
@@ -337,7 +282,6 @@ function KnowledgePage() {
         </div>
       </div>
 
-      {/* KB list */}
       {kbsError ? (
         <QueryErrorState
           error={kbsError instanceof Error ? kbsError : new Error(String(kbsError))}
@@ -350,7 +294,7 @@ function KnowledgePage() {
           ))}
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -371,14 +315,13 @@ function KnowledgePage() {
               </tr>
             </thead>
             <tbody>
-              {/* Default KBs — always at top, never filtered by search */}
               {personalKb && (
                 <KbRow
                   kb={personalKb}
                   stats={statsBySlug[personalKb.slug]}
                   isDefault
                   variant="personal"
-                  descriptionOverride={m.knowledge_page_personal_body()}
+                  subtitle={m.knowledge_page_personal_body()}
                 />
               )}
               {orgKb && (
@@ -387,11 +330,9 @@ function KnowledgePage() {
                   stats={statsBySlug[orgKb.slug]}
                   isDefault
                   variant="regular"
-                  descriptionOverride={m.knowledge_page_org_body()}
+                  subtitle={m.knowledge_page_org_body()}
                 />
               )}
-
-              {/* Created KBs — filtered by search */}
               {filteredCreatedKbs.map((kb) => (
                 <KbRow
                   key={kb.id}

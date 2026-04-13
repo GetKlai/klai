@@ -64,7 +64,10 @@ async def create_default_org_kb(
                 PortalKnowledgeBase.slug == "org",
             )
         )
-        kb = result2.scalar_one()
+        kb = result2.scalar_one_or_none()
+        if not kb:
+            logger.exception("org_kb_lost_after_integrity_error", org_id=org_id)
+            raise
     return kb
 
 
@@ -110,7 +113,10 @@ async def create_default_personal_kb(
                 PortalKnowledgeBase.slug == slug,
             )
         )
-        kb = result2.scalar_one()
+        kb = result2.scalar_one_or_none()
+        if not kb:
+            logger.exception("personal_kb_lost_after_integrity_error", org_id=org_id, user_id=user_id)
+            raise
     return kb
 
 
