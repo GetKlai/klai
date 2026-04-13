@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.Column(
             "id",
             UUID(as_uuid=False),
-            server_default=sa.text("gen_random_uuid()::text"),
+            server_default=sa.text("gen_random_uuid()"),
             primary_key=True,
         ),
         sa.Column("org_id", sa.Integer, sa.ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False),
