@@ -163,6 +163,18 @@
         }
     }
 
+    # Partner API — external integration surface with per-IP rate limiting
+    handle /partner/* {
+        rate_limit {
+            zone partner_per_ip {
+                key {remote_host}
+                events 120
+                window 1m
+            }
+        }
+        reverse_proxy portal-api:8010
+    }
+
     handle /api/* {
         reverse_proxy portal-api:8010
     }
