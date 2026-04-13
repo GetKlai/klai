@@ -145,7 +145,7 @@ function AddSourcePage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.docx,.txt,.md"
+                accept=".pdf,.docx,.xlsx,.pptx,.txt,.md"
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0]
@@ -163,7 +163,7 @@ function AddSourcePage() {
                 <div>
                   <Upload className="mx-auto mb-2 h-6 w-6 text-[var(--color-muted-foreground)]" />
                   <p className="text-sm font-medium text-[var(--color-foreground)]">{m.app_focus_source_file_hint()}</p>
-                  <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">PDF, DOCX, TXT, MD</p>
+                  <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">PDF, DOCX, XLSX, PPTX, TXT, MD</p>
                 </div>
               )}
             </div>
