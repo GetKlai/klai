@@ -9,7 +9,6 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
-import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
