@@ -116,7 +116,7 @@ function CoverageWidget({
                   <input
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
-                    className="text-sm font-medium text-[var(--color-foreground)] bg-[var(--color-card)] border-0 ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-none py-0.5 px-1 -ml-[5px] flex-1 min-w-0 outline-none"
+                    className="text-sm font-medium text-[var(--color-foreground)] bg-[var(--color-card)] border border-[var(--color-border)] focus:border-[var(--color-accent)] ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-0.5 px-1.5 flex-1 min-w-0 outline-none"
                     autoFocus
                     onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
                   />
@@ -181,7 +181,7 @@ function CoverageWidget({
                 <textarea
                   value={editingDescription}
                   onChange={(e) => setEditingDescription(e.target.value)}
-                  className="text-xs text-[var(--color-muted-foreground)] bg-[var(--color-card)] border-0 ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-none py-0.5 px-1 mb-1 -ml-[5px] w-[calc(100%+10px)] outline-none resize-none"
+                  className="text-xs text-[var(--color-muted-foreground)] bg-[var(--color-card)] border border-[var(--color-border)] focus:border-[var(--color-accent)] ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-1 px-1.5 mb-1 w-full outline-none resize-none"
                   rows={2}
                   placeholder={m.knowledge_taxonomy_node_description_placeholder()}
                   onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
