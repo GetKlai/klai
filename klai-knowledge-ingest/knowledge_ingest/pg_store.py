@@ -68,6 +68,11 @@ async def create_artifact(
     return artifact_id
 
 
+def _personal_slug(user_id: str) -> str:
+    """Build the per-user personal KB slug: ``personal-{user_id}``."""
+    return f"personal-{user_id}"
+
+
 async def list_personal_artifacts(
     org_id: str,
     user_id: str,
@@ -81,12 +86,12 @@ async def list_personal_artifacts(
         SELECT id, path, assertion_mode, created_at
         FROM knowledge.artifacts
         WHERE org_id = $1 AND user_id = $2
-          AND kb_slug = 'personal'
-          AND belief_time_end = $3
+          AND kb_slug = $3
+          AND belief_time_end = $4
         ORDER BY created_at DESC
-        LIMIT $4 OFFSET $5
+        LIMIT $5 OFFSET $6
         """,
-        org_id, user_id, _SENTINEL, limit, offset,
+        org_id, user_id, _personal_slug(user_id), _SENTINEL, limit, offset,
     )
     return [dict(r) for r in rows]
 
@@ -99,10 +104,10 @@ async def count_personal_artifacts(org_id: str, user_id: str) -> int:
         SELECT COUNT(*)
         FROM knowledge.artifacts
         WHERE org_id = $1 AND user_id = $2
-          AND kb_slug = 'personal'
-          AND belief_time_end = $3
+          AND kb_slug = $3
+          AND belief_time_end = $4
         """,
-        org_id, user_id, _SENTINEL,
+        org_id, user_id, _personal_slug(user_id), _SENTINEL,
     )
     return row or 0
 
@@ -119,10 +124,10 @@ async def get_personal_artifact(
         SELECT id, path
         FROM knowledge.artifacts
         WHERE id = $1 AND org_id = $2 AND user_id = $3
-          AND kb_slug = 'personal'
-          AND belief_time_end = $4
+          AND kb_slug = $4
+          AND belief_time_end = $5
         """,
-        artifact_id, org_id, user_id, _SENTINEL,
+        artifact_id, org_id, user_id, _personal_slug(user_id), _SENTINEL,
     )
     return dict(row) if row else None
 

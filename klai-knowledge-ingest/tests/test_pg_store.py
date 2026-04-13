@@ -24,7 +24,7 @@ async def test_create_artifact_returns_uuid():
     with patch("knowledge_ingest.pg_store.get_pool", new_callable=AsyncMock, return_value=pool):
         artifact_id = await pg_store.create_artifact(
             org_id="362757920133283846",
-            kb_slug="personal",
+            kb_slug="personal-user456",
             path="note.md",
             provenance_type="observed",
             assertion_mode="factual",
@@ -119,10 +119,11 @@ async def test_list_personal_artifacts_queries_correct_params():
     call_args = pool.fetch.call_args[0]
     sql = call_args[0]
     assert "knowledge.artifacts" in sql
-    assert "kb_slug = 'personal'" in sql
+    assert "kb_slug = $3" in sql
     values = call_args[1:]
     assert "org1" in values
     assert "user1" in values
+    assert "personal-user1" in values
     assert _SENTINEL in values
     assert 10 in values
     assert 5 in values
@@ -157,7 +158,7 @@ async def test_count_personal_artifacts_returns_int():
     pool.fetchval.assert_called_once()
     sql = pool.fetchval.call_args[0][0]
     assert "COUNT(*)" in sql
-    assert "kb_slug = 'personal'" in sql
+    assert "kb_slug = $3" in sql
 
 
 @pytest.mark.asyncio
@@ -182,7 +183,7 @@ async def test_get_personal_artifact_returns_dict_when_found():
     assert result["id"] == "abc-123"
     assert result["path"] == "note.md"
     sql = pool.fetchrow.call_args[0][0]
-    assert "kb_slug = 'personal'" in sql
+    assert "kb_slug = $4" in sql
 
 
 @pytest.mark.asyncio

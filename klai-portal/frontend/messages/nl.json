@@ -425,6 +425,7 @@
   "docs_kb_empty_heading": "Nog geen libraries",
   "docs_kb_empty_body": "Kennisbanken worden aangemaakt via Knowledge. Ga naar /app/knowledge om er een aan te maken.",
   "docs_kb_edit_label": "Bewerken",
+  "docs_kb_view_label": "Bekijken",
   "docs_kb_edit_modal_title": "Kennisbank bewerken",
   "docs_kb_edit_save_action": "Opslaan",
   "docs_editor_select_page": "Selecteer een pagina in de zijbalk.",

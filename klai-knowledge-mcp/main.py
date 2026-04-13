@@ -233,7 +233,7 @@ async def save_personal_knowledge(
 
     ok = await _save_to_ingest(
         org_id=identity.org_id,
-        kb_slug="personal",
+        kb_slug=f"personal-{identity.user_id}",
         title=title,
         content=content,
         assertion_mode=assertion_mode,

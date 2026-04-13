@@ -362,14 +362,14 @@ async def search(
     Uses 3-leg RRF fusion (vector_chunk + vector_questions + vector_sparse)
     when a sparse query vector is provided. Falls back to 2-leg RRF otherwise.
 
-    user_id filter is applied only when kb_slugs contains "personal".
+    user_id filter is applied when any kb_slug starts with "personal-".
     """
     client = get_client()
 
     must = [FieldCondition(key="org_id", match=MatchValue(value=org_id))]
     if kb_slugs:
         must.append(FieldCondition(key="kb_slug", match=MatchAny(any=kb_slugs)))
-    if user_id and kb_slugs and "personal" in kb_slugs:
+    if user_id and kb_slugs and any(s.startswith("personal-") for s in kb_slugs):
         must.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
     if content_type_filter:
         must.append(FieldCondition(key="content_type", match=MatchValue(value=content_type_filter)))

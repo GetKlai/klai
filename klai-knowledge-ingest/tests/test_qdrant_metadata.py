@@ -26,7 +26,7 @@ async def test_metadata_does_not_contain_user_id():
     """user_id must NOT appear in metadata (V008)."""
     mock_point = _make_query_point({
         "text": "some text",
-        "kb_slug": "personal",
+        "kb_slug": "personal-secret-user-123",
         "path": "note.md",
         "org_id": "org1",
         "user_id": "secret-user-123",
@@ -101,7 +101,7 @@ async def test_search_with_user_id_filter():
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
         mock_query = AsyncMock(return_value=_make_query_response([]))
         mock_client.return_value.query_points = mock_query
-        await search("org1", [0.1] * 1024, kb_slugs=["personal"], user_id="user123")
+        await search("org1", [0.1] * 1024, kb_slugs=["personal-user123"], user_id="user123")
 
         call_kwargs = mock_query.call_args
         # The filter is passed via prefetch entries; check that user_id filter exists

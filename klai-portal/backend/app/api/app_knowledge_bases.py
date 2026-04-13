@@ -238,44 +238,43 @@ async def _get_kb_or_404(kb_slug: str, org_id: int, db: AsyncSession) -> PortalK
     return kb
 
 
-async def _get_or_create_personal_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
-    """Return the personal KB row for this org, creating it lazily on first access."""
+async def _resolve_personal_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
+    """Return the caller's personal KB, creating it as fallback if provisioning missed it."""
+    from app.services.default_knowledge_bases import create_default_personal_kb, personal_kb_slug
+
+    slug = personal_kb_slug(caller_id)
     result = await db.execute(
         select(PortalKnowledgeBase).where(
             PortalKnowledgeBase.org_id == org_id,
-            PortalKnowledgeBase.slug == "personal",
+            PortalKnowledgeBase.slug == slug,
         )
     )
     kb = result.scalar_one_or_none()
     if kb:
         return kb
 
-    kb = PortalKnowledgeBase(
-        org_id=org_id,
-        name="Persoonlijk",
-        slug="personal",
-        description=None,
-        created_by=caller_id,
-        visibility="internal",
-        docs_enabled=False,
-        owner_type="user",
-        owner_user_id=caller_id,
-    )
-    db.add(kb)
-    try:
-        await db.flush()
-        await db.commit()
-        await db.refresh(kb)
-    except IntegrityError:
-        await db.rollback()
-        # Another request created it concurrently — fetch the existing row
-        result2 = await db.execute(
-            select(PortalKnowledgeBase).where(
-                PortalKnowledgeBase.org_id == org_id,
-                PortalKnowledgeBase.slug == "personal",
-            )
+    # Fallback: provisioning didn't create it yet — create on the fly
+    kb = await create_default_personal_kb(caller_id, org_id, db)
+    await db.commit()
+    return kb
+
+
+async def _resolve_org_kb(caller_id: str, org_id: int, db: AsyncSession) -> PortalKnowledgeBase:
+    """Return the org KB, creating it as fallback if provisioning missed it."""
+    from app.services.default_knowledge_bases import create_default_org_kb
+
+    result = await db.execute(
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == org_id,
+            PortalKnowledgeBase.slug == "org",
         )
-        kb = result2.scalar_one()
+    )
+    kb = result.scalar_one_or_none()
+    if kb:
+        return kb
+
+    kb = await create_default_org_kb(org_id, created_by=caller_id, db=db)
+    await db.commit()
     return kb
 
 
@@ -424,10 +423,18 @@ async def get_app_knowledge_base(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBOut:
-    """Return a single KB by slug for the caller's org. The personal KB is created lazily."""
+    """Return a single KB by slug for the caller's org.
+
+    Magic slugs:
+    - 'personal' resolves to the caller's personal-{user_id} KB
+    - 'org' resolves to the org-wide KB
+    Both are created as fallback if provisioning missed them.
+    """
     caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _get_or_create_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(caller_id, org.id, db)
+    elif kb_slug == "org":
+        kb = await _resolve_org_kb(caller_id, org.id, db)
     else:
         kb = await _get_kb_or_404(kb_slug, org.id, db)
     return _kb_out(kb)
@@ -661,7 +668,9 @@ async def get_kb_stats(
     """Return dashboard stats for a KB: connectors, docs count, volume, usage."""
     caller_id, org, _ = await _get_caller_org(credentials, db)
     if kb_slug == "personal":
-        kb = await _get_or_create_personal_kb(caller_id, org.id, db)
+        kb = await _resolve_personal_kb(caller_id, org.id, db)
+    elif kb_slug == "org":
+        kb = await _resolve_org_kb(caller_id, org.id, db)
     else:
         kb = await _get_kb_or_404(kb_slug, org.id, db)
 

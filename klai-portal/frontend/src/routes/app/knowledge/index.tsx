@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Lock, BookOpen, Plus, AlertTriangle, Pencil, Users } from 'lucide-react'
+import { Globe, Lock, Plus, AlertTriangle, Eye, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -20,6 +20,10 @@ export const Route = createFileRoute('/app/knowledge/')({
     </ProductGuard>
   ),
 })
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface KnowledgeBase {
   id: number
@@ -48,11 +52,18 @@ interface KBStatsSummaryResponse {
   stats: Record<string, KBStatsSummary>
 }
 
+interface GapSummary {
+  total_7d: number
+  hard_7d: number
+  soft_7d: number
+}
+
+// ---------------------------------------------------------------------------
+// Visibility helpers
+// ---------------------------------------------------------------------------
+
 type VisibilityMode = 'public' | 'org' | 'restricted'
 
-// Mirrors deriveVisibilityMode() in routes/app/knowledge/$kbSlug/members.tsx.
-// The backend stores `visibility` as 'public' or 'internal'; the distinction
-// between "organisation-wide" and "restricted" comes from default_org_role.
 function deriveVisibilityMode(kb: Pick<KnowledgeBase, 'visibility' | 'default_org_role'>): VisibilityMode {
   if (kb.visibility === 'public') return 'public'
   if (kb.default_org_role) return 'org'
@@ -70,13 +81,21 @@ function visibilityLabel(mode: VisibilityMode): string {
   }
 }
 
-/**
- * Compact stats line shown under a KB name. Each metric is omitted
- * when its count is zero so a KB with no activity stays clean.
- * The `variant` prop controls the wording: the personal singleton
- * uses "items onthouden" to match the chat-memory concept, regular
- * KBs use the neutral "items".
- */
+function VisibilityIcon({ mode, className }: { mode: VisibilityMode; className?: string }) {
+  switch (mode) {
+    case 'public':
+      return <Globe className={className} />
+    case 'org':
+      return <Users className={className} />
+    case 'restricted':
+      return <Lock className={className} />
+  }
+}
+
+// ---------------------------------------------------------------------------
+// KBMetaText — compact stats line under KB name
+// ---------------------------------------------------------------------------
+
 function KBMetaText({
   stats,
   variant = 'regular',
@@ -110,11 +129,92 @@ function KBMetaText({
   )
 }
 
-interface GapSummary {
-  total_7d: number
-  hard_7d: number
-  soft_7d: number
+// ---------------------------------------------------------------------------
+// KbRow — single table row for a knowledge base
+// ---------------------------------------------------------------------------
+
+function KbRow({
+  kb,
+  stats,
+  isDefault,
+  variant,
+  descriptionOverride,
+}: {
+  kb: KnowledgeBase
+  stats: KBStatsSummary | undefined
+  isDefault: boolean
+  variant: 'regular' | 'personal'
+  descriptionOverride?: string
+}) {
+  const navigate = useNavigate()
+  const isPersonal = variant === 'personal'
+  const mode: VisibilityMode = isPersonal ? 'restricted' : deriveVisibilityMode(kb)
+  const label = isPersonal ? m.docs_kb_visibility_private() : visibilityLabel(mode)
+
+  return (
+    <tr className="border-b border-[var(--color-border)] last:border-b-0">
+      <td
+        className={`py-4 pr-4 align-top ${isDefault ? 'pl-4 shadow-[inset_3px_0_0_0_var(--color-rl-accent)]' : ''}`}
+      >
+        <div className="flex items-start gap-2">
+          <VisibilityIcon
+            mode={mode}
+            className="h-4 w-4 mt-0.5 text-[var(--color-muted-foreground)] shrink-0"
+          />
+          <div className="min-w-0">
+            <Link
+              to="/app/knowledge/$kbSlug/overview"
+              params={{ kbSlug: kb.slug }}
+              className="font-medium text-[var(--color-foreground)] hover:underline"
+            >
+              {kb.name}
+            </Link>
+            {descriptionOverride && (
+              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                {descriptionOverride}
+              </p>
+            )}
+            {!descriptionOverride && kb.description && (
+              <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5 truncate">
+                {kb.description}
+              </p>
+            )}
+            <KBMetaText stats={stats} variant={variant} />
+            {/* Mobile: visibility inline below name when column is hidden */}
+            <span className="md:hidden inline-block mt-1 text-xs text-[var(--color-muted-foreground)]">
+              {label}
+            </span>
+          </div>
+        </div>
+      </td>
+      <td className="hidden md:table-cell py-4 pr-4 align-top w-28">
+        <span className="text-xs text-[var(--color-muted-foreground)]">{label}</span>
+      </td>
+      <td className="py-4 align-top text-right w-12">
+        <div className="flex items-start justify-end gap-2 mt-px">
+          <Tooltip label={m.docs_kb_view_label()}>
+            <button
+              onClick={() =>
+                void navigate({
+                  to: '/app/knowledge/$kbSlug/overview',
+                  params: { kbSlug: kb.slug },
+                })
+              }
+              aria-label={m.docs_kb_view_label()}
+              className="inline-flex items-center justify-center text-[var(--color-muted-foreground)] transition-opacity hover:opacity-70"
+            >
+              <Eye className="h-4 w-4" />
+            </button>
+          </Tooltip>
+        </div>
+      </td>
+    </tr>
+  )
 }
+
+// ---------------------------------------------------------------------------
+// KnowledgePage
+// ---------------------------------------------------------------------------
 
 function KnowledgePage() {
   const auth = useAuth()
@@ -155,8 +255,6 @@ function KnowledgePage() {
     retry: false,
   })
 
-  // Per-KB aggregate stats for the list view (items, connectors, gaps, usage).
-  // Runs in parallel with the KBs query; UI renders progressively as it arrives.
   const { data: statsData } = useQuery<KBStatsSummaryResponse>({
     queryKey: ['app-knowledge-bases-stats-summary'],
     queryFn: async () => {
@@ -177,18 +275,18 @@ function KnowledgePage() {
   const statsBySlug = statsData?.stats ?? {}
 
   const allKbs = kbsData?.knowledge_bases ?? []
-  const orgKbs = allKbs.filter((kb) => kb.owner_type === 'org')
-  const allPersonalKbs = allKbs.filter(
-    (kb) => kb.owner_type === 'user' && kb.owner_user_id === myUserId,
-  )
-  // First personal KB = the "default personal KB" represented by the singleton row.
-  // Any extra personal KBs render in the created-KBs list below.
-  const defaultPersonalKb = allPersonalKbs[0] ?? null
-  const extraPersonalKbs = allPersonalKbs.slice(1)
 
-  // Combined list of user/admin-created KBs (org-owned + extra personal).
-  // The first personal KB is excluded because it is the fixed singleton row.
-  const createdKbs = [...orgKbs, ...extraPersonalKbs]
+  // Identify the two default KBs by slug convention.
+  const personalKb = allKbs.find(
+    (kb) => kb.slug === `personal-${myUserId}` && kb.owner_type === 'user',
+  )
+  const orgKb = allKbs.find(
+    (kb) => kb.slug === 'org' && kb.owner_type === 'org',
+  )
+  const defaultSlugs = new Set([personalKb?.slug, orgKb?.slug].filter(Boolean))
+
+  // All other KBs form the searchable list.
+  const createdKbs = allKbs.filter((kb) => !defaultSlugs.has(kb.slug))
   const filteredCreatedKbs = search.trim()
     ? createdKbs.filter((kb) => {
         const q = search.toLowerCase()
@@ -199,8 +297,6 @@ function KnowledgePage() {
       })
     : createdKbs
 
-  const createdCount = createdKbs.length
-
   return (
     <div className="p-6 space-y-6 max-w-5xl">
       {/* Header */}
@@ -210,12 +306,14 @@ function KnowledgePage() {
             {m.knowledge_page_intro_heading()}
           </h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {!kbsLoading && createdCount > 0 && m.knowledge_page_stat_org({ count: String(createdCount) })}
+            {!kbsLoading &&
+              createdKbs.length > 0 &&
+              m.knowledge_page_stat_org({ count: String(createdKbs.length) })}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Gaps-knop — admin only, altijd zichtbaar.
-              Count-badge verschijnt alleen als er open gaps zijn. */}
+          {/* Gaps button — admin only, always visible.
+              Count badge appears only when open gaps exist. */}
           {isAdmin && (
             <Button
               variant="outline"
@@ -241,7 +339,10 @@ function KnowledgePage() {
 
       {/* KB list */}
       {kbsError ? (
-        <QueryErrorState error={kbsError instanceof Error ? kbsError : new Error(String(kbsError))} onRetry={() => void refetchKbs()} />
+        <QueryErrorState
+          error={kbsError instanceof Error ? kbsError : new Error(String(kbsError))}
+          onRetry={() => void refetchKbs()}
+        />
       ) : kbsLoading ? (
         <div className="flex flex-col gap-2 pt-4">
           {[1, 2, 3].map((i) => (
@@ -263,142 +364,43 @@ function KnowledgePage() {
                 <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
                   {m.docs_kb_name_label()}
                 </th>
-                <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                <th className="hidden md:table-cell py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
                   {m.docs_kb_visibility_label()}
                 </th>
                 <th className="py-3 text-right w-12" />
               </tr>
             </thead>
             <tbody>
-              {/* ── Vaste kennisbanken — staan altijd bovenaan, niet gefilterd door search.
-                   Amber accent balk links + pl-4 indent markeert ze visueel als default. */}
+              {/* Default KBs — always at top, never filtered by search */}
+              {personalKb && (
+                <KbRow
+                  kb={personalKb}
+                  stats={statsBySlug[personalKb.slug]}
+                  isDefault
+                  variant="personal"
+                  descriptionOverride={m.knowledge_page_personal_body()}
+                />
+              )}
+              {orgKb && (
+                <KbRow
+                  kb={orgKb}
+                  stats={statsBySlug[orgKb.slug]}
+                  isDefault
+                  variant="regular"
+                  descriptionOverride={m.knowledge_page_org_body()}
+                />
+              )}
 
-              {/* Persoonlijke kennisbank — linkt naar de echte default KB als die bestaat */}
-              <tr className="border-b border-[var(--color-border)]">
-                <td className="py-4 pl-4 pr-4 align-top shadow-[inset_3px_0_0_0_var(--color-rl-accent)]">
-                  <div className="flex items-start gap-2">
-                    <Lock className="h-4 w-4 mt-0.5 text-[var(--color-muted-foreground)] shrink-0" />
-                    <div className="min-w-0">
-                      <Link
-                        to="/app/knowledge/$kbSlug"
-                        params={{ kbSlug: defaultPersonalKb?.slug ?? 'personal' }}
-                        className="font-medium text-[var(--color-foreground)] hover:underline"
-                      >
-                        {m.knowledge_page_personal_heading()}
-                      </Link>
-                      <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                        {m.knowledge_page_personal_body()}
-                      </p>
-                      {defaultPersonalKb && (
-                        <KBMetaText
-                          stats={statsBySlug[defaultPersonalKb.slug]}
-                          variant="personal"
-                        />
-                      )}
-                    </div>
-                  </div>
-                </td>
-                <td className="py-4 pr-4 align-top w-28">
-                  <span className="text-xs text-[var(--color-muted-foreground)]">
-                    {m.docs_kb_visibility_private()}
-                  </span>
-                </td>
-                <td className="py-4 align-top text-right w-12">
-                  {defaultPersonalKb && (
-                    <div className="flex items-start justify-end gap-2 mt-px">
-                      <Tooltip label={m.docs_kb_edit_label()}>
-                        <button
-                          onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/settings', params: { kbSlug: defaultPersonalKb.slug } })}
-                          aria-label={m.docs_kb_edit_label()}
-                          className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                      </Tooltip>
-                    </div>
-                  )}
-                </td>
-              </tr>
-
-              {/* Organisatie kennisbank — altijd aanwezig */}
-              <tr className="border-b border-[var(--color-border)]">
-                <td className="py-4 pl-4 pr-4 align-top shadow-[inset_3px_0_0_0_var(--color-rl-accent)]">
-                  <div className="flex items-start gap-2">
-                    <Users className="h-4 w-4 mt-0.5 text-[var(--color-muted-foreground)] shrink-0" />
-                    <div className="min-w-0">
-                      <Link
-                        to="/app/knowledge/$kbSlug"
-                        params={{ kbSlug: 'org' }}
-                        className="font-medium text-[var(--color-foreground)] hover:underline"
-                      >
-                        {m.knowledge_page_org_heading()}
-                      </Link>
-                      <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                        {m.knowledge_page_org_body()}
-                      </p>
-                    </div>
-                  </div>
-                </td>
-                <td className="py-4 pr-4 align-top w-28">
-                  <span className="text-xs text-[var(--color-muted-foreground)]">
-                    {visibilityLabel('org')}
-                  </span>
-                </td>
-                <td className="py-4 align-top text-right w-12" />
-              </tr>
-
-              {/* ── Aangemaakte kennisbanken — gefilterd door search ─── */}
-              {filteredCreatedKbs.map((kb) => {
-                const isPersonal = kb.owner_type === 'user'
-                const label = isPersonal
-                  ? m.docs_kb_visibility_private()
-                  : visibilityLabel(deriveVisibilityMode(kb))
-                return (
-                  <tr key={kb.id} className="border-b border-[var(--color-border)] last:border-b-0">
-                    <td className="py-4 pr-4 align-top">
-                      <div className="flex items-start gap-2">
-                        <BookOpen className="h-4 w-4 mt-0.5 text-[var(--color-muted-foreground)] shrink-0" />
-                        <div className="min-w-0">
-                          <Link
-                            to="/app/knowledge/$kbSlug"
-                            params={{ kbSlug: kb.slug }}
-                            className="font-medium text-[var(--color-foreground)] hover:underline"
-                          >
-                            {kb.name}
-                          </Link>
-                          {kb.description && (
-                            <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5 truncate">
-                              {kb.description}
-                            </p>
-                          )}
-                          <KBMetaText
-                            stats={statsBySlug[kb.slug]}
-                            variant={isPersonal ? 'personal' : 'regular'}
-                          />
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-4 pr-4 align-top w-28">
-                      <span className="text-xs text-[var(--color-muted-foreground)]">
-                        {label}
-                      </span>
-                    </td>
-                    <td className="py-4 align-top text-right w-12">
-                      <div className="flex items-start justify-end gap-2 mt-px">
-                        <Tooltip label={m.docs_kb_edit_label()}>
-                          <button
-                            onClick={() => void navigate({ to: '/app/knowledge/$kbSlug/settings', params: { kbSlug: kb.slug } })}
-                            aria-label={m.docs_kb_edit_label()}
-                            className="inline-flex items-center justify-center text-[var(--color-warning)] transition-opacity hover:opacity-70"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
+              {/* Created KBs — filtered by search */}
+              {filteredCreatedKbs.map((kb) => (
+                <KbRow
+                  key={kb.id}
+                  kb={kb}
+                  stats={statsBySlug[kb.slug]}
+                  isDefault={false}
+                  variant={kb.owner_type === 'user' ? 'personal' : 'regular'}
+                />
+              ))}
             </tbody>
           </table>
 

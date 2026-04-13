@@ -1,0 +1,17 @@
+# Source (dist/ is the compiled output)
+src/
+tsconfig.json
+
+# Dev files
+*.ts
+!dist/**/*.d.ts
+.git/
+.gitignore
+node_modules/
+
+# Package lock (consumers use their own)
+package-lock.json
+
+# IDE
+.vscode/
+.idea/

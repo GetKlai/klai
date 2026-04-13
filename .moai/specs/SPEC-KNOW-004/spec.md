@@ -32,7 +32,7 @@ modules: [M1-save-confirmation, M2-list-endpoint, M3-delete-endpoint, M4-portal-
 
 - A1: De `knowledge.artifacts` tabel bevat een `belief_time_end` sentinel waarde van `253402300800` voor actieve items.
 - A2: `pg_store.soft_delete_artifact(org_id, kb_slug, path)` en `qdrant_store.delete_document(org_id, kb_slug, path)` bestaan en werken correct (momenteel alleen getriggerd via Gitea webhooks).
-- A3: Persoonlijke kennisitems worden opgeslagen met `kb_slug='personal'`.
+- A3: Persoonlijke kennisitems worden opgeslagen met `kb_slug='personal-{user_id}'`.
 - A4: Tags worden opgeslagen in de Qdrant payload, niet in PostgreSQL. De list endpoint kan `tags=[]` retourneren in v1.
 - A5: De assertion_mode waarden die de MCP tool accepteert zijn `fact`, `claim`, `note` - niet de waarden in de database schema (`factual`, `procedural`, `quoted`, `belief`, `hypothesis`).
 - A6: Het portal-backend gebruikt `httpx.AsyncClient` voor service-to-service calls naar knowledge-ingest.
@@ -60,7 +60,7 @@ Het systeem **shall niet** kennisitems opslaan zonder voorafgaande expliciete be
 
 **IF** de query parameters `org_id` of `user_id` ontbreken **THEN** retourneert het systeem een `400 Bad Request`. [REQ-M2-002]
 
-Het systeem **shall** alleen items retourneren waar `kb_slug='personal'` AND `belief_time_end=253402300800` (actief). [REQ-M2-003]
+Het systeem **shall** alleen items retourneren waar `kb_slug='personal-{user_id}'` AND `belief_time_end=253402300800` (actief). [REQ-M2-003]
 
 Het systeem **shall** paginering ondersteunen via `limit` (standaard 50, max 200) en `offset` (standaard 0) query parameters. [REQ-M2-004]
 
@@ -79,7 +79,7 @@ Het systeem **shall** per item de volgende velden retourneren: `id` (UUID), `pat
 **IF** het artifact niet bestaat, niet van de opgegeven gebruiker is, of al verwijderd is **THEN** retourneert het systeem een `404 Not Found`. [REQ-M3-002]
 
 Het systeem **shall** de volgende stappen uitvoeren bij verwijdering:
-1. Lookup artifact op `id` AND `org_id` AND `user_id` AND `kb_slug='personal'` AND `belief_time_end=253402300800`
+1. Lookup artifact op `id` AND `org_id` AND `user_id` AND `kb_slug='personal-{user_id}'` AND `belief_time_end=253402300800`
 2. `pg_store.soft_delete_artifact(org_id, 'personal', path)` aanroepen — zet `belief_time_end` op nu (**soft-delete**: item blijft bewaard in PostgreSQL voor auditdoeleinden, maar is functioneel inactief)
 3. `qdrant_store.delete_document(org_id, 'personal', path)` aanroepen — verwijdert vectorchunks permanent (**hard-delete**: zodat de AI het item niet meer kan ophalen bij toekomstige zoekopdrachten)
 4. `{"status": "ok"}` retourneren

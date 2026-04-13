@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.system_groups import create_system_groups
-from app.models.portal import PortalOrg
+from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.generators import _generate_librechat_env, _slugify_unique
 from app.services.provisioning.infrastructure import (
     _create_mongodb_tenant_user,
@@ -218,6 +218,19 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                 logger.info("Created personal KB for %s", slug)
         except Exception as exc:
             logger.warning("Could not create personal KB for %s: %s", slug, exc)
+
+        # Step 6b: Create default portal KB rows (org KB + admin's personal KB)
+        try:
+            from app.services.default_knowledge_bases import ensure_default_knowledge_bases
+
+            # Use the creator user_id from the first admin — looked up from signup caller
+            first_user_result = await db.execute(
+                select(PortalUser.zitadel_user_id).where(PortalUser.org_id == org.id).limit(1)
+            )
+            first_user_id = first_user_result.scalar_one_or_none() or "system"
+            await ensure_default_knowledge_bases(org.id, first_user_id, db)
+        except Exception as exc:
+            logger.warning("Could not create default portal KBs for %s: %s", slug, exc)
 
         # Step 7: Start Docker container
         loop = asyncio.get_running_loop()

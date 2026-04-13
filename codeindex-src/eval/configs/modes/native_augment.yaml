@@ -1,0 +1,24 @@
+# Native + Augment mode — the primary evaluation mode
+#
+# Combines two capabilities (mirroring the Claude Code model):
+# 1. Explicit CodeIndex tools: codeindex-query, codeindex-context, codeindex-impact, codeindex-cypher
+#    Available as fast bash commands (~100ms via eval-server)
+# 2. Automatic grep enrichment: grep/rg results are transparently augmented with
+#    [CodeIndex] annotations showing callers, callees, and execution flows
+#
+# The agent decides when to use explicit tools vs rely on enriched grep results.
+agent:
+  agent_class: "eval.agents.codeindex_agent.CodeIndexAgent"
+  codeindex_mode: "native_augment"
+  step_limit: 30
+  cost_limit: 3.0
+  augment_timeout: 5.0
+  augment_min_pattern_length: 3
+  track_codeindex_usage: true
+
+environment:
+  environment_class: "eval.environments.codeindex_docker.CodeIndexDockerEnvironment"
+  enable_codeindex: true
+  skip_embeddings: true
+  codeindex_timeout: 120
+  eval_server_port: 4848

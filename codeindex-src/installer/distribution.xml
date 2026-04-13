@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>CodeIndex</title>
+    <organization>com.codeindex</organization>
+    <domains enable_anywhere="true"/>
+
+    <welcome file="welcome.html"/>
+    <license file="license.html"/>
+    <conclusion file="conclusion.html"/>
+
+    <options customize="never" require-scripts="true" hostArchitectures="x86_64,arm64"/>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.codeindex.pkg"/>
+        </line>
+    </choices-outline>
+
+    <choice id="default"/>
+    <choice id="com.codeindex.pkg" visible="false">
+        <pkg-ref id="com.codeindex.pkg"/>
+    </choice>
+
+    <pkg-ref id="com.codeindex.pkg"
+             version="__VERSION__"
+             onConclusion="none">codeindex.pkg</pkg-ref>
+</installer-gui-script>

@@ -1,5 +1,10 @@
 {
-  "autoMemoryEnabled": false,
+  "permissions": {
+    "allow": [
+      "mcp__playwright__browser_evaluate",
+      "Bash(codeindex update:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -25,9 +30,5 @@
     ],
     "Stop": []
   },
-  "permissions": {
-    "allow": [
-      "mcp__playwright__browser_evaluate"
-    ]
-  }
+  "autoMemoryEnabled": false
 }

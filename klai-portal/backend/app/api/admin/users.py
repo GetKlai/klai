@@ -194,6 +194,16 @@ async def invite_user(
     await db.commit()
     logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
 
+    # Create personal KB for the new user (non-fatal)
+    try:
+        from app.services.default_knowledge_bases import create_default_personal_kb
+
+        await create_default_personal_kb(zitadel_user_id, org.id, db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("Could not create personal KB for invited user %s", body.email, exc_info=True)
+
     return InviteResponse(
         user_id=zitadel_user_id,
         message=f"Uitnodiging verstuurd naar {body.email}.",
