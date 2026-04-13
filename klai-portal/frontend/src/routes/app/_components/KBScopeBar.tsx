@@ -34,12 +34,16 @@ export function KBScopeBar() {
   })
 
   const { data: kbsData } = useQuery<{ knowledge_bases: OrgKB[] }>({
-    queryKey: ['org-kbs-for-bar'],
-    queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases?owner_type=org', token),
+    queryKey: ['all-kbs-for-bar'],
+    queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases', token),
     enabled: !!token,
   })
 
-  const orgKbs = kbsData?.knowledge_bases ?? []
+  // All non-personal KBs (org + custom) — personal KB has its own toggle
+  const myUserId = auth.user?.profile?.sub
+  const orgKbs = (kbsData?.knowledge_bases ?? []).filter(
+    (kb) => kb.slug !== `personal-${myUserId}`,
+  )
 
   const mutation = useMutation({
     mutationFn: async (patch: Partial<Omit<KBPref, 'kb_pref_version'>>) => {
@@ -142,10 +146,14 @@ export function KBScopeBar() {
         <ChevronUp className={`h-3 w-3 opacity-40 transition-transform ${open ? '' : 'rotate-180'}`} />
       </button>
 
-      {/* Dropdown — opens upward */}
+      {/* Dropdown — opens upward, shows each collection by name */}
       {open && isOn && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-xl border border-[var(--color-border)] bg-white py-1 shadow-xl">
-          {/* Personal KB */}
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 z-50 mb-2 w-60 rounded-xl border border-[var(--color-border)] bg-white py-1.5 shadow-xl">
+          <div className="px-3 py-1.5 text-[10px] font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
+            Collecties
+          </div>
+
+          {/* Personal */}
           <button
             type="button"
             onClick={togglePersonal}
@@ -156,7 +164,7 @@ export function KBScopeBar() {
             <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_personal_label()}</span>
           </button>
 
-          {/* Org KBs */}
+          {/* Each org KB by name */}
           {orgKbs.map((kb) => (
             <button
               key={kb.slug}
@@ -180,12 +188,11 @@ export function KBScopeBar() {
             className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
           >
             <Checkbox checked={pref.kb_narrow} />
-            <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_narrow_label()}</span>
+            <span className="text-[var(--color-muted-foreground)]">{m.chat_kb_bar_narrow_label()}</span>
           </button>
 
           <div className="my-1 border-t border-[var(--color-border)]" />
 
-          {/* Disable */}
           <button
             type="button"
             onClick={() => { toggleRetrieval(); setOpen(false) }}
