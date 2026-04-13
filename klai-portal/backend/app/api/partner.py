@@ -124,9 +124,7 @@ async def list_knowledge_bases(
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_kb_slugs(
-    kb_ids: list[int], org_id: int, db: AsyncSession
-) -> list[str]:
+async def _resolve_kb_slugs(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[str]:
     """Translate integer KB IDs to slug strings via DB lookup."""
     result = await db.execute(
         select(PortalKnowledgeBase).where(
@@ -156,7 +154,12 @@ async def chat_completions(
     if request.model not in _ALLOWED_MODELS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"type": "invalid_request", "message": f"Model must be one of: {', '.join(sorted(_ALLOWED_MODELS))}"}},
+            detail={
+                "error": {
+                    "type": "invalid_request",
+                    "message": f"Model must be one of: {', '.join(sorted(_ALLOWED_MODELS))}",
+                }
+            },
         )
 
     # 3. Messages validation: at least one user message

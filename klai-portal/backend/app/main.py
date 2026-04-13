@@ -8,6 +8,7 @@ from fastapi.responses import Response
 
 from app.api import me, signup
 from app.api.admin import router as admin_router
+from app.api.admin_integrations import router as admin_integrations_router
 from app.api.app_account import router as app_account_router
 from app.api.app_chat import router as app_chat_router
 from app.api.app_gaps import router as app_gaps_router
@@ -21,7 +22,6 @@ from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.mcp_servers import router as mcp_servers_router
 from app.api.meetings import router as meetings_router
-from app.api.admin_integrations import router as admin_integrations_router
 from app.api.partner import router as partner_router
 from app.api.taxonomy import router as taxonomy_router
 from app.api.vitals import router as vitals_router

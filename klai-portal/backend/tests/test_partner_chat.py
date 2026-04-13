@@ -197,7 +197,7 @@ async def test_happy_path_non_streaming():
             "app.api.partner.chat_completion_non_streaming",
             return_value=litellm_response,
         ),
-        patch("app.api.partner.asyncio") as mock_asyncio,
+        patch("app.api.partner.asyncio"),
     ):
         result = await chat_completions(request=req, auth=auth, db=db)
 

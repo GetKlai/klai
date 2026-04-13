@@ -27,9 +27,7 @@ def _last_user_message(messages: list[dict]) -> str | None:
             if isinstance(content, str):
                 return content
             if isinstance(content, list):
-                return " ".join(
-                    p.get("text", "") for p in content if p.get("type") == "text"
-                )
+                return " ".join(p.get("text", "") for p in content if p.get("type") == "text")
     return None
 
 
@@ -38,8 +36,7 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     history = [
         {"role": m["role"], "content": m["content"]}
         for m in messages[:-1]
-        if m.get("role") in ("user", "assistant")
-        and isinstance(m.get("content"), str)
+        if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
     ]
     return history[-6:]
 
