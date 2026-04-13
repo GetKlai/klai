@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, ChevronDown } from 'lucide-react'
+import { Brain, ChevronDown, X } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
@@ -68,7 +68,6 @@ export function KBScopeBar() {
     },
   })
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -83,8 +82,6 @@ export function KBScopeBar() {
 
   const allSlugs = orgKbs.map((kb) => kb.slug)
 
-  // Auto-heal stale slug filter: if all stored slugs no longer exist in the org,
-  // reset to null (= all KBs) rather than silently sending a dead filter to the hook.
   const staleSlugsOnly =
     pref != null &&
     pref.kb_slugs_filter !== null &&
@@ -96,20 +93,13 @@ export function KBScopeBar() {
     }
   }, [staleSlugsOnly, mutation.isPending, mutation.isError]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide bar when no org KBs are configured (KB feature not provisioned)
   if (!pref || orgKbs.length === 0) return null
 
-  // null means all KBs selected; filter out stale slugs no longer in the org
   const currentSlugs: string[] =
     pref.kb_slugs_filter === null ? allSlugs : pref.kb_slugs_filter.filter((s) => allSlugs.includes(s))
   const selectedCount = currentSlugs.length
   const isOn = pref.kb_retrieval_enabled
   const isPending = mutation.isPending
-
-  const filterLabel =
-    pref.kb_slugs_filter === null || selectedCount === orgKbs.length
-      ? m.chat_kb_bar_org_filter_placeholder()
-      : `${selectedCount} / ${orgKbs.length}`
 
   function toggleRetrieval() {
     mutation.mutate({ kb_retrieval_enabled: !pref!.kb_retrieval_enabled })
@@ -127,117 +117,139 @@ export function KBScopeBar() {
     const next = currentSlugs.includes(slug)
       ? currentSlugs.filter((s) => s !== slug)
       : [...currentSlugs, slug]
-    // Normalize: if all selected or none selected, send null (server treats null as "all")
     const normalized: string[] | null =
       next.length === 0 || next.length === allSlugs.length ? null : next
     mutation.mutate({ kb_slugs_filter: normalized })
   }
 
+  // Count active sources
+  const activeCount =
+    (pref.kb_personal_enabled ? 1 : 0) + selectedCount
+
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-background)] px-4">
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-background)] px-4">
       {/* Invisible overlay to catch clicks outside the dropdown (iframe swallows mousedown) */}
       {dropdownOpen && (
         <div className="fixed inset-0 z-40" onClick={() => setDropdownOpen(false)} />
       )}
-      {/* KB retrieval toggle */}
+
+      {/* Main knowledge toggle — clean pill */}
       <button
         type="button"
         onClick={toggleRetrieval}
         disabled={isPending}
         title={isOn ? m.chat_kb_bar_tooltip_on() : m.chat_kb_bar_tooltip_off()}
         className={[
-          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
+          'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-colors',
           isPending ? 'opacity-50' : '',
           isOn
-            ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
-            : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+            ? 'bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)]'
+            : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-secondary)]',
         ].join(' ')}
       >
-        <BookOpen className="h-3 w-3" />
-        {m.chat_kb_bar_toggle_label()}
-        <span
-          className={[
-            'h-1.5 w-1.5 rounded-full',
-            isOn ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/40',
-          ].join(' ')}
-        />
+        <Brain className="h-3.5 w-3.5" />
+        <span className="font-medium">
+          {isOn ? `${activeCount} ${activeCount === 1 ? 'bron' : 'bronnen'}` : m.chat_kb_bar_toggle_label()}
+        </span>
+        {isOn && (
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
+        )}
       </button>
 
       {isOn && (
         <>
-          {/* Personal KB pill */}
-          <button
-            type="button"
-            onClick={togglePersonal}
-            disabled={isPending}
-            title={m.chat_kb_bar_personal_tooltip()}
-            className={[
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
-              isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-              pref.kb_personal_enabled
-                ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
-                : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
-            ].join(' ')}
-          >
-            <span className={['h-1.5 w-1.5 rounded-full', pref.kb_personal_enabled ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/40'].join(' ')} />
-            {m.chat_kb_bar_personal_label()}
-          </button>
-
-          {/* Org KB filter dropdown */}
-          <div ref={dropdownRef} className="relative z-50">
+          {/* Source pills — clean, lowercase */}
+          <div className="flex items-center gap-1.5">
+            {/* Personal */}
             <button
               type="button"
-              onClick={() => setDropdownOpen((v) => !v)}
+              onClick={togglePersonal}
               disabled={isPending}
+              title={m.chat_kb_bar_personal_tooltip()}
               className={[
-                'flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
-                isPending
-                  ? 'opacity-50'
-                  : 'hover:border-[var(--color-foreground)]/30 hover:text-[var(--color-foreground)]',
-                'text-[var(--color-muted-foreground)]',
+                'flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-colors',
+                isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                pref.kb_personal_enabled
+                  ? 'bg-[var(--color-secondary)] text-[var(--color-foreground)]'
+                  : 'text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)]',
               ].join(' ')}
             >
-              {filterLabel}
-              <ChevronDown className="h-3 w-3" />
+              {m.chat_kb_bar_personal_label()}
+              {pref.kb_personal_enabled && (
+                <X className="h-3 w-3 opacity-40 hover:opacity-100" />
+              )}
             </button>
 
-            {dropdownOpen && (
-              <div className="absolute left-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1.5 shadow-lg">
-                {orgKbs.map((kb) => (
-                  <button
-                    key={kb.slug}
-                    type="button"
-                    onClick={() => toggleSlug(kb.slug)}
-                    disabled={isPending}
-                    className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
-                  >
-                    <span className={['h-1.5 w-1.5 rounded-full shrink-0', currentSlugs.includes(kb.slug) ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'].join(' ')} />
-                    <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
-                  </button>
-                ))}
-              </div>
+            {/* Org KB selector */}
+            <div ref={dropdownRef} className="relative z-50">
+              <button
+                type="button"
+                onClick={() => setDropdownOpen((v) => !v)}
+                disabled={isPending}
+                className={[
+                  'flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-colors',
+                  isPending ? 'opacity-50' : 'cursor-pointer',
+                  selectedCount > 0
+                    ? 'bg-[var(--color-secondary)] text-[var(--color-foreground)]'
+                    : 'text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)]',
+                ].join(' ')}
+              >
+                {selectedCount === orgKbs.length
+                  ? m.chat_kb_bar_org_filter_placeholder()
+                  : `${selectedCount} / ${orgKbs.length}`}
+                <ChevronDown className="h-3 w-3" />
+              </button>
+
+              {dropdownOpen && (
+                <div className="absolute left-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1.5 shadow-lg">
+                  {orgKbs.map((kb) => (
+                    <button
+                      key={kb.slug}
+                      type="button"
+                      onClick={() => toggleSlug(kb.slug)}
+                      disabled={isPending}
+                      className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
+                    >
+                      <span className={[
+                        'h-3.5 w-3.5 rounded border flex items-center justify-center',
+                        currentSlugs.includes(kb.slug)
+                          ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]'
+                          : 'border-[var(--color-border)]',
+                      ].join(' ')}>
+                        {currentSlugs.includes(kb.slug) && (
+                          <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Narrow mode — subtle toggle */}
+            {pref.kb_narrow && (
+              <span className="rounded-full bg-[var(--color-rl-accent)]/10 px-2 py-1 text-xs text-[var(--color-foreground)]">
+                {m.chat_kb_bar_narrow_label()}
+              </span>
+            )}
+            {!pref.kb_narrow && (
+              <button
+                type="button"
+                onClick={toggleNarrow}
+                disabled={isPending}
+                className="rounded-full px-2 py-1 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
+              >
+                {m.chat_kb_bar_narrow_label()}
+              </button>
             )}
           </div>
-
-          {/* Narrow mode pill */}
-          <button
-            type="button"
-            onClick={toggleNarrow}
-            disabled={isPending}
-            className={[
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium tracking-wide uppercase transition-colors',
-              isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-              pref.kb_narrow
-                ? 'bg-[var(--color-rl-accent)]/12 text-[var(--color-foreground)]'
-                : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
-            ].join(' ')}
-          >
-            {m.chat_kb_bar_narrow_label()}
-          </button>
         </>
       )}
 
-      {/* Status indicators */}
+      {/* Status */}
       {mutation.isPending && (
         <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
           {m.chat_kb_bar_saving()}
