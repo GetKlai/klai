@@ -65,7 +65,7 @@ function AppLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
       <Sidebar navItems={appNav} />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto bg-white">
         <SessionBanner />
         <Outlet />
       </main>

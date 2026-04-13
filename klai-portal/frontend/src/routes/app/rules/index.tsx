@@ -14,7 +14,7 @@ export const Route = createFileRoute('/app/rules/')({
 
 function RulesPage() {
   return (
-    <div className="p-6 space-y-8 max-w-5xl">
+    <div className="p-8 space-y-8 max-w-5xl">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
@@ -31,7 +31,7 @@ function RulesPage() {
       </div>
 
       {/* Empty state */}
-      <div className="flex flex-col items-center gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] py-16 px-6">
+      <div className="flex flex-col items-center gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] py-16 px-6">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/10">
           <Shield size={24} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
         </div>
@@ -54,21 +54,21 @@ function RulesPage() {
           {m.rules_enforced_title()}
         </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
             <MessageSquare size={20} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Chat</p>
             <p className="text-xs text-[var(--color-muted-foreground)]">
               {m.rules_enforced_chat()}
             </p>
           </div>
-          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
             <BookOpen size={20} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Kennis</p>
             <p className="text-xs text-[var(--color-muted-foreground)]">
               {m.rules_enforced_knowledge()}
             </p>
           </div>
-          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
             <Lock size={20} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Privacy</p>
             <p className="text-xs text-[var(--color-muted-foreground)]">

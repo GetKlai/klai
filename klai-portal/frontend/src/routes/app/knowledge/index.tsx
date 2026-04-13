@@ -93,8 +93,8 @@ function CollectionCard({
       params={{ kbSlug: kb.slug }}
       className={`group flex flex-col gap-3 rounded-xl border p-5 transition-shadow hover:shadow-md ${
         isDefault
-          ? 'border-l-[3px] border-l-[var(--color-rl-accent)] bg-[var(--color-card)]'
-          : 'bg-[var(--color-card)]'
+          ? 'border-l-[3px] border-l-[var(--color-rl-accent)] bg-[var(--color-secondary)]'
+          : 'bg-[var(--color-secondary)]'
       }`}
     >
       <div className="flex items-center gap-2">
@@ -195,7 +195,7 @@ function KnowledgePage() {
   ]
 
   return (
-    <div className="p-6 space-y-8 max-w-5xl">
+    <div className="p-8 space-y-8 max-w-5xl">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
