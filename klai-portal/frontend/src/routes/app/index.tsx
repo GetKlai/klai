@@ -35,9 +35,10 @@ function useChatBaseUrl(): string {
 }
 
 function getIframeSrc(baseUrl: string): string {
-  const stored = localStorage.getItem(LC_AUTH_KEY)
-  const isFresh = stored !== null && Date.now() - parseInt(stored, 10) < LC_AUTH_TTL_MS
-  return isFresh ? baseUrl : `${baseUrl}/oauth/openid`
+  // Always load the base URL. If LibreChat needs auth, it handles the
+  // redirect itself. The /oauth/openid suffix causes issues in iframe
+  // contexts on non-primary domains (third-party cookie blocking).
+  return baseUrl
 }
 
 function getErrorMessage(reason: string | null): string {
