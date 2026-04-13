@@ -112,7 +112,7 @@ function KnowledgePage() {
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex items-center gap-1.5 rounded-full border border-gray-200 px-4 py-2 text-sm text-[var(--color-foreground)] transition-colors hover:bg-gray-50"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm text-[var(--color-foreground)] transition-colors hover:bg-gray-50"
           >
             <Plus className="h-4 w-4" />
             {m.knowledge_new_button()}
@@ -121,7 +121,7 @@ function KnowledgePage() {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+              <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
                 <button
                   type="button"
                   onClick={() => { setMenuOpen(false); void navigate({ to: '/app/knowledge/new' }) }}
@@ -222,7 +222,7 @@ function CollectionRow({
     <Link
       to="/app/knowledge/$kbSlug/overview"
       params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-3 rounded-xl border border-gray-100 px-4 py-3.5 transition-all hover:border-gray-200 hover:shadow-sm"
+      className="group flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-3.5 transition-all hover:border-gray-300 hover:shadow-sm"
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${isDefault ? 'bg-[var(--color-success)]' : 'bg-gray-300'}`} />
       <div className="flex-1 min-w-0">
