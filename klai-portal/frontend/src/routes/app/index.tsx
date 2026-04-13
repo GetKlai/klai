@@ -310,35 +310,40 @@ function KnowledgePanel({ token }: { token: string | undefined }) {
     mutation.mutate({ kb_personal_enabled: !pref!.kb_personal_enabled })
   }
 
+  // Total items across active collections
+  const totalItems = Object.values(stats).reduce((sum, s) => sum + s.items, 0)
+
   if (!pref || allKbs.length === 0) return null
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-background)]">
+    <aside className="flex w-64 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-card)]">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-        <Brain size={16} strokeWidth={1.5} className="text-[var(--color-muted-foreground)]" />
-        <span className="text-xs font-medium text-[var(--color-foreground)]">Je kennis</span>
+      <div className="px-5 pt-5 pb-4">
+        <h2 className="text-sm font-medium text-[var(--color-foreground)]">Je kennis</h2>
+        <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+          {totalItems} items in {allKbs.length} collecties
+        </p>
       </div>
 
       {/* Collections */}
-      <div className="flex-1 overflow-y-auto px-2 pb-4">
-        {/* Personal */}
+      <div className="flex-1 overflow-y-auto px-3 space-y-1">
         {personalKb && (
-          <CollectionRow
+          <CollectionCard
             name={m.chat_kb_bar_personal_label()}
             items={stats[personalKb.slug]?.items ?? 0}
+            connectors={stats[personalKb.slug]?.connectors ?? 0}
             active={pref.kb_personal_enabled}
             onClick={togglePersonal}
             pending={mutation.isPending}
           />
         )}
 
-        {/* Other KBs */}
         {otherKbs.map((kb) => (
-          <CollectionRow
+          <CollectionCard
             key={kb.slug}
             name={kb.name}
             items={stats[kb.slug]?.items ?? 0}
+            connectors={stats[kb.slug]?.connectors ?? 0}
             active={currentSlugs.includes(kb.slug)}
             onClick={() => toggleSlug(kb.slug)}
             pending={mutation.isPending}
@@ -346,11 +351,11 @@ function KnowledgePanel({ token }: { token: string | undefined }) {
         ))}
       </div>
 
-      {/* Add source link */}
-      <div className="border-t border-[var(--color-border)] px-4 py-3">
+      {/* Footer */}
+      <div className="px-5 py-4">
         <Link
           to="/app/knowledge"
-          className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+          className="flex items-center justify-center gap-1.5 rounded-full border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-muted-foreground)] transition-colors hover:border-[var(--color-foreground)]/30 hover:text-[var(--color-foreground)]"
         >
           <Plus size={14} strokeWidth={1.5} />
           Beheer bronnen
@@ -360,15 +365,17 @@ function KnowledgePanel({ token }: { token: string | undefined }) {
   )
 }
 
-function CollectionRow({
+function CollectionCard({
   name,
   items,
+  connectors,
   active,
   onClick,
   pending,
 }: {
   name: string
   items: number
+  connectors: number
   active: boolean
   onClick: () => void
   pending: boolean
@@ -379,24 +386,23 @@ function CollectionRow({
       onClick={onClick}
       disabled={pending}
       className={[
-        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors',
+        'flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-all',
         pending ? 'opacity-50' : '',
         active
-          ? 'bg-[var(--color-rl-accent)]/8 text-[var(--color-foreground)]'
-          : 'text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)]',
+          ? 'bg-[var(--color-background)] shadow-sm border border-[var(--color-border)]'
+          : 'hover:bg-[var(--color-background)]/60 border border-transparent',
       ].join(' ')}
     >
       <span className={[
-        'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-colors',
+        'mt-0.5 h-2 w-2 shrink-0 rounded-full transition-colors',
         active ? 'bg-[var(--color-success)]' : 'bg-[var(--color-border)]',
-      ].join(' ')}>
-        {active && <Check size={10} strokeWidth={3} className="text-white" />}
-      </span>
+      ].join(' ')} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium">{name}</p>
-        {items > 0 && (
-          <p className="text-[10px] text-[var(--color-muted-foreground)]">{items} items</p>
-        )}
+        <p className="text-xs font-medium text-[var(--color-foreground)]">{name}</p>
+        <p className="mt-0.5 text-[10px] text-[var(--color-muted-foreground)]">
+          {items > 0 ? `${items} items` : 'Leeg'}
+          {connectors > 0 && ` · ${connectors} bronnen`}
+        </p>
       </div>
     </button>
   )
