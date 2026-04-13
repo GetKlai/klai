@@ -1,7 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/locale'
@@ -26,14 +26,6 @@ interface SidebarProps {
 // ---------------------------------------------------------------------------
 // Knowledge types
 // ---------------------------------------------------------------------------
-
-interface KBPref {
-  kb_retrieval_enabled: boolean
-  kb_personal_enabled: boolean
-  kb_slugs_filter: string[] | null
-  kb_narrow: boolean
-  kb_pref_version: number
-}
 
 interface KBItem {
   id: number
@@ -266,14 +258,6 @@ export function Sidebar({ navItems }: SidebarProps) {
 // ---------------------------------------------------------------------------
 
 function KnowledgeCollections({ token, myUserId }: { token: string | undefined; myUserId: string | undefined }) {
-  const queryClient = useQueryClient()
-
-  const { data: pref } = useQuery<KBPref>({
-    queryKey: ['kb-preference'],
-    queryFn: async () => apiFetch<KBPref>('/api/app/account/kb-preference', token),
-    enabled: !!token,
-  })
-
   const { data: kbsData } = useQuery<{ knowledge_bases: KBItem[] }>({
     queryKey: ['app-knowledge-bases'],
     queryFn: async () => apiFetch<{ knowledge_bases: KBItem[] }>('/api/app/knowledge-bases', token),
@@ -286,31 +270,6 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
     enabled: !!token,
   })
 
-  const mutation = useMutation({
-    mutationFn: async (patch: Partial<Omit<KBPref, 'kb_pref_version'>>) => {
-      return apiFetch<KBPref>('/api/app/account/kb-preference', token, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
-      })
-    },
-    onMutate: async (patch) => {
-      await queryClient.cancelQueries({ queryKey: ['kb-preference'] })
-      const previous = queryClient.getQueryData<KBPref>(['kb-preference'])
-      if (previous) {
-        queryClient.setQueryData<KBPref>(['kb-preference'], { ...previous, ...patch })
-      }
-      return { previous }
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(['kb-preference'], data)
-    },
-    onError: (_err, _patch, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['kb-preference'], context.previous)
-      }
-    },
-  })
-
   const allKbs = kbsData?.knowledge_bases ?? []
   const stats = statsData?.stats ?? {}
 
@@ -319,55 +278,47 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
   )
   const otherKbs = allKbs.filter((kb) => kb.slug !== personalKb?.slug)
 
-  const allSlugs = otherKbs.map((kb) => kb.slug)
-  const currentSlugs: string[] = pref
-    ? pref.kb_slugs_filter === null
-      ? allSlugs
-      : pref.kb_slugs_filter.filter((s) => allSlugs.includes(s))
-    : allSlugs
-
-  function toggleSlug(slug: string) {
-    const next = currentSlugs.includes(slug)
-      ? currentSlugs.filter((s) => s !== slug)
-      : [...currentSlugs, slug]
-    const normalized: string[] | null =
-      next.length === 0 || next.length === allSlugs.length ? null : next
-    mutation.mutate({ kb_slugs_filter: normalized })
-  }
-
-  function togglePersonal() {
-    if (!pref) return
-    mutation.mutate({ kb_personal_enabled: !pref.kb_personal_enabled })
-  }
-
-  if (!pref || allKbs.length === 0) return null
-
-  const isPending = mutation.isPending
+  if (allKbs.length === 0) return null
 
   return (
     <div className="border-t border-[var(--color-sidebar-border)] pt-3 px-3">
       <p className="px-3 mb-2 text-[10px] font-medium text-[var(--color-sidebar-muted-foreground)] uppercase tracking-wider">
-        Praat met
+        Collecties
       </p>
       <ul className="space-y-0.5">
         {personalKb && (
-          <KBRow
-            name={m.chat_kb_bar_personal_label()}
-            items={stats[personalKb.slug]?.items ?? 0}
-            active={pref.kb_personal_enabled}
-            onClick={togglePersonal}
-            pending={isPending}
-          />
+          <li>
+            <Link
+              to="/app/knowledge/$kbSlug/overview"
+              params={{ kbSlug: personalKb.slug }}
+              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)] transition-colors"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
+              <span className="truncate">{m.chat_kb_bar_personal_label()}</span>
+              {(stats[personalKb.slug]?.items ?? 0) > 0 && (
+                <span className="ml-auto text-[10px] text-[var(--color-sidebar-muted-foreground)] tabular-nums">
+                  {stats[personalKb.slug]?.items}
+                </span>
+              )}
+            </Link>
+          </li>
         )}
         {otherKbs.map((kb) => (
-          <KBRow
-            key={kb.slug}
-            name={kb.name}
-            items={stats[kb.slug]?.items ?? 0}
-            active={currentSlugs.includes(kb.slug)}
-            onClick={() => toggleSlug(kb.slug)}
-            pending={isPending}
-          />
+          <li key={kb.slug}>
+            <Link
+              to="/app/knowledge/$kbSlug/overview"
+              params={{ kbSlug: kb.slug }}
+              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)] transition-colors"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
+              <span className="truncate">{kb.name}</span>
+              {(stats[kb.slug]?.items ?? 0) > 0 && (
+                <span className="ml-auto text-[10px] text-[var(--color-sidebar-muted-foreground)] tabular-nums">
+                  {stats[kb.slug]?.items}
+                </span>
+              )}
+            </Link>
+          </li>
         ))}
       </ul>
     </div>
