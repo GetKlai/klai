@@ -162,7 +162,7 @@ def test_webhook_personal_kb_extracts_user_id(hmac_client):
     assert len(captured) == 1
     req = captured[0]
     assert req.user_id == _USER_UUID, f"Expected user_id={_USER_UUID!r}, got {req.user_id!r}"
-    assert req.kb_slug == "personal"
+    assert req.kb_slug == f"personal-{_USER_UUID}"
 
 
 def test_webhook_non_personal_kb_no_user_id(hmac_client):

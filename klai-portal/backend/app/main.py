@@ -21,6 +21,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.mcp_servers import router as mcp_servers_router
 from app.api.meetings import router as meetings_router
+from app.api.partner import router as partner_router
 from app.api.taxonomy import router as taxonomy_router
 from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
@@ -176,6 +177,7 @@ app.include_router(connectors_router)
 app.include_router(taxonomy_router)
 app.include_router(vitals_router)
 app.include_router(mcp_servers_router)
+app.include_router(partner_router)
 
 
 @app.get("/health")

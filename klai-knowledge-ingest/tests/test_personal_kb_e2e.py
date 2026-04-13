@@ -62,7 +62,7 @@ async def test_upsert_chunks_stores_user_id(mem_client):
     with patch.object(qs_module, "get_client", return_value=mem_client):
         await qs_module.upsert_chunks(
             org_id="org-test",
-            kb_slug="personal",
+            kb_slug="personal-user-aaa",
             path="users/user-aaa/note.md",
             chunks=["My private note."],
             vectors=[_unit_vector()],
@@ -76,7 +76,7 @@ async def test_upsert_chunks_stores_user_id(mem_client):
     assert len(points) == 1
     payload = points[0].payload
     assert payload["user_id"] == "user-aaa"
-    assert payload["kb_slug"] == "personal"
+    assert payload["kb_slug"] == "personal-user-aaa"
     assert payload["org_id"] == "org-test"
 
 
@@ -87,7 +87,7 @@ async def test_personal_chunk_invisible_to_other_user(mem_client):
         # Index a chunk for user A
         await qs_module.upsert_chunks(
             org_id="org-test",
-            kb_slug="personal",
+            kb_slug="personal-user-aaa",
             path="users/user-aaa/note.md",
             chunks=["User A secret note."],
             vectors=[_unit_vector()],
@@ -97,7 +97,7 @@ async def test_personal_chunk_invisible_to_other_user(mem_client):
         # Index a chunk for user B
         await qs_module.upsert_chunks(
             org_id="org-test",
-            kb_slug="personal",
+            kb_slug="personal-user-bbb",
             path="users/user-bbb/note.md",
             chunks=["User B secret note."],
             vectors=[_unit_vector()],
@@ -110,7 +110,7 @@ async def test_personal_chunk_invisible_to_other_user(mem_client):
         COLLECTION,
         scroll_filter=Filter(
             must=[
-                FieldCondition(key="kb_slug", match=MatchValue(value="personal")),
+                FieldCondition(key="kb_slug", match=MatchValue(value="personal-user-aaa")),
                 FieldCondition(key="user_id", match=MatchValue(value="user-aaa")),
             ]
         ),
@@ -125,7 +125,7 @@ async def test_personal_chunk_invisible_to_other_user(mem_client):
         COLLECTION,
         scroll_filter=Filter(
             must=[
-                FieldCondition(key="kb_slug", match=MatchValue(value="personal")),
+                FieldCondition(key="kb_slug", match=MatchValue(value="personal-user-bbb")),
                 FieldCondition(key="user_id", match=MatchValue(value="user-bbb")),
             ]
         ),
@@ -167,7 +167,7 @@ async def test_personal_chunk_not_returned_without_user_id_filter(mem_client):
     with patch.object(qs_module, "get_client", return_value=mem_client):
         await qs_module.upsert_chunks(
             org_id="org-test",
-            kb_slug="personal",
+            kb_slug="personal-user-aaa",
             path="users/user-aaa/note.md",
             chunks=["Personal secret."],
             vectors=[_unit_vector()],

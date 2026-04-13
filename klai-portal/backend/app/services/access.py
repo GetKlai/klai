@@ -93,7 +93,7 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
     """Return Qdrant kb_slug values the user can query.
 
     Includes:
-    - "personal" (always, for personal knowledge)
+    - "personal-{user_id}" (always, for personal knowledge)
     - "org" (always, for org-wide knowledge)
     - "group:{group_id}" for each group the user belongs to
     - Named KB slugs via group-KB access grants
@@ -104,7 +104,7 @@ async def get_accessible_kb_slugs(user_id: str, db: AsyncSession) -> list[str]:
     )
     group_ids = [row[0] for row in result.all()]
 
-    base_slugs = ["personal", "org"] + [f"group:{gid}" for gid in group_ids]
+    base_slugs = [f"personal-{user_id}", "org"] + [f"group:{gid}" for gid in group_ids]
 
     # Named KB slugs via group-KB access
     group_kb_slugs: list[str] = []

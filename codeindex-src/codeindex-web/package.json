@@ -1,0 +1,32 @@
+{
+  "name": "codeindex-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "desktop": "vite build && electrobun dev",
+    "desktop:hmr": "concurrently \"vite\" \"electrobun dev\"",
+    "desktop:build": "vite build && electrobun build --env=canary"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "lucide-react": "^0.562.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^4.1.18",
+    "electrobun": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "concurrently": "^9.1.0",
+    "@types/node": "^24.10.1",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.0"
+  }
+}

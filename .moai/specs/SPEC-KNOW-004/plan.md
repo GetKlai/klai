@@ -30,7 +30,7 @@ De modules moeten in strikt sequentiele volgorde worden uitgerold. Elke module m
 
 **Taken**:
 1. Nieuwe `pg_store` functie: `list_personal_artifacts(org_id, user_id, limit, offset)` implementeren
-   - Query: `SELECT id, path, assertion_mode, created_at FROM knowledge.artifacts WHERE org_id=? AND user_id=? AND kb_slug='personal' AND belief_time_end=253402300800 ORDER BY created_at DESC LIMIT ? OFFSET ?`
+   - Query: `SELECT id, path, assertion_mode, created_at FROM knowledge.artifacts WHERE org_id=? AND user_id=? AND kb_slug='personal-{user_id}' AND belief_time_end=253402300800 ORDER BY created_at DESC LIMIT ? OFFSET ?`
    - Count query voor `total` veld
    - Return type: `list[ArtifactSummary]` dataclass/model
 2. Nieuw route endpoint `GET /knowledge/v1/personal/items` toevoegen
@@ -49,12 +49,12 @@ De modules moeten in strikt sequentiele volgorde worden uitgerold. Elke module m
 
 **Taken**:
 1. Artifact lookup functie: `get_artifact_by_id(artifact_id, org_id, user_id)` toevoegen aan pg_store
-   - Scoping op `kb_slug='personal'` en `belief_time_end=253402300800`
+   - Scoping op `kb_slug='personal-{user_id}'` en `belief_time_end=253402300800`
 2. Nieuw route endpoint `DELETE /knowledge/v1/personal/items/{artifact_id}` toevoegen
    - `X-Internal-Secret` header validatie
    - Artifact lookup met ownership verificatie
-   - `pg_store.soft_delete_artifact(org_id, 'personal', path)` aanroepen
-   - `qdrant_store.delete_document(org_id, 'personal', path)` aanroepen
+   - `pg_store.soft_delete_artifact(org_id, 'personal-{user_id}', path)` aanroepen
+   - `qdrant_store.delete_document(org_id, 'personal-{user_id}', path)` aanroepen
    - 404 als artifact niet gevonden
 3. Unit tests schrijven
 

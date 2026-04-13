@@ -1,0 +1,14 @@
+{
+  "name": "codeindex-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "CodeIndex - Graph-powered code intelligence",
+  "workspaces": [
+    "codeindex",
+    "codeindex-web"
+  ],
+  "scripts": {
+    "dev": "electrobun dev",
+    "build": "bun run --cwd codeindex build && bun run --cwd codeindex-web build && electrobun build --env=canary"
+  }
+}

@@ -1,0 +1,65 @@
+import Parser from 'tree-sitter';
+import JavaScript from 'tree-sitter-javascript';
+import TypeScript from 'tree-sitter-typescript';
+import Python from 'tree-sitter-python';
+import Java from 'tree-sitter-java';
+import C from 'tree-sitter-c';
+import CPP from 'tree-sitter-cpp';
+import CSharp from 'tree-sitter-c-sharp';
+import Go from 'tree-sitter-go';
+import Rust from 'tree-sitter-rust';
+import Ruby from 'tree-sitter-ruby';
+import PHP from 'tree-sitter-php';
+import { createRequire } from 'node:module';
+import { SupportedLanguages } from '../../config/supported-languages.js';
+
+const _require = createRequire(import.meta.url);
+
+// tree-sitter-kotlin is an optionalDependency — may not be installed
+let Kotlin: any = null;
+try { Kotlin = _require('tree-sitter-kotlin'); } catch {}
+
+// tree-sitter-swift is an optionalDependency — may not be installed
+let Swift: any = null;
+try { Swift = _require('tree-sitter-swift'); } catch {}
+
+let parser: Parser | null = null;
+
+const languageMap: Record<string, any> = {
+  [SupportedLanguages.JavaScript]: JavaScript,
+  [SupportedLanguages.TypeScript]: TypeScript.typescript,
+  [`${SupportedLanguages.TypeScript}:tsx`]: TypeScript.tsx,
+  [SupportedLanguages.Python]: Python,
+  [SupportedLanguages.Java]: Java,
+  [SupportedLanguages.C]: C,
+  [SupportedLanguages.CPlusPlus]: CPP,
+  [SupportedLanguages.CSharp]: CSharp,
+  [SupportedLanguages.Go]: Go,
+  [SupportedLanguages.Rust]: Rust,
+  [SupportedLanguages.PHP]: PHP.php_only,
+  ...(Kotlin ? { [SupportedLanguages.Kotlin]: Kotlin } : {}),
+  [SupportedLanguages.Ruby]: Ruby,
+  ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
+};
+
+export const isLanguageAvailable = (language: SupportedLanguages): boolean =>
+  language in languageMap;
+
+export const loadParser = async (): Promise<Parser> => {
+  if (parser) return parser;
+  parser = new Parser();
+  return parser;
+};
+
+export const loadLanguage = async (language: SupportedLanguages, filePath?: string): Promise<void> => {
+  if (!parser) await loadParser();
+  const key = language === SupportedLanguages.TypeScript && filePath?.endsWith('.tsx')
+    ? `${language}:tsx`
+    : language;
+
+  const lang = languageMap[key];
+  if (!lang) {
+    throw new Error(`Unsupported language: ${language}`);
+  }
+  parser!.setLanguage(lang);
+};

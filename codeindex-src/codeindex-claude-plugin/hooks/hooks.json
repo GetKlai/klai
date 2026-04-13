@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/codeindex-hook.js",
+            "timeout": 10,
+            "statusMessage": "Enriching with CodeIndex graph context..."
+          }
+        ]
+      }
+    ]
+  }
+}

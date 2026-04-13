@@ -551,12 +551,18 @@ async def gitea_webhook(request: Request) -> dict:
     # so the knowledge layer always receives the final version.
     # Falls back to immediate ingest when enrichment is disabled (no Procrastinate app).
     for path in changed:
-        # Personal KB: path is "users/{user_uuid}/filename.md" — extract user_id.
-        # Note: save_personal_knowledge (MCP) currently posts directly to /ingest/v1/document
-        # with user_id set by the MCP. This Gitea path handles the future case where personal
-        # KB content is Gitea-backed (e.g. written via klai-docs personal KB support).
+        # Personal KB: the MCP posts with kb_slug=personal-{user_id}, but the Gitea
+        # repo is still named "personal" (legacy). Handle both patterns:
+        # - kb_slug starts with "personal-" → new pattern, user_id is in the slug
+        # - kb_slug == "personal" → legacy Gitea repo, extract user_id from path
+        #   and rewrite slug to personal-{user_id}
         webhook_user_id: str | None = None
         if kb_slug == "personal" and path.startswith("users/"):
+            path_parts = path.split("/")
+            if len(path_parts) >= 2 and path_parts[1]:
+                webhook_user_id = path_parts[1]
+                kb_slug = f"personal-{webhook_user_id}"
+        elif kb_slug.startswith("personal-") and path.startswith("users/"):
             path_parts = path.split("/")
             if len(path_parts) >= 2 and path_parts[1]:
                 webhook_user_id = path_parts[1]

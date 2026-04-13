@@ -124,7 +124,7 @@ async def get_knowledge_stats(
         {
             "must": [
                 {"key": "org_id", "match": {"value": org_id}},
-                {"key": "kb_slug", "match": {"value": "personal"}},
+                {"key": "kb_slug", "match": {"value": f"personal-{user_id}"}},
                 {"key": "user_id", "match": {"value": user_id}},
             ],
         }

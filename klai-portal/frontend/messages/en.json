@@ -425,6 +425,7 @@
   "docs_kb_empty_heading": "No libraries yet",
   "docs_kb_empty_body": "Knowledge bases are created via Knowledge. Go to /app/knowledge to create one.",
   "docs_kb_edit_label": "Edit",
+  "docs_kb_view_label": "View",
   "docs_kb_edit_modal_title": "Edit knowledge base",
   "docs_kb_edit_save_action": "Save",
   "docs_editor_select_page": "Select a page from the sidebar.",
