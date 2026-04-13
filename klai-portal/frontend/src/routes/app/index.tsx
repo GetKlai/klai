@@ -1,135 +1,205 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
+
+import { apiFetch } from '@/lib/apiFetch'
+import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 
-export const Route = createFileRoute('/app/')({
-  component: AppHome,
-})
+import { KBScopeBar } from './_components/KBScopeBar'
 
-function getGreeting(name: string): string {
-  const hour = new Date().getHours()
-  if (hour >= 6 && hour < 12) return m.app_home_greeting_morning({ name })
-  if (hour >= 12 && hour < 18) return m.app_home_greeting_afternoon({ name })
-  return m.app_home_greeting_evening({ name })
+// Threshold: 25 days (conservative — LibreChat refresh tokens are 30d)
+const LC_AUTH_KEY = 'lc_authed_at'
+const LC_AUTH_TTL_MS = 25 * 24 * 60 * 60 * 1000
+
+// If the iframe hasn't signaled a usable state within this window, assume stuck.
+const STUCK_TIMEOUT_MS = 20_000
+
+type Phase = 'health_check' | 'loading_iframe' | 'ready' | 'stuck' | 'error'
+
+interface ChatHealth {
+  healthy: boolean
+  reason: string | null
 }
 
-function AppHome() {
-  const auth = useAuth()
-  const { user } = useCurrentUser()
-  const userName = auth.user?.profile.given_name ?? auth.user?.profile.name ?? m.app_home_user_fallback()
+function useChatBaseUrl(): string {
+  return useMemo(() => {
+    const { hostname } = window.location
+    if (hostname === 'localhost') return 'http://localhost:3080'
+    const [tenant, ...rest] = hostname.split('.')
+    return `https://chat-${tenant}.${rest.join('.')}`
+  }, [])
+}
 
-  const tools = [
-    {
-      title: m.app_tool_chat_title(),
-      description: m.app_tool_chat_description(),
-      icon: MessageSquare,
-      href: '/app/chat',
-      helpId: 'home-tool-chat',
-      product: 'chat',
-    },
-    {
-      title: m.app_tool_transcribe_title(),
-      description: m.app_tool_transcribe_description(),
-      icon: Mic,
-      href: '/app/transcribe',
-      helpId: 'home-tool-transcribe',
-      product: 'scribe',
-    },
-    {
-      title: m.app_tool_focus_title(),
-      description: m.app_tool_focus_description(),
-      icon: BookOpen,
-      href: '/app/focus',
-      helpId: 'home-tool-focus',
-      product: 'chat',
-    },
-    {
-      title: m.app_tool_knowledge_title(),
-      description: m.app_tool_knowledge_description(),
-      icon: Brain,
-      href: '/app/knowledge',
-      helpId: 'home-tool-knowledge',
-      product: 'knowledge',
-    },
-    {
-      title: m.app_tool_docs_title(),
-      description: m.app_tool_docs_description(),
-      icon: BookMarked,
-      href: '/app/docs',
-      helpId: 'home-tool-docs',
-      product: 'knowledge',
-    },
-  ]
+function getIframeSrc(baseUrl: string): string {
+  const stored = localStorage.getItem(LC_AUTH_KEY)
+  const isFresh = stored !== null && Date.now() - parseInt(stored, 10) < LC_AUTH_TTL_MS
+  return isFresh ? baseUrl : `${baseUrl}/oauth/openid`
+}
 
-  function hasAccess(product: string) {
-    return user?.isAdmin || user?.products.includes(product)
+function getErrorMessage(reason: string | null): string {
+  switch (reason) {
+    case 'not_provisioned':
+      return m.chat_health_failed_not_provisioned()
+    case 'provisioning_in_progress':
+      return m.chat_health_failed_provisioning()
+    case 'sso_expired':
+      return m.chat_health_failed_sso_expired()
+    default:
+      return m.chat_health_failed_generic()
   }
+}
+
+export const Route = createFileRoute('/app/')({
+  component: ChatHome,
+})
+
+function ChatHome() {
+  const baseUrl = useChatBaseUrl()
+  const auth = useAuth()
+  const token = auth.user?.access_token
+
+  const [phase, setPhase] = useState<Phase>('health_check')
+  const [errorReason, setErrorReason] = useState<string | null>(null)
+  const [iframeSrc, setIframeSrc] = useState<string | null>(null)
+  const stuckTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearStuckTimer = useCallback(() => {
+    if (stuckTimer.current) {
+      clearTimeout(stuckTimer.current)
+      stuckTimer.current = null
+    }
+  }, [])
+
+  const runHealthCheck = useCallback(async () => {
+    if (!token) return
+
+    setPhase('health_check')
+    setErrorReason(null)
+
+    try {
+      const health = await apiFetch<ChatHealth>('/api/app/chat-health', token)
+
+      if (!health.healthy) {
+        chatKbLogger.warn('Chat health check failed', { reason: health.reason })
+        setPhase('error')
+        setErrorReason(health.reason)
+        return
+      }
+
+      // Health OK — load the iframe
+      setIframeSrc(getIframeSrc(baseUrl))
+      setPhase('loading_iframe')
+
+      // Start stuck detection timer
+      clearStuckTimer()
+      stuckTimer.current = setTimeout(() => {
+        setPhase((current) => {
+          if (current === 'loading_iframe') {
+            chatKbLogger.warn('Chat iframe stuck — did not reach ready state within timeout')
+            return 'stuck'
+          }
+          return current
+        })
+      }, STUCK_TIMEOUT_MS)
+    } catch (err) {
+      chatKbLogger.error('Chat health check request failed', { err })
+      // Health endpoint itself failed — still try loading the iframe as fallback.
+      setIframeSrc(getIframeSrc(baseUrl))
+      setPhase('loading_iframe')
+    }
+  }, [token, baseUrl, clearStuckTimer])
+
+  // Run health check on mount and when token becomes available
+  useEffect(() => {
+    if (token) {
+      void runHealthCheck()
+    }
+    return clearStuckTimer
+  }, [token, runHealthCheck, clearStuckTimer])
+
+  const handleIframeLoad = useCallback(() => {
+    localStorage.setItem(LC_AUTH_KEY, Date.now().toString())
+    clearStuckTimer()
+    setPhase('ready')
+  }, [clearStuckTimer])
+
+  // Listen for SSO failure from the login page running inside the iframe.
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return
+      if (event.data?.type === 'klai-sso-failed') {
+        chatKbLogger.warn('SSO cookie expired — iframe auth failed, triggering re-auth')
+        clearStuckTimer()
+        setPhase('error')
+        setErrorReason('sso_expired')
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [clearStuckTimer])
+
+  const handleRetry = useCallback(() => {
+    chatKbLogger.info('Retry: forcing portal re-authentication')
+    localStorage.removeItem(LC_AUTH_KEY)
+    void auth.signinRedirect({ state: { returnTo: '/app/' } })
+  }, [auth])
+
+  const showOverlay = phase === 'health_check' || phase === 'loading_iframe'
+  const showError = phase === 'error' || phase === 'stuck'
 
   return (
-    <div className="p-6 space-y-8 max-w-3xl">
-      <div className="space-y-1" data-help-id="home-greeting">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
-          {getGreeting(userName)}
-        </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
-          {m.app_home_subtitle()}
-        </p>
-      </div>
+    <div className="flex h-full w-full flex-col" data-help-id="chat-page">
+      <KBScopeBar />
+      <div className="relative flex-1">
+        {/* Loading overlay */}
+        {showOverlay && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-background)]">
+            <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+            <span className="text-sm text-[var(--color-muted-foreground)]">
+              {m.chat_health_loading()}
+            </span>
+          </div>
+        )}
 
-      <div>
-        <h2 className="mb-4 text-sm font-semibold text-[var(--color-foreground)]">{m.app_home_tools()}</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {tools.map((tool) => {
-            const accessible = hasAccess(tool.product)
-            if (accessible) {
-              return (
-                <a
-                  key={tool.title}
-                  href={tool.href}
-                  data-help-id={tool.helpId}
-                  className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
-                >
-                  <tool.icon
-                    size={20}
-                    strokeWidth={1.5}
-                    className="text-[var(--color-muted-foreground)]"
-                  />
-                  <div>
-                    <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
-                      {tool.title}
-                    </p>
-                    <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                      {tool.description}
-                    </p>
-                  </div>
-                </a>
-              )
-            }
-            return (
-              <div
-                key={tool.title}
-                data-help-id={tool.helpId}
-                className="flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 opacity-40 cursor-not-allowed select-none"
-              >
-                <tool.icon
-                  size={20}
-                  strokeWidth={1.5}
-                  className="text-[var(--color-muted-foreground)]"
-                />
-                <div>
-                  <p className="text-sm font-medium text-[var(--color-foreground)]">
-                    {tool.title}
-                  </p>
-                  <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                    {tool.description}
-                  </p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+        {/* Error / stuck state */}
+        {showError && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
+            <AlertTriangle className="h-8 w-8 text-[var(--color-muted-foreground)]" />
+            <div className="text-center">
+              <p className="text-sm font-medium text-[var(--color-foreground)]">
+                {phase === 'stuck' ? m.chat_health_stuck_title() : m.chat_health_failed_title()}
+              </p>
+              <p className="mt-1 max-w-sm text-xs text-[var(--color-muted-foreground)]">
+                {phase === 'stuck'
+                  ? m.chat_health_stuck_description()
+                  : getErrorMessage(errorReason)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="flex items-center gap-2 rounded-full bg-[var(--color-primary)] px-4 py-2 text-sm text-[var(--color-primary-foreground)] transition-colors hover:bg-[var(--color-accent)]"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {m.chat_health_retry()}
+            </button>
+          </div>
+        )}
+
+        {/* LibreChat iframe */}
+        {iframeSrc && (
+          <iframe
+            src={iframeSrc}
+            onLoad={handleIframeLoad}
+            className={`h-full w-full border-none transition-opacity duration-200 ${
+              phase === 'ready' ? 'opacity-100' : 'opacity-0'
+            }`}
+            title="Chat"
+            allow="clipboard-write; microphone; screen-wake-lock"
+          />
+        )}
       </div>
     </div>
   )

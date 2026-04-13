@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -17,6 +17,9 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 type FocusSearch = { search?: string }
 
 export const Route = createFileRoute('/app/focus/')({
+  beforeLoad: () => {
+    throw redirect({ to: '/app/knowledge' })
+  },
   validateSearch: (search: Record<string, unknown>): FocusSearch => ({
     search: typeof search.search === 'string' && search.search ? search.search : undefined,
   }),

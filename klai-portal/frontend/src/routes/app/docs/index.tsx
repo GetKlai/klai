@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, BookMarked, Globe, Lock, Pencil, ExternalLink } from 'lucide-react'
@@ -10,6 +10,9 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
 
 export const Route = createFileRoute('/app/docs/')({
+  beforeLoad: () => {
+    throw redirect({ to: '/app/knowledge' })
+  },
   component: () => (
     <ProductGuard product="knowledge">
       <DocsPage />
