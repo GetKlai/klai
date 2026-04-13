@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Shield, MessageSquare, BookOpen, Lock } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
@@ -14,64 +13,72 @@ export const Route = createFileRoute('/app/rules/')({
 
 function RulesPage() {
   return (
-    <div className="p-8 space-y-8 max-w-5xl">
+    <div className="mx-auto max-w-3xl px-6 py-10">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-semibold text-[var(--color-foreground)]">
             {m.rules_page_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="mt-1 text-sm text-gray-400">
             {m.rules_page_subtitle()}
           </p>
         </div>
-        <Button size="sm" disabled>
+        <button
+          type="button"
+          disabled
+          className="flex items-center gap-1.5 rounded-full border border-gray-200 px-4 py-2 text-sm text-gray-300 cursor-not-allowed"
+        >
           {m.rules_new_button()}
-        </Button>
+        </button>
       </div>
 
       {/* Empty state */}
-      <div className="flex flex-col items-center gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] py-16 px-6">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/10">
-          <Shield size={24} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
+      <div className="flex flex-col items-center gap-5 rounded-2xl border border-gray-100 py-20 px-6">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-50">
+          <Shield size={28} strokeWidth={1.5} className="text-gray-300" />
         </div>
-        <div className="text-center space-y-2 max-w-md">
-          <p className="font-medium text-[var(--color-foreground)]">
+        <div className="text-center space-y-2 max-w-sm">
+          <p className="text-lg font-medium text-[var(--color-foreground)]">
             {m.rules_empty_title()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400 leading-relaxed">
             {m.rules_empty_description()}
           </p>
         </div>
-        <Button disabled>
+        <button
+          type="button"
+          disabled
+          className="rounded-full border border-gray-200 px-5 py-2.5 text-sm text-gray-300 cursor-not-allowed"
+        >
           {m.rules_empty_cta()}
-        </Button>
+        </button>
       </div>
 
       {/* How rules are enforced */}
-      <div className="space-y-4">
-        <h2 className="text-sm font-medium text-[var(--color-muted-foreground)] uppercase tracking-[0.04em]">
+      <div className="mt-10">
+        <h2 className="mb-4 text-xs font-medium text-gray-400 uppercase tracking-wider">
           {m.rules_enforced_title()}
         </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
-            <MessageSquare size={20} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
+          <div className="flex flex-col gap-2.5 rounded-xl border border-gray-100 p-5">
+            <MessageSquare size={20} strokeWidth={1.5} className="text-gray-300" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Chat</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">
+            <p className="text-xs text-gray-400 leading-relaxed">
               {m.rules_enforced_chat()}
             </p>
           </div>
-          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
-            <BookOpen size={20} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
+          <div className="flex flex-col gap-2.5 rounded-xl border border-gray-100 p-5">
+            <BookOpen size={20} strokeWidth={1.5} className="text-gray-300" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Kennis</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">
+            <p className="text-xs text-gray-400 leading-relaxed">
               {m.rules_enforced_knowledge()}
             </p>
           </div>
-          <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-secondary)] p-5">
-            <Lock size={20} strokeWidth={1.5} className="text-[var(--color-rl-accent)]" />
+          <div className="flex flex-col gap-2.5 rounded-xl border border-gray-100 p-5">
+            <Lock size={20} strokeWidth={1.5} className="text-gray-300" />
             <p className="text-sm font-medium text-[var(--color-foreground)]">Privacy</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">
+            <p className="text-xs text-gray-400 leading-relaxed">
               {m.rules_enforced_privacy()}
             </p>
           </div>
