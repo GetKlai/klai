@@ -134,7 +134,7 @@ export function KBScopeBar() {
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-background)] px-4">
+    <div className="flex shrink-0 items-center gap-2 px-2">
       {/* Invisible overlay to catch clicks outside the dropdown (iframe swallows mousedown) */}
       {dropdownOpen && (
         <div className="fixed inset-0 z-40" onClick={() => setDropdownOpen(false)} />
