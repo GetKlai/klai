@@ -35,10 +35,9 @@ function useChatBaseUrl(): string {
 }
 
 function getIframeSrc(baseUrl: string): string {
-  // Always load the base URL. If LibreChat needs auth, it handles the
-  // redirect itself. The /oauth/openid suffix causes issues in iframe
-  // contexts on non-primary domains (third-party cookie blocking).
-  return baseUrl
+  const stored = localStorage.getItem(LC_AUTH_KEY)
+  const isFresh = stored !== null && Date.now() - parseInt(stored, 10) < LC_AUTH_TTL_MS
+  return isFresh ? baseUrl : `${baseUrl}/oauth/openid`
 }
 
 function getErrorMessage(reason: string | null): string {
@@ -108,13 +107,11 @@ function ChatHome() {
       }, STUCK_TIMEOUT_MS)
     } catch (err) {
       chatKbLogger.error('Chat health check request failed', { err })
-      // Health endpoint itself failed — still try loading the iframe as fallback.
       setIframeSrc(getIframeSrc(baseUrl))
       setPhase('loading_iframe')
     }
   }, [token, baseUrl, clearStuckTimer])
 
-  // Run health check on mount and when token becomes available
   useEffect(() => {
     if (token) {
       void runHealthCheck()
@@ -128,7 +125,6 @@ function ChatHome() {
     setPhase('ready')
   }, [clearStuckTimer])
 
-  // Listen for SSO failure from the login page running inside the iframe.
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return
@@ -146,18 +142,19 @@ function ChatHome() {
   const handleRetry = useCallback(() => {
     chatKbLogger.info('Retry: forcing portal re-authentication')
     localStorage.removeItem(LC_AUTH_KEY)
-    void auth.signinRedirect({ state: { returnTo: '/app/' } })
+    void auth.signinRedirect({ state: { returnTo: '/app' } })
   }, [auth])
 
   const showOverlay = phase === 'health_check' || phase === 'loading_iframe'
   const showError = phase === 'error' || phase === 'stuck'
 
   return (
-    <div className="flex w-full flex-col bg-[var(--color-background)]" style={{ height: 'calc(100vh - 1px)' }} data-help-id="chat-page">
-      <div className="relative flex-1 min-h-0">
+    <div className="flex h-full w-full flex-col" data-help-id="chat-page">
+      <KBScopeBar />
+      <div className="relative flex-1">
         {/* Loading overlay */}
         {showOverlay && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-background)]">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-secondary)]">
             <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
             <span className="text-sm text-[var(--color-muted-foreground)]">
               {m.chat_health_loading()}
@@ -167,7 +164,7 @@ function ChatHome() {
 
         {/* Error / stuck state */}
         {showError && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-[var(--color-secondary)]">
             <AlertTriangle className="h-8 w-8 text-[var(--color-muted-foreground)]" />
             <div className="text-center">
               <p className="text-sm font-medium text-[var(--color-foreground)]">
@@ -190,12 +187,12 @@ function ChatHome() {
           </div>
         )}
 
-        {/* LibreChat iframe — full size, no wrapper overlay */}
+        {/* LibreChat iframe */}
         {iframeSrc && (
           <iframe
             src={iframeSrc}
             onLoad={handleIframeLoad}
-            className={`h-full w-full border-none bg-[var(--color-background)] transition-opacity duration-200 ${
+            className={`h-full w-full border-none transition-opacity duration-200 ${
               phase === 'ready' ? 'opacity-100' : 'opacity-0'
             }`}
             title="Chat"
