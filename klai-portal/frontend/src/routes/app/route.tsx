@@ -1,19 +1,21 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
-import { Sidebar } from '@/components/layout/Sidebar'
+import { MessageSquare, BookOpen, Shield } from 'lucide-react'
+import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 const PRODUCT_ROUTES: Record<string, string[]> = {
+  '/app': ['chat'],
   '/app/chat': ['chat'],
   '/app/transcribe': ['scribe'],
   '/app/focus': ['chat'],
   '/app/knowledge': ['knowledge'],
   '/app/docs': ['knowledge'],
+  '/app/rules': ['chat'],
 }
 
 export const Route = createFileRoute('/app')({
@@ -25,12 +27,11 @@ function AppLayout() {
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()
 
-  const allNavItems = [
-    { to: '/app/chat', label: m.app_tool_chat_title(), icon: MessageSquare },
-    { to: '/app/transcribe', label: m.app_tool_transcribe_title(), icon: Mic },
-    { to: '/app/focus', label: m.app_tool_focus_title(), icon: BookOpen },
-    { to: '/app/knowledge', label: m.app_tool_knowledge_title(), icon: Brain },
-    { to: '/app/docs', label: m.app_tool_docs_title(), icon: BookMarked },
+  // Three items. That's the whole app.
+  const allNavItems: NavItem[] = [
+    { to: '/app', label: m.sidebar_chat(), icon: MessageSquare, end: true },
+    { to: '/app/knowledge', label: m.sidebar_knowledge(), icon: BookOpen },
+    { to: '/app/rules', label: m.sidebar_rules(), icon: Shield },
   ]
 
   const isAdmin = user?.isAdmin === true
@@ -38,7 +39,7 @@ function AppLayout() {
   const appNav = isAdmin
     ? allNavItems
     : allNavItems.filter((item) => {
-        const required = PRODUCT_ROUTES[item.to]
+        const required = PRODUCT_ROUTES[item.to ?? '']
         return !required || required.some((p) => products.includes(p))
       })
 
