@@ -15,7 +15,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _get_caller_org, _require_admin
@@ -398,11 +398,11 @@ async def update_integration(
     # If we didn't update kb_access, count the existing ones
     if kb_access_count is None:
         count_result = await db.execute(
-            select(PartnerApiKeyKbAccess).where(
+            select(func.count()).select_from(PartnerApiKeyKbAccess).where(
                 PartnerApiKeyKbAccess.partner_api_key_id == key.id
             )
         )
-        kb_access_count = len(count_result.scalars().all())
+        kb_access_count = count_result.scalar() or 0
 
     # Emit product event (REQ-6.7)
     emit_event(
@@ -457,10 +457,10 @@ async def revoke_integration(
 
     # Count KB access for response
     count_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(
+        select(func.count()).select_from(PartnerApiKeyKbAccess).where(
             PartnerApiKeyKbAccess.partner_api_key_id == key.id
         )
     )
-    kb_access_count = len(count_result.scalars().all())
+    kb_access_count = count_result.scalar() or 0
 
     return _key_to_response(key, kb_access_count)

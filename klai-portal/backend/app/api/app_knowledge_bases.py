@@ -244,18 +244,21 @@ async def _resolve_personal_kb(caller_id: str, org_id: int, db: AsyncSession) ->
 
     slug = personal_kb_slug(caller_id)
     result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.org_id == org_id,
-            PortalKnowledgeBase.slug == slug,
-        )
+        select(PortalKnowledgeBase)
+        .where(PortalKnowledgeBase.org_id == org_id, PortalKnowledgeBase.slug == slug)
+        .with_for_update()
     )
     kb = result.scalar_one_or_none()
     if kb:
         return kb
 
-    # Fallback: provisioning didn't create it yet — create on the fly
-    kb = await create_default_personal_kb(caller_id, org_id, db)
-    await db.commit()
+    try:
+        kb = await create_default_personal_kb(caller_id, org_id, db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("fallback_personal_kb_creation_failed", caller_id=caller_id, org_id=org_id)
+        raise
     return kb
 
 
@@ -264,17 +267,21 @@ async def _resolve_org_kb(caller_id: str, org_id: int, db: AsyncSession) -> Port
     from app.services.default_knowledge_bases import create_default_org_kb
 
     result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.org_id == org_id,
-            PortalKnowledgeBase.slug == "org",
-        )
+        select(PortalKnowledgeBase)
+        .where(PortalKnowledgeBase.org_id == org_id, PortalKnowledgeBase.slug == "org")
+        .with_for_update()
     )
     kb = result.scalar_one_or_none()
     if kb:
         return kb
 
-    kb = await create_default_org_kb(org_id, created_by=caller_id, db=db)
-    await db.commit()
+    try:
+        kb = await create_default_org_kb(org_id, created_by=caller_id, db=db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("fallback_org_kb_creation_failed", org_id=org_id)
+        raise
     return kb
 
 
