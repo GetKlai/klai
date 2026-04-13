@@ -187,22 +187,14 @@ function ChatHome() {
           </div>
         )}
 
-        {/* Knowledge scope bar */}
-        <div className="absolute top-0 left-0 right-0 z-20">
-          <div className="flex items-center justify-center border-b border-[var(--color-border)] bg-[var(--color-background)]/95 py-1.5 backdrop-blur-sm">
-            <KBScopeBar />
-          </div>
-        </div>
-
-        {/* LibreChat iframe — padded top to not overlap KB bar */}
+        {/* LibreChat iframe — full size, no wrapper overlay */}
         {iframeSrc && (
           <iframe
             src={iframeSrc}
             onLoad={handleIframeLoad}
-            className={`h-full w-full border-none bg-[var(--color-background)] pt-10 transition-opacity duration-200 ${
+            className={`h-full w-full border-none bg-[var(--color-background)] transition-opacity duration-200 ${
               phase === 'ready' ? 'opacity-100' : 'opacity-0'
             }`}
-            style={{ marginTop: '40px', height: 'calc(100% - 40px)' }}
             title="Chat"
             allow="clipboard-write; microphone; screen-wake-lock"
           />
