@@ -152,8 +152,8 @@ function ChatHome() {
   const showError = phase === 'error' || phase === 'stuck'
 
   return (
-    <div className="flex h-full w-full flex-col bg-[var(--color-background)]" data-help-id="chat-page">
-      <div className="relative flex-1">
+    <div className="flex w-full flex-col bg-[var(--color-background)]" style={{ height: 'calc(100vh - 1px)' }} data-help-id="chat-page">
+      <div className="relative flex-1 min-h-0">
         {/* Loading overlay */}
         {showOverlay && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-background)]">
