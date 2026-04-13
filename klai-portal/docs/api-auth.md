@@ -338,7 +338,7 @@ The cookie value is a Fernet-encrypted token containing `{session_id, session_to
 
 The API allows credentials (`allow_credentials=True`) from:
 - `http://localhost:5174` (local dev)
-- `https://my.getklai.com`
+- `https://getklai.getklai.com`
 - Any `https://*.getklai.com` subdomain (tenant portals)
 
 ## Cache-Control

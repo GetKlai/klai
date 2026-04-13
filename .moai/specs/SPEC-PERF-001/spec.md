@@ -12,7 +12,7 @@ priority: high
 
 ## Environment
 
-- **Portal frontend:** React 19, Vite 7, TypeScript 5.9, TanStack Router — served at `my.getklai.com`
+- **Portal frontend:** React 19, Vite 7, TypeScript 5.9, TanStack Router — served at `getklai.getklai.com`
 - **Portal backend:** Python 3.12, FastAPI, running as `portal-api:8010` on core-01
 - **Monitoring stack:** Alloy (scraper) on `klai-net` + `monitoring` networks, VictoriaMetrics on `monitoring` network, Grafana for dashboards
 - **Existing scrape pattern:** Alloy scrapes `retrieval-api:8040/metrics` every 30s and forwards to VictoriaMetrics via `prometheus.remote_write`

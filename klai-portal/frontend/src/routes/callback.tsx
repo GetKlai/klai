@@ -43,6 +43,7 @@ function CallbackPage() {
             if (!isLocalDev) {
               const workspaceHost = new URL(me.workspace_url).hostname
               if (currentHost !== workspaceHost) {
+                // User logged in from getklai.getklai.com — send them to their subdomain
                 window.location.replace(me.workspace_url)
                 return
               }
