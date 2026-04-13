@@ -199,9 +199,9 @@ function ChatHome() {
           />
         )}
 
-        {/* Knowledge pill — floating over iframe, near the chat input */}
+        {/* Knowledge pill — floating over iframe, aligned with LibreChat input footer */}
         {phase === 'ready' && (
-          <div className="absolute bottom-[18px] left-1/2 z-20 -translate-x-1/2 pointer-events-auto">
+          <div className="absolute bottom-[52px] z-20 pointer-events-auto" style={{ left: 'calc(50% - 80px)' }}>
             <KBScopeBar />
           </div>
         )}
