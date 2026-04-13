@@ -28,7 +28,9 @@ function useChatBaseUrl(): string {
     const { hostname } = window.location
     if (hostname === 'localhost') return 'http://localhost:3080'
     const [tenant, ...rest] = hostname.split('.')
-    return `https://chat-${tenant}.${rest.join('.')}`
+    // dev.getklai.com uses the getklai tenant's chat instance
+    const chatTenant = tenant === 'dev' ? 'getklai' : tenant
+    return `https://chat-${chatTenant}.${rest.join('.')}`
   }, [])
 }
 
