@@ -1,6 +1,6 @@
-"""Admin integration management endpoints.
+"""Admin integration management endpoints (SPEC-API-001 REQ-6).
 
-SPEC-API-001 REQ-6.1 through REQ-6.7:
+REQ-6.1 through REQ-6.7:
 - CRUD for partner API keys ("integrations") scoped to caller's org
 - Auth: Zitadel OIDC session with admin role check
 - Product events for create, update, revoke actions
