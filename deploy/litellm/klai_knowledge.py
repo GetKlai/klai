@@ -397,16 +397,17 @@ class KlaiKnowledgeHook(CustomLogger):
         source_link_instruction = (
             "[ANTWOORDFORMAAT — volg dit ALTIJD:\n"
             "1. Begin met een korte TLDR (2-3 zinnen) van het antwoord.\n"
-            "2. Direct daarna een bronnenlijst met ALLEEN de echte source_url's uit de chunks:\n"
-            "   📎 [Paginatitel](https://notion.so/...) | [Titel](https://...)\n"
+            "2. Direct daarna een bronnenlijst. Gebruik ALLEEN de letterlijke source_url waarde uit elke chunk.\n"
+            "   Format: 📎 [Paginatitel](source_url_uit_chunk)\n"
             "3. Indien noodzakelijk voor goede uitleg of indien de gebruiker het vraagt uitgebreide antwoord met inline citaties.\n"
             "   Citeer met [n] waar n het chunknummer is. ALTIJD met een spatie ervoor: '...tekst [1].' NOOIT '...tekst1' of '...tekst[1]'.\n"
             "   Wees bondig maar volledig. Geen muren van tekst — schrijf alsof je een collega helpt.\n\n"
             "STRIKT:\n"
-            "- Gebruik UITSLUITEND URLs die letterlijk in de chunks staan (source_url velden).\n"
-            "- Verzin NOOIT een URL. Geen portal.voys.nl, geen freedom.voys.nl, geen enkele URL die niet in de bronnen staat.\n"
-            "- Als een bron geen source_url heeft, noem alleen de titel zonder link.\n"
-            "- Gebruik de titel NOOIT als URL-target. Fout: [tekst](Support wiki). Goed: [tekst](https://notion.so/...).\n"
+            "- Sommige chunks hebben een 'source_url:' veld. Dat is de ENIGE URL die je mag gebruiken voor die bron.\n"
+            "- Kopieer die URL EXACT zoals hij staat. Verander geen enkel karakter.\n"
+            "- Verzin NOOIT een URL. Geen notion.so, geen portal.voys.nl, geen enkele URL die niet letterlijk als source_url in een chunk staat.\n"
+            "- Als een chunk GEEN source_url heeft, noem alleen de titel zonder link — schrijf GEEN URL.\n"
+            "- Gebruik de titel NOOIT als URL-target.\n"
             "- Als meerdere chunks dezelfde source_url hebben, toon die URL slechts één keer.\n\n"
             "AFBEELDINGEN:\n"
             "- Chunks kunnen ![afbeelding](url) markdown bevatten. Neem deze ALTIJD letterlijk over in het uitgebreide antwoord (sectie 3).\n"
@@ -429,6 +430,8 @@ class KlaiKnowledgeHook(CustomLogger):
             else:
                 lines.append(f"### Kennisbank  {label}")
             lines.append(text)
+            if source_url:
+                lines.append(f"source_url: {source_url}")
             image_urls = chunk.get("image_urls") or []
             if image_urls:
                 absolute_urls = [

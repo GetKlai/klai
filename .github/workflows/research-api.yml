@@ -52,6 +52,8 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/research-api:latest
+            sudo mkdir -p /opt/klai/research-uploads
+            sudo chown -R klai:klai /opt/klai/research-uploads
             cd /opt/klai && docker compose up -d research-api
 
   scan:

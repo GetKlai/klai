@@ -67,7 +67,10 @@ async def _decode_token(token: str) -> dict:
         if settings.zitadel_api_audience:
             decode_kwargs["audience"] = settings.zitadel_api_audience
         else:
-            logger.warning("ZITADEL_API_AUDIENCE not set — audience verification disabled")
+            logger.error(
+                "ZITADEL_API_AUDIENCE not set — JWT audience verification is DISABLED. "
+                "Set RESEARCH_API_ZITADEL_AUDIENCE in .env to the Zitadel project ID."
+            )
             decode_kwargs["options"] = {"verify_aud": False}
 
         payload = jwt.decode(token, key, **decode_kwargs)
