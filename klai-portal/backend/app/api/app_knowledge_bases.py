@@ -322,8 +322,7 @@ async def list_app_knowledge_bases(
     query = select(PortalKnowledgeBase).where(
         PortalKnowledgeBase.org_id == org.id,
         # Org-owned KBs are visible to everyone; personal KBs only to their owner
-        (PortalKnowledgeBase.owner_type == "org")
-        | (PortalKnowledgeBase.owner_user_id == caller_id),
+        (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == caller_id),
     )
     if docs_only:
         query = query.where(
