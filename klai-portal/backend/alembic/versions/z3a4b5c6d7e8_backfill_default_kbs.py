@@ -3,11 +3,9 @@
 Revision ID: z3a4b5c6d7e8
 Revises: z2a3b4c5d6e7
 Create Date: 2026-04-13
-
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "z3a4b5c6d7e8"
 down_revision = "z2a3b4c5d6e7"
@@ -16,24 +14,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add columns that this migration depends on
-    op.add_column(
-        "portal_knowledge_bases",
-        sa.Column("visibility", sa.Text(), nullable=True, server_default=sa.text("'internal'")),
-    )
-    op.add_column(
-        "portal_knowledge_bases",
-        sa.Column("docs_enabled", sa.Boolean(), nullable=True, server_default=sa.text("false")),
-    )
-    op.add_column(
-        "portal_knowledge_bases",
-        sa.Column("owner_type", sa.Text(), nullable=True),
-    )
-    op.add_column(
-        "portal_knowledge_bases",
-        sa.Column("owner_user_id", sa.Text(), nullable=True),
-    )
-
     # 1. Create org KB for every org that doesn't have one yet
     op.execute("""
         INSERT INTO portal_knowledge_bases
@@ -95,15 +75,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Best-effort: rename personal-{user_id} back to personal for the first user per org
-    # This is lossy for multi-user orgs but acceptable for a dev-phase migration
     op.execute("""
         DELETE FROM portal_knowledge_bases WHERE slug = 'org'
     """)
     op.execute("""
         DELETE FROM portal_knowledge_bases WHERE slug LIKE 'personal-%'
     """)
-    op.drop_column("portal_knowledge_bases", "owner_user_id")
-    op.drop_column("portal_knowledge_bases", "owner_type")
-    op.drop_column("portal_knowledge_bases", "docs_enabled")
-    op.drop_column("portal_knowledge_bases", "visibility")
