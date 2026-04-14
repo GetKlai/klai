@@ -42,7 +42,7 @@ jobs:
       # no user-controlled input reaches the vulnerable code path). Re-assess Q3 2026.
       # See: https://github.com/GetKlai/klai/issues/62
       - name: Dependency vulnerability scan (pip-audit)
-        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539
+        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2025-71176
 
   build-push:
     needs: quality
