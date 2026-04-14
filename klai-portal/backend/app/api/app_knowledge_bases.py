@@ -314,9 +314,17 @@ async def list_app_knowledge_bases(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBsResponse:
-    """Return KBs for the caller's org. Optionally filter by docs_only or owner_type."""
-    _, org, _ = await _get_caller_org(credentials, db)
-    query = select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id)
+    """Return KBs visible to the caller: all org-owned KBs + caller's own personal KBs.
+
+    Other users' personal KBs are never returned.
+    """
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    query = select(PortalKnowledgeBase).where(
+        PortalKnowledgeBase.org_id == org.id,
+        # Org-owned KBs are visible to everyone; personal KBs only to their owner
+        (PortalKnowledgeBase.owner_type == "org")
+        | (PortalKnowledgeBase.owner_user_id == caller_id),
+    )
     if docs_only:
         query = query.where(
             PortalKnowledgeBase.docs_enabled == True,  # noqa: E712
