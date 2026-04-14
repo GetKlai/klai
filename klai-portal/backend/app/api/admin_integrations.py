@@ -120,6 +120,7 @@ async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSes
 
 async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[PortalKnowledgeBase]:
     """Validate that all kb_ids belong to the org. Returns matching KB rows."""
+    logger.info("Validating KB IDs", kb_ids=kb_ids, org_id=org_id)
     if not kb_ids:
         return []
     result = await db.execute(
@@ -131,6 +132,7 @@ async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> 
     found_kbs = result.scalars().all()
     found_ids = {kb.id for kb in found_kbs}
     missing = set(kb_ids) - found_ids
+    logger.info("KB validation result", found_ids=sorted(found_ids), missing=sorted(missing), org_id=org_id)
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
