@@ -135,7 +135,13 @@ async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> 
     found_kbs = result.scalars().all()
     found_ids = {kb.id for kb in found_kbs}
     missing = set(kb_ids) - found_ids
-    logger.info("KB validation result", found_ids=sorted(found_ids), missing=sorted(missing), org_id=org_id, current_tenant=current_tenant)
+    logger.info(
+        "KB validation result",
+        found_ids=sorted(found_ids),
+        missing=sorted(missing),
+        org_id=org_id,
+        current_tenant=current_tenant,
+    )
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
