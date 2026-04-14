@@ -1401,15 +1401,19 @@
   "admin_integrations_field_rate_limit": "Verzoeken per minuut",
   "admin_integrations_rate_limit_unit": "verzoeken/min",
 
-  "admin_integrations_perm_chat": "Chatvervolledigingen",
+  "admin_integrations_perm_chat": "Chat",
+  "admin_integrations_perm_chat_description": "Stel vragen aan kennisbanken via de API.",
   "admin_integrations_perm_feedback": "Feedback",
+  "admin_integrations_perm_feedback_description": "Beoordeel antwoorden als goed of slecht om resultaten te verbeteren.",
   "admin_integrations_perm_knowledge_append": "Kennis toevoegen",
+  "admin_integrations_perm_knowledge_append_description": "Voeg nieuwe kennis toe aan kennisbanken.",
 
   "admin_integrations_kb_name": "Kennisbank",
   "admin_integrations_kb_none": "Geen",
   "admin_integrations_kb_read": "Lezen",
-  "admin_integrations_kb_read_write": "Lezen + Schrijven",
-  "admin_integrations_kb_read_write_disabled_hint": "Schakel de toestemming Kennis toevoegen in om schrijftoegang toe te staan",
+  "admin_integrations_kb_read_write": "Schrijven",
+  "admin_integrations_kb_intro": "Selecteer welke kennisbanken deze integratie mag gebruiken. \"Schrijven\" is alleen beschikbaar als \"Kennis toevoegen\" hierboven aan staat.",
+  "admin_integrations_kb_read_write_disabled_hint": "Schakel \"Kennis toevoegen\" hierboven in om schrijftoegang toe te staan",
   "admin_integrations_kb_empty": "Geen kennisbanken gevonden in deze organisatie.",
 
   "admin_integrations_key_modal_title": "API-sleutel aangemaakt",

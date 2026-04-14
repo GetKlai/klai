@@ -1401,15 +1401,19 @@
   "admin_integrations_field_rate_limit": "Requests per minute",
   "admin_integrations_rate_limit_unit": "requests/min",
 
-  "admin_integrations_perm_chat": "Chat completions",
+  "admin_integrations_perm_chat": "Chat",
+  "admin_integrations_perm_chat_description": "Ask questions to knowledge bases via the API.",
   "admin_integrations_perm_feedback": "Feedback",
-  "admin_integrations_perm_knowledge_append": "Knowledge append",
+  "admin_integrations_perm_feedback_description": "Rate answers as good or bad to improve results.",
+  "admin_integrations_perm_knowledge_append": "Add knowledge",
+  "admin_integrations_perm_knowledge_append_description": "Add new knowledge to knowledge bases.",
 
   "admin_integrations_kb_name": "Knowledge base",
   "admin_integrations_kb_none": "None",
   "admin_integrations_kb_read": "Read",
-  "admin_integrations_kb_read_write": "Read + Write",
-  "admin_integrations_kb_read_write_disabled_hint": "Enable the Knowledge append permission to allow write access",
+  "admin_integrations_kb_read_write": "Write",
+  "admin_integrations_kb_intro": "Select which knowledge bases this integration can use. \"Write\" is only available when \"Add knowledge\" is enabled above.",
+  "admin_integrations_kb_read_write_disabled_hint": "Enable \"Add knowledge\" above to allow write access",
   "admin_integrations_kb_empty": "No knowledge bases found in this organisation.",
 
   "admin_integrations_key_modal_title": "API key created",
