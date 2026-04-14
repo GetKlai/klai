@@ -138,37 +138,52 @@ function NewIntegrationPage() {
           <h2 className="text-sm font-medium text-[var(--color-foreground)]">
             {m.admin_integrations_section_permissions()}
           </h2>
-          <div className="space-y-3">
-            <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+          <div className="space-y-4">
+            <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
               <input
                 type="checkbox"
                 checked={form.chat}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, chat: e.target.checked }))
                 }
-                className="accent-[var(--color-accent)]"
+                className="accent-[var(--color-accent)] mt-0.5"
               />
-              {m.admin_integrations_perm_chat()}
+              <div>
+                <span className="font-medium">{m.admin_integrations_perm_chat()}</span>
+                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  {m.admin_integrations_perm_chat_description()}
+                </p>
+              </div>
             </label>
-            <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+            <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
               <input
                 type="checkbox"
                 checked={form.feedback}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, feedback: e.target.checked }))
                 }
-                className="accent-[var(--color-accent)]"
+                className="accent-[var(--color-accent)] mt-0.5"
               />
-              {m.admin_integrations_perm_feedback()}
+              <div>
+                <span className="font-medium">{m.admin_integrations_perm_feedback()}</span>
+                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  {m.admin_integrations_perm_feedback_description()}
+                </p>
+              </div>
             </label>
-            <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+            <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
               <input
                 type="checkbox"
                 checked={form.knowledge_append}
                 onChange={(e) => handleKnowledgeAppendChange(e.target.checked)}
-                className="accent-[var(--color-accent)]"
+                className="accent-[var(--color-accent)] mt-0.5"
               />
-              {m.admin_integrations_perm_knowledge_append()}
+              <div>
+                <span className="font-medium">{m.admin_integrations_perm_knowledge_append()}</span>
+                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                  {m.admin_integrations_perm_knowledge_append_description()}
+                </p>
+              </div>
             </label>
           </div>
         </section>
@@ -178,6 +193,9 @@ function NewIntegrationPage() {
           <h2 className="text-sm font-medium text-[var(--color-foreground)]">
             {m.admin_integrations_section_kb_access()}
           </h2>
+          <p className="text-xs text-[var(--color-muted-foreground)]">
+            {m.admin_integrations_kb_intro()}
+          </p>
           <KbAccessEditor
             value={form.kb_access}
             onChange={(kb_access) => setForm((prev) => ({ ...prev, kb_access }))}
