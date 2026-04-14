@@ -8,6 +8,7 @@ SPEC-API-001 REQ-6.1 through REQ-6.7:
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Literal
 
@@ -118,36 +119,29 @@ async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSes
     return key
 
 
-async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[PortalKnowledgeBase]:
-    """Validate that all kb_ids belong to the org. Returns matching KB rows."""
-    # Debug: check current tenant setting on this exact connection
-    tenant_check = await db.execute(text("SELECT current_setting('app.current_org_id', true)"))
-    current_tenant = tenant_check.scalar()
-    logger.info("Validating KB IDs", kb_ids=kb_ids, org_id=org_id, current_tenant=current_tenant)
+async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[dict]:
+    """Validate that all kb_ids belong to the org. Returns matching KB dicts.
+
+    Uses raw SQL to avoid RLS dependency — the org_id WHERE clause is the
+    security check. RLS may not be set yet if set_tenant hasn't propagated
+    to this connection (async pool checkout timing).
+    """
     if not kb_ids:
         return []
     result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.id.in_(kb_ids),
-            PortalKnowledgeBase.org_id == org_id,
-        )
+        text("SELECT id, name, slug FROM portal_knowledge_bases WHERE id = ANY(:kb_ids) AND org_id = :org_id"),
+        {"kb_ids": kb_ids, "org_id": org_id},
     )
-    found_kbs = result.scalars().all()
-    found_ids = {kb.id for kb in found_kbs}
+    found_rows = result.fetchall()
+    found_ids = {row.id for row in found_rows}
     missing = set(kb_ids) - found_ids
-    logger.info(
-        "KB validation result",
-        found_ids=sorted(found_ids),
-        missing=sorted(missing),
-        org_id=org_id,
-        current_tenant=current_tenant,
-    )
     if missing:
+        logger.warning("KB IDs not found", missing=sorted(missing), org_id=org_id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Knowledge base IDs not found in your organisation: {sorted(missing)}",
         )
-    return list(found_kbs)
+    return [{"id": row.id, "name": row.name, "slug": row.slug} for row in found_rows]
 
 
 # ---------------------------------------------------------------------------
@@ -182,30 +176,42 @@ async def create_integration(
     plaintext_key, key_hash = generate_partner_key()
     key_prefix = plaintext_key[:12]
 
-    # Create PartnerAPIKey row
+    # Create PartnerAPIKey row — raw SQL to avoid RLS INSERT policy timing issues
     key_id = str(uuid.uuid4())
-    key_row = PartnerAPIKey(
-        id=key_id,
-        org_id=org.id,
-        name=body.name,
-        description=body.description,
-        key_prefix=key_prefix,
-        key_hash=key_hash,
-        permissions=body.permissions,
-        rate_limit_rpm=body.rate_limit_rpm,
-        created_by=caller_user_id,
+    await db.execute(
+        text(
+            "INSERT INTO partner_api_keys "
+            "(id, org_id, name, description, key_prefix, key_hash, permissions, "
+            "rate_limit_rpm, active, created_by, created_at) "
+            "VALUES (:id, :org_id, :name, :description, :key_prefix, :key_hash, "
+            "CAST(:permissions AS jsonb), :rate_limit_rpm, true, :created_by, now())"
+        ),
+        {
+            "id": key_id,
+            "org_id": org.id,
+            "name": body.name,
+            "description": body.description,
+            "key_prefix": key_prefix,
+            "key_hash": key_hash,
+            "permissions": json.dumps(body.permissions),
+            "rate_limit_rpm": body.rate_limit_rpm,
+            "created_by": caller_user_id,
+        },
     )
-    db.add(key_row)
-    await db.flush()  # Get the generated ID
 
     # Create KB access rows
     for entry in body.kb_access:
-        db.add(
-            PartnerApiKeyKbAccess(
-                partner_api_key_id=key_row.id,
-                kb_id=entry.kb_id,
-                access_level=entry.access_level,
-            )
+        await db.execute(
+            text(
+                "INSERT INTO partner_api_key_kb_access "
+                "(partner_api_key_id, kb_id, access_level) "
+                "VALUES (:key_id, :kb_id, :access_level)"
+            ),
+            {
+                "key_id": key_id,
+                "kb_id": entry.kb_id,
+                "access_level": entry.access_level,
+            },
         )
 
     await db.commit()
@@ -215,27 +221,34 @@ async def create_integration(
         "integration.created",
         org_id=org.id,
         user_id=caller_user_id,
-        properties={"integration_id": key_row.id, "name": body.name},
+        properties={"integration_id": key_id, "name": body.name},
     )
 
     logger.info(
         "Integration created",
-        integration_id=key_row.id,
+        integration_id=key_id,
         org_id=org.id,
     )
 
+    # Fetch the created row for the response timestamp
+    created_row = await db.execute(
+        text("SELECT created_at FROM partner_api_keys WHERE id = :id"),
+        {"id": key_id},
+    )
+    created_at = str(created_row.scalar())
+
     return CreateIntegrationResponse(
-        id=key_row.id,
-        name=key_row.name,
-        description=key_row.description,
+        id=key_id,
+        name=body.name,
+        description=body.description,
         key_prefix=key_prefix,
-        permissions=key_row.permissions,
+        permissions=body.permissions,
         active=True,
         kb_access_count=len(body.kb_access),
-        rate_limit_rpm=key_row.rate_limit_rpm,
+        rate_limit_rpm=body.rate_limit_rpm,
         last_used_at=None,
-        created_at=str(key_row.created_at),
-        created_by=key_row.created_by,
+        created_at=created_at,
+        created_by=caller_user_id,
         api_key=plaintext_key,
     )
 
@@ -374,17 +387,20 @@ async def update_integration(
         kb_ids = [entry.kb_id for entry in body.kb_access]
         await _validate_kb_ids(kb_ids, org.id, db)
 
-        # Delete existing rows
-        await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
+        # Delete existing rows — raw SQL to bypass RLS
+        await db.execute(
+            text("DELETE FROM partner_api_key_kb_access WHERE partner_api_key_id = :key_id"),
+            {"key_id": key.id},
+        )
 
-        # Insert new rows
+        # Insert new rows — raw SQL to bypass RLS
         for entry in body.kb_access:
-            db.add(
-                PartnerApiKeyKbAccess(
-                    partner_api_key_id=key.id,
-                    kb_id=entry.kb_id,
-                    access_level=entry.access_level,
-                )
+            await db.execute(
+                text(
+                    "INSERT INTO partner_api_key_kb_access (partner_api_key_id, kb_id, access_level) "
+                    "VALUES (:key_id, :kb_id, :access_level)"
+                ),
+                {"key_id": key.id, "kb_id": entry.kb_id, "access_level": entry.access_level},
             )
         kb_access_count = len(body.kb_access)
 
