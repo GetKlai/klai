@@ -5,14 +5,16 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table'
-import { Plus, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, Loader2, Eye, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
-import { useIntegrations } from './-hooks'
+import { useIntegrations, useDeleteIntegration } from './-hooks'
 import type { IntegrationResponse } from './-types'
 
 export const Route = createFileRoute('/admin/integrations/')({
@@ -43,6 +45,8 @@ const columnHelper = createColumnHelper<IntegrationResponse>()
 function IntegrationsPage() {
   const navigate = useNavigate()
   const { data, isLoading, error, refetch } = useIntegrations()
+  const deleteMutation = useDeleteIntegration()
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const integrations = Array.isArray(data) ? data : []
 
@@ -92,21 +96,41 @@ function IntegrationsPage() {
     columnHelper.display({
       id: 'actions',
       header: () => '',
-      cell: ({ row }) => (
-        <div className="flex items-start justify-end mt-px">
-          <button
-            onClick={() =>
-              navigate({
-                to: '/admin/integrations/$id',
-                params: { id: String(row.original.id) },
-              })
-            }
-            className="text-sm text-[var(--color-accent)] hover:opacity-70 transition-opacity"
+      cell: ({ row }) => {
+        const isConfirming = confirmDeleteId === String(row.original.id)
+        return (
+          <InlineDeleteConfirm
+            isConfirming={isConfirming}
+            isPending={deleteMutation.isPending}
+            label={m.admin_integrations_delete_confirm({ name: row.original.name })}
+            cancelLabel={m.admin_users_cancel()}
+            onConfirm={() => { deleteMutation.mutate(String(row.original.id)); setConfirmDeleteId(null) }}
+            onCancel={() => setConfirmDeleteId(null)}
           >
-            {m.admin_integrations_view_detail()}
-          </button>
-        </div>
-      ),
+            <div className="flex items-start justify-end gap-2 mt-px">
+              <button
+                onClick={() => setConfirmDeleteId(String(row.original.id))}
+                aria-label={`Delete ${row.original.name}`}
+                className="inline-flex items-center justify-center text-[var(--color-destructive)] transition-opacity hover:opacity-70"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() =>
+                  navigate({
+                    to: '/admin/integrations/$id',
+                    params: { id: String(row.original.id) },
+                  })
+                }
+                aria-label={row.original.name}
+                className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+              >
+                <Eye className="h-4 w-4" />
+              </button>
+            </div>
+          </InlineDeleteConfirm>
+        )
+      },
     }),
   ]
 

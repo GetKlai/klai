@@ -1432,5 +1432,7 @@
   "admin_integrations_revoke_description": "Are you sure? The API key will stop working immediately. This action cannot be undone.",
   "admin_integrations_revoke_confirm": "Revoke",
 
+  "admin_integrations_delete_confirm": "Delete {name}?",
+
   "admin_integrations_view_logs": "View logs in Grafana"
 }

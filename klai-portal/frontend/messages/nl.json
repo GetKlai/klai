@@ -1432,5 +1432,5 @@
   "admin_integrations_revoke_description": "Weet je het zeker? De API-sleutel stopt onmiddellijk met werken. Deze actie kan niet ongedaan worden gemaakt.",
   "admin_integrations_revoke_confirm": "Intrekken",
 
-  "admin_integrations_view_logs": "Logs bekijken in Grafana"
+  "admin_integrations_delete_confirm": "{name} verwijderen?"
 }

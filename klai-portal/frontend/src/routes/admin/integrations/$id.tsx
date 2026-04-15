@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -109,7 +109,7 @@ function IntegrationDetailPage() {
     })
   }
 
-  const grafanaUrl = `https://grafana.getklai.com/explore?left={"queries":[{"expr":"partner_key_id:${id}"}]}`
+  // Grafana link removed — not exposed to customers
 
   if (isLoading) {
     return (
@@ -325,19 +325,6 @@ function IntegrationDetailPage() {
           </div>
         )}
       </form>
-
-      {/* View logs link */}
-      <div className="mt-8 pt-6 border-t border-[var(--color-border)]">
-        <a
-          href={grafanaUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm text-[var(--color-accent)] hover:opacity-70 transition-opacity"
-        >
-          {m.admin_integrations_view_logs()}
-          <ExternalLink className="h-3.5 w-3.5" />
-        </a>
-      </div>
 
       {/* Revoke section */}
       {!isRevoked && (

@@ -501,3 +501,41 @@ async def revoke_integration(
     kb_access_count = count_result.scalar() or 0
 
     return _key_to_response(key, kb_access_count)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/integrations/{id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_integration(
+    integration_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Permanently delete an integration and its KB access entries."""
+    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
+    _require_admin(caller_user)
+
+    key = await _get_integration_or_404(integration_id, org.id, db)
+
+    await _ensure_tenant(db, org.id)
+    await db.execute(
+        text("DELETE FROM partner_api_key_kb_access WHERE partner_api_key_id = :kid"),
+        {"kid": key.id},
+    )
+    await db.execute(
+        text("DELETE FROM partner_api_keys WHERE id = :id AND org_id = :oid"),
+        {"id": key.id, "oid": org.id},
+    )
+    await db.commit()
+
+    emit_event(
+        "integration.deleted",
+        org_id=org.id,
+        user_id=caller_user_id,
+        properties={"integration_id": key.id, "name": key.name},
+    )
+
+    logger.info("Integration deleted", integration_id=key.id, org_id=org.id)
