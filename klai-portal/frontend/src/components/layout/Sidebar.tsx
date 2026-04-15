@@ -281,25 +281,17 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
   if (allKbs.length === 0) return null
 
   return (
-    <div className="border-t border-[var(--color-sidebar-border)] pt-3 px-3">
-      <p className="px-3 mb-2 text-[10px] font-medium text-[var(--color-sidebar-muted-foreground)] uppercase tracking-wider">
-        Collecties
-      </p>
+    <div className="mt-4 px-3">
       <ul className="space-y-0.5">
         {personalKb && (
           <li>
             <Link
               to="/app/knowledge/$kbSlug/overview"
               params={{ kbSlug: personalKb.slug }}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
+              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/50 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
               <span className="truncate">{m.chat_kb_bar_personal_label()}</span>
-              {(stats[personalKb.slug]?.items ?? 0) > 0 && (
-                <span className="ml-auto text-[10px] text-[var(--color-sidebar-muted-foreground)] tabular-nums">
-                  {stats[personalKb.slug]?.items}
-                </span>
-              )}
             </Link>
           </li>
         )}
@@ -308,15 +300,10 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
             <Link
               to="/app/knowledge/$kbSlug/overview"
               params={{ kbSlug: kb.slug }}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
+              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/50 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
               <span className="truncate">{kb.name}</span>
-              {(stats[kb.slug]?.items ?? 0) > 0 && (
-                <span className="ml-auto text-[10px] text-[var(--color-sidebar-muted-foreground)] tabular-nums">
-                  {stats[kb.slug]?.items}
-                </span>
-              )}
             </Link>
           </li>
         ))}
