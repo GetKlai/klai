@@ -19,7 +19,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal, get_db
+from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.services.partner_keys import verify_partner_key
@@ -111,11 +111,12 @@ async def get_partner_key(
     kb_rows = kb_result.scalars().all()
     kb_access = {row.kb_id: row.access_level for row in kb_rows}
 
-    # Step 6: Resolve org_id -> zitadel_org_id
+    # Step 6: Resolve org_id -> zitadel_org_id and set tenant for downstream ORM queries
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+    await set_tenant(db, org.id)
 
     # Step 7: Check rate limit
     redis_pool = await get_redis_pool()
