@@ -187,7 +187,6 @@ function NewKnowledgeBasePage() {
           <Button
             type="submit"
             disabled={!canSubmit || isPending}
-            className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
           >
             {m.knowledge_wizard_create_button()}
           </Button>
