@@ -3,7 +3,7 @@ import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, ChevronDown } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { chatKbLogger } from '@/lib/logger'
@@ -209,62 +209,45 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
 
   if (!pref || allKbs.length === 0) return null
 
-  const isOn = pref.kb_retrieval_enabled
-  const selectedCount = (pref.kb_personal_enabled ? 1 : 0) + currentSlugs.length
+  // Build list of active collection names
+  const activeNames: string[] = []
+  if (pref.kb_personal_enabled) activeNames.push('Persoonlijk')
+  for (const kb of allKbs) {
+    if (currentSlugs.includes(kb.slug)) activeNames.push(kb.name)
+  }
 
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-gray-100 bg-white px-4 py-1.5">
+    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
-      {/* Collections pill */}
+      <span className="text-xs text-[var(--color-muted-foreground)]">Chat met:</span>
+
       <div className="relative z-50">
         <button type="button" onClick={() => setCollOpen((v) => !v)}
-          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-            isOn && selectedCount > 0
-              ? 'border-blue-200 bg-blue-50 text-blue-700'
-              : 'border-gray-200 text-gray-400 hover:border-gray-300'
-          }`}>
-          <BookOpen className="h-3 w-3" />
-          {selectedCount}/{allKbs.length + (pref.kb_personal_enabled ? 1 : 0)}
-          <ChevronDown className="h-2.5 w-2.5 opacity-50" />
+          className="flex items-center gap-1 text-xs font-medium text-[var(--color-foreground)] hover:text-[var(--color-rl-accent-dark)] transition-colors">
+          {activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}
+          <ChevronDown className="h-3 w-3 opacity-40" />
         </button>
 
         {collOpen && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
-            <div className="px-3 py-1.5 flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Collecties</span>
-            </div>
+          <div className="absolute left-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1.5 shadow-lg">
             {/* Personal */}
             <button type="button" onClick={() => mutation.mutate({ kb_personal_enabled: !pref.kb_personal_enabled })}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 transition-colors">
-              <Checkbox checked={pref.kb_personal_enabled} />
-              <span className={pref.kb_personal_enabled ? 'text-gray-900 font-medium' : 'text-gray-500'}>Persoonlijk</span>
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'}`} />
+              <span className={pref.kb_personal_enabled ? 'text-[var(--color-foreground)]' : 'text-[var(--color-muted-foreground)]'}>Persoonlijk</span>
             </button>
             {/* Org KBs */}
             {allKbs.map((kb) => (
               <button key={kb.slug} type="button" onClick={() => toggleSlug(kb.slug)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 transition-colors">
-                <Checkbox checked={currentSlugs.includes(kb.slug)} />
-                <span className={currentSlugs.includes(kb.slug) ? 'text-gray-900 font-medium' : 'text-gray-500'}>{kb.name}</span>
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${currentSlugs.includes(kb.slug) ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'}`} />
+                <span className={currentSlugs.includes(kb.slug) ? 'text-[var(--color-foreground)]' : 'text-[var(--color-muted-foreground)]'}>{kb.name}</span>
               </button>
             ))}
           </div>
         )}
       </div>
     </div>
-  )
-}
-
-function Checkbox({ checked }: { checked: boolean }) {
-  return (
-    <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
-      checked ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
-    }`}>
-      {checked && (
-        <svg className="h-2 w-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="4">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-        </svg>
-      )}
-    </span>
   )
 }
