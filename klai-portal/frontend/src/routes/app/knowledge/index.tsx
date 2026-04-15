@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, ChevronRight } from 'lucide-react'
+import { Plus, ChevronRight, User, Building2, FolderOpen, FileText, Zap } from 'lucide-react'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
@@ -79,7 +79,7 @@ function KnowledgePage() {
         <button
           type="button"
           onClick={() => void navigate({ to: '/app/knowledge/new' })}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
         >
           <Plus className="h-4 w-4" />
           {m.knowledge_new_button()}
@@ -95,19 +95,47 @@ function KnowledgePage() {
       ) : isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-16 rounded-lg bg-gray-50 animate-pulse" />
+            <div key={i} className="h-20 rounded-lg bg-gray-50 animate-pulse" />
           ))}
+        </div>
+      ) : allKbs.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center">
+          <FolderOpen className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+          <p className="text-base font-medium text-gray-900">Nog geen collecties</p>
+          <p className="text-sm text-gray-400 mt-1">Maak je eerste collectie aan om kennis toe te voegen.</p>
+          <button
+            type="button"
+            onClick={() => void navigate({ to: '/app/knowledge/new' })}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Eerste collectie aanmaken
+          </button>
         </div>
       ) : (
         <div className="space-y-2">
           {personalKb && (
-            <CollectionRow kb={personalKb} stats={statsBySlug[personalKb.slug]} label="Persoonlijk" />
+            <CollectionRow
+              kb={personalKb}
+              stats={statsBySlug[personalKb.slug]}
+              icon={<User className="h-5 w-5" />}
+              label="Persoonlijk"
+            />
           )}
           {orgKb && (
-            <CollectionRow kb={orgKb} stats={statsBySlug[orgKb.slug]} />
+            <CollectionRow
+              kb={orgKb}
+              stats={statsBySlug[orgKb.slug]}
+              icon={<Building2 className="h-5 w-5" />}
+            />
           )}
           {otherKbs.map((kb) => (
-            <CollectionRow key={kb.id} kb={kb} stats={statsBySlug[kb.slug]} />
+            <CollectionRow
+              key={kb.id}
+              kb={kb}
+              stats={statsBySlug[kb.slug]}
+              icon={<FolderOpen className="h-5 w-5" />}
+            />
           ))}
         </div>
       )}
@@ -118,10 +146,12 @@ function KnowledgePage() {
 function CollectionRow({
   kb,
   stats,
+  icon,
   label,
 }: {
   kb: KnowledgeBase
   stats: KBStatsSummary | undefined
+  icon: React.ReactNode
   label?: string
 }) {
   const itemCount = stats?.items ?? 0
@@ -133,18 +163,27 @@ function CollectionRow({
       params={{ kbSlug: kb.slug }}
       className="group flex items-center gap-4 rounded-lg border border-gray-200 px-5 py-4 transition-all hover:border-gray-300 hover:shadow-sm"
     >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400 group-hover:bg-gray-100 group-hover:text-gray-600 transition-colors">
+        {icon}
+      </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-gray-900">{label ?? kb.name}</p>
         {kb.description && (
           <p className="text-xs text-gray-400 truncate mt-0.5">{kb.description}</p>
         )}
       </div>
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-4 shrink-0">
         {itemCount > 0 && (
-          <span className="text-xs text-gray-400 tabular-nums">{itemCount} bestanden</span>
+          <span className="flex items-center gap-1.5 text-xs text-gray-400">
+            <FileText className="h-3.5 w-3.5" />
+            {itemCount}
+          </span>
         )}
         {connectorCount > 0 && (
-          <span className="text-xs text-gray-400 tabular-nums">{connectorCount} bronnen</span>
+          <span className="flex items-center gap-1.5 text-xs text-gray-400">
+            <Zap className="h-3.5 w-3.5" />
+            {connectorCount}
+          </span>
         )}
         <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-400 transition-colors" />
       </div>
