@@ -48,16 +48,22 @@ function OverviewTab() {
     <div className="space-y-8">
       <DashboardSection icon={BookOpen} title={m.knowledge_detail_section_docs()}>
         {!kb.docs_enabled ? (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.knowledge_detail_docs_not_enabled()}</p>
+          <p className="text-sm text-gray-400">{m.knowledge_detail_docs_not_enabled()}</p>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-[var(--color-muted-foreground)]" />
-              <span className="text-sm text-[var(--color-foreground)]">{docsLabel}</span>
+              <FileText className="h-4 w-4 text-gray-400" />
+              <span className="text-sm text-gray-900">{docsLabel}</span>
             </div>
             {kb.gitea_repo_slug && (
               <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }}>
-                <Button variant="outline" size="sm">{m.knowledge_detail_view_in_docs()}</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg border-gray-200 text-gray-700 hover:bg-gray-50"
+                >
+                  {m.knowledge_detail_view_in_docs()}
+                </Button>
               </Link>
             )}
           </div>
@@ -67,16 +73,16 @@ function OverviewTab() {
       <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
         <div className="flex gap-8 mb-5">
           <div>
-            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
+            <p className="text-sm font-medium text-gray-900">
               {stats?.volume != null
                 ? m.knowledge_detail_volume({ count: String(stats.volume) })
                 : m.knowledge_detail_volume_unknown()}
             </p>
           </div>
           <div>
-            <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
-            <p className="text-sm font-medium text-[var(--color-foreground)]">
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
+            <p className="text-sm font-medium text-gray-900">
               {stats?.usage_last_30d != null
                 ? m.knowledge_detail_usage({ count: String(stats.usage_last_30d) })
                 : m.knowledge_detail_usage_unknown()}
@@ -85,11 +91,11 @@ function OverviewTab() {
           {user?.isAdmin === true && stats?.org_gap_count_7d != null && (
             <Link to="/app/gaps" className="group">
               <div>
-                <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-1 flex items-center gap-1">
+                <p className="text-xs text-gray-400 uppercase tracking-wide mb-1 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
                   {m.gaps_overview_tile()}
                 </p>
-                <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-accent)] transition-colors">
+                <p className="text-sm font-medium text-gray-900 group-hover:text-gray-600 transition-colors">
                   {stats.org_gap_count_7d}
                 </p>
               </div>
@@ -99,43 +105,43 @@ function OverviewTab() {
 
         {/* Breakdown per database */}
         <div>
-          <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wide mb-2">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-2">
             {m.knowledge_detail_volume_breakdown_title()}
           </p>
           <div className="grid grid-cols-3 gap-3">
-            <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
-              <Database className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
+              <Database className="h-4 w-4 text-gray-700 mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_sources()}
                 </p>
-                <p className="text-sm text-[var(--color-foreground)]">
+                <p className="text-sm text-gray-900">
                   {stats?.source_page_count != null
                     ? m.knowledge_detail_volume_sources_count({ count: String(stats.source_page_count) })
                     : m.knowledge_detail_volume_unavailable()}
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
-              <Search className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
+              <Search className="h-4 w-4 text-gray-700 mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_search_chunks()}
                 </p>
-                <p className="text-sm text-[var(--color-foreground)]">
+                <p className="text-sm text-gray-900">
                   {stats?.vector_chunk_count != null
                     ? m.knowledge_detail_volume_search_chunks_count({ count: String(stats.vector_chunk_count) })
                     : m.knowledge_detail_volume_unavailable()}
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] p-3">
-              <GitBranch className="h-4 w-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
+              <GitBranch className="h-4 w-4 text-gray-700 mt-0.5 shrink-0" />
               <div>
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_graph()}
                 </p>
-                <p className="text-sm text-[var(--color-foreground)]">
+                <p className="text-sm text-gray-900">
                   {stats?.graph_entity_count != null && stats?.graph_edge_count != null
                     ? m.knowledge_detail_volume_graph_count({
                         entities: String(stats.graph_entity_count),

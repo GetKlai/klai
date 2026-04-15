@@ -56,8 +56,8 @@ export function DashboardSection({
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <Icon className="h-4 w-4 text-[var(--color-foreground)]" />
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{title}</h2>
+        <Icon className="h-4 w-4 text-gray-900" />
+        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
       </div>
       {children}
     </div>

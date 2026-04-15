@@ -103,16 +103,22 @@ function KbLayout() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
-        <div className="h-8 w-48 rounded bg-[var(--color-secondary)] animate-pulse mb-4" />
-        <div className="h-4 w-96 rounded bg-[var(--color-secondary)] animate-pulse" />
+      <div
+        className="mx-auto max-w-3xl px-6 py-10"
+        style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+      >
+        <div className="h-8 w-48 rounded-lg bg-gray-100 animate-pulse mb-4" />
+        <div className="h-4 w-96 rounded-lg bg-gray-100 animate-pulse" />
       </div>
     )
   }
 
   if (isError || !kb) {
     return (
-      <div className="p-6 text-[var(--color-muted-foreground)]">
+      <div
+        className="mx-auto max-w-3xl px-6 py-10 text-gray-400"
+        style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+      >
         {m.knowledge_detail_not_found()}
       </div>
     )
@@ -130,21 +136,29 @@ function KbLayout() {
   ]
 
   return (
-    <div className="p-6 max-w-4xl space-y-8">
+    <div
+      className="mx-auto max-w-3xl px-6 py-10 space-y-8"
+      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+    >
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">{kb.name}</h1>
+          <h1 className="text-xl font-semibold text-gray-900">{kb.name}</h1>
           {kb.description && (
-            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">{kb.description}</p>
+            <p className="text-sm text-gray-400 mt-1">{kb.description}</p>
           )}
-          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-[var(--color-muted-foreground)]">
+          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-400">
             {kb.visibility === 'public' ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             <span>{kb.visibility === 'public' ? m.knowledge_page_kb_visibility_public() : m.knowledge_page_kb_visibility_internal()}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            asChild
+            className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+          >
             <Link to="/app/knowledge">
               <ArrowLeft className="h-4 w-4 mr-2" />
               {m.knowledge_page_intro_heading()}
@@ -154,7 +168,7 @@ function KbLayout() {
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-[var(--color-border)]">
+      <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-6">
           {tabEntries.map(({ id, to, icon: TabIcon, label, badge }) => (
             <Link
@@ -162,10 +176,10 @@ function KbLayout() {
               to={to}
               params={{ kbSlug }}
               activeProps={{
-                className: 'border-[var(--color-accent)] text-[var(--color-foreground)]',
+                className: 'border-gray-900 text-gray-900',
               }}
               inactiveProps={{
-                className: 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                className: 'border-transparent text-gray-400 hover:text-gray-900',
               }}
               className="flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors"
               onClick={(e) => {
