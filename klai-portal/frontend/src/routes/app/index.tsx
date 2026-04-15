@@ -220,11 +220,11 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
     <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
-      <span className="text-xs text-[var(--color-muted-foreground)]">Chat met:</span>
+      <span className="text-xs font-medium text-[var(--color-foreground)]/60">Chat met:</span>
 
       <div className="relative z-50">
         <button type="button" onClick={() => setCollOpen((v) => !v)}
-          className="flex items-center gap-1 text-xs font-medium text-[var(--color-foreground)] hover:text-[var(--color-rl-accent-dark)] transition-colors">
+          className="flex items-center gap-1 text-xs font-semibold text-[var(--color-foreground)] hover:text-[var(--color-rl-accent-dark)] transition-colors">
           {activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}
           <ChevronDown className="h-3 w-3 opacity-40" />
         </button>
