@@ -62,7 +62,7 @@ function ForgotPasswordPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
         <div className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-900">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-900">
             <Mail size={22} className="text-white" />
           </div>
           <p className="text-xl font-semibold text-gray-900">

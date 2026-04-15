@@ -606,7 +606,7 @@ function TaxonomyTab() {
             <button
               type="button"
               onClick={() => setActiveNodeId(null)}
-              className="inline-flex items-center gap-1 rounded-full border border-gray-900 bg-gray-900/10 px-2 py-0.5 text-xs text-gray-900 hover:bg-gray-900/20 transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-900 bg-gray-900/10 px-2 py-0.5 text-xs text-gray-900 hover:bg-gray-900/20 transition-colors"
             >
               {m.knowledge_taxonomy_filter_node({ name: activeNode.name })}
               <X className="h-3 w-3" />
@@ -617,7 +617,7 @@ function TaxonomyTab() {
               key={tag}
               type="button"
               onClick={() => toggleTag(tag)}
-              className="inline-flex items-center gap-1 rounded-full border border-gray-900 bg-gray-900/10 px-2 py-0.5 text-xs text-gray-900 hover:bg-gray-900/20 transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-900 bg-gray-900/10 px-2 py-0.5 text-xs text-gray-900 hover:bg-gray-900/20 transition-colors"
             >
               {m.knowledge_taxonomy_filter_tag({ name: tag })}
               <X className="h-3 w-3" />

@@ -61,7 +61,7 @@ function StatusBadge({ status, source }: { status: string; source: Source }) {
   }
   const c = config[status] ?? { label: status, classes: 'bg-gray-50 text-gray-900' }
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${c.classes}`}>
+    <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-medium ${c.classes}`}>
       {c.label}
     </span>
   )
