@@ -134,7 +134,7 @@ function TemplatesPage() {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Bijv. Klantenservice, Marketing, Formeel"
-              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300"
+              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400"
             />
           </div>
 
@@ -145,7 +145,7 @@ function TemplatesPage() {
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               placeholder="Waar is dit template voor?"
-              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300"
+              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400"
             />
           </div>
 
@@ -156,7 +156,7 @@ function TemplatesPage() {
               onChange={(e) => setForm({ ...form, prompt_text: e.target.value })}
               placeholder="Bijv. Antwoord altijd in het Nederlands. Gebruik een vriendelijke en professionele toon. Houd antwoorden kort en bondig."
               rows={5}
-              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300 resize-none"
+              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 resize-none"
             />
             <p className="mt-1 text-xs text-gray-400">{form.prompt_text.length}/5000</p>
           </div>
@@ -170,7 +170,7 @@ function TemplatesPage() {
                 className={`rounded-lg px-4 py-1.5 text-sm font-medium border transition-colors ${
                   form.scope === 'global'
                     ? 'bg-gray-900 text-white border-gray-900'
-                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    : 'border-gray-200 text-gray-700 hover:bg-gray-50'
                 }`}
               >
                 Organisatie
@@ -181,7 +181,7 @@ function TemplatesPage() {
                 className={`rounded-lg px-4 py-1.5 text-sm font-medium border transition-colors ${
                   form.scope === 'personal'
                     ? 'bg-gray-900 text-white border-gray-900'
-                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    : 'border-gray-200 text-gray-700 hover:bg-gray-50'
                 }`}
               >
                 Alleen ik
@@ -244,7 +244,7 @@ function TemplatesPage() {
                   <button
                     type="button"
                     onClick={() => startEdit(t)}
-                    className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                    className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-50 transition-colors"
                   >
                     <Pencil size={14} />
                   </button>
@@ -253,7 +253,7 @@ function TemplatesPage() {
                       <button
                         type="button"
                         onClick={() => deleteMutation.mutate(t.slug)}
-                        className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition-colors"
+                        className="px-2 py-1 text-xs text-[var(--color-destructive)] hover:bg-gray-50 rounded transition-colors"
                       >
                         Verwijder
                       </button>
@@ -269,7 +269,7 @@ function TemplatesPage() {
                     <button
                       type="button"
                       onClick={() => setDeleteConfirm(t.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors"
+                      className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-50 transition-colors"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -279,9 +279,9 @@ function TemplatesPage() {
               {t.description && (
                 <p className="text-xs text-gray-400 mb-2 line-clamp-2">{t.description}</p>
               )}
-              <p className="text-xs text-gray-500 line-clamp-2 mb-3">{t.prompt_text}</p>
+              <p className="text-xs text-gray-400 line-clamp-2 mb-3">{t.prompt_text}</p>
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[10px] font-medium text-gray-600">
+                <span className="rounded-full bg-gray-50 px-2.5 py-0.5 text-[10px] font-medium text-gray-700">
                   {t.scope === 'global' ? 'Organisatie' : 'Persoonlijk'}
                 </span>
               </div>

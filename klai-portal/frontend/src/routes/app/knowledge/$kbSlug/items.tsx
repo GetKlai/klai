@@ -54,43 +54,41 @@ function ItemsTab() {
 
   return (
     <div className="space-y-2">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-400">
-              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_title()}</th>
-              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_type()}</th>
-              <th className="pb-2 pr-4 font-medium">{m.knowledge_items_column_saved_at()}</th>
-              <th className="pb-2 font-medium">{m.knowledge_items_column_actions()}</th>
+      <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
+        <thead>
+          <tr className="border-b border-gray-200">
+            <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">{m.knowledge_items_column_title()}</th>
+            <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-28">{m.knowledge_items_column_type()}</th>
+            <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-28">{m.knowledge_items_column_saved_at()}</th>
+            <th className="py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-20">{m.knowledge_items_column_actions()}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.items.map((item) => (
+            <tr key={item.id} className="border-b border-gray-200 last:border-b-0">
+              <td className="py-4 pr-4 align-top text-gray-900">
+                {item.path.replace(/\.md$/, '')}
+              </td>
+              <td className="py-4 pr-4 align-top w-28">
+                {item.assertion_mode ? (
+                  <Badge variant="secondary">{item.assertion_mode}</Badge>
+                ) : (
+                  <span className="text-gray-400">-</span>
+                )}
+              </td>
+              <td className="py-4 pr-4 align-top text-gray-400 whitespace-nowrap tabular-nums w-28">
+                {new Date(item.created_at).toLocaleDateString()}
+              </td>
+              <td className="py-4 align-top text-right w-20">
+                <DeleteConfirmButton
+                  onConfirm={() => deleteMutation.mutate(item.id)}
+                  isDeleting={deletingId === item.id}
+                />
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {data.items.map((item) => (
-              <tr key={item.id} className="border-b border-gray-200 last:border-0">
-                <td className="py-2.5 pr-4 text-gray-900">
-                  {item.path.replace(/\.md$/, '')}
-                </td>
-                <td className="py-2.5 pr-4">
-                  {item.assertion_mode ? (
-                    <Badge variant="secondary">{item.assertion_mode}</Badge>
-                  ) : (
-                    <span className="text-gray-400">-</span>
-                  )}
-                </td>
-                <td className="py-2.5 pr-4 text-gray-400">
-                  {new Date(item.created_at).toLocaleDateString()}
-                </td>
-                <td className="py-2.5">
-                  <DeleteConfirmButton
-                    onConfirm={() => deleteMutation.mutate(item.id)}
-                    isDeleting={deletingId === item.id}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

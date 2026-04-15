@@ -82,7 +82,7 @@ function AccountPage() {
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
       <div className="space-y-1">
-        <h1 className="text-xl font-semibold text-gray-900">
+        <h1 className="text-2xl font-semibold text-gray-900">
           {m.account_heading()}
         </h1>
         <p className="text-sm text-gray-400">

@@ -64,7 +64,6 @@ function KnowledgePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-      {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">
@@ -86,7 +85,6 @@ function KnowledgePage() {
         </button>
       </div>
 
-      {/* Content */}
       {error ? (
         <QueryErrorState
           error={error instanceof Error ? error : new Error(String(error))}
@@ -115,27 +113,13 @@ function KnowledgePage() {
       ) : (
         <div className="space-y-2">
           {personalKb && (
-            <CollectionRow
-              kb={personalKb}
-              stats={statsBySlug[personalKb.slug]}
-              icon={<User className="h-5 w-5" />}
-              label="Persoonlijk"
-            />
+            <CollectionRow kb={personalKb} stats={statsBySlug[personalKb.slug]} icon={<User className="h-5 w-5" />} label="Persoonlijk" />
           )}
           {orgKb && (
-            <CollectionRow
-              kb={orgKb}
-              stats={statsBySlug[orgKb.slug]}
-              icon={<Building2 className="h-5 w-5" />}
-            />
+            <CollectionRow kb={orgKb} stats={statsBySlug[orgKb.slug]} icon={<Building2 className="h-5 w-5" />} />
           )}
           {otherKbs.map((kb) => (
-            <CollectionRow
-              key={kb.id}
-              kb={kb}
-              stats={statsBySlug[kb.slug]}
-              icon={<FolderOpen className="h-5 w-5" />}
-            />
+            <CollectionRow key={kb.id} kb={kb} stats={statsBySlug[kb.slug]} icon={<FolderOpen className="h-5 w-5" />} />
           ))}
         </div>
       )}
@@ -144,10 +128,7 @@ function KnowledgePage() {
 }
 
 function CollectionRow({
-  kb,
-  stats,
-  icon,
-  label,
+  kb, stats, icon, label,
 }: {
   kb: KnowledgeBase
   stats: KBStatsSummary | undefined
@@ -161,9 +142,9 @@ function CollectionRow({
     <Link
       to="/app/knowledge/$kbSlug/overview"
       params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-4 rounded-lg border border-gray-200 px-5 py-4 transition-all hover:border-gray-300 hover:shadow-sm"
+      className="group flex items-center gap-4 rounded-lg border border-gray-200 px-5 py-4 transition-all hover:border-gray-200 hover:shadow-sm"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400 group-hover:bg-gray-100 group-hover:text-gray-600 transition-colors">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400 group-hover:bg-gray-50 group-hover:text-gray-900 transition-colors">
         {icon}
       </div>
       <div className="flex-1 min-w-0">
@@ -185,7 +166,7 @@ function CollectionRow({
             {connectorCount}
           </span>
         )}
-        <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-400 transition-colors" />
+        <ChevronRight size={16} className="text-gray-400 group-hover:text-gray-900 transition-colors" />
       </div>
     </Link>
   )

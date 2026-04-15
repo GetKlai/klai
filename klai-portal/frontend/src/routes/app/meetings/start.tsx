@@ -81,7 +81,7 @@ function StartMeetingPage() {
   return (
     <div className="p-6 max-w-3xl">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-gray-900">
+        <h1 className="text-2xl font-semibold text-gray-900">
           {m.app_meetings_start_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
@@ -123,7 +123,7 @@ function StartMeetingPage() {
             </div>
             <button
               onClick={dismissOnboarding}
-              className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-900 transition-colors"
+              className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-900 transition-colors"
               aria-label={m.app_meetings_start_onboarding_dismiss()}
             >
               <X className="h-4 w-4" />

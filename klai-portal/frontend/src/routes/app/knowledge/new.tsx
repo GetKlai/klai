@@ -83,7 +83,7 @@ function NewKnowledgeBasePage() {
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-xl font-semibold text-gray-900">
+        <h1 className="text-2xl font-semibold text-gray-900">
           {m.knowledge_new_heading()}
         </h1>
         <Button
@@ -139,7 +139,7 @@ function NewKnowledgeBasePage() {
             onChange={(e) => setDescription(e.target.value)}
             placeholder={m.knowledge_wizard_description_placeholder()}
             rows={3}
-            className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+            className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
           />
         </div>
 

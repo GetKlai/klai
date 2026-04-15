@@ -206,7 +206,7 @@ export function TranscriptionTable({
   if (allItems.length === 0) {
     return (
       <div data-help-id="transcribe-list" className="flex flex-col items-center gap-3 py-16 text-center">
-        <Mic className="h-10 w-10 text-gray-400 opacity-40" />
+        <Mic className="h-10 w-10 text-gray-300" />
         <div className="space-y-1">
           <p className="font-medium text-gray-900">
             {m.app_transcribe_empty_heading()}
