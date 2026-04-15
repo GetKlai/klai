@@ -926,6 +926,7 @@ services:
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
+      CRAWL4AI_HOOKS_ENABLED: "true"
     networks:
       - klai-net
     deploy:
