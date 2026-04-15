@@ -112,7 +112,32 @@ function OverviewTab() {
         )}
       </div>
 
-      {/* Documents — block editor link */}
+      {/* Bestanden — link to items tab for personal KB */}
+      {kb.owner_type === 'user' && items > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Bestanden</h2>
+            <Link
+              to="/app/knowledge/$kbSlug/items"
+              params={{ kbSlug }}
+              className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              Alles bekijken
+            </Link>
+          </div>
+          <div className="rounded-lg border border-gray-200 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <FileText className="h-5 w-5 text-gray-400" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">{items} bestanden</p>
+                <p className="text-xs text-gray-400">Geindexeerd en doorzoekbaar in chat</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Documenten — block editor link */}
       {kb.docs_enabled && kb.gitea_repo_slug && (
         <div>
           <div className="flex items-center justify-between mb-4">
