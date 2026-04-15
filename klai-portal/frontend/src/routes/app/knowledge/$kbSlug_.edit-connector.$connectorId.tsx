@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { ArrowLeft, AlertTriangle } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,7 +23,7 @@ interface NotionEditConfig {
   new_access_token: string
 }
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
+const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs text-gray-600 [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-600 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-600 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-600 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
 
 function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
@@ -157,196 +156,197 @@ function EditConnectorPage() {
   }
 
   return (
-    <div className="p-6 max-w-lg">
-      <div className="flex items-start justify-between mb-6">
+    <div className="mx-auto max-w-3xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-semibold text-gray-900">
           {m.admin_connectors_edit_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={goBack}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
+        <button type="button" onClick={goBack} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+          <ArrowLeft className="h-4 w-4 inline mr-1" />
           {m.admin_connectors_cancel()}
-        </Button>
+        </button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
 
-          {/* Web crawler */}
-          {connector?.connector_type === 'web_crawler' && (
-            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
-                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+        {/* Web crawler */}
+        {connector?.connector_type === 'web_crawler' && (
+          <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-base-url" className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_base_url()}</Label>
+              <Input id="edit-conn-base-url" type="url" required value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-content-selector" className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_content_selector()}</Label>
+              <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!webcrawlerConfig.base_url || previewMutation.isPending}
+                onClick={() => previewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })}
+                className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+              >
+                {previewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
+              </Button>
+            </div>
+            {previewResult !== null && (previewResult.warnings ?? []).length > 0 && (
+              <div className="flex gap-2 items-start rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 p-3 text-xs text-[var(--color-warning)]">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
-                <Input id="edit-conn-base-url" type="url" required value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
-                <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
-              </div>
-              <div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={!webcrawlerConfig.base_url || previewMutation.isPending}
-                  onClick={() => previewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })}
-                >
-                  {previewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
-                </Button>
-              </div>
-              {previewResult !== null && (previewResult.warnings ?? []).length > 0 && (
-                <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
+            )}
+            {previewResult !== null && (
+              <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_preview_title()}</span>
+                  <span className="text-xs text-gray-400">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                 </div>
-              )}
-              {previewResult !== null && (
-                <div className="rounded-lg border border-gray-200 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_preview_title()}</span>
-                    <span className="text-xs text-gray-400">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
+                {previewResult.fit_markdown ? (
+                  <div className={MARKDOWN_PROSE_CLASSES}>
+                    <ReactMarkdown components={{ a: ({ children }) => <span className="text-gray-900">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
                   </div>
-                  {previewResult.fit_markdown ? (
-                    <div className={MARKDOWN_PROSE_CLASSES}>
-                      <ReactMarkdown components={{ a: ({ children }) => <span className="text-gray-700">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
-                  )}
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
-                <Input id="edit-conn-path-prefix" value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                ) : (
+                  <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
-                <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
-              <div className="pt-2">
-                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-              </div>
-            </form>
-          )}
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-path-prefix" className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+              <Input id="edit-conn-path-prefix" value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-max-pages" className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_max_pages()}</Label>
+              <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-900">{m.admin_connectors_assertion_modes_label()}</Label>
+              <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+            </div>
+            {renderError()}
+            <div className="pt-2">
+              <Button type="submit" size="sm" disabled={updateMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">{m.admin_connectors_save()}</Button>
+            </div>
+          </form>
+        )}
 
-          {/* GitHub */}
-          {connector?.connector_type === 'github' && (
-            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+        {/* GitHub */}
+        {connector?.connector_type === 'github' && (
+          <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-install" className="text-sm font-medium text-gray-900">{m.admin_connectors_github_installation_id()}</Label>
+              <Input id="edit-conn-install" type="number" required value={githubConfig.installation_id} onChange={(e) => setGithubConfig((p) => ({ ...p, installation_id: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
-                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-install">{m.admin_connectors_github_installation_id()}</Label>
-                <Input id="edit-conn-install" type="number" required value={githubConfig.installation_id} onChange={(e) => setGithubConfig((p) => ({ ...p, installation_id: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-conn-owner">{m.admin_connectors_github_repo_owner()}</Label>
-                  <Input id="edit-conn-owner" required value={githubConfig.repo_owner} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-conn-repo">{m.admin_connectors_github_repo_name()}</Label>
-                  <Input id="edit-conn-repo" required value={githubConfig.repo_name} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_name: e.target.value }))} />
-                </div>
+                <Label htmlFor="edit-conn-owner" className="text-sm font-medium text-gray-900">{m.admin_connectors_github_repo_owner()}</Label>
+                <Input id="edit-conn-owner" required value={githubConfig.repo_owner} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_owner: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-branch">{m.admin_connectors_github_branch()}</Label>
-                <Input id="edit-conn-branch" required value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} />
+                <Label htmlFor="edit-conn-repo" className="text-sm font-medium text-gray-900">{m.admin_connectors_github_repo_name()}</Label>
+                <Input id="edit-conn-repo" required value={githubConfig.repo_name} onChange={(e) => setGithubConfig((p) => ({ ...p, repo_name: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
               </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
-              <div className="pt-2">
-                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-              </div>
-            </form>
-          )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-branch" className="text-sm font-medium text-gray-900">{m.admin_connectors_github_branch()}</Label>
+              <Input id="edit-conn-branch" required value={githubConfig.branch} onChange={(e) => setGithubConfig((p) => ({ ...p, branch: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-900">{m.admin_connectors_assertion_modes_label()}</Label>
+              <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+            </div>
+            {renderError()}
+            <div className="pt-2">
+              <Button type="submit" size="sm" disabled={updateMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">{m.admin_connectors_save()}</Button>
+            </div>
+          </form>
+        )}
 
-          {/* Notion */}
-          {connector?.connector_type === 'notion' && (
-            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
-                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-notion-token">{m.admin_connectors_notion_access_token()}</Label>
-                <Input
-                  id="edit-conn-notion-token"
-                  type="password"
-                  placeholder={m.admin_connectors_notion_access_token_placeholder()}
-                  value={notionConfig.new_access_token}
-                  onChange={(e) => setNotionConfig((p) => ({ ...p, new_access_token: e.target.value }))}
-                />
-                <p className="text-xs text-gray-400">{m.admin_connectors_notion_token_help_update()}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-notion-dbs">{m.admin_connectors_notion_database_ids()}</Label>
-                <textarea
-                  id="edit-conn-notion-dbs"
-                  rows={3}
-                  placeholder={m.admin_connectors_notion_database_ids_placeholder()}
-                  value={notionConfig.database_ids}
-                  onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-400 resize-none"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-notion-max-pages">{m.admin_connectors_notion_max_pages()}</Label>
-                <Input
-                  id="edit-conn-notion-max-pages"
-                  type="number"
-                  min="1"
-                  max="5000"
-                  value={notionConfig.max_pages}
-                  onChange={(e) => setNotionConfig((p) => ({ ...p, max_pages: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
-              <div className="pt-2">
-                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-              </div>
-            </form>
-          )}
+        {/* Notion */}
+        {connector?.connector_type === 'notion' && (
+          <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-notion-token" className="text-sm font-medium text-gray-900">{m.admin_connectors_notion_access_token()}</Label>
+              <Input
+                id="edit-conn-notion-token"
+                type="password"
+                placeholder={m.admin_connectors_notion_access_token_placeholder()}
+                value={notionConfig.new_access_token}
+                onChange={(e) => setNotionConfig((p) => ({ ...p, new_access_token: e.target.value }))}
+                className="rounded-lg border border-gray-200 text-sm"
+              />
+              <p className="text-xs text-gray-400">{m.admin_connectors_notion_token_help_update()}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-notion-dbs" className="text-sm font-medium text-gray-900">{m.admin_connectors_notion_database_ids()}</Label>
+              <textarea
+                id="edit-conn-notion-dbs"
+                rows={3}
+                placeholder={m.admin_connectors_notion_database_ids_placeholder()}
+                value={notionConfig.database_ids}
+                onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-400 resize-none"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-notion-max-pages" className="text-sm font-medium text-gray-900">{m.admin_connectors_notion_max_pages()}</Label>
+              <Input
+                id="edit-conn-notion-max-pages"
+                type="number"
+                min="1"
+                max="5000"
+                value={notionConfig.max_pages}
+                onChange={(e) => setNotionConfig((p) => ({ ...p, max_pages: e.target.value }))}
+                className="rounded-lg border border-gray-200 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-900">{m.admin_connectors_assertion_modes_label()}</Label>
+              <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+            </div>
+            {renderError()}
+            <div className="pt-2">
+              <Button type="submit" size="sm" disabled={updateMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">{m.admin_connectors_save()}</Button>
+            </div>
+          </form>
+        )}
 
-          {/* Generic fallback for unsupported connector types */}
-          {connector && !['web_crawler', 'github', 'notion'].includes(connector.connector_type) && (
-            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
-                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
-              {renderError()}
-              <div className="pt-2">
-                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
-              </div>
-            </form>
-          )}
+        {/* Generic fallback for unsupported connector types */}
+        {connector && !['web_crawler', 'github', 'notion'].includes(connector.connector_type) && (
+          <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-conn-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-900">{m.admin_connectors_assertion_modes_label()}</Label>
+              <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+            </div>
+            {renderError()}
+            <div className="pt-2">
+              <Button type="submit" size="sm" disabled={updateMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">{m.admin_connectors_save()}</Button>
+            </div>
+          </form>
+        )}
 
-          {!connector && (
-            <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
-          )}
-        </CardContent>
-      </Card>
+        {!connector && (
+          <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
+        )}
+      </div>
     </div>
   )
 }
