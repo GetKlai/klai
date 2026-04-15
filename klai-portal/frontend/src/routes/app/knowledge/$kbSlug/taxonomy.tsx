@@ -203,7 +203,7 @@ function CoverageWidget({
                 {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
               </span>
               {node.gap_count > 0 && (
-                <span className="text-xs text-gray-600">
+                <span className="text-xs text-gray-400">
                   {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
                 </span>
               )}
@@ -283,7 +283,7 @@ function TagCloud({
               'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 transition-colors',
               isActive
                 ? 'border-gray-900 bg-gray-900 text-white'
-                : 'border-gray-200 bg-gray-100 text-gray-900 hover:border-gray-900/50',
+                : 'border-gray-200 bg-gray-50 text-gray-900 hover:border-gray-900/50',
             ].join(' ')}
             style={{ fontSize: `${fontSize}rem` }}
           >
@@ -880,8 +880,8 @@ function TaxonomyTab() {
       )}
 
       {suggestState === 'applying' && (
-        <div className="rounded-lg border border-gray-200 bg-gray-100 p-4 flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-gray-700" />
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
           <p className="text-sm text-gray-900">{m.knowledge_taxonomy_suggest_applying()}</p>
         </div>
       )}

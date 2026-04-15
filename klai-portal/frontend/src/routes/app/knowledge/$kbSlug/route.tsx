@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Shield, BarChart2, Zap, List, Settings, ArrowLeft
+  Shield, BarChart2, Settings, ArrowLeft
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
@@ -85,7 +85,6 @@ function KbLayout() {
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
   const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
-  const isPersonal = kb?.owner_type === 'user'
 
   if (isLoading) {
     return (
@@ -93,8 +92,8 @@ function KbLayout() {
         className="mx-auto max-w-3xl px-6 py-10"
         style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
       >
-        <div className="h-8 w-48 rounded-lg bg-gray-100 animate-pulse mb-4" />
-        <div className="h-4 w-96 rounded-lg bg-gray-100 animate-pulse" />
+        <div className="h-8 w-48 rounded-lg bg-gray-50 animate-pulse mb-4" />
+        <div className="h-4 w-96 rounded-lg bg-gray-50 animate-pulse" />
       </div>
     )
   }
@@ -110,7 +109,7 @@ function KbLayout() {
     )
   }
 
-  // Tabs: Overzicht (bronnen + bestanden), Toegang, Instellingen (owner only)
+  // 3 tabs: Overzicht (bronnen + bestanden + docs), Toegang, Instellingen (owner only)
   const tabEntries: { id: KBTab; to: string; icon: React.ElementType; label: string; badge?: number }[] = [
     { id: 'overview', to: '/app/knowledge/$kbSlug/overview', icon: BarChart2, label: 'Overzicht' },
     { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: 'Toegang' },
@@ -132,7 +131,7 @@ function KbLayout() {
         </div>
         <Link
           to="/app/knowledge"
-          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-900 transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Terug

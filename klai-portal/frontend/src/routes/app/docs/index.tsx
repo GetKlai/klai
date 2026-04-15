@@ -49,7 +49,7 @@ function DocsPage() {
     <div className="p-6 space-y-6 max-w-5xl">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+          <h1 className="text-2xl font-semibold text-gray-900">
             {m.docs_kbs_title()}
           </h1>
           <p className="text-sm text-gray-400">
@@ -66,7 +66,7 @@ function DocsPage() {
         </div>
       ) : kbs.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <BookMarked className="h-10 w-10 text-gray-400 opacity-40" />
+          <BookMarked className="h-10 w-10 text-gray-300" />
           <div className="space-y-1">
             <p className="font-medium text-gray-900">
               {m.docs_kb_empty_heading()}

@@ -293,7 +293,7 @@ function NotebookDetailPage() {
       {/* Header */}
       <div>
         <div className="flex items-start justify-between mb-1">
-          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+          <h1 className="text-2xl font-semibold text-gray-900">
             {notebook?.name ?? m.app_focus_loading()}
           </h1>
           <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
@@ -361,7 +361,7 @@ function NotebookDetailPage() {
             </div>
             <button
               onClick={dismissOnboarding}
-              className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-900 transition-colors"
+              className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-900 transition-colors"
               aria-label={m.app_focus_onboarding_dismiss()}
             >
               <X className="h-4 w-4" />

@@ -178,7 +178,7 @@ function AddConnectorPage() {
     <div className="p-6 max-w-xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-gray-900">
+        <h1 className="text-2xl font-semibold text-gray-900">
           {m.admin_connectors_add_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
@@ -517,7 +517,7 @@ function AddConnectorPage() {
                       </div>
                     )}
                     {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                      <div className="rounded-lg border border-gray-300 bg-gray-50 p-3 space-y-2">
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
                         <div className="flex gap-2 items-center text-xs text-gray-700">
                           <Sparkles className="h-3.5 w-3.5 shrink-0" />
                           <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>

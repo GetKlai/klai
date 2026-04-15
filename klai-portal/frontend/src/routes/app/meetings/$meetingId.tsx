@@ -274,7 +274,7 @@ function MeetingDetailPage() {
         </Card>
       ) : (
         <div className="flex items-start justify-between">
-          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+          <h1 className="text-2xl font-semibold text-gray-900">
             {meeting.meeting_title ?? meeting.meeting_url}
           </h1>
           <StatusBadge status={meeting.status} />

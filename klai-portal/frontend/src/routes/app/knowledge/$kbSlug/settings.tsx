@@ -103,7 +103,7 @@ function SettingsTab() {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
             />
           </div>
 
@@ -114,7 +114,7 @@ function SettingsTab() {
               type="text"
               value={kb.slug}
               disabled
-              className="bg-gray-100 text-gray-400 rounded-lg border-gray-200"
+              className="bg-gray-50 text-gray-400 rounded-lg border-gray-200"
             />
             <p className="text-xs text-gray-400">
               {m.knowledge_settings_slug_hint()}

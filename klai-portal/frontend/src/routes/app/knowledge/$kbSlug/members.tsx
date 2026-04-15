@@ -265,7 +265,7 @@ function MembersTab() {
             type="checkbox"
             checked={allowContribute}
             onChange={handleContributeToggle}
-            className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-900 focus:ring-gray-300"
+            className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-900 focus:ring-gray-400"
           />
           <div>
             <span className="text-sm font-medium text-gray-900">
