@@ -18,7 +18,7 @@ export function useIntegrations() {
   return useQuery({
     queryKey: ['admin-integrations'],
     queryFn: async () =>
-      apiFetch<{ integrations: IntegrationResponse[] }>('/api/integrations', token),
+      apiFetch<IntegrationResponse[]>('/api/integrations', token),
     enabled: !!token,
   })
 }

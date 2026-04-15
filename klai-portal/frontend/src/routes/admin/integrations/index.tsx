@@ -44,7 +44,7 @@ function IntegrationsPage() {
   const navigate = useNavigate()
   const { data, isLoading, error, refetch } = useIntegrations()
 
-  const integrations = data?.integrations ?? []
+  const integrations = Array.isArray(data) ? data : []
 
   const columns = [
     columnHelper.accessor('name', {
