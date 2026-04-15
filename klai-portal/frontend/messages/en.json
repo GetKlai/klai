@@ -1117,6 +1117,9 @@
   "admin_connectors_webcrawler_ai_selector_use": "Use this selector",
   "admin_connectors_webcrawler_try_ai": "Let AI find the content selector",
   "admin_connectors_webcrawler_preview_loading_ai": "Analyzing page structure with AI...",
+  "admin_connectors_webcrawler_cookies_label": "Authentication cookies",
+  "admin_connectors_webcrawler_cookies_placeholder": "session=eyJhb...; XSRF-TOKEN=eyJp...",
+  "admin_connectors_webcrawler_cookies_help": "For sites behind a login. Copy the Cookie header from DevTools Network tab.",
 
   "admin_connectors_coming_soon": "Coming soon",
   "admin_connectors_create_submit": "Add connector",

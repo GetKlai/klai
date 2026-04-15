@@ -27,7 +27,7 @@ SENSITIVE_FIELDS: dict[str, list[str]] = {
     "notion": ["access_token"],
     "google_drive": ["oauth_token", "refresh_token", "access_token"],
     "ms_docs": ["oauth_token", "refresh_token", "access_token"],
-    "web_crawler": ["auth_headers"],
+    "web_crawler": ["auth_headers", "cookies"],
 }
 
 

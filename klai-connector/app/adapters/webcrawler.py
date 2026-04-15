@@ -1,6 +1,7 @@
 """Web crawler connector adapter using the Crawl4AI REST API."""
 
 import asyncio
+import json
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -39,6 +40,17 @@ document.querySelectorAll(
 ).forEach(s => s.click());
 await new Promise(r => setTimeout(r, 300));
 """
+
+
+def _build_cookie_hooks(cookies: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build Crawl4AI hooks payload that injects cookies via on_page_context_created."""
+    cookies_json = json.dumps(cookies)
+    hook_code = f"""
+async def hook(page, context, **kwargs):
+    await context.add_cookies({cookies_json})
+    return page
+"""
+    return {"code": {"on_page_context_created": hook_code}, "timeout": 30}
 
 
 class CrawlJobPendingError(Exception):
@@ -94,7 +106,12 @@ class WebCrawlerAdapter(BaseAdapter):
             return []
 
     async def _crawl_pages_sync(
-        self, urls: list[str], crawl_params: dict[str, Any], cache: dict[str, str], base_url: str,
+        self,
+        urls: list[str],
+        crawl_params: dict[str, Any],
+        cache: dict[str, str],
+        base_url: str,
+        cookies: list[dict[str, Any]] | None = None,
     ) -> list[DocumentRef]:
         """Crawl a list of URLs via the synchronous /crawl endpoint and return DocumentRefs.
 
@@ -112,6 +129,8 @@ class WebCrawlerAdapter(BaseAdapter):
                 "browser_config": {"type": "BrowserConfig", "params": {"text_mode": True}},
                 "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
             }
+            if cookies:
+                payload["hooks"] = _build_cookie_hooks(cookies)
             try:
                 response = await self._http_client.post(
                     f"{self._api_url}/crawl",
@@ -332,11 +351,12 @@ class WebCrawlerAdapter(BaseAdapter):
         config: dict[str, Any] = connector.config
         base_url: str = config.get("base_url", "")
         max_pages: int = min(config.get("max_pages", 200), 2000)
+        cookies: list[dict[str, Any]] | None = config.get("cookies") or None
         page_params = self._build_page_crawl_params(config)
 
         # Phase 1: crawl base_url (gets homepage; BFS may find more on non-JS sites).
-        logger.info("Starting crawl of %s (max_pages=%d)", base_url, max_pages)
-        refs = await self._crawl_pages_sync([base_url], page_params, cache, base_url=base_url)
+        logger.info("Starting crawl of %s (max_pages=%d, authenticated=%s)", base_url, max_pages, bool(cookies))
+        refs = await self._crawl_pages_sync([base_url], page_params, cache, base_url=base_url, cookies=cookies)
 
         # Phase 2: supplement with sitemap URLs not yet crawled.
         if len(refs) < max_pages:
@@ -350,7 +370,7 @@ class WebCrawlerAdapter(BaseAdapter):
                     len(supplement_urls), len(refs),
                 )
                 supplement_refs = await self._crawl_pages_sync(
-                    supplement_urls, page_params, cache, base_url=base_url,
+                    supplement_urls, page_params, cache, base_url=base_url, cookies=cookies,
                 )
                 refs.extend(supplement_refs)
 

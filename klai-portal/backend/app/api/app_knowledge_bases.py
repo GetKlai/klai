@@ -1149,6 +1149,7 @@ class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
     try_ai: bool = False
+    cookies: list[dict] | None = None
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -1176,6 +1177,7 @@ async def crawl_preview(
         content_selector=body.content_selector,
         org_id=str(org.id),
         try_ai=body.try_ai,
+        cookies=body.cookies,
     )
     return CrawlPreviewResponse(
         url=result.get("url", body.url),

@@ -34,6 +34,7 @@ interface WebCrawlerConfig {
   path_prefix: string
   max_pages: string
   content_selector: string
+  cookies: string
 }
 
 interface NotionConfig {
@@ -88,7 +89,7 @@ function AddConnectorPage() {
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
   })
   const [webcrawlerConfig, setWebcrawlerConfig] = useState<WebCrawlerConfig>({
-    base_url: '', path_prefix: '', max_pages: '200', content_selector: '',
+    base_url: '', path_prefix: '', max_pages: '200', content_selector: '', cookies: '',
   })
   const [notionConfig, setNotionConfig] = useState<NotionConfig>({
     access_token: '', database_ids: '', max_pages: '500',
@@ -103,6 +104,21 @@ function AddConnectorPage() {
     fit_markdown: string; word_count: number; warnings: string[]
     content_selector: string | null; selector_source: string | null
   } | null>(null)
+
+  function parseCookies(): unknown[] | undefined {
+    const raw = webcrawlerConfig.cookies.trim()
+    if (!raw) return undefined
+    // JSON array format: [{"name": "...", "value": "..."}]
+    if (raw.startsWith('[')) {
+      try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : undefined } catch { return undefined }
+    }
+    // Raw cookie header format: name1=value1; name2=value2
+    const domain = (() => { try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' } })()
+    return raw.split(';').map(pair => {
+      const [name, ...rest] = pair.trim().split('=')
+      return { name: name.trim(), value: rest.join('='), domain, path: '/' }
+    }).filter(c => c.name && c.value)
+  }
 
   function goBack() {
     void navigate({ to: '/app/knowledge/$kbSlug', params: { kbSlug }, search: { tab: 'connectors' } })
@@ -124,6 +140,9 @@ function AddConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
+        if (webcrawlerConfig.cookies.trim()) {
+          try { config.cookies = JSON.parse(webcrawlerConfig.cookies) } catch { /* validated on input */ }
+        }
       }
       if (selectedType === 'notion') {
         config.access_token = notionConfig.access_token
@@ -154,13 +173,13 @@ function AddConnectorPage() {
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   const previewMutation = useMutation({
-    mutationFn: async ({ url, content_selector, try_ai }: { url: string; content_selector?: string; try_ai?: boolean }) => {
+    mutationFn: async ({ url, content_selector, try_ai, cookies }: { url: string; content_selector?: string; try_ai?: boolean; cookies?: unknown[] }) => {
       return apiFetch<{
         fit_markdown: string; word_count: number; warnings: string[]; url: string
         content_selector: string | null; selector_source: string | null
       }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, token, {
         method: 'POST',
-        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false }),
+        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies || null }),
       })
     },
     onSuccess: (data) => {
@@ -431,13 +450,24 @@ function AddConnectorPage() {
                       {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                     </button>
                     {showAdvancedSelector && (
-                      <div className="pl-4 border-l-2 border-[var(--color-border)]">
+                      <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-3">
                         <Input
                           id="wc-preview-selector"
                           placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
                           value={webcrawlerConfig.content_selector}
                           onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
                         />
+                        <div className="space-y-1.5">
+                          <Label htmlFor="wc-cookies">{m.admin_connectors_webcrawler_cookies_label()}</Label>
+                          <textarea
+                            id="wc-cookies"
+                            className="flex min-h-[60px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                            placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
+                            value={webcrawlerConfig.cookies}
+                            onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))}
+                          />
+                          <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_cookies_help()}</p>
+                        </div>
                       </div>
                     )}
                     {!webcrawlerConfig.content_selector && (
@@ -448,7 +478,7 @@ function AddConnectorPage() {
                         onClick={() => {
                           setPreviewResult(null)
                           setPreviewError(null)
-                          previewMutation.mutate({ url: wcPreviewUrl, try_ai: true })
+                          previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
                         }}
                       >
                         <Sparkles className="h-3 w-3" />
@@ -464,7 +494,7 @@ function AddConnectorPage() {
                       onClick={() => {
                         setPreviewResult(null)
                         setPreviewError(null)
-                        previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector })
+                        previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
                       }}
                     >
                       {previewMutation.isPending
@@ -507,7 +537,7 @@ function AddConnectorPage() {
                             onClick={() => {
                               setPreviewResult(null)
                               setPreviewError(null)
-                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true })
+                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: parseCookies() })
                             }}
                           >
                             <Sparkles className="h-3 w-3" />

@@ -74,6 +74,7 @@ class CrawlPreviewRequest(BaseModel):
     content_selector: str | None = None
     org_id: str = ""  # optional for backwards compatibility; required for domain selector lookup
     try_ai: bool = False  # explicit opt-in for AI selector detection
+    cookies: list[dict] | None = None  # browser cookies for authenticated crawling
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -89,12 +90,16 @@ class CrawlPreviewResponse(BaseModel):
 _MIN_WORD_COUNT = 100
 
 
-async def _run_crawl(url: str, selector: str | None) -> tuple[str, int, str]:
+async def _run_crawl(
+    url: str,
+    selector: str | None,
+    cookies: list[dict] | None = None,
+) -> tuple[str, int, str]:
     """Crawl a single page via the Crawl4AI REST API.
 
     Returns (fit_markdown, word_count, raw_html).
     """
-    result = await crawl_page(url, selector)
+    result = await crawl_page(url, selector, cookies=cookies)
     fit_md = result.fit_markdown or result.raw_markdown
     return fit_md, result.word_count, result.html
 
@@ -115,7 +120,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 effective_selector, selector_source = stored
 
         # Initial crawl
-        fit_md, word_count, _ = await _run_crawl(body.url, effective_selector)
+        fit_md, word_count, _ = await _run_crawl(body.url, effective_selector, cookies=body.cookies)
         warnings: list[str] = _detect_nav_contamination(fit_md)
 
         # AI-assisted selector detection — only when explicitly requested via try_ai flag
@@ -126,7 +131,9 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 ai_selector = await detect_selector_via_llm(dom_summary)
                 if ai_selector:
                     try:
-                        recrawl_md, recrawl_wc, _ = await _run_crawl(body.url, ai_selector)
+                        recrawl_md, recrawl_wc, _ = await _run_crawl(
+                            body.url, ai_selector, cookies=body.cookies,
+                        )
                         if recrawl_wc >= _MIN_WORD_COUNT:
                             await upsert_domain_selector(
                                 extract_domain(body.url), body.org_id, ai_selector, "ai"
