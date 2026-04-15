@@ -2,15 +2,14 @@ import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Globe, Lock, Shield, BarChart2, Zap, List, FolderTree, Settings, SlidersHorizontal, ArrowLeft
+  Shield, BarChart2, Zap, List, Settings, ArrowLeft
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
-import type { KBTab, KnowledgeBase, KBStats, MembersResponse, TaxonomyProposal } from './-kb-types'
+import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
 
 const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings', 'advanced'])
 
@@ -88,19 +87,6 @@ function KbLayout() {
   const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
   const isPersonal = kb?.owner_type === 'user'
 
-  const pendingProposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
-    queryKey: ['taxonomy-proposals-count', kbSlug],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, token)
-      } catch {
-        return { proposals: [] }
-      }
-    },
-    enabled: !!token && !!kb,
-  })
-  const pendingCount = pendingProposalsQuery.data?.proposals.length ?? 0
-
   if (isLoading) {
     return (
       <div
@@ -125,14 +111,14 @@ function KbLayout() {
   }
 
   // Determine active tab from URL path
+  // Simplified tabs: end users see Overzicht, Bestanden (personal only), Bronnen, Toegang
+  // Admin/owner tabs: Instellingen, Geavanceerd, Taxonomie
   const tabEntries: { id: KBTab; to: string; icon: React.ElementType; label: string; badge?: number }[] = [
-    { id: 'overview', to: '/app/knowledge/$kbSlug/overview', icon: BarChart2, label: m.knowledge_detail_tab_overview() },
-    ...(isPersonal ? [{ id: 'items' as KBTab, to: '/app/knowledge/$kbSlug/items', icon: List, label: m.knowledge_detail_tab_items() }] : []),
-    { id: 'connectors', to: '/app/knowledge/$kbSlug/connectors', icon: Zap, label: m.knowledge_detail_tab_connectors() },
-    { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: m.knowledge_detail_tab_members() },
-    { id: 'taxonomy', to: '/app/knowledge/$kbSlug/taxonomy', icon: FolderTree, label: m.knowledge_detail_tab_taxonomy(), badge: pendingCount > 0 ? pendingCount : undefined },
-    ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: m.knowledge_detail_tab_settings() }] : []),
-    ...(isOwner ? [{ id: 'advanced' as KBTab, to: '/app/knowledge/$kbSlug/advanced', icon: SlidersHorizontal, label: m.knowledge_detail_tab_advanced() }] : []),
+    { id: 'overview', to: '/app/knowledge/$kbSlug/overview', icon: BarChart2, label: 'Overzicht' },
+    ...(isPersonal ? [{ id: 'items' as KBTab, to: '/app/knowledge/$kbSlug/items', icon: List, label: 'Bestanden' }] : []),
+    { id: 'connectors', to: '/app/knowledge/$kbSlug/connectors', icon: Zap, label: 'Bronnen' },
+    { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: 'Toegang' },
+    ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: 'Instellingen' }] : []),
   ]
 
   return (
@@ -141,30 +127,20 @@ function KbLayout() {
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
       {/* Header */}
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
-          <h1 className="text-xl font-semibold text-gray-900">{kb.name}</h1>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">{kb.name}</h1>
           {kb.description && (
             <p className="text-sm text-gray-400 mt-1">{kb.description}</p>
           )}
-          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-400">
-            {kb.visibility === 'public' ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-            <span>{kb.visibility === 'public' ? m.knowledge_page_kb_visibility_public() : m.knowledge_page_kb_visibility_internal()}</span>
-          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            asChild
-            className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
-          >
-            <Link to="/app/knowledge">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              {m.knowledge_page_intro_heading()}
-            </Link>
-          </Button>
-        </div>
+        <Link
+          to="/app/knowledge"
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Terug
+        </Link>
       </div>
 
       {/* Tab bar */}
