@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Shield, MessageSquare, BookOpen, Lock } from 'lucide-react'
-import * as m from '@/paraglide/messages'
+import { Sliders, MessageSquare, BookOpen, Shield } from 'lucide-react'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
 export const Route = createFileRoute('/app/rules/')({
@@ -13,15 +12,13 @@ export const Route = createFileRoute('/app/rules/')({
 
 function RulesPage() {
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold text-[var(--color-foreground)]">
-            {m.rules_page_title()}
-          </h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Regels</h1>
           <p className="mt-1 text-sm text-gray-400">
-            {m.rules_page_subtitle()}
+            Stel instructies in die de AI altijd volgt
           </p>
         </div>
         <button
@@ -29,21 +26,23 @@ function RulesPage() {
           disabled
           className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-300 cursor-not-allowed"
         >
-          {m.rules_new_button()}
+          Nieuwe regel
         </button>
       </div>
 
       {/* Empty state */}
-      <div className="flex flex-col items-center gap-5 rounded-lg border border-gray-200 py-20 px-6">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-50">
-          <Shield size={28} strokeWidth={1.5} className="text-gray-300" />
+      <div className="flex flex-col items-center gap-5 rounded-lg border border-gray-200 py-16 px-6">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
+          <Sliders size={24} strokeWidth={1.5} className="text-gray-300" />
         </div>
-        <div className="text-center space-y-2 max-w-sm">
-          <p className="text-lg font-medium text-[var(--color-foreground)]">
-            {m.rules_empty_title()}
+        <div className="text-center space-y-2 max-w-md">
+          <p className="text-base font-medium text-gray-900">
+            Nog geen regels
           </p>
           <p className="text-sm text-gray-400 leading-relaxed">
-            {m.rules_empty_description()}
+            Maak regels aan die bepalen hoe de AI reageert.
+            Bijvoorbeeld: "Antwoord altijd in het Nederlands" of
+            "Gebruik een formele toon". Regels gelden voor al je gesprekken.
           </p>
         </div>
         <button
@@ -51,35 +50,35 @@ function RulesPage() {
           disabled
           className="rounded-lg border border-gray-200 px-5 py-2.5 text-sm text-gray-300 cursor-not-allowed"
         >
-          {m.rules_empty_cta()}
+          Binnenkort beschikbaar
         </button>
       </div>
 
-      {/* How rules are enforced */}
-      <div className="mt-10">
+      {/* Explanation */}
+      <div className="mt-8">
         <h2 className="mb-4 text-xs font-medium text-gray-400 uppercase tracking-wider">
-          {m.rules_enforced_title()}
+          Hoe werken regels?
         </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="flex flex-col gap-2.5 rounded-lg border border-gray-200 p-5">
             <MessageSquare size={20} strokeWidth={1.5} className="text-gray-300" />
-            <p className="text-sm font-medium text-[var(--color-foreground)]">Chat</p>
+            <p className="text-sm font-medium text-gray-900">In je gesprekken</p>
             <p className="text-xs text-gray-400 leading-relaxed">
-              {m.rules_enforced_chat()}
+              Regels worden automatisch toegepast op elk gesprek dat je voert.
             </p>
           </div>
           <div className="flex flex-col gap-2.5 rounded-lg border border-gray-200 p-5">
             <BookOpen size={20} strokeWidth={1.5} className="text-gray-300" />
-            <p className="text-sm font-medium text-[var(--color-foreground)]">Kennis</p>
+            <p className="text-sm font-medium text-gray-900">Per collectie</p>
             <p className="text-xs text-gray-400 leading-relaxed">
-              {m.rules_enforced_knowledge()}
+              Je kunt regels koppelen aan specifieke kenniscollecties.
             </p>
           </div>
           <div className="flex flex-col gap-2.5 rounded-lg border border-gray-200 p-5">
-            <Lock size={20} strokeWidth={1.5} className="text-gray-300" />
-            <p className="text-sm font-medium text-[var(--color-foreground)]">Privacy</p>
+            <Shield size={20} strokeWidth={1.5} className="text-gray-300" />
+            <p className="text-sm font-medium text-gray-900">Altijd veilig</p>
             <p className="text-xs text-gray-400 leading-relaxed">
-              {m.rules_enforced_privacy()}
+              EU AI Act compliance wordt automatisch toegepast.
             </p>
           </div>
         </div>
