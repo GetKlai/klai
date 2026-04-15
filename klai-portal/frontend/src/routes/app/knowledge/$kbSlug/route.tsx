@@ -110,13 +110,9 @@ function KbLayout() {
     )
   }
 
-  // Determine active tab from URL path
-  // Simplified tabs: end users see Overzicht, Bestanden (personal only), Bronnen, Toegang
-  // Admin/owner tabs: Instellingen, Geavanceerd, Taxonomie
+  // Tabs: Overzicht (bronnen + bestanden), Toegang, Instellingen (owner only)
   const tabEntries: { id: KBTab; to: string; icon: React.ElementType; label: string; badge?: number }[] = [
     { id: 'overview', to: '/app/knowledge/$kbSlug/overview', icon: BarChart2, label: 'Overzicht' },
-    ...(isPersonal ? [{ id: 'items' as KBTab, to: '/app/knowledge/$kbSlug/items', icon: List, label: 'Bestanden' }] : []),
-    { id: 'connectors', to: '/app/knowledge/$kbSlug/connectors', icon: Zap, label: 'Bronnen' },
     { id: 'members', to: '/app/knowledge/$kbSlug/members', icon: Shield, label: 'Toegang' },
     ...(isOwner ? [{ id: 'settings' as KBTab, to: '/app/knowledge/$kbSlug/settings', icon: Settings, label: 'Instellingen' }] : []),
   ]
