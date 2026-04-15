@@ -87,6 +87,22 @@ export function useRevokeIntegration(id: string) {
   })
 }
 
+export function useDeleteIntegration() {
+  const auth = useAuth()
+  const token = auth.user?.access_token
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (id: string) =>
+      apiFetch<void>(`/api/integrations/${id}`, token, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-integrations'] })
+    },
+  })
+}
+
 export function useOrgKnowledgeBases() {
   const auth = useAuth()
   const token = auth.user?.access_token
