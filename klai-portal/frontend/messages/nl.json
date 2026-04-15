@@ -1117,6 +1117,9 @@
   "admin_connectors_webcrawler_ai_selector_use": "Gebruik deze selector",
   "admin_connectors_webcrawler_try_ai": "Laat AI de content selector zoeken",
   "admin_connectors_webcrawler_preview_loading_ai": "Paginastructuur analyseren met AI...",
+  "admin_connectors_webcrawler_cookies_label": "Authenticatie cookies",
+  "admin_connectors_webcrawler_cookies_placeholder": "session=eyJhb...; XSRF-TOKEN=eyJp...",
+  "admin_connectors_webcrawler_cookies_help": "Voor sites achter een login. Kopieer de Cookie header uit DevTools Network tab.",
 
   "admin_connectors_coming_soon": "Binnenkort",
   "admin_connectors_create_submit": "Connector toevoegen",
