@@ -264,14 +264,7 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
     enabled: !!token,
   })
 
-  const { data: statsData } = useQuery<{ stats: Record<string, KBStats> }>({
-    queryKey: ['app-knowledge-bases-stats-summary'],
-    queryFn: async () => apiFetch<{ stats: Record<string, KBStats> }>('/api/app/knowledge-bases/stats-summary', token),
-    enabled: !!token,
-  })
-
   const allKbs = kbsData?.knowledge_bases ?? []
-  const stats = statsData?.stats ?? {}
 
   const personalKb = allKbs.find(
     (kb) => kb.slug === `personal-${myUserId}` && kb.owner_type === 'user',
