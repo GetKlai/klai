@@ -217,7 +217,7 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2 pl-4 pr-4 h-[40px]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="flex shrink-0 items-center gap-2 pl-4 pr-4 pt-5 pb-1" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
       <span className="text-sm text-gray-400 whitespace-nowrap">Chat met:</span>
