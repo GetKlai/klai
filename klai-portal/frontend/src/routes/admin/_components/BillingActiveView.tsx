@@ -79,21 +79,21 @@ export function BillingActiveView({ token, status, onCancel }: BillingActiveView
         <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_plan_label()}</p>
+              <p className="text-gray-400">{m.admin_billing_active_plan_label()}</p>
               <p className="font-medium">{getPlanLabel(status.plan)}</p>
             </div>
             <div>
-              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_cycle_label()}</p>
+              <p className="text-gray-400">{m.admin_billing_active_cycle_label()}</p>
               <p className="font-medium">{getCycleLabel(status.billing_cycle)}</p>
             </div>
             <div>
-              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_seats_label()}</p>
+              <p className="text-gray-400">{m.admin_billing_active_seats_label()}</p>
               <p className="font-medium">{status.seats}</p>
             </div>
           </div>
-          <div className="pt-3 border-t border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-            <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <div className="pt-3 border-t border-gray-200">
+            <p className="text-xs text-gray-400">{m.admin_billing_total_excl_vat()}</p>
+            <p className="text-xl font-semibold text-gray-900">
               {totalPrice(status.plan, status.billing_cycle, status.seats)}
             </p>
           </div>
@@ -125,12 +125,12 @@ export function BillingActiveView({ token, status, onCancel }: BillingActiveView
         </div>
       )}
 
-      <div className="border-t border-[var(--color-border)] pt-4">
+      <div className="border-t border-gray-200 pt-4">
         {!cancelConfirm ? (
           <button
             type="button"
             onClick={() => setCancelConfirm(true)}
-            className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+            className="text-sm text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
           >
             {m.admin_billing_cancel_link()}
           </button>

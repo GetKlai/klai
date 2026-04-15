@@ -8,12 +8,12 @@ export function BillingFreeView() {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
-          <CheckCircle size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-gray-100 p-4">
+          <CheckCircle size={24} className="text-gray-700" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_free_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_free_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_free_description()}
           </p>
         </div>
@@ -27,12 +27,12 @@ export function BillingMandateRequestedView() {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
-          <CreditCard size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-gray-100 p-4">
+          <CreditCard size={24} className="text-gray-700" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_mandate_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_mandate_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_mandate_description()}
           </p>
         </div>
@@ -50,8 +50,8 @@ export function BillingPaymentFailedView({ onRetry }: { onRetry: () => void }) {
           <AlertCircle size={24} className="text-[var(--color-destructive)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_payment_failed_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_payment_failed_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_payment_failed_description()}
           </p>
         </div>
@@ -69,12 +69,12 @@ export function BillingCancelledView({ onReactivate }: { onReactivate: () => voi
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-cream)] p-4">
-          <XCircle size={24} className="text-[var(--color-muted-foreground)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-gray-50 p-4">
+          <XCircle size={24} className="text-gray-400" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_cancelled_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_cancelled_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_cancelled_description()}
           </p>
         </div>

@@ -108,7 +108,7 @@ function Field({
       <Label htmlFor={name}>
         {label}
         {!required && (
-          <span className="ml-1 text-xs text-[var(--color-muted-foreground)] font-normal">{m.admin_billing_field_optional()}</span>
+          <span className="ml-1 text-xs text-gray-400 font-normal">{m.admin_billing_field_optional()}</span>
         )}
       </Label>
       <Input
@@ -120,7 +120,7 @@ function Field({
         required={required}
         placeholder={placeholder}
       />
-      {hint && <p className="text-xs text-[var(--color-muted-foreground)]">{hint}</p>}
+      {hint && <p className="text-xs text-gray-400">{hint}</p>}
     </div>
   )
 }
@@ -146,7 +146,7 @@ function BillingPage() {
   if (loadingStatus) {
     return (
       <div className="p-6">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
       </div>
     )
   }
@@ -154,8 +154,8 @@ function BillingPage() {
   return (
     <div className="p-6 space-y-6 max-w-3xl" data-help-id="admin-billing-overview">
       <div className="space-y-1">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">{m.admin_billing_heading()}</h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">{m.admin_billing_heading()}</h1>
+        <p className="text-sm text-gray-400">
           {m.admin_billing_subtitle()}
         </p>
       </div>
@@ -285,13 +285,13 @@ function SetupView({
                 className={[
                   'flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition',
                   form.billing_cycle === cycle
-                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10 text-[var(--color-foreground)]'
-                    : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-rl-accent-dark)]',
+                    ? 'border-gray-900 bg-gray-100 text-gray-900'
+                    : 'border-gray-200 text-gray-400 hover:border-gray-700',
                 ].join(' ')}
               >
                 {getCycleLabel(cycle)}
                 {cycle === 'yearly' && (
-                  <span className="ml-2 text-xs text-[var(--color-rl-accent)]">{m.admin_billing_yearly_discount()}</span>
+                  <span className="ml-2 text-xs text-gray-700">{m.admin_billing_yearly_discount()}</span>
                 )}
               </button>
             ))}
@@ -305,21 +305,21 @@ function SetupView({
                 type="button"
                 onClick={() => set('plan', plan.id)}
                 className={[
-                  'flex flex-col items-start rounded-xl border p-4 text-left transition',
+                  'flex flex-col items-start rounded-lg border p-4 text-left transition',
                   form.plan === plan.id
-                    ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/10'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent-dark)]',
+                    ? 'border-gray-900 bg-gray-100'
+                    : 'border-gray-200 hover:border-gray-700',
                 ].join(' ')}
               >
-                <span className="text-sm font-semibold text-[var(--color-foreground)]">
+                <span className="text-sm font-semibold text-gray-900">
                   {plan.name}
                 </span>
-                <span className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+                <span className="mt-0.5 text-xs text-gray-400">
                   {getPlanDescription(plan.id)}
                 </span>
-                <span className="mt-3 text-xl font-semibold text-[var(--color-foreground)]">
+                <span className="mt-3 text-xl font-semibold text-gray-900">
                   &euro;{form.billing_cycle === 'yearly' ? plan.yearly : plan.monthly}
-                  <span className="text-xs font-normal text-[var(--color-muted-foreground)]">
+                  <span className="text-xs font-normal text-gray-400">
                     {' '}
                     {m.admin_billing_per_user_month()}
                   </span>
@@ -329,11 +329,11 @@ function SetupView({
           </div>
 
           {/* Seats + total */}
-          <div className="flex items-end gap-4 pt-1 border-t border-[var(--color-border)]">
+          <div className="flex items-end gap-4 pt-1 border-t border-gray-200">
             <div className="space-y-1">
               <label
                 htmlFor="seats"
-                className="block text-sm font-medium text-[var(--color-foreground)]"
+                className="block text-sm font-medium text-gray-900"
               >
                 {m.admin_billing_seats_label()}
               </label>
@@ -344,16 +344,16 @@ function SetupView({
                 max={500}
                 value={form.seats}
                 onChange={(e) => set('seats', Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-24 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-24 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
             <div className="ml-auto text-right">
-              <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-              <p className="text-xl font-semibold text-[var(--color-foreground)]">
+              <p className="text-xs text-gray-400">{m.admin_billing_total_excl_vat()}</p>
+              <p className="text-xl font-semibold text-gray-900">
                 {totalPrice(form.plan, form.billing_cycle, form.seats)}
               </p>
               {form.billing_cycle === 'yearly' && (
-                <p className="text-xs text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-gray-400">
                   &euro;{planPrice(form.plan, form.billing_cycle) * form.seats} {m.admin_billing_monthly_equivalent()}
                 </p>
               )}
@@ -443,7 +443,7 @@ function SetupView({
       )}
 
       <div className="flex items-center justify-between gap-4">
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+        <p className="text-xs text-gray-400">
           {m.admin_billing_sepa_note()}
         </p>
         <Button type="submit" disabled={loading} className="shrink-0 gap-2">
@@ -461,12 +461,12 @@ function FreeView() {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
-          <CheckCircle size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-gray-100 p-4">
+          <CheckCircle size={24} className="text-gray-700" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_free_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_free_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_free_description()}
           </p>
         </div>
@@ -482,12 +482,12 @@ function MandateRequestedView() {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-accent)]/10 p-4">
-          <CreditCard size={24} className="text-[var(--color-rl-accent)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-gray-100 p-4">
+          <CreditCard size={24} className="text-gray-700" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_mandate_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_mandate_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_mandate_description()}
           </p>
         </div>
@@ -552,21 +552,21 @@ function ActiveView({
         <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_plan_label()}</p>
+              <p className="text-gray-400">{m.admin_billing_active_plan_label()}</p>
               <p className="font-medium">{getPlanLabel(status.plan)}</p>
             </div>
             <div>
-              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_cycle_label()}</p>
+              <p className="text-gray-400">{m.admin_billing_active_cycle_label()}</p>
               <p className="font-medium">{getCycleLabel(status.billing_cycle)}</p>
             </div>
             <div>
-              <p className="text-[var(--color-muted-foreground)]">{m.admin_billing_active_seats_label()}</p>
+              <p className="text-gray-400">{m.admin_billing_active_seats_label()}</p>
               <p className="font-medium">{status.seats}</p>
             </div>
           </div>
-          <div className="pt-3 border-t border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_billing_total_excl_vat()}</p>
-            <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <div className="pt-3 border-t border-gray-200">
+            <p className="text-xs text-gray-400">{m.admin_billing_total_excl_vat()}</p>
+            <p className="text-xl font-semibold text-gray-900">
               {totalPrice(status.plan, status.billing_cycle, status.seats)}
             </p>
           </div>
@@ -598,12 +598,12 @@ function ActiveView({
         </div>
       )}
 
-      <div className="border-t border-[var(--color-border)] pt-4">
+      <div className="border-t border-gray-200 pt-4">
         {!cancelConfirm ? (
           <button
             type="button"
             onClick={() => setCancelConfirm(true)}
-            className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+            className="text-sm text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
           >
             {m.admin_billing_cancel_link()}
           </button>
@@ -638,8 +638,8 @@ function PaymentFailedView({ onRetry }: { onRetry: () => void }) {
           <AlertCircle size={24} className="text-[var(--color-destructive)]" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_payment_failed_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_payment_failed_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_payment_failed_description()}
           </p>
         </div>
@@ -659,12 +659,12 @@ function CancelledView({ onReactivate }: { onReactivate: () => void }) {
   return (
     <Card>
       <CardContent className="py-12 flex flex-col items-center text-center gap-4">
-        <div className="rounded-full bg-[var(--color-rl-cream)] p-4">
-          <XCircle size={24} className="text-[var(--color-muted-foreground)]" strokeWidth={1.5} />
+        <div className="rounded-full bg-gray-50 p-4">
+          <XCircle size={24} className="text-gray-400" strokeWidth={1.5} />
         </div>
         <div className="space-y-2">
-          <p className="font-semibold text-[var(--color-foreground)]">{m.admin_billing_cancelled_title()}</p>
-          <p className="text-sm text-[var(--color-muted-foreground)] max-w-sm">
+          <p className="font-semibold text-gray-900">{m.admin_billing_cancelled_title()}</p>
+          <p className="text-sm text-gray-400 max-w-sm">
             {m.admin_billing_cancelled_description()}
           </p>
         </div>

@@ -106,10 +106,10 @@ export function PasskeySetup({ token, onSuccess, onBack }: PasskeySetupProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.setup_mfa_passkey_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.setup_mfa_passkey_body()}
         </p>
       </div>
@@ -138,7 +138,7 @@ export function PasskeySetup({ token, onSuccess, onBack }: PasskeySetupProps) {
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+        className="block text-xs text-gray-700 hover:underline"
       >
         {m.setup_mfa_back()}
       </button>

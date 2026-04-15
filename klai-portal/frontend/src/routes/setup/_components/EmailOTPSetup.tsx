@@ -77,10 +77,10 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       {phase === 'send' ? (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_email_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.setup_mfa_email_body({ email })}
             </p>
           </div>
@@ -92,17 +92,17 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_email_code_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.setup_mfa_email_code_body()}
             </p>
           </div>
 
           <form onSubmit={handleVerify} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="email-otp-code" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="email-otp-code" className="block text-sm font-medium text-gray-900">
                 {m.setup_mfa_email_field_code()}
               </label>
               <input
@@ -116,7 +116,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
@@ -140,12 +140,12 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
                   type="button"
                   onClick={handleResend}
                   disabled={sending}
-                  className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+                  className="text-xs text-gray-700 hover:underline"
                 >
                   {m.setup_mfa_email_resend()}
                 </button>
               ) : (
-                <span className="text-xs text-[var(--color-muted-foreground)]">
+                <span className="text-xs text-gray-400">
                   {m.setup_mfa_email_resend()} ({Math.ceil((resendAt - now) / 1000)}s)
                 </span>
               )}
@@ -157,7 +157,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+        className="block text-xs text-gray-700 hover:underline"
       >
         {m.setup_mfa_back()}
       </button>

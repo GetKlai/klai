@@ -85,8 +85,8 @@ function LoginPage() {
   // Still checking for existing SSO session — show a spinner
   if (checkingSSO) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
       </div>
     )
   }
@@ -200,17 +200,17 @@ function LoginPage() {
         /* TOTP challenge step */
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.totp_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.totp_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleTotpSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="totp-code" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="totp-code" className="block text-sm font-medium text-gray-900">
                 {m.totp_field_code()}
               </label>
               <input
@@ -224,7 +224,7 @@ function LoginPage() {
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)] tracking-widest text-center text-base font-mono"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400 tracking-widest text-center text-base font-mono"
               />
             </div>
 
@@ -238,10 +238,10 @@ function LoginPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-center text-xs text-gray-400">
             <button
               onClick={() => { setTotpStep(false); setTotpCode(''); setError(null) }}
-              className="text-[var(--color-rl-accent-dark)] hover:underline"
+              className="text-gray-700 hover:underline"
             >
               {m.totp_back()}
             </button>
@@ -251,17 +251,17 @@ function LoginPage() {
         /* Password login step */
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.login_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.login_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="email" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-900">
                 {m.login_field_email()}
               </label>
               <input
@@ -272,12 +272,12 @@ function LoginPage() {
                 required
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
             <div className="space-y-1">
-              <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-900">
                 {m.login_field_password()}
               </label>
               <input
@@ -287,7 +287,7 @@ function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
@@ -301,19 +301,19 @@ function LoginPage() {
             </Button>
           </form>
 
-          <div className="flex items-center justify-between text-center text-xs text-[var(--color-muted-foreground)]">
+          <div className="flex items-center justify-between text-center text-xs text-gray-400">
             <Link
               to="/$locale/password/forgot"
               params={{ locale }}
               search={email ? { email } : {}}
-              className="text-[var(--color-rl-accent-dark)] hover:underline"
+              className="text-gray-700 hover:underline"
             >
               {m.login_forgot_password()}
             </Link>
             <Link
               to="/$locale/signup"
               params={{ locale }}
-              className="text-[var(--color-rl-accent-dark)] hover:underline"
+              className="text-gray-700 hover:underline"
             >
               {m.login_no_account()}
             </Link>
