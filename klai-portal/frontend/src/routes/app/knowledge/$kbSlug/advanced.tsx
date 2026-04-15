@@ -49,13 +49,14 @@ function AdvancedTab() {
         <h2 className="text-sm font-semibold text-[var(--color-destructive)]">
           {m.knowledge_settings_danger_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.knowledge_settings_danger_description()}
         </p>
         <div className="pt-2">
           <Button
             variant="destructive"
             size="sm"
+            className="rounded-lg"
             onClick={() => setDeleteModalOpen(true)}
           >
             {m.knowledge_settings_delete_button()}

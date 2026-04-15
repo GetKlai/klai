@@ -70,7 +70,7 @@ function SettingsTab() {
     <div className="space-y-6">
       {/* General settings */}
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-sm font-semibold text-gray-900">
           {m.knowledge_settings_general_heading()}
         </h2>
         <form
@@ -85,37 +85,38 @@ function SettingsTab() {
           className="space-y-4"
         >
           <div className="space-y-1.5">
-            <Label htmlFor="kb-name">{m.knowledge_settings_name_label()}</Label>
+            <Label htmlFor="kb-name" className="text-gray-900">{m.knowledge_settings_name_label()}</Label>
             <Input
               id="kb-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              className="rounded-lg border-gray-200"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="kb-description">{m.knowledge_settings_description_label()}</Label>
+            <Label htmlFor="kb-description" className="text-gray-900">{m.knowledge_settings_description_label()}</Label>
             <textarea
               id="kb-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="kb-slug">{m.knowledge_settings_slug_label()}</Label>
+            <Label htmlFor="kb-slug" className="text-gray-900">{m.knowledge_settings_slug_label()}</Label>
             <Input
               id="kb-slug"
               type="text"
               value={kb.slug}
               disabled
-              className="bg-[var(--color-secondary)] text-[var(--color-muted-foreground)]"
+              className="bg-gray-100 text-gray-400 rounded-lg border-gray-200"
             />
-            <p className="text-xs text-[var(--color-muted-foreground)]">
+            <p className="text-xs text-gray-400">
               {m.knowledge_settings_slug_hint()}
             </p>
           </div>
@@ -127,7 +128,12 @@ function SettingsTab() {
           )}
 
           <div className="flex items-center gap-3 pt-2">
-            <Button type="submit" size="sm" disabled={!canSave || updateMutation.isPending}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!canSave || updateMutation.isPending}
+              className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+            >
               {updateMutation.isPending ? m.knowledge_settings_saving() : m.knowledge_settings_save()}
             </Button>
             {showSaved && (
