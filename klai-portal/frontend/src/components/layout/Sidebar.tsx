@@ -1,12 +1,12 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { useQuery } from '@tanstack/react-query'
+// Knowledge collections removed — config now lives in chat config bar
 import { LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserCircle, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/locale'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
-import { apiFetch } from '@/lib/apiFetch'
+// apiFetch removed — sidebar is pure navigation now
 import { STORAGE_KEYS } from '@/lib/storage'
 import * as m from '@/paraglide/messages'
 
@@ -25,26 +25,14 @@ interface SidebarProps {
 
 // ---------------------------------------------------------------------------
 // Knowledge types
-// ---------------------------------------------------------------------------
-
-interface KBItem {
-  id: number
-  name: string
-  slug: string
-  owner_type: string
-  owner_user_id: string | null
-}
 
 export function Sidebar({ navItems }: SidebarProps) {
   const auth = useAuth()
   const location = useLocation()
   const { locale, switchLocale } = useLocale()
   const { user } = useCurrentUser()
-  const token = auth.user?.access_token
-
   const inAdmin = location.pathname.startsWith('/admin')
   const isAdmin = inAdmin || user?.isAdmin === true
-  const hasKnowledge = user?.isAdmin || user?.products.includes('knowledge')
 
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === 'true'
@@ -129,11 +117,6 @@ export function Sidebar({ navItems }: SidebarProps) {
           ))}
         </ul>
       </nav>
-
-      {/* Knowledge collections — always visible */}
-      {!collapsed && hasKnowledge && !inAdmin && (
-        <KnowledgeCollections token={token} myUserId={auth.user?.profile?.sub} />
-      )}
 
       {/* Spacer */}
       <div className="flex-1" />
@@ -250,53 +233,4 @@ export function Sidebar({ navItems }: SidebarProps) {
 
 // ---------------------------------------------------------------------------
 // Knowledge collections in sidebar
-// ---------------------------------------------------------------------------
-
-function KnowledgeCollections({ token, myUserId }: { token: string | undefined; myUserId: string | undefined }) {
-  const { data: kbsData } = useQuery<{ knowledge_bases: KBItem[] }>({
-    queryKey: ['app-knowledge-bases'],
-    queryFn: async () => apiFetch<{ knowledge_bases: KBItem[] }>('/api/app/knowledge-bases', token),
-    enabled: !!token,
-  })
-
-  const allKbs = kbsData?.knowledge_bases ?? []
-
-  const personalKb = allKbs.find(
-    (kb) => kb.slug === `personal-${myUserId}` && kb.owner_type === 'user',
-  )
-  const otherKbs = allKbs.filter((kb) => kb.slug !== personalKb?.slug)
-
-  if (allKbs.length === 0) return null
-
-  return (
-    <div className="mt-4 px-3">
-      <ul className="space-y-0.5">
-        {personalKb && (
-          <li>
-            <Link
-              to="/app/knowledge/$kbSlug/overview"
-              params={{ kbSlug: personalKb.slug }}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/50 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
-            >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
-              <span className="truncate">{m.chat_kb_bar_personal_label()}</span>
-            </Link>
-          </li>
-        )}
-        {otherKbs.map((kb) => (
-          <li key={kb.slug}>
-            <Link
-              to="/app/knowledge/$kbSlug/overview"
-              params={{ kbSlug: kb.slug }}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/50 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
-            >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
-              <span className="truncate">{kb.name}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
 

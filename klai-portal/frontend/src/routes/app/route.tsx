@@ -30,7 +30,7 @@ function AppLayout() {
   const allNavItems: NavItem[] = [
     { to: '/app', label: 'Chat', icon: MessageSquare, end: true },
     { to: '/app/knowledge', label: 'Kennis', icon: BookOpen },
-    { to: '/app/rules', label: 'Regels', icon: Sliders },
+    { to: '/app/rules', label: 'Templates', icon: Sliders },
   ]
 
   const isAdmin = user?.isAdmin === true
