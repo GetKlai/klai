@@ -86,7 +86,7 @@ function MethodCard({
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-gray-900">{title}</span>
             {recommended && (
-              <span className="rounded-full bg-gray-900 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
+              <span className="rounded-lg bg-gray-900 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
                 {m.setup_mfa_badge_recommended()}
               </span>
             )}
@@ -587,7 +587,7 @@ function SetupMFAPage() {
       {/* ── Done state ── */}
       {step === 'done' && (
         <div className="space-y-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-900">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-900">
             <ShieldCheck size={22} className="text-white" />
           </div>
           <p className="text-xl font-semibold text-gray-900">

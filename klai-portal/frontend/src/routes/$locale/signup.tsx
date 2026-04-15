@@ -75,7 +75,7 @@ function SignupPage() {
     return (
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="space-y-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-900">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-900">
             <CheckCircle size={22} className="text-white" strokeWidth={1.5} />
           </div>
           <p className="text-xl font-semibold text-gray-900">

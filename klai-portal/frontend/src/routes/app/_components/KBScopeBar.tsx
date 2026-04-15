@@ -133,7 +133,7 @@ export function KBScopeBar() {
         onClick={() => isOn ? setOpen((v) => !v) : toggleRetrieval()}
         disabled={isPending}
         className={[
-          'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium shadow-md border transition-all',
+          'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium shadow-md border transition-all',
           isPending ? 'opacity-50' : '',
           isOn
             ? 'bg-white border-gray-200 text-gray-900 hover:shadow-lg'
