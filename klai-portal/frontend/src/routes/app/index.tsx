@@ -217,32 +217,35 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
+    <div className="flex shrink-0 items-center gap-3 border-b border-gray-100 px-5 py-2.5" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
-      <span className="text-xs font-medium text-[var(--color-foreground)]/60">Chat met:</span>
+      <span className="text-[13px] text-gray-400">Chat met:</span>
 
       <div className="relative z-50">
         <button type="button" onClick={() => setCollOpen((v) => !v)}
-          className="flex items-center gap-1 text-xs font-semibold text-[var(--color-foreground)] hover:text-[var(--color-rl-accent-dark)] transition-colors">
+          className="flex items-center gap-1.5 text-[13px] font-semibold text-gray-900 hover:text-gray-600 transition-colors">
           {activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}
-          <ChevronDown className="h-3 w-3 opacity-40" />
+          <ChevronDown className="h-3.5 w-3.5 opacity-40" />
         </button>
 
         {collOpen && (
-          <div className="absolute left-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-1.5 shadow-lg">
+          <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
+            <div className="px-3 py-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Collecties</span>
+            </div>
             {/* Personal */}
             <button type="button" onClick={() => mutation.mutate({ kb_personal_enabled: !pref.kb_personal_enabled })}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left">
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'}`} />
-              <span className={pref.kb_personal_enabled ? 'text-[var(--color-foreground)]' : 'text-[var(--color-muted-foreground)]'}>Persoonlijk</span>
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-green-500' : 'bg-gray-200'}`} />
+              <span className={pref.kb_personal_enabled ? 'text-gray-900 font-medium' : 'text-gray-400'}>Persoonlijk</span>
             </button>
             {/* Org KBs */}
             {allKbs.map((kb) => (
               <button key={kb.slug} type="button" onClick={() => toggleSlug(kb.slug)}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left">
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${currentSlugs.includes(kb.slug) ? 'bg-[var(--color-success)]' : 'bg-[var(--color-muted-foreground)]/30'}`} />
-                <span className={currentSlugs.includes(kb.slug) ? 'text-[var(--color-foreground)]' : 'text-[var(--color-muted-foreground)]'}>{kb.name}</span>
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-gray-50 transition-colors text-left">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${currentSlugs.includes(kb.slug) ? 'bg-green-500' : 'bg-gray-200'}`} />
+                <span className={currentSlugs.includes(kb.slug) ? 'text-gray-900 font-medium' : 'text-gray-400'}>{kb.name}</span>
               </button>
             ))}
           </div>
