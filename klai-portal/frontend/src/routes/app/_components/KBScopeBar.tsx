@@ -136,8 +136,8 @@ export function KBScopeBar() {
           'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium shadow-md border transition-all',
           isPending ? 'opacity-50' : '',
           isOn
-            ? 'bg-white border-[var(--color-border)] text-[var(--color-foreground)] hover:shadow-lg'
-            : 'bg-white/80 border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+            ? 'bg-white border-gray-200 text-gray-900 hover:shadow-lg'
+            : 'bg-white/80 border-gray-200 text-gray-400 hover:text-gray-900',
         ].join(' ')}
       >
         <Brain className="h-3.5 w-3.5" />
@@ -148,8 +148,8 @@ export function KBScopeBar() {
 
       {/* Dropdown — opens upward, shows each collection by name */}
       {open && isOn && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 z-50 mb-2 w-60 rounded-xl border border-[var(--color-border)] bg-white py-1.5 shadow-xl">
-          <div className="px-3 py-1.5 text-[10px] font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 z-50 mb-2 w-60 rounded-lg border border-gray-200 bg-white py-1.5 shadow-xl">
+          <div className="px-3 py-1.5 text-[10px] font-medium text-gray-400 uppercase tracking-wider">
             Collecties
           </div>
 
@@ -158,10 +158,10 @@ export function KBScopeBar() {
             type="button"
             onClick={togglePersonal}
             disabled={isPending}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-gray-50 transition-colors text-left"
           >
             <Checkbox checked={pref.kb_personal_enabled} />
-            <span className="text-[var(--color-foreground)]">{m.chat_kb_bar_personal_label()}</span>
+            <span className="text-gray-900">{m.chat_kb_bar_personal_label()}</span>
           </button>
 
           {/* Each org KB by name */}
@@ -171,33 +171,33 @@ export function KBScopeBar() {
               type="button"
               onClick={() => toggleSlug(kb.slug)}
               disabled={isPending}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-gray-50 transition-colors text-left"
             >
               <Checkbox checked={currentSlugs.includes(kb.slug)} />
-              <span className="truncate text-[var(--color-foreground)]">{kb.name}</span>
+              <span className="truncate text-gray-900">{kb.name}</span>
             </button>
           ))}
 
-          <div className="my-1 border-t border-[var(--color-border)]" />
+          <div className="my-1 border-t border-gray-200" />
 
           {/* Narrow mode */}
           <button
             type="button"
             onClick={toggleNarrow}
             disabled={isPending}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-[var(--color-secondary)] transition-colors text-left"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-gray-50 transition-colors text-left"
           >
             <Checkbox checked={pref.kb_narrow} />
-            <span className="text-[var(--color-muted-foreground)]">{m.chat_kb_bar_narrow_label()}</span>
+            <span className="text-gray-400">{m.chat_kb_bar_narrow_label()}</span>
           </button>
 
-          <div className="my-1 border-t border-[var(--color-border)]" />
+          <div className="my-1 border-t border-gray-200" />
 
           <button
             type="button"
             onClick={() => { toggleRetrieval(); setOpen(false) }}
             disabled={isPending}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] transition-colors text-left"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-gray-400 hover:bg-gray-50 transition-colors text-left"
           >
             {m.chat_kb_bar_tooltip_off()}
           </button>
@@ -212,8 +212,8 @@ function Checkbox({ checked }: { checked: boolean }) {
     <span className={[
       'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors',
       checked
-        ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]'
-        : 'border-[var(--color-border)]',
+        ? 'border-gray-900 bg-gray-900'
+        : 'border-gray-200',
     ].join(' ')}>
       {checked && (
         <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">

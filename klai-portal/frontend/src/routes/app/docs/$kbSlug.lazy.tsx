@@ -473,7 +473,7 @@ function KBEditorPage() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+          <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
             {m.docs_editor_select_page()}
           </div>
         )}
@@ -489,10 +489,10 @@ function KBEditorPage() {
             role="dialog"
             aria-modal="true"
             aria-label={m.docs_wikilink_connect()}
-            className="w-[360px] max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-xl"
+            className="w-[360px] max-w-[90vw] rounded-xl border border-gray-200 bg-white p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
+            <p className="mb-2 text-xs text-gray-400">
               {m.docs_wikilink_connect()}
             </p>
             <Input
@@ -514,7 +514,7 @@ function KBEditorPage() {
                 .map((p) => (
                   <button
                     key={p.slug}
-                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-[var(--color-secondary)] text-[var(--color-foreground)]"
+                    className="w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 hover:bg-gray-50 text-gray-900"
                     onClick={() => {
                       editorRef.current?.insertWikilink(p.id ?? p.slug, p.title, p.icon)
                       setShowWikilinkPicker(false)
@@ -526,7 +526,7 @@ function KBEditorPage() {
                   </button>
                 ))}
               {pageIndex.filter((p) => p.slug !== selectedPath).length === 0 && (
-                <p className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">{m.docs_wikilink_no_results()}</p>
+                <p className="px-3 py-2 text-xs text-gray-400">{m.docs_wikilink_no_results()}</p>
               )}
             </div>
           </div>
