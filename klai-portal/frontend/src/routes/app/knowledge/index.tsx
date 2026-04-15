@@ -103,8 +103,8 @@ function KnowledgePage() {
             {m.knowledge_page_title()}
           </h1>
           {!isLoading && totalItems > 0 && (
-            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
-              {totalItems} items in {allKbs.length} collecties
+            <p className="mt-1 text-sm text-gray-400">
+              {totalItems} bestanden
             </p>
           )}
         </div>
@@ -233,10 +233,7 @@ function CollectionRow({
       </div>
       <div className="flex items-center gap-4">
         {stats && stats.items > 0 && (
-          <span className="text-xs text-gray-400 tabular-nums">{stats.items} items</span>
-        )}
-        {stats && stats.connectors > 0 && (
-          <span className="text-xs text-gray-400 tabular-nums">{stats.connectors} bronnen</span>
+          <span className="text-xs text-gray-400 tabular-nums">{stats.items} bestanden</span>
         )}
         <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-400 transition-colors" />
       </div>

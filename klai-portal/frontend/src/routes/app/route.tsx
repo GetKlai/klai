@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, BookOpen, Shield } from 'lucide-react'
+import { MessageSquare, BookOpen } from 'lucide-react'
 import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
@@ -27,11 +27,9 @@ function AppLayout() {
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()
 
-  // Three items. That's the whole app.
   const allNavItems: NavItem[] = [
-    { to: '/app', label: m.sidebar_chat(), icon: MessageSquare, end: true },
-    { to: '/app/knowledge', label: m.sidebar_knowledge(), icon: BookOpen },
-    { to: '/app/rules', label: m.sidebar_rules(), icon: Shield },
+    { to: '/app', label: 'Chat', icon: MessageSquare, end: true },
+    { to: '/app/knowledge', label: 'Kennis', icon: BookOpen },
   ]
 
   const isAdmin = user?.isAdmin === true
