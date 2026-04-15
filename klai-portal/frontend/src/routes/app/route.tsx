@@ -5,7 +5,7 @@ import { MessageSquare, BookOpen } from 'lucide-react'
 import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
-import * as m from '@/paraglide/messages'
+// i18n messages used by child components via Sidebar
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 const PRODUCT_ROUTES: Record<string, string[]> = {
