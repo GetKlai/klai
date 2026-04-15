@@ -99,13 +99,13 @@ async def list_knowledge_bases(
 
     kb_ids = list(auth.kb_access.keys())
 
+    # Set tenant + raw SQL — partner auth doesn't call set_tenant (chicken-and-egg)
+    await db.execute(text("SELECT set_config('app.current_org_id', :oid, false)"), {"oid": str(auth.org_id)})
     result = await db.execute(
-        select(PortalKnowledgeBase).where(
-            PortalKnowledgeBase.id.in_(kb_ids),
-            PortalKnowledgeBase.org_id == auth.org_id,
-        )
+        text("SELECT id, name, slug FROM portal_knowledge_bases WHERE id = ANY(:ids) AND org_id = :oid"),
+        {"ids": kb_ids, "oid": auth.org_id},
     )
-    kbs = result.scalars().all()
+    kbs = result.fetchall()
 
     return [
         {

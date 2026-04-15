@@ -13,14 +13,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 import structlog
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.services.partner_keys import verify_partner_key
@@ -47,11 +46,23 @@ class PartnerAuthContext:
     rate_limit_rpm: int
 
 
-async def _update_last_used(key_id: str, db: AsyncSession) -> None:
-    """Update last_used_at timestamp (fire-and-forget)."""
+async def _update_last_used(key_id: str, org_id: int) -> None:
+    """Update last_used_at timestamp (fire-and-forget, independent session).
+
+    Uses raw SQL with explicit set_config because this runs as an asyncio.create_task
+    on a fresh session — no tenant context from the request is available.
+    """
     try:
-        await db.execute(update(PartnerAPIKey).where(PartnerAPIKey.id == key_id).values(last_used_at=datetime.now(UTC)))
-        await db.commit()
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("SELECT set_config('app.current_org_id', :oid, false)"),
+                {"oid": str(org_id)},
+            )
+            await db.execute(
+                text("UPDATE partner_api_keys SET last_used_at = now() WHERE id = :id"),
+                {"id": key_id},
+            )
+            await db.commit()
     except Exception:
         logger.exception("Failed to update last_used_at", partner_key_id=key_id)
 
@@ -118,7 +129,7 @@ async def get_partner_key(
             )
 
     # Step 8: Schedule last_used_at update (non-blocking)
-    task = asyncio.create_task(_update_last_used(key_row.id, db))
+    task = asyncio.create_task(_update_last_used(key_row.id, key_row.org_id))
     _pending.add(task)
     task.add_done_callback(_pending.discard)
 

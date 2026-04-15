@@ -102,8 +102,22 @@ def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> IntegrationRes
     )
 
 
+async def _ensure_tenant(db: AsyncSession, org_id: int) -> None:
+    """Set RLS tenant on the current connection.
+
+    Must be called before every query block because the async connection pool
+    may hand out a different connection than the one set_tenant() used in
+    _get_caller_org(). See: RLS + async SQLAlchemy pitfall in CodeIndex memory.
+    """
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :oid, false)"),
+        {"oid": str(org_id)},
+    )
+
+
 async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSession) -> PartnerAPIKey:
     """Fetch integration scoped to org, raise 404 if not found."""
+    await _ensure_tenant(db, org_id)
     result = await db.execute(
         select(PartnerAPIKey).where(
             PartnerAPIKey.id == integration_id,
@@ -276,6 +290,7 @@ async def list_integrations(
     _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
+    await _ensure_tenant(db, org.id)
     result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == org.id))
     keys = result.scalars().all()
 
@@ -417,6 +432,7 @@ async def update_integration(
 
     # If we didn't update kb_access, count the existing ones
     if kb_access_count is None:
+        await _ensure_tenant(db, org.id)
         count_result = await db.execute(
             select(func.count())
             .select_from(PartnerApiKeyKbAccess)
@@ -476,6 +492,7 @@ async def revoke_integration(
     )
 
     # Count KB access for response
+    await _ensure_tenant(db, org.id)
     count_result = await db.execute(
         select(func.count())
         .select_from(PartnerApiKeyKbAccess)

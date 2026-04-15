@@ -147,13 +147,17 @@ class TestCreateIntegration:
 
         mock_db.execute = AsyncMock(
             side_effect=[
-                # 1: KB validation raw SQL (fetchall)
+                # 1: _validate_kb_ids → set_config (ensure tenant)
+                MagicMock(),
+                # 2: _validate_kb_ids → raw SQL fetchall
                 _mock_fetchall_result([mock_kb_row]),
-                # 2: INSERT partner_api_keys
+                # 3: set_config before INSERT
                 MagicMock(),
-                # 3: INSERT partner_api_key_kb_access
+                # 4: INSERT partner_api_keys
                 MagicMock(),
-                # 4: SELECT created_at after commit
+                # 5: INSERT partner_api_key_kb_access
+                MagicMock(),
+                # 6: SELECT created_at after commit
                 _mock_scalar_value("2026-04-14T12:00:00+00:00"),
             ]
         )
@@ -184,8 +188,13 @@ class TestCreateIntegration:
         """REQ-6.2: KB not in org -> 400."""
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
-        # Mock: no KBs found for org (kb_id=999 doesn't belong) — raw SQL fetchall
-        mock_db.execute = AsyncMock(return_value=_mock_fetchall_result([]))
+        # Mock: set_config + no KBs found for org (kb_id=999 doesn't belong)
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),  # set_config
+                _mock_fetchall_result([]),  # KB validation
+            ]
+        )
 
         body = CreateIntegrationRequest(
             name="Test Partner",
@@ -208,7 +217,12 @@ class TestCreateIntegration:
 
         mock_kb_row = MagicMock()
         mock_kb_row.id = 1
-        mock_db.execute = AsyncMock(return_value=_mock_fetchall_result([mock_kb_row]))
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),  # set_config
+                _mock_fetchall_result([mock_kb_row]),  # KB validation
+            ]
+        )
 
         body = CreateIntegrationRequest(
             name="Test Partner",
@@ -233,14 +247,12 @@ class TestCreateIntegration:
         mock_kb_row.slug = "test-kb"
         mock_db.execute = AsyncMock(
             side_effect=[
-                # 1: KB validation (raw SQL fetchall)
-                _mock_fetchall_result([mock_kb_row]),
-                # 2: INSERT partner_api_keys
-                MagicMock(),
-                # 3: INSERT partner_api_key_kb_access
-                MagicMock(),
-                # 4: SELECT created_at
-                _mock_scalar_value("2026-04-14T12:00:00+00:00"),
+                MagicMock(),  # set_config (validate)
+                _mock_fetchall_result([mock_kb_row]),  # KB validation
+                MagicMock(),  # set_config (insert)
+                MagicMock(),  # INSERT key
+                MagicMock(),  # INSERT kb_access
+                _mock_scalar_value("2026-04-14T12:00:00+00:00"),  # SELECT created_at
             ]
         )
 
@@ -308,10 +320,9 @@ class TestListIntegrations:
 
         mock_db.execute = AsyncMock(
             side_effect=[
-                # First: list keys
-                _mock_scalars_result([key_row]),
-                # Second: KB access entries
-                _mock_scalars_result([kb_access_row]),
+                MagicMock(),  # _ensure_tenant
+                _mock_scalars_result([key_row]),  # list keys
+                _mock_scalars_result([kb_access_row]),  # KB access entries
             ]
         )
 
@@ -364,12 +375,10 @@ class TestGetIntegrationDetail:
 
         mock_db.execute = AsyncMock(
             side_effect=[
-                # Key lookup
-                _mock_scalar_result(key_row),
-                # KB access entries
-                _mock_scalars_result([kb_access_entry]),
-                # KB details lookup
-                _mock_scalars_result([kb_model]),
+                MagicMock(),  # _ensure_tenant
+                _mock_scalar_result(key_row),  # Key lookup
+                _mock_scalars_result([kb_access_entry]),  # KB access entries
+                _mock_scalars_result([kb_model]),  # KB details lookup
             ]
         )
 
@@ -421,7 +430,15 @@ class TestUpdateIntegration:
         key_row.created_at = "2026-01-01T00:00:00Z"
         key_row.created_by = "admin-user-123"
 
-        mock_db.execute = AsyncMock(return_value=_mock_scalar_result(key_row))
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),  # _ensure_tenant (get_integration_or_404)
+                _mock_scalar_result(key_row),  # Key lookup
+                # No kb_access update → count query:
+                MagicMock(),  # _ensure_tenant (count)
+                _mock_scalar_value(1),  # count result
+            ]
+        )
 
         body = UpdateIntegrationRequest(name="New Name")
 
@@ -460,14 +477,12 @@ class TestUpdateIntegration:
 
         mock_db.execute = AsyncMock(
             side_effect=[
-                # Key lookup
-                _mock_scalar_result(key_row),
-                # KB validation (raw SQL fetchall)
-                _mock_fetchall_result([mock_kb_row]),
-                # DELETE old kb_access
-                MagicMock(),
-                # INSERT new kb_access
-                MagicMock(),
+                MagicMock(),  # _ensure_tenant (get_integration_or_404)
+                _mock_scalar_result(key_row),  # Key lookup
+                MagicMock(),  # _ensure_tenant (validate_kb_ids)
+                _mock_fetchall_result([mock_kb_row]),  # KB validation
+                MagicMock(),  # DELETE old kb_access
+                MagicMock(),  # INSERT new kb_access
             ]
         )
 
@@ -492,7 +507,7 @@ class TestUpdateIntegration:
         key_row.org_id = 42
         key_row.active = False  # revoked
 
-        mock_db.execute = AsyncMock(return_value=_mock_scalar_result(key_row))
+        mock_db.execute = AsyncMock(side_effect=[MagicMock(), _mock_scalar_result(key_row)])
 
         # The SPEC says no setting active=true on revoked key
         # UpdateIntegrationRequest should not even support active field,
@@ -531,7 +546,14 @@ class TestRevokeIntegration:
         key_row.created_at = "2026-01-01T00:00:00Z"
         key_row.created_by = "admin-user-123"
 
-        mock_db.execute = AsyncMock(return_value=_mock_scalar_result(key_row))
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),  # _ensure_tenant (key lookup)
+                _mock_scalar_result(key_row),  # key lookup
+                MagicMock(),  # _ensure_tenant (count)
+                _mock_scalar_value(1),  # count
+            ]
+        )
 
         with (
             patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
@@ -553,7 +575,7 @@ class TestRevokeIntegration:
         key_row.org_id = 42
         key_row.active = False  # already revoked
 
-        mock_db.execute = AsyncMock(return_value=_mock_scalar_result(key_row))
+        mock_db.execute = AsyncMock(side_effect=[MagicMock(), _mock_scalar_result(key_row)])
 
         with patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)):
             with pytest.raises(HTTPException) as exc_info:
@@ -578,7 +600,14 @@ class TestRevokeIntegration:
         key_row.created_at = "2026-01-01T00:00:00Z"
         key_row.created_by = "admin-user-123"
 
-        mock_db.execute = AsyncMock(return_value=_mock_scalar_result(key_row))
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),  # _ensure_tenant (key lookup)
+                _mock_scalar_result(key_row),  # key lookup
+                MagicMock(),  # _ensure_tenant (count)
+                _mock_scalar_value(1),  # count
+            ]
+        )
 
         with (
             patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
