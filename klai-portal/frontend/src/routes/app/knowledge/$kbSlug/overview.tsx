@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { FileText, Zap, Plus, Globe, ExternalLink } from 'lucide-react'
+import { FileText, Zap, Plus, Globe, ExternalLink, Upload, File } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { apiFetch } from '@/lib/apiFetch'
 import { SyncStatusBadge } from './-kb-helpers'
-import type { KnowledgeBase, KBStats, ConnectorSummary } from './-kb-types'
+import type { KnowledgeBase, KBStats, ConnectorSummary, PersonalItemsResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/overview')({
   component: OverviewTab,
@@ -42,10 +42,18 @@ function OverviewTab() {
     enabled: !!token && !!kb,
   })
 
+  // Personal KB: fetch actual files
+  const { data: filesData } = useQuery<PersonalItemsResponse>({
+    queryKey: ['personal-knowledge', kbSlug],
+    queryFn: async () => apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items', token),
+    enabled: !!token && kb?.owner_type === 'user',
+  })
+
   if (!kb) return null
 
   const items = stats?.volume ?? 0
   const sourceList = connectors ?? []
+  const files = filesData?.items ?? []
 
   return (
     <div className="space-y-8">
@@ -112,30 +120,61 @@ function OverviewTab() {
         )}
       </div>
 
-      {/* Bestanden — link to items tab for personal KB */}
-      {kb.owner_type === 'user' && items > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Bestanden</h2>
-            <Link
-              to="/app/knowledge/$kbSlug/items"
-              params={{ kbSlug }}
-              className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              Alles bekijken
-            </Link>
+      {/* Bestanden — actual file list */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+            Bestanden {items > 0 && <span className="text-gray-400 normal-case font-normal">({items})</span>}
+          </h2>
+          <div className="flex items-center gap-2">
+            {kb.owner_type === 'user' && files.length > 0 && (
+              <Link
+                to="/app/knowledge/$kbSlug/items"
+                params={{ kbSlug }}
+                className="text-xs font-medium text-gray-400 hover:text-gray-900 transition-colors"
+              >
+                Beheer
+              </Link>
+            )}
           </div>
+        </div>
+
+        {files.length > 0 ? (
+          <div className="space-y-1">
+            {files.slice(0, 10).map((f) => (
+              <div key={f.id} className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5">
+                <File className="h-4 w-4 text-gray-400 shrink-0" />
+                <span className="text-sm text-gray-900 truncate">{f.path}</span>
+              </div>
+            ))}
+            {files.length > 10 && (
+              <Link
+                to="/app/knowledge/$kbSlug/items"
+                params={{ kbSlug }}
+                className="block text-center text-xs text-gray-400 hover:text-gray-900 py-2 transition-colors"
+              >
+                + {files.length - 10} meer bestanden
+              </Link>
+            )}
+          </div>
+        ) : items > 0 ? (
           <div className="rounded-lg border border-gray-200 px-4 py-3">
             <div className="flex items-center gap-3">
               <FileText className="h-5 w-5 text-gray-400" />
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">{items} bestanden</p>
-                <p className="text-xs text-gray-400">Geindexeerd en doorzoekbaar in chat</p>
+              <div>
+                <p className="text-sm font-medium text-gray-900">{items} bestanden geindexeerd</p>
+                <p className="text-xs text-gray-400">Via verbonden bronnen</p>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="rounded-lg border border-dashed border-gray-200 py-8 text-center">
+            <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">Nog geen bestanden</p>
+            <p className="text-xs text-gray-400 mt-0.5">Voeg een bron toe of upload bestanden</p>
+          </div>
+        )}
+      </div>
 
       {/* Documenten — block editor link */}
       {kb.docs_enabled && kb.gitea_repo_slug && (
