@@ -1,14 +1,11 @@
-"""Admin integration management endpoints.
+"""Admin integration management endpoints (SPEC-API-001 REQ-6).
 
-SPEC-API-001 REQ-6.1 through REQ-6.7:
-- CRUD for partner API keys ("integrations") scoped to caller's org
-- Auth: Zitadel OIDC session with admin role check
-- Product events for create, update, revoke actions
+CRUD for partner API keys ("integrations") scoped to caller's org.
+Auth: Zitadel OIDC session with admin/owner role check.
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Literal
 
@@ -16,7 +13,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _get_caller_org, _require_admin
@@ -86,7 +83,6 @@ class UpdateIntegrationRequest(BaseModel):
 
 
 def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> IntegrationResponse:
-    """Map a PartnerAPIKey row to IntegrationResponse."""
     return IntegrationResponse(
         id=key.id,
         name=key.name,
@@ -102,22 +98,7 @@ def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> IntegrationRes
     )
 
 
-async def _ensure_tenant(db: AsyncSession, org_id: int) -> None:
-    """Set RLS tenant on the current connection.
-
-    Must be called before every query block because the async connection pool
-    may hand out a different connection than the one set_tenant() used in
-    _get_caller_org(). See: RLS + async SQLAlchemy pitfall in CodeIndex memory.
-    """
-    await db.execute(
-        text("SELECT set_config('app.current_org_id', :oid, false)"),
-        {"oid": str(org_id)},
-    )
-
-
 async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSession) -> PartnerAPIKey:
-    """Fetch integration scoped to org, raise 404 if not found."""
-    await _ensure_tenant(db, org_id)
     result = await db.execute(
         select(PartnerAPIKey).where(
             PartnerAPIKey.id == integration_id,
@@ -126,45 +107,42 @@ async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSes
     )
     key = result.scalar_one_or_none()
     if key is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Integration not found",
-        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Integration not found")
     return key
 
 
-async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[dict]:
-    """Validate that all kb_ids belong to the org. Returns matching KB dicts.
-
-    Explicitly sets tenant context before querying because the connection
-    from the pool may not have app.current_org_id set yet (async session
-    can checkout a different connection than set_tenant used).
-    """
+async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[PortalKnowledgeBase]:
+    """Validate that all kb_ids belong to the caller's org."""
     if not kb_ids:
         return []
-    # Ensure tenant is set on THIS connection right before the query
-    await db.execute(
-        text("SELECT set_config('app.current_org_id', :org_id, false)"),
-        {"org_id": str(org_id)},
-    )
     result = await db.execute(
-        text("SELECT id, name, slug FROM portal_knowledge_bases WHERE id = ANY(:kb_ids) AND org_id = :org_id"),
-        {"kb_ids": kb_ids, "org_id": org_id},
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.id.in_(kb_ids),
+            PortalKnowledgeBase.org_id == org_id,
+        )
     )
-    found_rows = result.fetchall()
-    found_ids = {row.id for row in found_rows}
+    found_kbs = result.scalars().all()
+    found_ids = {kb.id for kb in found_kbs}
     missing = set(kb_ids) - found_ids
     if missing:
-        logger.warning("KB IDs not found", missing=sorted(missing), org_id=org_id)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status.HTTP_400_BAD_REQUEST,
             detail=f"Knowledge base IDs not found in your organisation: {sorted(missing)}",
         )
-    return [{"id": row.id, "name": row.name, "slug": row.slug} for row in found_rows]
+    return list(found_kbs)
+
+
+async def _count_kb_access(key_id: str, db: AsyncSession) -> int:
+    result = await db.execute(
+        select(func.count())
+        .select_from(PartnerApiKeyKbAccess)
+        .where(PartnerApiKeyKbAccess.partner_api_key_id == key_id)
+    )
+    return result.scalar() or 0
 
 
 # ---------------------------------------------------------------------------
-# TASK-012: POST /api/integrations
+# POST /api/integrations
 # ---------------------------------------------------------------------------
 
 
@@ -184,100 +162,68 @@ async def create_integration(
 
     # Validate: knowledge_append requires at least one read_write KB
     if body.permissions.get("knowledge_append"):
-        has_rw = any(entry.access_level == "read_write" for entry in body.kb_access)
-        if not has_rw:
+        if not any(e.access_level == "read_write" for e in body.kb_access):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status.HTTP_400_BAD_REQUEST,
                 detail="knowledge_append permission requires at least one KB with read_write access",
             )
 
     # Generate key
     plaintext_key, key_hash = generate_partner_key()
-    key_prefix = plaintext_key[:12]
-
-    # Ensure tenant is set for RLS INSERT policy
     key_id = str(uuid.uuid4())
-    await db.execute(
-        text("SELECT set_config('app.current_org_id', :org_id, false)"),
-        {"org_id": str(org.id)},
-    )
-    await db.execute(
-        text(
-            "INSERT INTO partner_api_keys "
-            "(id, org_id, name, description, key_prefix, key_hash, permissions, "
-            "rate_limit_rpm, active, created_by, created_at) "
-            "VALUES (:id, :org_id, :name, :description, :key_prefix, :key_hash, "
-            "CAST(:permissions AS jsonb), :rate_limit_rpm, true, :created_by, now())"
-        ),
-        {
-            "id": key_id,
-            "org_id": org.id,
-            "name": body.name,
-            "description": body.description,
-            "key_prefix": key_prefix,
-            "key_hash": key_hash,
-            "permissions": json.dumps(body.permissions),
-            "rate_limit_rpm": body.rate_limit_rpm,
-            "created_by": caller_user_id,
-        },
-    )
 
-    # Create KB access rows
+    # Create key + KB access rows via ORM
+    key_row = PartnerAPIKey(
+        id=key_id,
+        org_id=org.id,
+        name=body.name,
+        description=body.description,
+        key_prefix=plaintext_key[:12],
+        key_hash=key_hash,
+        permissions=body.permissions,
+        rate_limit_rpm=body.rate_limit_rpm,
+        created_by=caller_user_id,
+    )
+    db.add(key_row)
+
     for entry in body.kb_access:
-        await db.execute(
-            text(
-                "INSERT INTO partner_api_key_kb_access "
-                "(partner_api_key_id, kb_id, access_level) "
-                "VALUES (:key_id, :kb_id, :access_level)"
-            ),
-            {
-                "key_id": key_id,
-                "kb_id": entry.kb_id,
-                "access_level": entry.access_level,
-            },
+        db.add(
+            PartnerApiKeyKbAccess(
+                partner_api_key_id=key_id,
+                kb_id=entry.kb_id,
+                access_level=entry.access_level,
+            )
         )
 
     await db.commit()
+    await db.refresh(key_row)  # load server-generated created_at
 
-    # Emit product event (REQ-6.7)
     emit_event(
         "integration.created",
         org_id=org.id,
         user_id=caller_user_id,
         properties={"integration_id": key_id, "name": body.name},
     )
-
-    logger.info(
-        "Integration created",
-        integration_id=key_id,
-        org_id=org.id,
-    )
-
-    # Fetch the created row for the response timestamp
-    created_row = await db.execute(
-        text("SELECT created_at FROM partner_api_keys WHERE id = :id"),
-        {"id": key_id},
-    )
-    created_at = str(created_row.scalar())
+    logger.info("Integration created", integration_id=key_id, org_id=org.id)
 
     return CreateIntegrationResponse(
-        id=key_id,
-        name=body.name,
-        description=body.description,
-        key_prefix=key_prefix,
-        permissions=body.permissions,
+        id=key_row.id,
+        name=key_row.name,
+        description=key_row.description,
+        key_prefix=key_row.key_prefix,
+        permissions=key_row.permissions,
         active=True,
         kb_access_count=len(body.kb_access),
-        rate_limit_rpm=body.rate_limit_rpm,
+        rate_limit_rpm=key_row.rate_limit_rpm,
         last_used_at=None,
-        created_at=created_at,
-        created_by=caller_user_id,
+        created_at=str(key_row.created_at),
+        created_by=key_row.created_by,
         api_key=plaintext_key,
     )
 
 
 # ---------------------------------------------------------------------------
-# TASK-012: GET /api/integrations
+# GET /api/integrations
 # ---------------------------------------------------------------------------
 
 
@@ -290,30 +236,28 @@ async def list_integrations(
     _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    await _ensure_tenant(db, org.id)
     result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == org.id))
     keys = result.scalars().all()
-
     if not keys:
         return []
 
-    # Load KB access counts for all keys in one query
+    # Count KB access per key in one query
     key_ids = [k.id for k in keys]
-    kb_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id.in_(key_ids))
+    count_result = await db.execute(
+        select(
+            PartnerApiKeyKbAccess.partner_api_key_id,
+            func.count().label("cnt"),
+        )
+        .where(PartnerApiKeyKbAccess.partner_api_key_id.in_(key_ids))
+        .group_by(PartnerApiKeyKbAccess.partner_api_key_id)
     )
-    kb_rows = kb_result.scalars().all()
-
-    # Count per key
-    kb_counts: dict[str, int] = {}
-    for row in kb_rows:
-        kb_counts[row.partner_api_key_id] = kb_counts.get(row.partner_api_key_id, 0) + 1
+    kb_counts = {row.partner_api_key_id: row.cnt for row in count_result}
 
     return [_key_to_response(k, kb_counts.get(k.id, 0)) for k in keys]
 
 
 # ---------------------------------------------------------------------------
-# TASK-013: GET /api/integrations/{id}
+# GET /api/integrations/{id}
 # ---------------------------------------------------------------------------
 
 
@@ -329,28 +273,20 @@ async def get_integration_detail(
 
     key = await _get_integration_or_404(integration_id, org.id, db)
 
-    # Load KB access entries
-    kb_access_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
+    # Load KB access with KB names in one query
+    kb_result = await db.execute(
+        select(PartnerApiKeyKbAccess, PortalKnowledgeBase)
+        .join(PortalKnowledgeBase, PartnerApiKeyKbAccess.kb_id == PortalKnowledgeBase.id)
+        .where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
     )
-    kb_access_rows = kb_access_result.scalars().all()
-
-    # Load KB names
-    kb_ids = [row.kb_id for row in kb_access_rows]
-    kb_details: dict[int, PortalKnowledgeBase] = {}
-    if kb_ids:
-        kb_result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.id.in_(kb_ids)))
-        for kb in kb_result.scalars().all():
-            kb_details[kb.id] = kb
-
     kb_access_list = [
         {
-            "kb_id": row.kb_id,
-            "kb_name": kb_details[row.kb_id].name if row.kb_id in kb_details else "Unknown",
-            "kb_slug": kb_details[row.kb_id].slug if row.kb_id in kb_details else "",
-            "access_level": row.access_level,
+            "kb_id": access.kb_id,
+            "kb_name": kb.name,
+            "kb_slug": kb.slug,
+            "access_level": access.access_level,
         }
-        for row in kb_access_rows
+        for access, kb in kb_result
     ]
 
     return IntegrationDetailResponse(
@@ -360,7 +296,7 @@ async def get_integration_detail(
         key_prefix=key.key_prefix,
         permissions=key.permissions,
         active=key.active,
-        kb_access_count=len(kb_access_rows),
+        kb_access_count=len(kb_access_list),
         rate_limit_rpm=key.rate_limit_rpm,
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
@@ -370,7 +306,7 @@ async def get_integration_detail(
 
 
 # ---------------------------------------------------------------------------
-# TASK-013: PATCH /api/integrations/{id}
+# PATCH /api/integrations/{id}
 # ---------------------------------------------------------------------------
 
 
@@ -387,14 +323,10 @@ async def update_integration(
 
     key = await _get_integration_or_404(integration_id, org.id, db)
 
-    # Cannot update a revoked key
     if not key.active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot update a revoked integration",
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Cannot update a revoked integration")
 
-    # Apply partial updates
+    # Apply partial field updates
     if body.name is not None:
         key.name = body.name
     if body.description is not None:
@@ -404,43 +336,25 @@ async def update_integration(
     if body.rate_limit_rpm is not None:
         key.rate_limit_rpm = body.rate_limit_rpm
 
-    kb_access_count: int | None = None
-
-    # Atomic KB access replacement (REQ-6.5)
+    # Atomic KB access replacement
     if body.kb_access is not None:
         kb_ids = [entry.kb_id for entry in body.kb_access]
         await _validate_kb_ids(kb_ids, org.id, db)
 
-        # Delete existing rows — raw SQL to bypass RLS
-        await db.execute(
-            text("DELETE FROM partner_api_key_kb_access WHERE partner_api_key_id = :key_id"),
-            {"key_id": key.id},
-        )
-
-        # Insert new rows — raw SQL to bypass RLS
+        await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
         for entry in body.kb_access:
-            await db.execute(
-                text(
-                    "INSERT INTO partner_api_key_kb_access (partner_api_key_id, kb_id, access_level) "
-                    "VALUES (:key_id, :kb_id, :access_level)"
-                ),
-                {"key_id": key.id, "kb_id": entry.kb_id, "access_level": entry.access_level},
+            db.add(
+                PartnerApiKeyKbAccess(
+                    partner_api_key_id=key.id,
+                    kb_id=entry.kb_id,
+                    access_level=entry.access_level,
+                )
             )
-        kb_access_count = len(body.kb_access)
 
     await db.commit()
 
-    # If we didn't update kb_access, count the existing ones
-    if kb_access_count is None:
-        await _ensure_tenant(db, org.id)
-        count_result = await db.execute(
-            select(func.count())
-            .select_from(PartnerApiKeyKbAccess)
-            .where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
-        )
-        kb_access_count = count_result.scalar() or 0
+    kb_access_count = len(body.kb_access) if body.kb_access is not None else await _count_kb_access(key.id, db)
 
-    # Emit product event (REQ-6.7)
     emit_event(
         "integration.updated",
         org_id=org.id,
@@ -452,7 +366,7 @@ async def update_integration(
 
 
 # ---------------------------------------------------------------------------
-# TASK-013: POST /api/integrations/{id}/revoke
+# POST /api/integrations/{id}/revoke
 # ---------------------------------------------------------------------------
 
 
@@ -469,38 +383,20 @@ async def revoke_integration(
     key = await _get_integration_or_404(integration_id, org.id, db)
 
     if not key.active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Integration is already revoked",
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Integration is already revoked")
 
     key.active = False
     await db.commit()
 
-    # Emit product event (REQ-6.7)
     emit_event(
         "integration.revoked",
         org_id=org.id,
         user_id=caller_user_id,
         properties={"integration_id": key.id, "name": key.name},
     )
+    logger.info("Integration revoked", integration_id=key.id, org_id=org.id)
 
-    logger.info(
-        "Integration revoked",
-        integration_id=key.id,
-        org_id=org.id,
-    )
-
-    # Count KB access for response
-    await _ensure_tenant(db, org.id)
-    count_result = await db.execute(
-        select(func.count())
-        .select_from(PartnerApiKeyKbAccess)
-        .where(PartnerApiKeyKbAccess.partner_api_key_id == key.id)
-    )
-    kb_access_count = count_result.scalar() or 0
-
-    return _key_to_response(key, kb_access_count)
+    return _key_to_response(key, await _count_kb_access(key.id, db))
 
 
 # ---------------------------------------------------------------------------
@@ -520,14 +416,13 @@ async def delete_integration(
 
     key = await _get_integration_or_404(integration_id, org.id, db)
 
-    await _ensure_tenant(db, org.id)
+    # CASCADE on FK handles kb_access, but explicit for clarity
+    await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
     await db.execute(
-        text("DELETE FROM partner_api_key_kb_access WHERE partner_api_key_id = :kid"),
-        {"kid": key.id},
-    )
-    await db.execute(
-        text("DELETE FROM partner_api_keys WHERE id = :id AND org_id = :oid"),
-        {"id": key.id, "oid": org.id},
+        delete(PartnerAPIKey).where(
+            PartnerAPIKey.id == key.id,
+            PartnerAPIKey.org_id == org.id,
+        )
     )
     await db.commit()
 
@@ -537,5 +432,4 @@ async def delete_integration(
         user_id=caller_user_id,
         properties={"integration_id": key.id, "name": key.name},
     )
-
     logger.info("Integration deleted", integration_id=key.id, org_id=org.id)

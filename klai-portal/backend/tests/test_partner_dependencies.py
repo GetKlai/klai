@@ -149,14 +149,13 @@ async def test_valid_key_returns_auth_context():
     request = _make_request(token="pk_live_" + "a" * 40)
 
     db = AsyncMock()
-    # First call: key lookup
-    # Second call: kb_access lookup
-    # Third call: org lookup
+    # Calls: key lookup, kb_access, org lookup, set_tenant
     db.execute = AsyncMock(
         side_effect=[
             _mock_scalar_one_or_none(fake_key),
             _mock_scalars_all(fake_kb_access),
             _mock_scalar_one_or_none(fake_org),
+            MagicMock(),  # set_tenant
         ]
     )
 
@@ -194,6 +193,7 @@ async def test_rate_limited_returns_429():
             _mock_scalar_one_or_none(fake_key),
             _mock_scalars_all(fake_kb_access),
             _mock_scalar_one_or_none(fake_org),
+            MagicMock(),  # set_tenant
         ]
     )
 
@@ -226,6 +226,7 @@ async def test_last_used_at_update_scheduled():
             _mock_scalar_one_or_none(fake_key),
             _mock_scalars_all(fake_kb_access),
             _mock_scalar_one_or_none(fake_org),
+            MagicMock(),  # set_tenant
         ]
     )
 
