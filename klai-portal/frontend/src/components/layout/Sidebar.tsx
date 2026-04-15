@@ -66,7 +66,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_expand() : m.sidebar_collapse()}
           className={cn(
             'flex items-center justify-center rounded-lg p-1.5 transition-colors',
-            'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/80 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
           )}
         >
           {collapsed
@@ -88,7 +88,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-                    'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
+                    'text-[var(--color-sidebar-foreground)]/80 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                 >
@@ -102,11 +102,11 @@ export function Sidebar({ navItems }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-                    'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
+                    'text-[var(--color-sidebar-foreground)]/80 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                   activeProps={{
-                    className: 'bg-black/5 text-[var(--color-sidebar-foreground)] font-medium',
+                    className: 'bg-black/[0.06] text-[var(--color-sidebar-foreground)] font-semibold',
                   }}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
@@ -129,7 +129,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
               'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-              'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
+              'text-[var(--color-sidebar-foreground)]/80 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
               collapsed ? 'justify-center' : 'gap-3 px-3'
             )}
           >
@@ -201,11 +201,11 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
             'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/80 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
           activeProps={{
-            className: 'bg-black/5 text-[var(--color-sidebar-foreground)] font-medium',
+            className: 'bg-black/[0.06] text-[var(--color-sidebar-foreground)] font-semibold',
           }}
         >
           <UserCircle size={18} strokeWidth={1.5} />
@@ -219,7 +219,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
             'flex w-full items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/80 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
         >
