@@ -4,27 +4,27 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-xs font-normal uppercase tracking-[0.04em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
         default:
-          'bg-[var(--color-rl-accent)] text-[var(--color-foreground)] hover:bg-[var(--color-rl-accent-hover)]',
+          'bg-gray-900 text-white hover:bg-gray-800',
         secondary:
-          'bg-[var(--color-secondary)] text-[var(--color-secondary-foreground)] hover:bg-[var(--color-rl-border)]',
+          'bg-white text-gray-900 border border-gray-300 hover:bg-gray-50',
         ghost:
-          'border border-[var(--color-rl-dark-10)] bg-transparent hover:border-[var(--color-foreground)]',
+          'border border-gray-300 bg-transparent text-gray-700 hover:bg-gray-50',
         outline:
-          'border border-[var(--color-border)] bg-transparent hover:bg-[var(--color-secondary)]',
+          'border border-gray-300 bg-transparent text-gray-700 hover:bg-gray-50',
         destructive:
           'bg-destructive text-white hover:opacity-90',
         link:
-          'text-[var(--color-rl-accent-dark)] underline-offset-4 hover:underline normal-case tracking-normal',
+          'text-gray-700 underline-offset-4 hover:underline',
       },
       size: {
         default: 'h-10 px-5 py-2',
-        sm: 'h-8 px-3',
-        lg: 'h-12 px-8 text-sm',
+        sm: 'h-8 px-4',
+        lg: 'h-12 px-8',
         icon: 'h-10 w-10',
       },
     },

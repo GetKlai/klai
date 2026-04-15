@@ -143,7 +143,7 @@ function AccountPage() {
           <Button
             onClick={() => saveMutation.mutate(selectedLang)}
             disabled={saveMutation.isPending || saved}
-            className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+            className="rounded-full border border-gray-300 text-gray-700 hover:bg-gray-50"
           >
             {saved
               ? m.account_saved()
@@ -169,7 +169,7 @@ function AccountPage() {
           <Button
             onClick={() => sarMutation.mutate()}
             disabled={sarMutation.isPending}
-            className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+            className="rounded-full border border-gray-300 text-gray-700 hover:bg-gray-50"
           >
             {sarMutation.isPending ? m.account_sar_downloading() : m.account_sar_button()}
           </Button>

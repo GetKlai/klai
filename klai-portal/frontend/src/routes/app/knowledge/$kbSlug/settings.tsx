@@ -132,7 +132,7 @@ function SettingsTab() {
               type="submit"
               size="sm"
               disabled={!canSave || updateMutation.isPending}
-              className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+              className="rounded-full border border-gray-300 text-gray-700 hover:bg-gray-50"
             >
               {updateMutation.isPending ? m.knowledge_settings_saving() : m.knowledge_settings_save()}
             </Button>
