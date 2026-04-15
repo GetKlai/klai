@@ -90,7 +90,7 @@ function NewKnowledgeBasePage() {
           type="button"
           variant="ghost"
           size="sm"
-          className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+          className="rounded-full border border-gray-300 text-gray-700 hover:bg-gray-50"
           onClick={() => void navigate({ to: '/app/knowledge' })}
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -187,7 +187,7 @@ function NewKnowledgeBasePage() {
           <Button
             type="submit"
             disabled={!canSubmit || isPending}
-            className="rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+            className="rounded-full border border-gray-300 text-gray-700 hover:bg-gray-50"
           >
             {m.knowledge_wizard_create_button()}
           </Button>

@@ -79,7 +79,7 @@ function KnowledgePage() {
         <button
           type="button"
           onClick={() => void navigate({ to: '/app/knowledge/new' })}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          className="flex items-center gap-1.5 rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
         >
           <Plus className="h-4 w-4" />
           {m.knowledge_new_button()}
