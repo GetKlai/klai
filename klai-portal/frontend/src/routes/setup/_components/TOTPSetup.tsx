@@ -53,10 +53,10 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.setup_2fa_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.setup_2fa_subheading()}
         </p>
       </div>
@@ -66,7 +66,7 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
           <p className="text-sm text-[var(--color-destructive-text)]">{loadError}</p>
           <button
             onClick={() => setRetryCount((c) => c + 1)}
-            className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+            className="text-xs text-gray-700 hover:underline"
           >
             {m.setup_2fa_retry()}
           </button>
@@ -75,20 +75,20 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
         <>
           <div className="flex flex-col items-center gap-4">
             {uri ? (
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-4">
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
                 <QRCode value={uri} size={180} />
               </div>
             ) : (
-              <div className="flex h-[212px] w-[212px] items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+              <div className="flex h-[212px] w-[212px] items-center justify-center rounded-lg border border-gray-200 bg-white">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
               </div>
             )}
             {secret && (
               <details className="w-full text-center">
-                <summary className="cursor-pointer select-none text-xs text-[var(--color-rl-accent-dark)] hover:underline">
+                <summary className="cursor-pointer select-none text-xs text-gray-700 hover:underline">
                   {m.setup_2fa_manual_label()}
                 </summary>
-                <p className="mt-2 break-all rounded-lg bg-[var(--color-border)] px-3 py-2 font-mono text-xs tracking-widest">
+                <p className="mt-2 break-all rounded-lg bg-gray-100 px-3 py-2 font-mono text-xs tracking-widest">
                   {secret}
                 </p>
               </details>
@@ -97,7 +97,7 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="totp-code" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="totp-code" className="block text-sm font-medium text-gray-900">
                 {m.setup_2fa_field_code()}
               </label>
               <input
@@ -111,7 +111,7 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
             {error && (
@@ -133,7 +133,7 @@ export function TOTPSetup({ token, onSuccess, onBack }: TOTPSetupProps) {
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+        className="block text-xs text-gray-700 hover:underline"
       >
         {m.setup_mfa_back()}
       </button>

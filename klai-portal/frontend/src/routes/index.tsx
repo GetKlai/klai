@@ -25,8 +25,8 @@ function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+    <div className="flex min-h-screen items-center justify-center bg-white">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
     </div>
   )
 }

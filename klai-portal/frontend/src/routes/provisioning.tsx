@@ -84,7 +84,7 @@ function ProvisioningPage() {
   }, [auth.isLoading, auth.isAuthenticated, auth.user])
 
   return (
-    <div className="flex min-h-screen flex-col bg-[var(--color-background)]">
+    <div className="flex min-h-screen flex-col bg-white">
       <div className="flex justify-end px-6 pt-5">
         <LocaleSwitcher />
       </div>
@@ -94,12 +94,12 @@ function ProvisioningPage() {
 
         {(status === 'polling') && (
           <>
-            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
             <div className="space-y-2">
-              <p className="text-xl font-semibold text-[var(--color-foreground)]">
+              <p className="text-xl font-semibold text-gray-900">
                 {m.provisioning_polling_title()}{dots}
               </p>
-              <p className="text-sm text-[var(--color-muted-foreground)]">
+              <p className="text-sm text-gray-400">
                 {m.provisioning_polling_subtitle()}
               </p>
             </div>
@@ -110,13 +110,13 @@ function ProvisioningPage() {
           <>
             <CheckCircle
               size={40}
-              className="mx-auto text-[var(--color-rl-accent)]"
+              className="mx-auto text-gray-700"
               strokeWidth={1.5}
             />
-            <p className="text-xl font-semibold text-[var(--color-foreground)]">
+            <p className="text-xl font-semibold text-gray-900">
               {m.provisioning_ready_title()}
             </p>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.provisioning_ready_subtitle()}
             </p>
           </>
@@ -130,14 +130,14 @@ function ProvisioningPage() {
               strokeWidth={1.5}
             />
             <div className="space-y-2">
-              <p className="text-xl font-semibold text-[var(--color-foreground)]">
+              <p className="text-xl font-semibold text-gray-900">
                 {m.provisioning_failed_title()}
               </p>
-              <p className="text-sm text-[var(--color-muted-foreground)]">
+              <p className="text-sm text-gray-400">
                 {m.provisioning_failed_body()}{' '}
                 <a
                   href="mailto:support@getklai.com"
-                  className="font-medium text-[var(--color-rl-accent-dark)] underline"
+                  className="font-medium text-gray-700 underline"
                 >
                   support@getklai.com
                 </a>

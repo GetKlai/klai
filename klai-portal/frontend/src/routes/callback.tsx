@@ -92,21 +92,21 @@ function CallbackPage() {
 
   if (auth.error) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="space-y-3 text-center max-w-sm px-4">
           <p className="text-sm font-medium text-[var(--color-destructive-text)]">{m.callback_error_heading()}</p>
-          <p className="text-xs text-[var(--color-muted-foreground)] font-mono break-all">{auth.error.message}</p>
-          <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline">{m.callback_error_back()}</a>
+          <p className="text-xs text-gray-400 font-mono break-all">{auth.error.message}</p>
+          <a href="/" className="block text-xs text-gray-700 hover:underline">{m.callback_error_back()}</a>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
+    <div className="flex min-h-screen items-center justify-center bg-white">
       <div className="space-y-3 text-center">
-        <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
-        <p className="text-sm text-[var(--color-muted-foreground)]">{m.callback_loading()}</p>
+        <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
+        <p className="text-sm text-gray-400">{m.callback_loading()}</p>
       </div>
     </div>
   )

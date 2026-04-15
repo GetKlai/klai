@@ -51,10 +51,10 @@ function McpsListPage() {
     <div className="p-6 space-y-6 max-w-6xl">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-xl/none font-semibold text-gray-900">
             {m.admin_mcps_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_mcps_subtitle()}
           </p>
         </div>
@@ -68,21 +68,21 @@ function McpsListPage() {
           {m.admin_mcps_load_error()}
         </p>
       ) : isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_mcps_loading()}
         </p>
       ) : enabledServers.length === 0 ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           {m.admin_mcps_no_servers()}
         </p>
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-48">
+            <tr className="border-b border-gray-200">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-48">
                 {m.admin_mcps_col_name()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">
                 {m.admin_mcps_col_description()}
               </th>
               <th className="py-3 text-right w-28" aria-label={m.admin_mcps_col_actions()} />
@@ -96,18 +96,18 @@ function McpsListPage() {
                 deactivateMutation.variables?.id === server.id
 
               return (
-                <tr key={server.id} className="border-b border-[var(--color-border)] last:border-b-0">
+                <tr key={server.id} className="border-b border-gray-200 last:border-b-0">
                   <td className="py-4 pr-4 align-top">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{displayName}</span>
                       {server.managed && (
-                        <span className="rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em] text-[var(--color-muted-foreground)]">
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em] text-gray-400">
                           {m.admin_mcps_builtin()}
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)]">
+                  <td className="py-4 pr-4 align-top text-gray-400">
                     {server.description}
                   </td>
                   <td className="py-4 align-top text-right w-28">

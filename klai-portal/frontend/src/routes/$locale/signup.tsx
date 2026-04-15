@@ -75,21 +75,21 @@ function SignupPage() {
     return (
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="space-y-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
-            <CheckCircle size={22} className="text-[var(--color-rl-cream)]" strokeWidth={1.5} />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-900">
+            <CheckCircle size={22} className="text-white" strokeWidth={1.5} />
           </div>
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.signup_confirm_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.signup_confirm_body({ email: form.email })}
           </p>
-          <p className="text-xs text-[var(--color-muted-foreground)] opacity-70">
+          <p className="text-xs text-gray-400 opacity-70">
             {m.signup_confirm_hint()}
           </p>
           <Link
             to="/"
-            className="inline-block text-sm font-medium text-[var(--color-rl-accent-dark)] underline"
+            className="inline-block text-sm font-medium text-gray-700 underline"
           >
             {m.signup_confirm_back()}
           </Link>
@@ -101,12 +101,12 @@ function SignupPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="space-y-1">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.signup_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.signup_existing_account()}{' '}
-          <Link to="/" className="font-medium text-[var(--color-rl-accent-dark)] underline">
+          <Link to="/" className="font-medium text-gray-700 underline">
             {m.signup_login_link()}
           </Link>
         </p>
@@ -164,9 +164,9 @@ function SignupPage() {
         </Button>
       </form>
 
-      <p className="text-center text-xs text-[var(--color-muted-foreground)]">
+      <p className="text-center text-xs text-gray-400">
         {m.signup_privacy_text()}{' '}
-        <a href="https://getklai.com/docs/legal/privacy" className="text-[var(--color-rl-accent-dark)] underline">
+        <a href="https://getklai.com/docs/legal/privacy" className="text-gray-700 underline">
           {m.signup_privacy_link()}
         </a>
       </p>
@@ -193,7 +193,7 @@ function Field({
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={name} className="block text-sm font-medium text-[var(--color-foreground)]">
+      <label htmlFor={name} className="block text-sm font-medium text-gray-900">
         {label}
       </label>
       <input
@@ -203,9 +203,9 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
-        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
       />
-      {hint && <p className="text-xs text-[var(--color-muted-foreground)]">{hint}</p>}
+      {hint && <p className="text-xs text-gray-400">{hint}</p>}
     </div>
   )
 }

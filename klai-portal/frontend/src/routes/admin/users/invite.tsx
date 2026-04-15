@@ -83,7 +83,7 @@ function InviteUserPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_users_invite_button()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
