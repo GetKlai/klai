@@ -217,16 +217,16 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-gray-100 px-5 py-2.5" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="flex shrink-0 items-center gap-2 px-4 h-[42px]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
-      <span className="text-[13px] text-gray-400">Chat met:</span>
+      <span className="text-sm text-gray-400 whitespace-nowrap">Chat met:</span>
 
-      <div className="relative z-50">
+      <div className="relative z-50 min-w-0">
         <button type="button" onClick={() => setCollOpen((v) => !v)}
-          className="flex items-center gap-1.5 text-[13px] font-semibold text-gray-900 hover:text-gray-600 transition-colors">
-          {activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}
-          <ChevronDown className="h-3.5 w-3.5 opacity-40" />
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors truncate">
+          <span className="truncate">{activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
         </button>
 
         {collOpen && (
