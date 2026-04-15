@@ -36,8 +36,12 @@ export async function apiFetch<T>(
   if (!res.ok) {
     let detail = `${res.status}`
     try {
-      const body = (await res.json()) as { detail?: string }
-      if (body.detail) detail = body.detail
+      const body = (await res.json()) as { detail?: string | object[] }
+      if (body.detail) {
+        detail = typeof body.detail === 'string'
+          ? body.detail
+          : JSON.stringify(body.detail)
+      }
     } catch {
       // no JSON body
     }
