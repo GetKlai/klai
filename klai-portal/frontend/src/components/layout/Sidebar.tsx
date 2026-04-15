@@ -35,11 +35,6 @@ interface KBItem {
   owner_user_id: string | null
 }
 
-interface KBStats {
-  items: number
-  connectors: number
-}
-
 export function Sidebar({ navItems }: SidebarProps) {
   const auth = useAuth()
   const location = useLocation()
