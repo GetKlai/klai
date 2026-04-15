@@ -140,9 +140,8 @@ function AddConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages && webcrawlerConfig.max_pages !== '200') config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
-        if (webcrawlerConfig.cookies.trim()) {
-          try { config.cookies = JSON.parse(webcrawlerConfig.cookies) } catch { /* validated on input */ }
-        }
+        const cookies = parseCookies()
+        if (cookies) config.cookies = cookies
       }
       if (selectedType === 'notion') {
         config.access_token = notionConfig.access_token
