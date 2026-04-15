@@ -83,7 +83,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_expand() : m.sidebar_collapse()}
           className={cn(
             'flex items-center justify-center rounded-lg p-1.5 transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
           )}
         >
           {collapsed
@@ -105,7 +105,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-                    'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                    'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                 >
@@ -119,11 +119,11 @@ export function Sidebar({ navItems }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-                    'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+                    'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
                     collapsed ? 'justify-center' : 'gap-3 px-3'
                   )}
                   activeProps={{
-                    className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
+                    className: 'bg-black/5 text-[var(--color-sidebar-foreground)] font-medium',
                   }}
                 >
                   <item.icon size={18} strokeWidth={1.5} />
@@ -151,7 +151,7 @@ export function Sidebar({ navItems }: SidebarProps) {
             title={collapsed ? (inAdmin ? m.sidebar_go_to_app() : m.sidebar_go_to_admin()) : undefined}
             className={cn(
               'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-              'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+              'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
               collapsed ? 'justify-center' : 'gap-3 px-3'
             )}
           >
@@ -223,11 +223,11 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_account() : undefined}
           className={cn(
             'flex items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
           activeProps={{
-            className: 'bg-[var(--color-sidebar-accent)] text-[var(--color-sidebar-accent-foreground)]',
+            className: 'bg-black/5 text-[var(--color-sidebar-foreground)] font-medium',
           }}
         >
           <UserCircle size={18} strokeWidth={1.5} />
@@ -241,7 +241,7 @@ export function Sidebar({ navItems }: SidebarProps) {
           title={collapsed ? m.sidebar_logout() : undefined}
           className={cn(
             'flex w-full items-center rounded-md py-2 mx-3 text-sm transition-colors',
-            'text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)]',
+            'text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)]',
             collapsed ? 'justify-center' : 'gap-3 px-3'
           )}
         >
@@ -291,7 +291,7 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
             <Link
               to="/app/knowledge/$kbSlug/overview"
               params={{ kbSlug: personalKb.slug }}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)] transition-colors"
+              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
               <span className="truncate">{m.chat_kb_bar_personal_label()}</span>
@@ -308,7 +308,7 @@ function KnowledgeCollections({ token, myUserId }: { token: string | undefined; 
             <Link
               to="/app/knowledge/$kbSlug/overview"
               params={{ kbSlug: kb.slug }}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/70 hover:bg-[var(--color-sidebar-accent)] hover:text-[var(--color-sidebar-foreground)] transition-colors"
+              className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-xs text-[var(--color-sidebar-foreground)]/60 hover:bg-black/5 hover:text-[var(--color-sidebar-foreground)] transition-colors"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />
               <span className="truncate">{kb.name}</span>
