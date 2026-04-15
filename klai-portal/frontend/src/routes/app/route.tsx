@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, BookOpen } from 'lucide-react'
+import { MessageSquare, BookOpen, Sliders } from 'lucide-react'
 import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
@@ -30,6 +30,7 @@ function AppLayout() {
   const allNavItems: NavItem[] = [
     { to: '/app', label: 'Chat', icon: MessageSquare, end: true },
     { to: '/app/knowledge', label: 'Kennis', icon: BookOpen },
+    { to: '/app/rules', label: 'Regels', icon: Sliders },
   ]
 
   const isAdmin = user?.isAdmin === true
