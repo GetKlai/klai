@@ -237,7 +237,7 @@ function NewIntegrationPage() {
         {createMutation.error && (
           <p className="text-sm text-[var(--color-destructive)]">
             {createMutation.error instanceof Error
-              ? String(createMutation.error.message)
+              ? createMutation.error.message
               : m.admin_integrations_error_generic()}
           </p>
         )}
@@ -245,7 +245,7 @@ function NewIntegrationPage() {
         <div className="pt-2">
           <Button
             type="submit"
-            disabled={createMutation.isPending || !form.name.trim()}
+            disabled={createMutation.isPending || form.name.trim().length < 3}
           >
             {createMutation.isPending && (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
