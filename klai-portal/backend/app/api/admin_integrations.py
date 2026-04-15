@@ -122,12 +122,17 @@ async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSes
 async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[dict]:
     """Validate that all kb_ids belong to the org. Returns matching KB dicts.
 
-    Uses raw SQL to avoid RLS dependency — the org_id WHERE clause is the
-    security check. RLS may not be set yet if set_tenant hasn't propagated
-    to this connection (async pool checkout timing).
+    Explicitly sets tenant context before querying because the connection
+    from the pool may not have app.current_org_id set yet (async session
+    can checkout a different connection than set_tenant used).
     """
     if not kb_ids:
         return []
+    # Ensure tenant is set on THIS connection right before the query
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, false)"),
+        {"org_id": str(org_id)},
+    )
     result = await db.execute(
         text("SELECT id, name, slug FROM portal_knowledge_bases WHERE id = ANY(:kb_ids) AND org_id = :org_id"),
         {"kb_ids": kb_ids, "org_id": org_id},
@@ -176,8 +181,12 @@ async def create_integration(
     plaintext_key, key_hash = generate_partner_key()
     key_prefix = plaintext_key[:12]
 
-    # Create PartnerAPIKey row — raw SQL to avoid RLS INSERT policy timing issues
+    # Ensure tenant is set for RLS INSERT policy
     key_id = str(uuid.uuid4())
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, false)"),
+        {"org_id": str(org.id)},
+    )
     await db.execute(
         text(
             "INSERT INTO partner_api_keys "

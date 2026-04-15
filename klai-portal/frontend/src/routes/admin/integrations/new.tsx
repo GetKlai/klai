@@ -237,7 +237,7 @@ function NewIntegrationPage() {
         {createMutation.error && (
           <p className="text-sm text-[var(--color-destructive)]">
             {createMutation.error instanceof Error
-              ? createMutation.error.message
+              ? String(createMutation.error.message)
               : m.admin_integrations_error_generic()}
           </p>
         )}
