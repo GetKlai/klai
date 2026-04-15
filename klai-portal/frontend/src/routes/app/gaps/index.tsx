@@ -98,7 +98,7 @@ function GapsPage() {
   if (!isAdmin) {
     return (
       <div className="p-6 max-w-2xl">
-        <p className="text-[var(--color-muted-foreground)]">Admin access required.</p>
+        <p className="text-gray-400">Admin access required.</p>
       </div>
     )
   }
@@ -109,8 +109,8 @@ function GapsPage() {
     <div className="p-6 max-w-4xl">
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
-          <AlertTriangle className="h-7 w-7 text-[var(--color-foreground)]" />
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <AlertTriangle className="h-7 w-7 text-gray-900" />
+          <h1 className="page-title text-xl/none font-semibold text-gray-900">
             {m.gaps_page_title()}
           </h1>
         </div>
@@ -122,7 +122,7 @@ function GapsPage() {
         </Button>
       </div>
 
-      <p className="text-[var(--color-muted-foreground)] mb-6 leading-relaxed">
+      <p className="text-gray-400 mb-6 leading-relaxed">
         {m.gaps_index_card_body()}
       </p>
 
@@ -162,35 +162,35 @@ function GapsPage() {
       {isLoading ? (
         <div className="flex flex-col gap-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-12 rounded-lg bg-[var(--color-secondary)] animate-pulse" />
+            <div key={i} className="h-12 rounded-lg bg-gray-50 animate-pulse" />
           ))}
         </div>
       ) : gaps.length === 0 ? (
         <Card>
           <CardContent className="pt-6 pb-6 text-center">
-            <AlertTriangle className="h-8 w-8 text-[var(--color-muted-foreground)] mx-auto mb-2" />
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <AlertTriangle className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">
               {m.gaps_empty_state()}
             </p>
           </CardContent>
         </Card>
       ) : (
-        <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+            <tr className="border-b border-gray-200">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">
                 {m.gaps_column_query()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-24">
                 {m.gaps_column_type()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-36">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-36">
                 {m.gaps_column_nearest_kb()}
               </th>
-              <th className="py-3 pr-4 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-20">
+              <th className="py-3 pr-4 text-right text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-20">
                 {m.gaps_column_count()}
               </th>
-              <th className="py-3 pr-4 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+              <th className="py-3 pr-4 text-right text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-28">
                 {m.gaps_column_last()}
               </th>
               <th className="py-3 text-right w-12" />
@@ -202,9 +202,9 @@ function GapsPage() {
               return (
                 <tr
                   key={rowKey}
-                  className="border-b border-[var(--color-border)] last:border-b-0"
+                  className="border-b border-gray-200 last:border-b-0"
                 >
-                  <td className="py-4 pr-4 align-top text-[var(--color-foreground)] truncate max-w-xs">
+                  <td className="py-4 pr-4 align-top text-gray-900 truncate max-w-xs">
                     {gap.query_text}
                   </td>
                   <td className="py-4 pr-4 align-top w-24">
@@ -212,13 +212,13 @@ function GapsPage() {
                       {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
                     </span>
                   </td>
-                  <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)] w-36">
+                  <td className="py-4 pr-4 align-top text-gray-400 w-36">
                     {gap.nearest_kb_slug ?? '\u2014'}
                   </td>
-                  <td className="py-4 pr-4 align-top text-right font-medium text-[var(--color-foreground)] tabular-nums w-20">
+                  <td className="py-4 pr-4 align-top text-right font-medium text-gray-900 tabular-nums w-20">
                     {gap.occurrence_count}
                   </td>
-                  <td className="py-4 pr-4 align-top text-right text-[var(--color-muted-foreground)] whitespace-nowrap tabular-nums w-28">
+                  <td className="py-4 pr-4 align-top text-right text-gray-400 whitespace-nowrap tabular-nums w-28">
                     {new Date(gap.last_occurred).toLocaleDateString()}
                   </td>
                   <td className="py-4 align-top text-right w-12">
@@ -231,7 +231,7 @@ function GapsPage() {
                           })
                         }
                         aria-label={m.gaps_action_add()}
-                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
+                        className="inline-flex items-center justify-center text-gray-900 transition-opacity hover:opacity-70 ml-auto"
                       >
                         <PlusCircle className="h-4 w-4" />
                       </button>
@@ -262,7 +262,7 @@ function GapsPage() {
                       <button
                         onClick={() => setActivePicker(rowKey)}
                         aria-label={m.gaps_action_pick_kb()}
-                        className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
+                        className="inline-flex items-center justify-center text-gray-900 transition-opacity hover:opacity-70 ml-auto"
                       >
                         <BookOpen className="h-4 w-4" />
                       </button>

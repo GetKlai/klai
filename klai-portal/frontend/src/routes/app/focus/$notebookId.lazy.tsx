@@ -86,7 +86,7 @@ function StatusBadge({ status }: { status: SourceStatus }) {
   if (status === 'error')
     return <span className="text-xs text-[var(--color-destructive)]">{m.app_focus_source_status_error()}</span>
   return (
-    <span className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+    <span className="flex items-center gap-1 text-xs text-gray-400">
       <Loader2 className="h-3 w-3 animate-spin" />
       {m.app_focus_source_status_processing()}
     </span>
@@ -293,7 +293,7 @@ function NotebookDetailPage() {
       {/* Header */}
       <div>
         <div className="flex items-start justify-between mb-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-xl/none font-semibold text-gray-900">
             {notebook?.name ?? m.app_focus_loading()}
           </h1>
           <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/focus' })}>
@@ -302,41 +302,41 @@ function NotebookDetailPage() {
           </Button>
         </div>
         {notebook?.description && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{notebook.description}</p>
+          <p className="text-sm text-gray-400">{notebook.description}</p>
         )}
       </div>
 
       {/* Onboarding banner */}
       {showOnboarding && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4">
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
           <div className="flex items-start gap-3">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-rl-accent)]" />
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-gray-900" />
             <div className="flex-1 space-y-3 text-sm">
-              <p className="font-medium text-[var(--color-foreground)]">
+              <p className="font-medium text-gray-900">
                 {m.app_focus_onboarding_title()}
               </p>
-              <p className="text-[var(--color-muted-foreground)]">
+              <p className="text-gray-400">
                 {m.app_focus_onboarding_body()}
               </p>
               <div className="space-y-1.5">
-                <p className="text-xs font-medium text-[var(--color-foreground)]">
+                <p className="text-xs font-medium text-gray-900">
                   {m.app_focus_onboarding_modes_heading()}
                 </p>
-                <ul className="space-y-0.5 text-xs text-[var(--color-muted-foreground)]">
+                <ul className="space-y-0.5 text-xs text-gray-400">
                   <li>
-                    <span className="font-medium text-[var(--color-foreground)]">
+                    <span className="font-medium text-gray-900">
                       {m.app_focus_chat_mode_narrow()}
                     </span>{' '}
                     &ndash; {m.app_focus_chat_mode_narrow_tooltip()}
                   </li>
                   <li>
-                    <span className="font-medium text-[var(--color-foreground)]">
+                    <span className="font-medium text-gray-900">
                       {m.app_focus_chat_mode_broad()}
                     </span>{' '}
                     &ndash; {m.app_focus_chat_mode_broad_tooltip()}
                   </li>
                   <li>
-                    <span className="font-medium text-[var(--color-foreground)]">
+                    <span className="font-medium text-gray-900">
                       {m.app_focus_chat_mode_web()}
                     </span>{' '}
                     &ndash; {m.app_focus_chat_mode_web_tooltip()}
@@ -344,24 +344,24 @@ function NotebookDetailPage() {
                 </ul>
               </div>
               <div className="space-y-0.5">
-                <p className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-foreground)]">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-gray-900">
                   <History className="h-3.5 w-3.5" />
                   {m.app_focus_onboarding_history_heading()}
                 </p>
-                <p className="text-xs text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-gray-400">
                   {m.app_focus_onboarding_history_body()}
                 </p>
               </div>
               <button
                 onClick={dismissOnboarding}
-                className="text-xs font-medium text-[var(--color-rl-accent)] hover:text-[var(--color-foreground)] transition-colors"
+                className="text-xs font-medium text-gray-900 hover:text-gray-900 transition-colors"
               >
                 {m.app_focus_onboarding_dismiss()}
               </button>
             </div>
             <button
               onClick={dismissOnboarding}
-              className="shrink-0 rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] hover:text-[var(--color-foreground)] transition-colors"
+              className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-900 transition-colors"
               aria-label={m.app_focus_onboarding_dismiss()}
             >
               <X className="h-4 w-4" />
@@ -380,7 +380,7 @@ function NotebookDetailPage() {
                 <CardTitle className="text-sm">{m.app_focus_sources_heading()}</CardTitle>
                 <button
                   onClick={() => navigate({ to: '/app/focus/$notebookId/add-source', params: { notebookId } })}
-                  className="flex items-center gap-1 text-xs font-medium text-[var(--color-rl-accent)] hover:text-[var(--color-foreground)] transition-colors"
+                  className="flex items-center gap-1 text-xs font-medium text-gray-900 hover:text-gray-900 transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {m.app_focus_add_source()}
@@ -389,7 +389,7 @@ function NotebookDetailPage() {
             </CardHeader>
             <CardContent className="pt-0">
               {sources.length === 0 ? (
-                <p className="py-3 text-xs text-[var(--color-muted-foreground)]">
+                <p className="py-3 text-xs text-gray-400">
                   {m.app_focus_no_sources()}
                 </p>
               ) : (
@@ -397,10 +397,10 @@ function NotebookDetailPage() {
                   {sources.map((src) => (
                     <li
                       key={src.id}
-                      className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] py-2 last:border-0"
+                      className="flex items-center justify-between gap-2 border-b border-gray-200 py-2 last:border-0"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-[var(--color-foreground)]">
+                        <p className="truncate text-xs font-medium text-gray-900">
                           {src.name}
                         </p>
                         <StatusBadge status={src.status} />
@@ -410,7 +410,7 @@ function NotebookDetailPage() {
                         disabled={
                           deleteSrcMutation.isPending && deleteSrcMutation.variables === src.id
                         }
-                        className="shrink-0 p-1 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-destructive)] disabled:opacity-50"
+                        className="shrink-0 p-1 text-gray-400 transition-colors hover:text-[var(--color-destructive)] disabled:opacity-50"
                         aria-label={m.app_focus_source_delete()}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -436,14 +436,14 @@ function NotebookDetailPage() {
                     <button
                       onClick={() => clearHistoryMutation.mutate()}
                       disabled={clearHistoryMutation.isPending}
-                      className="rounded-md p-1 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                      className="rounded-md p-1 text-gray-400 hover:text-gray-900 transition-colors"
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
                     </button>
                   </Tooltip>
                 )}
                 {/* History toggle */}
-                <div className="flex gap-1 rounded-lg p-1 bg-[var(--color-muted)]/40">
+                <div className="flex gap-1 rounded-lg p-1 bg-gray-100/40">
                   <button
                     onClick={() => {
                       if (notebook?.save_history !== true) toggleHistoryMutation.mutate(true)
@@ -452,8 +452,8 @@ function NotebookDetailPage() {
                     title={m.app_focus_chat_history_on_tooltip()}
                     className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
                       notebook?.save_history !== false
-                        ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
-                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                        ? 'bg-white shadow-sm text-gray-900'
+                        : 'text-gray-400 hover:text-gray-900'
                     }`}
                   >
                     <History className="h-3 w-3" />
@@ -467,15 +467,15 @@ function NotebookDetailPage() {
                     title={m.app_focus_chat_history_off_tooltip()}
                     className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
                       notebook?.save_history === false
-                        ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
-                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                        ? 'bg-white shadow-sm text-gray-900'
+                        : 'text-gray-400 hover:text-gray-900'
                     }`}
                   >
                     {m.app_focus_chat_history_off()}
                   </button>
                 </div>
                 {/* Mode selector */}
-                <div className="flex gap-1 rounded-lg p-1 bg-[var(--color-muted)]/40">
+                <div className="flex gap-1 rounded-lg p-1 bg-gray-100/40">
                   {(['narrow', 'broad', 'web'] as ChatMode[]).map((mode) => (
                     <button
                       key={mode}
@@ -489,8 +489,8 @@ function NotebookDetailPage() {
                       }
                       className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                         chatMode === mode
-                          ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
-                          : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                          ? 'bg-white shadow-sm text-gray-900'
+                          : 'text-gray-400 hover:text-gray-900'
                       }`}
                     >
                       {mode === 'narrow'
@@ -508,7 +508,7 @@ function NotebookDetailPage() {
           {/* Messages */}
           <CardContent className="flex-1 overflow-y-auto space-y-4 pb-0">
             {messages.length === 0 ? (
-              <p className="py-8 text-center text-xs text-[var(--color-muted-foreground)]">
+              <p className="py-8 text-center text-xs text-gray-400">
                 {hasReadySources
                   ? m.app_focus_chat_placeholder()
                   : m.app_focus_chat_disabled_hint()}
@@ -520,10 +520,10 @@ function NotebookDetailPage() {
                   className={`space-y-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
                 >
                   <div
-                    className={`inline-block max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                    className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                       msg.role === 'user'
-                        ? 'bg-[var(--color-rl-accent)] text-white'
-                        : 'bg-[var(--color-muted)]/40 text-[var(--color-foreground)]'
+                        ? 'bg-gray-900 text-white'
+                        : 'bg-gray-100/40 text-gray-900'
                     }`}
                   >
                     <p className="whitespace-pre-wrap">{msg.content}</p>
@@ -542,7 +542,7 @@ function NotebookDetailPage() {
                             return next
                           })
                         }
-                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-foreground)]"
+                        className="flex items-center gap-1 text-xs text-gray-400 transition-colors hover:text-gray-900"
                       >
                         {expandedCitations.has(i) ? (
                           <ChevronUp className="h-3 w-3" />
@@ -552,15 +552,15 @@ function NotebookDetailPage() {
                         {msg.citations.length} {m.app_focus_chat_sources_label()}
                       </button>
                       {expandedCitations.has(i) && (
-                        <div className="mt-1 space-y-0.5 border-l-2 border-[var(--color-border)] pl-2">
+                        <div className="mt-1 space-y-0.5 border-l-2 border-gray-200 pl-2">
                           {msg.citations.map((c, j) => (
-                            <p key={j} className="text-xs text-[var(--color-muted-foreground)]">
+                            <p key={j} className="text-xs text-gray-400">
                               {c.url ? (
                                 <a
                                   href={c.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-[var(--color-rl-accent-dark)] hover:text-[var(--color-foreground)] underline"
+                                  className="text-gray-700 hover:text-gray-900 underline"
                                 >
                                   {c.source_name}
                                 </a>
@@ -584,7 +584,7 @@ function NotebookDetailPage() {
           </CardContent>
 
           {/* Input */}
-          <div className="shrink-0 border-t border-[var(--color-border)] p-4 pt-3">
+          <div className="shrink-0 border-t border-gray-200 p-4 pt-3">
             <div className="flex gap-2">
               <Input
                 type="text"

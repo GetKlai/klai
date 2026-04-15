@@ -24,7 +24,7 @@ interface NotionEditConfig {
   new_access_token: string
 }
 
-const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
+const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-900 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-gray-900 [&_h3]:mb-1 [&_p]:text-gray-400 [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-gray-400 [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-gray-400 [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-gray-900 [&_hr]:border-gray-200 [&_hr]:my-2'
 
 function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
@@ -159,7 +159,7 @@ function EditConnectorPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_connectors_edit_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
@@ -204,17 +204,17 @@ function EditConnectorPage() {
                 </div>
               )}
               {previewResult !== null && (
-                <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                <div className="rounded-lg border border-gray-200 p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                    <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
+                    <span className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_preview_title()}</span>
+                    <span className="text-xs text-gray-400">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                   </div>
                   {previewResult.fit_markdown ? (
                     <div className={MARKDOWN_PROSE_CLASSES}>
-                      <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+                      <ReactMarkdown components={{ a: ({ children }) => <span className="text-gray-700">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
                     </div>
                   ) : (
-                    <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
+                    <p className="text-sm text-gray-400">{m.admin_connectors_webcrawler_preview_empty()}</p>
                   )}
                 </div>
               )}
@@ -289,7 +289,7 @@ function EditConnectorPage() {
                   value={notionConfig.new_access_token}
                   onChange={(e) => setNotionConfig((p) => ({ ...p, new_access_token: e.target.value }))}
                 />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_notion_token_help_update()}</p>
+                <p className="text-xs text-gray-400">{m.admin_connectors_notion_token_help_update()}</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-notion-dbs">{m.admin_connectors_notion_database_ids()}</Label>
@@ -299,7 +299,7 @@ function EditConnectorPage() {
                   placeholder={m.admin_connectors_notion_database_ids_placeholder()}
                   value={notionConfig.database_ids}
                   onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] resize-none"
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-400 resize-none"
                 />
               </div>
               <div className="space-y-1.5">
@@ -343,7 +343,7 @@ function EditConnectorPage() {
           )}
 
           {!connector && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
           )}
         </CardContent>
       </Card>

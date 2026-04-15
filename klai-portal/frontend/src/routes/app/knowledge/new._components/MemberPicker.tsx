@@ -74,7 +74,7 @@ export function MemberPicker({
     <div className="flex flex-col gap-4">
       {/* Groups */}
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-[var(--color-foreground)]">
+        <span className="text-sm font-medium text-gray-900">
           {m.knowledge_sharing_groups()}
         </span>
         <div
@@ -87,7 +87,7 @@ export function MemberPicker({
             }
           }}
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <Input
             value={groupSearch}
             onChange={(e) => setGroupSearch(e.target.value)}
@@ -95,7 +95,7 @@ export function MemberPicker({
             className="pl-9"
           />
           {groupFocused && filteredGroups.length > 0 && (
-            <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+            <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-md max-h-40 overflow-y-auto">
               {filteredGroups.map((g) => (
                 <button
                   key={g.id}
@@ -108,7 +108,7 @@ export function MemberPicker({
                     ])
                     setGroupSearch('')
                   }}
-                  className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-secondary)] transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm text-gray-900 hover:bg-gray-50 transition-colors"
                 >
                   {g.name}
                 </button>
@@ -119,9 +119,9 @@ export function MemberPicker({
         {initialGroups.map((g) => (
           <div
             key={g.id}
-            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+            className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2"
           >
-            <span className="text-sm text-[var(--color-foreground)]">{g.name}</span>
+            <span className="text-sm text-gray-900">{g.name}</span>
             <div className="flex items-center gap-2">
               <RoleSelect
                 value={g.role}
@@ -135,7 +135,7 @@ export function MemberPicker({
               <button
                 type="button"
                 onClick={() => setInitialGroups((prev) => prev.filter((ig) => ig.id !== g.id))}
-                className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -147,7 +147,7 @@ export function MemberPicker({
 
       {/* Persons */}
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-[var(--color-foreground)]">
+        <span className="text-sm font-medium text-gray-900">
           {m.knowledge_sharing_persons()}
         </span>
         <div
@@ -160,7 +160,7 @@ export function MemberPicker({
             }
           }}
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <Input
             value={userSearch}
             onChange={(e) => setUserSearch(e.target.value)}
@@ -168,7 +168,7 @@ export function MemberPicker({
             className="pl-9"
           />
           {userFocused && filteredUsers.length > 0 && (
-            <div className="absolute z-10 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] shadow-md max-h-40 overflow-y-auto">
+            <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-md max-h-40 overflow-y-auto">
               {filteredUsers.map((u) => (
                 <button
                   key={u.zitadel_user_id}
@@ -186,10 +186,10 @@ export function MemberPicker({
                     ])
                     setUserSearch('')
                   }}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-secondary)] transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors"
                 >
-                  <span className="text-[var(--color-foreground)]">{u.display_name}</span>
-                  <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">
+                  <span className="text-gray-900">{u.display_name}</span>
+                  <span className="ml-2 text-xs text-gray-400">
                     {u.email}
                   </span>
                 </button>
@@ -200,11 +200,11 @@ export function MemberPicker({
         {initialUsers.map((u) => (
           <div
             key={u.id}
-            className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2"
+            className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2"
           >
             <div>
-              <span className="text-sm text-[var(--color-foreground)]">{u.name}</span>
-              <span className="ml-2 text-xs text-[var(--color-muted-foreground)]">{u.email}</span>
+              <span className="text-sm text-gray-900">{u.name}</span>
+              <span className="ml-2 text-xs text-gray-400">{u.email}</span>
             </div>
             <div className="flex items-center gap-2">
               <RoleSelect
@@ -219,7 +219,7 @@ export function MemberPicker({
               <button
                 type="button"
                 onClick={() => setInitialUsers((prev) => prev.filter((iu) => iu.id !== u.id))}
-                className="flex h-6 w-6 items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -228,7 +228,7 @@ export function MemberPicker({
         ))}
 
         {isRestrictedEmpty && (
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-gray-400">
             {m.knowledge_wizard_min_one_member()}
           </p>
         )}

@@ -109,7 +109,7 @@ function TranscriptionDetailPage() {
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
       </div>
     )
   }
@@ -125,7 +125,7 @@ function TranscriptionDetailPage() {
   return (
     <div className="p-6 max-w-3xl">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {displayTitle}
         </h1>
         <Button
@@ -165,7 +165,7 @@ function TranscriptionDetailPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-[var(--color-muted-foreground)] whitespace-pre-wrap">
+            <p className="text-sm text-gray-400 whitespace-pre-wrap">
               {transcription.text}
             </p>
           </CardContent>
@@ -173,7 +173,7 @@ function TranscriptionDetailPage() {
 
         {transcription.text.trim() && (
           <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-[var(--color-foreground)] shrink-0">
+            <label className="text-sm font-medium text-gray-900 shrink-0">
               {m.app_transcribe_summary_type_label()}
             </label>
             <Select
@@ -210,7 +210,7 @@ function TranscriptionDetailPage() {
               <p className="text-sm font-medium text-[var(--color-destructive)]">
                 {m.app_transcribe_summary_error()}
               </p>
-              <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{summarizeMutation.error.message}</p>
+              <p className="mt-1 text-sm text-gray-400">{summarizeMutation.error.message}</p>
             </CardContent>
           </Card>
         )}
@@ -251,7 +251,7 @@ function TranscriptionDetailPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-sm text-[var(--color-foreground)] space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
+              <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
                 <Markdown>{transcription.summary_json.markdown}</Markdown>
               </div>
             </CardContent>

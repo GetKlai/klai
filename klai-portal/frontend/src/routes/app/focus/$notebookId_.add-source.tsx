@@ -92,7 +92,7 @@ function AddSourcePage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.app_focus_add_source()}
         </h1>
         <Button
@@ -109,15 +109,15 @@ function AddSourcePage() {
       <Card>
         <CardContent className="pt-6 space-y-4">
           {/* Tabs */}
-          <div className="flex gap-1 p-1 bg-[var(--color-muted)]/40 rounded-lg w-fit">
+          <div className="flex gap-1 p-1 bg-gray-100/40 rounded-lg w-fit">
             {(['file', 'url'] as AddTab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => { void navigate({ search: { tab: tab === 'file' ? undefined : tab } }); setAddError(null) }}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
                   addTab === tab
-                    ? 'bg-[var(--color-background)] shadow-sm text-[var(--color-foreground)]'
-                    : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                    ? 'bg-white shadow-sm text-gray-900'
+                    : 'text-gray-400 hover:text-gray-900'
                 }`}
               >
                 {tab === 'file' ? m.app_focus_source_add_tab_file() : m.app_focus_source_add_tab_url()}
@@ -129,8 +129,8 @@ function AddSourcePage() {
             <div
               className={`cursor-pointer rounded-lg border-2 border-dashed p-6 text-center transition-colors ${
                 dragging
-                  ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/5'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-rl-accent)]/50'
+                  ? 'border-gray-900 bg-gray-900/5'
+                  : 'border-gray-200 hover:border-gray-900/50'
               }`}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
@@ -154,16 +154,16 @@ function AddSourcePage() {
               />
               {addFileMutation.isPending ? (
                 <div className="flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
-                  <span className="text-sm text-[var(--color-muted-foreground)]">
+                  <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                  <span className="text-sm text-gray-400">
                     {m.app_focus_source_uploading()}
                   </span>
                 </div>
               ) : (
                 <div>
-                  <Upload className="mx-auto mb-2 h-6 w-6 text-[var(--color-muted-foreground)]" />
-                  <p className="text-sm font-medium text-[var(--color-foreground)]">{m.app_focus_source_file_hint()}</p>
-                  <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">PDF, DOCX, TXT, MD</p>
+                  <Upload className="mx-auto mb-2 h-6 w-6 text-gray-400" />
+                  <p className="text-sm font-medium text-gray-900">{m.app_focus_source_file_hint()}</p>
+                  <p className="mt-1 text-xs text-gray-400">PDF, DOCX, TXT, MD</p>
                 </div>
               )}
             </div>
