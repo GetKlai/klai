@@ -89,32 +89,14 @@ function SourcesPage() {
         <h1 className="text-[26px] font-display-bold text-gray-900">
           {m.sources_page_title()}
         </h1>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void navigate({ to: '/app/knowledge/new' })}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            {m.sources_new_collection()}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const firstKb = allKbs[0]
-              if (firstKb) {
-                void navigate({
-                  to: '/app/knowledge/$kbSlug/add-source',
-                  params: { kbSlug: firstKb.slug },
-                })
-              }
-            }}
-            className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            {m.sources_add_source()}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void navigate({ to: '/app/knowledge/new' })}
+          className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+        >
+          <Plus className="h-4 w-4" />
+          {m.sources_new_collection()}
+        </button>
       </div>
       <p className="text-sm text-gray-400 mb-6">
         {m.sources_page_subtitle()}
