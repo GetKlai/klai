@@ -228,8 +228,7 @@ function GapsPage() {
                           void navigate({
                             to: '/app/docs/$kbSlug',
                             params: { kbSlug: gap.nearest_kb_slug! },
-                            search: { page: undefined },
-                          })
+                                                      })
                         }
                         aria-label={m.gaps_action_add()}
                         className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70 ml-auto"
@@ -244,8 +243,7 @@ function GapsPage() {
                             void navigate({
                               to: '/app/docs/$kbSlug',
                               params: { kbSlug: e.target.value },
-                              search: { page: undefined },
-                            })
+                                                          })
                             setActivePicker(null)
                           }
                         }}
