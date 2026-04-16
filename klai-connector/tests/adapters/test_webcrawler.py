@@ -319,6 +319,55 @@ async def test_phase2_replaces_phase1_content(adapter: WebCrawlerAdapter) -> Non
 # ---------------------------------------------------------------------------
 
 
+async def test_process_results_extracts_media_images(adapter: WebCrawlerAdapter) -> None:
+    """Images from media['images'] are stored in DocumentRef.images — bypasses PruningContentFilter."""
+    url = "https://wiki.example.com/en/page-with-images"
+    data = {
+        "results": [
+            {
+                "url": url,
+                # fit_markdown has no ![alt](url) — PruningContentFilter stripped them.
+                "markdown": {"fit_markdown": "# Page title\n\nSome article text without images."},
+                "media": {
+                    "images": [
+                        {"src": "https://wiki.example.com/uploads/screenshot1.png", "alt": "Screenshot 1"},
+                        {"src": "https://wiki.example.com/uploads/screenshot2.png", "alt": ""},
+                        {"src": "", "alt": "empty src should be skipped"},
+                    ]
+                },
+            }
+        ]
+    }
+    cache: dict = {}
+    refs = adapter._process_results(data, cache, base_url="https://wiki.example.com")
+
+    assert len(refs) == 1
+    assert refs[0].images is not None
+    assert len(refs[0].images) == 2  # empty src skipped
+    assert refs[0].images[0].url == "https://wiki.example.com/uploads/screenshot1.png"
+    assert refs[0].images[0].alt == "Screenshot 1"
+    assert refs[0].images[1].url == "https://wiki.example.com/uploads/screenshot2.png"
+    assert refs[0].images[1].alt == ""
+
+
+async def test_process_results_no_media_images_is_none(adapter: WebCrawlerAdapter) -> None:
+    """DocumentRef.images is None when crawl4ai returns no media images."""
+    url = "https://wiki.example.com/en/text-only-page"
+    data = {
+        "results": [
+            {
+                "url": url,
+                "markdown": {"fit_markdown": "# Text only\n\nNo images here."},
+            }
+        ]
+    }
+    cache: dict = {}
+    refs = adapter._process_results(data, cache, base_url="https://wiki.example.com")
+
+    assert len(refs) == 1
+    assert refs[0].images is None
+
+
 async def test_sitemap_supplement_still_runs(adapter: WebCrawlerAdapter) -> None:
     """AC-7: Sitemap URLs are crawled after BFS phases, up to max_pages."""
     bfs_urls = [f"https://wiki.example.com/bfs-{i}" for i in range(3)]
