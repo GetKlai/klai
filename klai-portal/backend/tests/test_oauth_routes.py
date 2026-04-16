@@ -112,7 +112,7 @@ class TestAuthorizeEndpoint:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
-            mock_settings.frontend_url = "https://portal.getklai.com"
+            mock_settings.portal_url = "https://portal.getklai.com"
             mock_settings.domain = "getklai.com"
 
             response = await authorize_provider(
@@ -134,7 +134,7 @@ class TestAuthorizeEndpoint:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
-            mock_settings.frontend_url = "https://portal.getklai.com"
+            mock_settings.portal_url = "https://portal.getklai.com"
             mock_settings.domain = "getklai.com"
 
             response = await authorize_provider(
@@ -185,7 +185,7 @@ class TestCallbackEndpoint:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
-            mock_settings.frontend_url = "https://portal.getklai.com"
+            mock_settings.portal_url = "https://portal.getklai.com"
 
             with pytest.raises(HTTPException) as exc_info:
                 await callback_provider(
@@ -237,7 +237,7 @@ class TestCallbackEndpoint:
             mock_settings.google_drive_client_id = _PLACEHOLDER_CLIENT_ID
             mock_settings.google_drive_client_secret = _PLACEHOLDER_CLIENT_SECRET
             mock_settings.sso_cookie_key = _PLACEHOLDER_COOKIE_KEY
-            mock_settings.frontend_url = "https://portal.getklai.com"
+            mock_settings.portal_url = "https://portal.getklai.com"
             mock_settings.domain = "getklai.com"
 
             state_token = _sign_state(

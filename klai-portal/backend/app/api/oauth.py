@@ -94,8 +94,7 @@ def _provider_enabled(provider: str) -> bool:
 
 def _frontend_redirect_url(path: str) -> str:
     """Build the browser redirect URL for post-callback navigation."""
-    base = settings.frontend_url.rstrip("/") if settings.frontend_url else ""
-    return f"{base}{path}" if base else path
+    return f"{settings.portal_url.rstrip('/')}{path}"
 
 
 # ---------------------------------------------------------------------------
