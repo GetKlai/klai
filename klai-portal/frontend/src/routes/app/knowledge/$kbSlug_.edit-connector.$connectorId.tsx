@@ -3,9 +3,11 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ArrowLeft, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, AlertTriangle, Globe, FileText } from 'lucide-react'
+import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
@@ -25,6 +27,15 @@ interface NotionEditConfig {
 }
 
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
+
+type ConnectorTypeInfo = { label: string; Icon: React.ComponentType<{ className?: string }> }
+const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
+  github:       { label: 'GitHub',       Icon: SiGithub },
+  web_crawler:  { label: 'Web',          Icon: Globe },
+  notion:       { label: 'Notion',       Icon: SiNotion },
+  google_drive: { label: 'Google Drive', Icon: SiGoogledrive },
+  ms_docs:      { label: 'MS Docs',      Icon: FileText },
+}
 
 function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
@@ -71,7 +82,22 @@ function EditConnectorPage() {
       setIsReconnecting(false)
     }
   }
+  const [wcPreviewUrl, setWcPreviewUrl] = useState('')
+  const [wcCookies, setWcCookies] = useState('')
   const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
+
+  function parseCookies(): unknown[] | undefined {
+    const raw = wcCookies.trim()
+    if (!raw) return undefined
+    if (raw.startsWith('[')) {
+      try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : undefined } catch { return undefined }
+    }
+    const domain = (() => { try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' } })()
+    return raw.split(';').map((pair) => {
+      const [name, ...rest] = pair.trim().split('=')
+      return { name: name.trim(), value: rest.join('='), domain, path: '/' }
+    }).filter((c) => c.name && c.value)
+  }
 
   useEffect(() => {
     if (!connector) return
@@ -154,12 +180,12 @@ function EditConnectorPage() {
   })
 
   const previewMutation = useMutation({
-    mutationFn: async ({ url, content_selector }: { url: string; content_selector?: string }) => {
+    mutationFn: async ({ url, content_selector, cookies }: { url: string; content_selector?: string; cookies?: unknown[] }) => {
       try {
         return await apiFetch<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>(
           `/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`,
           token,
-          { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null }) },
+          { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null, cookies: cookies ?? null }) },
         )
       } catch {
         return { fit_markdown: '', word_count: 0, warnings: [] as string[] }
@@ -181,9 +207,22 @@ function EditConnectorPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
-          {m.admin_connectors_edit_title()}
-        </h1>
+        <div className="space-y-1.5">
+          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+            {m.admin_connectors_edit_title()}
+          </h1>
+          {connector && (() => {
+            const info = CONNECTOR_TYPE_MAP[connector.connector_type]
+            const Icon = info?.Icon ?? FileText
+            const label = info?.label ?? connector.connector_type
+            return (
+              <div className="flex items-center gap-1.5">
+                <Icon className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
+                <Badge variant="secondary" className="text-xs font-normal">{label}</Badge>
+              </div>
+            )
+          })()}
+        </div>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_connectors_cancel()}
@@ -208,13 +247,38 @@ function EditConnectorPage() {
                 <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
                 <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
+                <Input
+                  id="edit-conn-preview-url"
+                  type="url"
+                  placeholder={webcrawlerConfig.base_url}
+                  value={wcPreviewUrl}
+                  onChange={(e) => setWcPreviewUrl(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-cookies">{m.admin_connectors_webcrawler_cookies_label()}</Label>
+                <textarea
+                  id="edit-conn-cookies"
+                  rows={2}
+                  className="flex w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] resize-none"
+                  placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
+                  value={wcCookies}
+                  onChange={(e) => setWcCookies(e.target.value)}
+                />
+                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_cookies_help()}</p>
+              </div>
               <div>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   disabled={!webcrawlerConfig.base_url || previewMutation.isPending}
-                  onClick={() => previewMutation.mutate({ url: webcrawlerConfig.base_url, content_selector: webcrawlerConfig.content_selector })}
+                  onClick={() => {
+                    const url = wcPreviewUrl || webcrawlerConfig.base_url
+                    previewMutation.mutate({ url, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
+                  }}
                 >
                   {previewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
                 </Button>
