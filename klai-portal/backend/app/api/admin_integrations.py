@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin import _get_caller_org, _require_admin
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
+from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess, generate_widget_id
 from app.services.events import emit_event
 from app.services.partner_keys import generate_partner_key
 
@@ -42,20 +42,25 @@ class KbAccessEntry(BaseModel):
 class CreateIntegrationRequest(BaseModel):
     name: str = Field(min_length=3, max_length=128)
     description: str | None = None
+    integration_type: Literal["api", "widget"] = "api"
     permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool}
     kb_access: list[KbAccessEntry]
     rate_limit_rpm: int = Field(default=60, ge=10, le=600)
+    widget_config: dict | None = None
 
 
 class IntegrationResponse(BaseModel):
     id: str
     name: str
     description: str | None
+    integration_type: str
     key_prefix: str
     permissions: dict
     active: bool
     kb_access_count: int
     rate_limit_rpm: int
+    widget_id: str | None = None
+    widget_config: dict | None = None
     last_used_at: str | None
     created_at: str
     created_by: str
@@ -75,6 +80,7 @@ class UpdateIntegrationRequest(BaseModel):
     permissions: dict | None = None
     kb_access: list[KbAccessEntry] | None = None
     rate_limit_rpm: int | None = None
+    widget_config: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -87,11 +93,14 @@ def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> IntegrationRes
         id=key.id,
         name=key.name,
         description=key.description,
+        integration_type=key.integration_type,
         key_prefix=key.key_prefix,
         permissions=key.permissions,
         active=key.active,
         kb_access_count=kb_access_count,
         rate_limit_rpm=key.rate_limit_rpm,
+        widget_id=key.widget_id,
+        widget_config=key.widget_config,
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
         created_by=key.created_by,
@@ -171,6 +180,7 @@ async def create_integration(
     # Generate key
     plaintext_key, key_hash = generate_partner_key()
     key_id = str(uuid.uuid4())
+    widget_id = generate_widget_id() if body.integration_type == "widget" else None
 
     # Create key + KB access rows via ORM
     key_row = PartnerAPIKey(
@@ -178,10 +188,13 @@ async def create_integration(
         org_id=org.id,
         name=body.name,
         description=body.description,
+        integration_type=body.integration_type,
         key_prefix=plaintext_key[:12],
         key_hash=key_hash,
         permissions=body.permissions,
         rate_limit_rpm=body.rate_limit_rpm,
+        widget_id=widget_id,
+        widget_config=body.widget_config,
         created_by=caller_user_id,
     )
     db.add(key_row)
@@ -210,11 +223,14 @@ async def create_integration(
         id=key_row.id,
         name=key_row.name,
         description=key_row.description,
+        integration_type=key_row.integration_type,
         key_prefix=key_row.key_prefix,
         permissions=key_row.permissions,
         active=True,
         kb_access_count=len(body.kb_access),
         rate_limit_rpm=key_row.rate_limit_rpm,
+        widget_id=key_row.widget_id,
+        widget_config=key_row.widget_config,
         last_used_at=None,
         created_at=str(key_row.created_at),
         created_by=key_row.created_by,
@@ -293,11 +309,14 @@ async def get_integration_detail(
         id=key.id,
         name=key.name,
         description=key.description,
+        integration_type=key.integration_type,
         key_prefix=key.key_prefix,
         permissions=key.permissions,
         active=key.active,
         kb_access_count=len(kb_access_list),
         rate_limit_rpm=key.rate_limit_rpm,
+        widget_id=key.widget_id,
+        widget_config=key.widget_config,
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
         created_by=key.created_by,
@@ -335,6 +354,8 @@ async def update_integration(
         key.permissions = body.permissions
     if body.rate_limit_rpm is not None:
         key.rate_limit_rpm = body.rate_limit_rpm
+    if body.widget_config is not None:
+        key.widget_config = body.widget_config
 
     # Atomic KB access replacement
     if body.kb_access is not None:
