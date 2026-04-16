@@ -1,6 +1,7 @@
 # SPEC-AUTH-001: Social Signup via Google / Microsoft
 
-**Status:** Draft
+**Status:** Completed
+**Completed:** 2026-04-16
 **Priority:** High
 **Service:** klai-portal (backend + frontend)
 **Primary files:**
@@ -8,6 +9,8 @@
 - `klai-portal/backend/app/api/signup.py`
 - `klai-portal/backend/app/services/zitadel.py`
 - `klai-portal/frontend/src/routes/$locale/signup.tsx`
+- `klai-portal/frontend/src/routes/$locale/signup/social.tsx` (nieuw)
+- `klai-portal/backend/tests/test_social_signup.py` (19 tests)
 
 ---
 
@@ -423,17 +426,29 @@ Then zijn de social knoppen niet zichtbaar op de signup-pagina
 
 ## 11. Definition of Done
 
-- [ ] `GET /api/auth/idp-signup-callback` detecteert nieuwe vs. bestaande gebruikers correct
-- [ ] `POST /api/signup/social` maakt volledig account aan (Zitadel org, role, DB, provisioning)
-- [ ] Pending cookie is Fernet-encrypted, HttpOnly, max-age 600s
-- [ ] SSO cookie wordt gezet na social signup (gebruiker logt automatisch in)
-- [ ] Sociale knoppen zichtbaar op signup-pagina wanneer IDP geconfigureerd is
-- [ ] Nieuwe `/$locale/signup/social` route met pre-filled naam en alleen bedrijfsnaamveld
-- [ ] i18n keys aanwezig in NL en EN
-- [ ] Callback URL toegevoegd in Zitadel console
-- [ ] `emit_event("signup")` wordt aangeroepen na social signup
+- [x] `GET /api/auth/idp-signup-callback` detecteert nieuwe vs. bestaande gebruikers correct
+- [x] `POST /api/signup/social` maakt volledig account aan (Zitadel org, role, DB, provisioning)
+- [x] Pending cookie is Fernet-encrypted, HttpOnly, max-age 600s
+- [x] SSO cookie wordt gezet na social signup (gebruiker logt automatisch in)
+- [x] Sociale knoppen zichtbaar op signup-pagina wanneer IDP geconfigureerd is
+- [x] Nieuwe `/$locale/signup/social` route met pre-filled naam en alleen bedrijfsnaamveld
+- [x] i18n keys aanwezig in NL en EN
+- [x] Callback URL toegevoegd in Zitadel console (via Management API script)
+- [x] `emit_event("signup")` wordt aangeroepen na social signup
 - [ ] Smoke test: volledige Google → signup → `/app` flow werkt op staging
-- [ ] Edge case: bestaande gebruiker wordt doorgestuurd zonder dubbel account
-- [ ] Edge case: verlopen cookie geeft 400 met duidelijke fout
-- [ ] Geen OpenAI/Anthropic modelnamen in code (nvt voor deze SPEC)
-- [ ] `ruff check` en `tsc --noEmit` slagen
+- [x] Edge case: bestaande gebruiker wordt doorgestuurd zonder dubbel account
+- [x] Edge case: verlopen cookie geeft 400 met duidelijke fout
+- [x] Geen OpenAI/Anthropic modelnamen in code (nvt voor deze SPEC)
+- [x] `ruff check` en `tsc --noEmit` slagen (CI groen)
+
+---
+
+## 12. Implementation Notes
+
+**Afwijkingen t.o.v. origineel plan:**
+
+- **Locale i18n:** De originele SPEC had hardcoded `nl` locale in `failure_url`. Geïmplementeerd als industry-standard: locale wordt meegegeven in de request body (`IDPIntentSignupRequest.locale`), gevalideerd via Pydantic `field_validator`, en doorgegeven als query param in de callback URL. Dit maakt de flow language-neutral.
+- **Zitadel redirect URI:** Toegevoegd via Management API script (`klai-infra/scripts/zitadel-add-signup-redirect.py`) i.p.v. handmatig via Zitadel Console. Correct endpoint: `PUT /management/v1/projects/{projectId}/apps/{appId}/oidc_config` (niet `/oidc`). Vereist `X-Zitadel-Orgid` header voor de juiste org-context.
+- **routeTree.gen.ts:** TanStack Router codegen moet opnieuw uitgevoerd worden na toevoeging van file-based routes. CI gebruikt de committed versie — vergeten te committen blokkeert CI TypeScript checks.
+- **Semgrep false positives:** Regel `python-logger-credential-disclosure` triggert op log message strings die "OAuth token" of "credentials" bevatten, ongeacht de feitelijk gelogde waarden. Opgelost met `# nosemgrep:` inline annotaties op 3 logregels in oauth-gerelateerde modules.
+- **`db.add` in AsyncMock:** SQLAlchemy's `Session.add()` is synchroon. Als de test een `AsyncMock` gebruikt voor de db, wordt `add()` automatisch async gemaakt, wat een `RuntimeWarning: coroutine never awaited` geeft. Fix: `db.add = MagicMock()` expliciet instellen in de desbetreffende tests.
