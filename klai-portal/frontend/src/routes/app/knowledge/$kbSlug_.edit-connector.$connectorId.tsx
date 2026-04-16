@@ -8,7 +8,6 @@ import {
   Settings, ChevronDown, ChevronRight, CheckCircle2, Loader2, Sparkles,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -263,8 +262,7 @@ function EditConnectorPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
+      <div>
 
           {/* Web crawler */}
           {connector?.connector_type === 'web_crawler' && (
@@ -558,8 +556,7 @@ function EditConnectorPage() {
           {!connector && (
             <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
           )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   )
 }
