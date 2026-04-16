@@ -505,11 +505,40 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def retrieve_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
+        """Retrieve a completed IDP intent. Returns dict with userId and idpInformation.
+
+        userId may be absent if the IDP did not link to an existing Zitadel user.
+        """
+        resp = await self._http.get(
+            f"/v2/idp_intents/{idp_intent_id}",
+            params={"idpIntentToken": idp_intent_token},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def create_session_with_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
-        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }."""
+        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }.
+
+        Retrieves the linked userId from the intent first — required since newer versions of the
+        Zitadel sessions API require an explicit user check alongside the IDP intent check.
+        """
+        intent = await self.retrieve_idp_intent(idp_intent_id, idp_intent_token)
+        user_id: str | None = intent.get("userId")
+        if not user_id:
+            logger.error(
+                "IDP intent %s returned no userId — cannot create session",
+                idp_intent_id,
+            )
+            raise ValueError(f"No user linked to IDP intent {idp_intent_id}")
         resp = await self._http.post(
             "/v2/sessions",
-            json={"checks": {"idpIntent": {"idpIntentId": idp_intent_id, "idpIntentToken": idp_intent_token}}},
+            json={
+                "checks": {
+                    "user": {"userId": user_id},
+                    "idpIntent": {"idpIntentId": idp_intent_id, "idpIntentToken": idp_intent_token},
+                }
+            },
         )
         resp.raise_for_status()
         return resp.json()

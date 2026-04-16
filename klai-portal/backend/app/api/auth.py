@@ -802,6 +802,9 @@ async def idp_callback(
     except httpx.HTTPStatusError as exc:
         logger.exception("create_session_with_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
         return RedirectResponse(url=failure_url, status_code=302)
+    except Exception:
+        logger.exception("create_session_with_idp_intent failed (non-HTTP)")
+        return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
     session_token: str | None = session.get("sessionToken")
@@ -974,6 +977,9 @@ async def idp_signup_callback(
             exc.response.status_code,
             exc.response.text,
         )
+        return RedirectResponse(url=failure_url, status_code=302)
+    except Exception:
+        logger.exception("idp_signup_callback create_session failed (non-HTTP)")
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
