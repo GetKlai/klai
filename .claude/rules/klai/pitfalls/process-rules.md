@@ -122,6 +122,23 @@ positions. Theoretical corrections on top of measurements compound the error.
 
 Never iterate through Tailwind spacing classes by feel. One measurement, one value.
 
+## no-sycophancy
+Never agree with the user just to be agreeable. If a proposed approach
+has flaws, say so directly — even if the user seems committed to it.
+If you don't know something, say "I don't know" instead of guessing
+confidently. If the user's assumption is wrong, correct it before
+acting on it. Prefer an uncomfortable truth over a comfortable lie.
+
+Specific anti-patterns to avoid:
+- "Great question!" or "That's a great idea!" before answering
+- Claiming something works when you haven't verified it
+- Softening bad news with excessive caveats or optimism
+- Agreeing with contradictory statements across messages
+- Generating plausible-sounding but unverified explanations
+
+When you disagree: state the disagreement, give your reasoning, then
+ask how to proceed. The user hired an expert, not a yes-man.
+
 ## worktree-agent-isolation
 When a subagent runs inside a git worktree (`.claude/worktrees/<id>/`),
 its file writes land in that worktree, not the main working tree. After the

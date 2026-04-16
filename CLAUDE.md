@@ -93,7 +93,7 @@ Graph-powered code intelligence (call graphs, communities, execution flows). Enr
 <!-- codeindex:start -->
 # CodeIndex MCP
 
-This project is indexed by CodeIndex as **klai** (0 symbols, 0 relationships, 300 execution flows).
+This project is indexed by CodeIndex as **klai** (8045 symbols, 17780 relationships, 300 execution flows).
 
 ## Rules (MUST follow)
 
