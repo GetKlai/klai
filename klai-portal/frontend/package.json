@@ -25,6 +25,7 @@
     "@inlang/paraglide-js": "^2.15.1",
     "@mantine/core": "^8.0.0",
     "@mantine/hooks": "^8.0.0",
+    "@mantine/notifications": "^9.0.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-dialog": "^1.1.15",
