@@ -33,6 +33,44 @@ paths:
 - Personal KBs: `checkKBAccess(kb, userId)` on authenticated routes.
 - Public endpoints: return 404 for personal KBs (never 403 — leaks existence).
 
+## Two separate apps serve docs content — public reader vs authenticated editor (HIGH)
+
+`klai-docs/` (Next.js 15, port 3010) and `klai-portal/frontend/src/routes/app/docs/` are
+two completely separate applications that both read from the same Gitea repos.
+
+| App | Auth | URL scheme | Purpose |
+|---|---|---|---|
+| `klai-docs/` | None (public) | `/docs/{kb-slug}/{page-slug}` | Public SSR reader |
+| `klai-portal/frontend` | Required | `/app/docs/{kb-slug}/{page-uuid}` | Authenticated editor |
+
+Caddy routes `/docs/*` to `docs-app:3010`. The portal editor is served from the portal SPA.
+`collectSlugs()` and page index building exist in **both** codebases — intentional duplication
+because they serve different runtime environments (SSR vs SPA).
+
+**Why this matters:** When investigating routing or URL questions, searching only
+`klai-portal/frontend/src/routes/` will miss the public reader entirely. A route not found in
+the portal is not evidence that the feature does not exist.
+
+**Prevention:** For any routing or URL investigation, always check:
+1. `deploy/caddy/Caddyfile` — what does Caddy route where?
+2. `klai-docs/` — public Next.js reader
+3. `klai-portal/frontend/src/routes/` — authenticated SPA editor
+
+---
+
+## resolveSlug: use strict equality, not startsWith (MED)
+
+When resolving a page by its ID from a URL param, use strict equality (`===`) not
+`startsWith`. A `startsWith` guard designed for short 8-char prefix lookups becomes
+functionally equivalent to equality when full UUIDs are used — but it introduces a
+theoretical false-positive risk if two UUIDs share the same prefix, and the misleading
+name/comment implies partial matching is still intended.
+
+**Prevention:** After any ID format change (prefix → full UUID), replace `startsWith(id)`
+with `=== id` and update the comment.
+
+---
+
 ## KB Editor (portal) — BlockNote persistence (HIGH)
 
 **Never use `blocksToHTMLLossy` for saving page content.** It silently drops empty paragraphs,
