@@ -22,6 +22,7 @@ dependencies = [
     "notion-sync-lib @ git+https://github.com/mvletter/notion-sync-lib.git",
     "minio>=7.2.0",
     "filetype>=1.2.0",
+    "msal>=1.31",
 ]
 
 [project.optional-dependencies]

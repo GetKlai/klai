@@ -224,6 +224,76 @@ async def receive_sync_status(
             )
 
 
+class CredentialsUpdate(BaseModel):
+    """Partial update to a connector's encrypted credentials (SPEC-KB-025).
+
+    Called by klai-connector after refreshing an OAuth access token. Only the
+    fields to be updated are provided; the rest of the encrypted credential
+    blob is preserved.
+    """
+
+    access_token: str
+    token_expiry: str | None = None
+
+
+# @MX:ANCHOR: [AUTO] Writeback path for refreshed OAuth access tokens.
+# @MX:REASON: Called by klai-connector OAuthAdapterBase.ensure_token(). SPEC-KB-025.
+@router.patch("/connectors/{connector_id}/credentials", status_code=status.HTTP_204_NO_CONTENT)
+async def update_connector_credentials(
+    connector_id: str,
+    body: CredentialsUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Merge refreshed OAuth tokens into the connector's encrypted credentials.
+
+    Flow:
+    1. Authorize via internal Bearer secret.
+    2. Load connector and set tenant context.
+    3. Decrypt current credentials (preserves refresh_token, etc.).
+    4. Merge in the new access_token + optional token_expiry.
+    5. Re-encrypt and persist. The plaintext config column is overwritten
+       with the redacted form (sensitive fields masked as "***").
+    """
+    _require_internal_token(request)
+    connector = await db.get(PortalConnector, connector_id)
+    if connector is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    await set_tenant(db, connector.org_id)
+
+    if credential_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Credential store not configured",
+        )
+
+    # Start from whatever is currently stored (encrypted or legacy plaintext).
+    merged: dict = {}
+    if connector.encrypted_credentials is not None:
+        merged = await credential_store.decrypt_credentials(
+            org_id=connector.org_id,
+            encrypted_credentials=connector.encrypted_credentials,
+            db=db,
+        )
+    else:
+        merged = dict(connector.config or {})
+
+    # Apply the patch — NEVER log access_token value.
+    merged["access_token"] = body.access_token
+    if body.token_expiry is not None:
+        merged["token_expiry"] = body.token_expiry
+
+    encrypted_blob, redacted_config = await credential_store.encrypt_credentials(
+        org_id=connector.org_id,
+        connector_type=connector.connector_type,
+        config=merged,
+        db=db,
+    )
+    connector.encrypted_credentials = encrypted_blob
+    connector.config = redacted_config
+    await db.commit()
+
+
 class KnowledgeFeatureResponse(BaseModel):
     enabled: bool
     kb_retrieval_enabled: bool = True

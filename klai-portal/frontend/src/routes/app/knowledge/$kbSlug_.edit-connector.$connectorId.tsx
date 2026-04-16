@@ -56,6 +56,7 @@ function EditConnectorPage() {
   const [notionConfig, setNotionConfig] = useState<NotionEditConfig>({
     database_ids: '', max_pages: '500', new_access_token: '',
   })
+  const [folderId, setFolderId] = useState('')
   const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
 
   useEffect(() => {
@@ -89,6 +90,10 @@ function EditConnectorPage() {
         new_access_token: '',
       })
     }
+    if (connector.connector_type === 'google_drive') {
+      const cfg = connector.config as { folder_id?: string }
+      setFolderId(cfg.folder_id ?? '')
+    }
   }, [connector?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
@@ -115,6 +120,9 @@ function EditConnectorPage() {
         const ids = notionConfig.database_ids.split('\n').map((s) => s.trim()).filter(Boolean)
         if (ids.length > 0) config.database_ids = ids
         if (notionConfig.max_pages) config.max_pages = Number(notionConfig.max_pages)
+      }
+      if (connector.connector_type === 'google_drive') {
+        if (folderId.trim()) config.folder_id = folderId.trim()
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, token, {
         method: 'PATCH',
@@ -324,8 +332,41 @@ function EditConnectorPage() {
             </form>
           )}
 
+          {/* Google Drive */}
+          {connector?.connector_type === 'google_drive' && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
+                <Input id="edit-conn-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
+                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_google_drive_folder_id_help()}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+              </div>
+              {renderError()}
+              <div className="flex gap-2 pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    window.location.href = `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`
+                  }}
+                >
+                  {m.admin_connectors_google_drive_reconnect()}
+                </Button>
+              </div>
+            </form>
+          )}
+
           {/* Generic fallback for unsupported connector types */}
-          {connector && !['web_crawler', 'github', 'notion'].includes(connector.connector_type) && (
+          {connector && !['web_crawler', 'github', 'notion', 'google_drive'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>

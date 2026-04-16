@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     klai_connector_url: str = "http://klai-connector:8200"
     klai_connector_secret: str = ""  # Shared internal secret; generate with: openssl rand -hex 32
 
+    # Google Drive OAuth (SPEC-KB-025) — empty client_id disables the provider
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
+
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
     frontend_url: str = ""  # e.g. http://localhost:5174 in dev; empty = same origin as API in prod
