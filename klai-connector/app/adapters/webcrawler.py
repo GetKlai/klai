@@ -222,9 +222,14 @@ class WebCrawlerAdapter(BaseAdapter):
         }
         if allowed_path_prefix:
             pattern = base_url.rstrip("/") + "/" + allowed_path_prefix.lstrip("/")
-            deep_crawl_params["filter_chain"] = [
-                {"type": "URLPatternFilter", "params": {"patterns": [pattern]}},
-            ]
+            deep_crawl_params["filter_chain"] = {
+                "type": "FilterChain",
+                "params": {
+                    "filters": [
+                        {"type": "URLPatternFilter", "params": {"patterns": [pattern]}},
+                    ]
+                },
+            }
 
         # Don't mutate the caller's dict — work on a copy.
         params = dict(crawl_params)

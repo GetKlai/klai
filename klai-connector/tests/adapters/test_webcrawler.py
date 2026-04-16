@@ -197,9 +197,11 @@ async def test_start_crawl_injects_path_prefix_filter(adapter: WebCrawlerAdapter
 
     deep_strategy = captured_payload["crawler_config"]["params"]["deep_crawl_strategy"]
     filter_chain = deep_strategy["params"]["filter_chain"]
-    assert len(filter_chain) == 1
-    assert filter_chain[0]["type"] == "URLPatternFilter"
-    assert filter_chain[0]["params"]["patterns"] == ["https://wiki.example.com/en"]
+    assert filter_chain["type"] == "FilterChain"
+    filters = filter_chain["params"]["filters"]
+    assert len(filters) == 1
+    assert filters[0]["type"] == "URLPatternFilter"
+    assert filters[0]["params"]["patterns"] == ["https://wiki.example.com/en"]
 
 
 # ---------------------------------------------------------------------------
