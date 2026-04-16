@@ -25,10 +25,6 @@ interface Template {
   created_by: string
 }
 
-interface TemplatesResponse {
-  templates: Template[]
-}
-
 function TemplatesPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
@@ -38,9 +34,9 @@ function TemplatesPage() {
   const [form, setForm] = useState({ name: '', description: '', prompt_text: '', scope: 'global' })
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
 
-  const { data, isLoading } = useQuery<TemplatesResponse>({
+  const { data, isLoading } = useQuery<Template[]>({
     queryKey: ['app-templates'],
-    queryFn: async () => apiFetch<TemplatesResponse>('/api/app/templates', token),
+    queryFn: async () => apiFetch<Template[]>('/api/app/templates', token),
     enabled: !!token,
   })
 
@@ -73,7 +69,7 @@ function TemplatesPage() {
     },
   })
 
-  const templates = data?.templates ?? []
+  const templates = data ?? []
 
   function startEdit(t: Template) {
     setEditId(t.id)
@@ -99,7 +95,7 @@ function TemplatesPage() {
   const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="mx-auto max-w-3xl px-6 py-10">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
@@ -102,11 +103,6 @@ const DEVELOPMENT: SourceTypeOption[] = [
   { type: 'github', label: m.add_source_type_github, description: m.add_source_type_github_desc, Icon: SiGithub },
 ]
 
-// -- Helpers -----------------------------------------------------------------
-
-function stepLabel(current: number, total: number, label: string): string {
-  return `Stap ${current} van ${total} \u2014 ${label}`
-}
 
 // -- Route -------------------------------------------------------------------
 
@@ -203,12 +199,13 @@ function AddSourcePage() {
     service_account_json: '', spreadsheet_ids: '',
   })
 
-  // Fetch KB name for the header
-  const { data: kb } = useQuery({
-    queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: () => apiFetch<{ name: string }>(`/api/app/knowledge-bases/${kbSlug}`, token),
+  // Fetch all KBs for collection switcher
+  const { data: allKbsData } = useQuery({
+    queryKey: ['app-knowledge-bases'],
+    queryFn: () => apiFetch<{ knowledge_bases: { id: number; name: string; slug: string }[] }>('/api/app/knowledge-bases', token),
     enabled: !!token,
   })
+  const allKbs = allKbsData?.knowledge_bases ?? []
 
   function goBack() {
     void navigate({ to: '/app/knowledge' })
@@ -444,36 +441,56 @@ function AddSourcePage() {
     },
   })
 
-  // Step counts for step labels
-  const wcTotalSteps = 4
-  const notionTotalSteps = 2
-  const githubTotalSteps = 2
+  // -- Step indicator logic --
+  const wizardStep: 'collection' | 'type' | 'configure' =
+    !sourceType ? 'type' : 'configure'
+
+  const steps: StepItem[] = [
+    { label: 'Collectie', onClick: () => { /* already chosen via URL */ } },
+    { label: 'Brontype', onClick: () => setSourceType(null) },
+    { label: 'Configureren' },
+  ]
+  const stepIndex = wizardStep === 'type' ? 1 : 2
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="mx-auto max-w-3xl px-6 py-10">
       {/* Page header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            {m.add_source_title()}
-          </h1>
-          {kb && (
-            <p className="text-sm text-gray-400 mt-0.5">
-              {m.add_source_to_collection({ name: kb.name })}
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={goBack}
-          className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4 inline mr-1" />
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
+          {m.add_source_title()}
+        </h1>
+        <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_connectors_cancel()}
-        </button>
+        </Button>
       </div>
 
-      {/* ── Step 1: Source type grid ─────────────────────────────────── */}
+      {/* Step indicator */}
+      <StepIndicator steps={steps} currentIndex={stepIndex} />
+
+      <div className="mt-6">
+
+      {/* ── Step 1 (already done): Collection selector ─────────────── */}
+      {/* Shown as a compact bar so user can switch collection at any point */}
+      <div className="flex items-center gap-2 mb-6 px-1">
+        <span className="text-sm text-[var(--color-muted-foreground)]">Collectie:</span>
+        <select
+          value={kbSlug}
+          onChange={(e) => {
+            void navigate({
+              to: '/app/knowledge/$kbSlug/add-source',
+              params: { kbSlug: e.target.value },
+            })
+          }}
+          className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--color-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] cursor-pointer"
+        >
+          {allKbs.map((k) => (
+            <option key={k.id} value={k.slug}>{k.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* ── Step 2: Source type grid ────────────────────────────────── */}
       {!sourceType && (
         <div className="space-y-8">
           <SourceCategory title={m.add_source_category_direct()} types={DIRECT_UPLOAD} onSelect={resetAndPickType} />
@@ -487,7 +504,6 @@ function AddSourcePage() {
       {/* ── File upload form ─────────────────────────────────────────── */}
       {sourceType === 'file' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Upload bestanden</p>
 
           {/* Drop zone */}
           <div
@@ -567,7 +583,6 @@ function AddSourcePage() {
       {/* ── URL form (single page scrape) ────────────────────────────── */}
       {sourceType === 'url' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Webpagina toevoegen</p>
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -618,7 +633,6 @@ function AddSourcePage() {
       {/* ── Text form ────────────────────────────────────────────────── */}
       {sourceType === 'text' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Tekst toevoegen</p>
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="text-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -670,7 +684,6 @@ function AddSourcePage() {
       {/* ── Image upload form ──────────────────────────────────────── */}
       {sourceType === 'image' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Afbeelding uploaden</p>
 
           {/* Drop zone */}
           <div
@@ -753,7 +766,6 @@ function AddSourcePage() {
       {/* ── YouTube form ─────────────────────────────────────────────── */}
       {sourceType === 'youtube' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; YouTube video</p>
           <form onSubmit={(e) => { e.preventDefault(); youtubeIngestMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="yt-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()} (optioneel)</Label>
@@ -783,7 +795,6 @@ function AddSourcePage() {
       {/* ── RSS form ─────────────────────────────────────────────────── */}
       {sourceType === 'rss' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; RSS Feed</p>
           <form onSubmit={(e) => { e.preventDefault(); rssIngestMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="rss-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()} (optioneel)</Label>
@@ -817,7 +828,6 @@ function AddSourcePage() {
       {/* ── Confluence form ──────────────────────────────────────────── */}
       {sourceType === 'confluence' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Confluence configuratie</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="conf-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -859,7 +869,6 @@ function AddSourcePage() {
       {/* ── Slack form ───────────────────────────────────────────────── */}
       {sourceType === 'slack' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Slack configuratie</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="slack-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -893,7 +902,6 @@ function AddSourcePage() {
       {/* ── Airtable form ────────────────────────────────────────────── */}
       {sourceType === 'airtable' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Airtable configuratie</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="at-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -931,7 +939,6 @@ function AddSourcePage() {
       {/* ── Google Drive form ────────────────────────────────────────── */}
       {sourceType === 'google_drive' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Google Drive configuratie</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="gd-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -972,7 +979,6 @@ function AddSourcePage() {
       {/* ── Gmail form ───────────────────────────────────────────────── */}
       {sourceType === 'gmail' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Gmail configuratie</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="gm-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -1017,7 +1023,6 @@ function AddSourcePage() {
       {/* ── Google Sheets form ───────────────────────────────────────── */}
       {sourceType === 'google_sheets' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Google Sheets configuratie</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="gs-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -1058,7 +1063,6 @@ function AddSourcePage() {
       {/* ── GitHub form ──────────────────────────────────────────────── */}
       {sourceType === 'github' && (
         <div className="space-y-6">
-          <p className="text-sm text-gray-400">{stepLabel(2, githubTotalSteps, m.admin_connectors_step_configure())}</p>
           <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="conn-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -1108,7 +1112,6 @@ function AddSourcePage() {
         <div className="space-y-6">
           {notionStep === 'credentials' && (
             <>
-              <p className="text-sm text-gray-400">{stepLabel(2, notionTotalSteps, m.admin_connectors_step_configure())}</p>
               <form onSubmit={(e) => { e.preventDefault(); setNotionStep('settings') }} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="notion-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -1148,7 +1151,6 @@ function AddSourcePage() {
           )}
           {notionStep === 'settings' && (
             <>
-              <p className="text-sm text-gray-400">{stepLabel(2, notionTotalSteps, m.admin_connectors_step_configure())}</p>
               <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-gray-900">{m.admin_connectors_assertion_modes_label()}</Label>
@@ -1183,7 +1185,6 @@ function AddSourcePage() {
           {/* Step 1: Details */}
           {wcStep === 'details' && (
             <>
-              <p className="text-sm text-gray-400">{stepLabel(2, wcTotalSteps, m.admin_connectors_webcrawler_step_details())}</p>
               <div className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="wc-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
@@ -1217,7 +1218,6 @@ function AddSourcePage() {
           {/* Step 2: Preview */}
           {wcStep === 'preview' && (
             <>
-              <p className="text-sm text-gray-400">{stepLabel(3, wcTotalSteps, m.admin_connectors_webcrawler_step_preview())}</p>
               <div className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="wc-preview-url" className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_preview_url()}</Label>
@@ -1334,7 +1334,6 @@ function AddSourcePage() {
           {/* Step 3: Settings */}
           {wcStep === 'settings' && (
             <>
-              <p className="text-sm text-gray-400">{stepLabel(4, wcTotalSteps, m.admin_connectors_webcrawler_step_settings())}</p>
               <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-gray-900">{m.admin_connectors_assertion_modes_label()}</Label>
@@ -1360,6 +1359,7 @@ function AddSourcePage() {
           )}
         </div>
       )}
+      </div>{/* close mt-6 */}
     </div>
   )
 }

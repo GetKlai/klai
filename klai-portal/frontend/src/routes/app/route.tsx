@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, BookOpen, Sliders, Scale, Users, Puzzle, CreditCard, Settings } from 'lucide-react'
+import { MessageSquare, BookOpen, Sliders, Scale, Users, Puzzle } from 'lucide-react'
 import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
@@ -39,10 +39,6 @@ function AppLayout() {
     { to: '/admin/mcps', label: m.sidebar_mcps(), icon: Puzzle },
   ]
 
-  const accountItems: NavItem[] = [
-    { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
-    { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
-  ]
 
   const isAdmin = user?.isAdmin === true
   const isGroupAdmin = user?.isGroupAdmin === true
@@ -78,8 +74,8 @@ function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar navItems={appNav} accountItems={(isAdmin || isGroupAdmin) ? accountItems : undefined} />
-      <main className="flex-1 overflow-y-auto bg-white" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <Sidebar navItems={appNav} />
+      <main className="flex-1 overflow-y-auto bg-white">
         <SessionBanner />
         <Outlet />
       </main>

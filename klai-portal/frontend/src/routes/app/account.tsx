@@ -79,7 +79,6 @@ function AccountPage() {
   return (
     <div
       className="mx-auto max-w-3xl px-6 py-10 space-y-6"
-      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold text-gray-900">

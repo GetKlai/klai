@@ -123,7 +123,7 @@ function ChatHome() {
   const showError = phase === 'error' || phase === 'stuck'
 
   return (
-    <div className="flex h-full w-full flex-col" data-help-id="chat-page" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="flex h-full w-full flex-col" data-help-id="chat-page">
       {/* Config bar — Superdock style */}
       <ChatConfigBar token={token} />
 
@@ -217,7 +217,7 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2 pl-4 pr-4 pt-5 pb-1" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="flex shrink-0 items-center gap-2 pl-4 pr-4 pt-5 pb-1">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
       <span className="text-sm text-gray-400 whitespace-nowrap">Chat met:</span>

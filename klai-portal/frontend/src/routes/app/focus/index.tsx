@@ -113,7 +113,7 @@ function FocusPage() {
         : null
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold text-gray-900">

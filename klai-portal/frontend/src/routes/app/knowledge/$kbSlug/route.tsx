@@ -90,7 +90,6 @@ function KbLayout() {
     return (
       <div
         className="mx-auto max-w-3xl px-6 py-10"
-        style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
       >
         <div className="h-8 w-48 rounded-lg bg-gray-50 animate-pulse mb-4" />
         <div className="h-4 w-96 rounded-lg bg-gray-50 animate-pulse" />
@@ -102,7 +101,6 @@ function KbLayout() {
     return (
       <div
         className="mx-auto max-w-3xl px-6 py-10 text-gray-400"
-        style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
       >
         {m.knowledge_detail_not_found()}
       </div>
@@ -119,7 +117,6 @@ function KbLayout() {
   return (
     <div
       className="mx-auto max-w-3xl px-6 py-10 space-y-8"
-      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
