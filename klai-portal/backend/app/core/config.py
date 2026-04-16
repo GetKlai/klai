@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     mongodb_container_name: str = "mongodb"
 
     # Secrets passed to new LibreChat containers (read from /opt/klai/.env)
+    mongo_root_username: str = "root"
     mongo_root_password: str = ""
     meili_master_key: str = ""
     litellm_master_key: str = ""
