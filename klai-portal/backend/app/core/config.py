@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # Generate with: openssl rand -hex 32
     internal_secret: str = ""
 
+    # klai-mailer service URL (for sending transactional emails)
+    mailer_url: str = ""  # e.g. http://klai-mailer:8300
+
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""
 
