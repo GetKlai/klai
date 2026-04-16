@@ -29,7 +29,11 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.core.database import session_maker
+# Import the module, not the attribute: ``init_engine()`` rebinds
+# ``database.session_maker`` at runtime. A plain ``from ... import session_maker``
+# would capture the initial ``None`` value at module import time and never
+# update — causing every event emission to no-op in production.
+from app.core import database
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +59,7 @@ def emit_product_event(
     """
 
     async def _insert() -> None:
+        session_maker = database.session_maker
         if session_maker is None:
             logger.warning(
                 "emit_product_event skipped: database not initialised (event_type=%s)",
