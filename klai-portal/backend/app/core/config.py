@@ -153,6 +153,9 @@ class Settings(BaseSettings):
     imap_poll_interval_seconds: int = 60
     invite_bot_rate_limit_per_user_per_day: int = 10
 
+    # Docker container names (provisioning uses these to manage tenants)
+    mongodb_container_name: str = "mongodb"
+
     # CORS — static origins + wildcard regex for tenant subdomains
     # SECURITY-CRITICAL: This regex controls which origins can make credentialed
     # cross-origin requests. A permissive pattern (e.g. .*) would allow any site
