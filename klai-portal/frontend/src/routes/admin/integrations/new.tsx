@@ -16,13 +16,14 @@ export const Route = createFileRoute('/admin/integrations/new')({
   component: NewIntegrationPage,
 })
 
-// Step identifiers. Widget skips the "permissions" step and adds "styling".
+// Step identifiers. Widget: type -> details -> kbs -> appearance -> embed.
+// API: type -> details -> permissions -> kbs -> settings.
 type ApiStep = 'type' | 'details' | 'permissions' | 'kbs' | 'settings'
-type WidgetStep = 'type' | 'details' | 'kbs' | 'settings' | 'styling'
+type WidgetStep = 'type' | 'details' | 'kbs' | 'appearance' | 'embed'
 type Step = ApiStep | WidgetStep
 
 const API_STEPS: ApiStep[] = ['type', 'details', 'permissions', 'kbs', 'settings']
-const WIDGET_STEPS: WidgetStep[] = ['type', 'details', 'kbs', 'settings', 'styling']
+const WIDGET_STEPS: WidgetStep[] = ['type', 'details', 'kbs', 'appearance', 'embed']
 
 const CSS_VAR_KEYS = [
   '--klai-primary-color',
@@ -120,10 +121,10 @@ function NewIntegrationPage() {
             ? m.admin_integrations_wizard_step_permissions()
             : s === 'kbs'
               ? m.admin_integrations_wizard_step_kb_access()
-              : s === 'styling'
-                ? m.admin_integrations_wizard_step_styling()
-                : integrationType === 'widget'
-                  ? m.admin_integrations_wizard_step_setup()
+              : s === 'appearance'
+                ? m.admin_integrations_wizard_step_appearance()
+                : s === 'embed'
+                  ? m.admin_integrations_wizard_step_embed()
                   : m.admin_integrations_wizard_step_rate_limit(),
     onClick: () => setStep(s),
   }))
@@ -170,15 +171,21 @@ function NewIntegrationPage() {
         : null
     }
     if (s === 'settings') {
-      if (integrationType === 'widget') {
-        const origins = parseOrigins(form.allowed_origins_raw)
-        if (origins.length === 0) {
-          return m.admin_integrations_wizard_error_no_origins()
-        }
-        if (origins.some((o) => !isValidOrigin(o))) {
-          return m.admin_integrations_wizard_error_invalid_origins()
-        }
-        return null
+      // API only: rate limit (optional, has default)
+      return null
+    }
+    if (s === 'appearance') {
+      // Widget appearance (title, welcome, CSS) is all optional
+      return null
+    }
+    if (s === 'embed') {
+      // Widget embed requires at least one valid origin
+      const origins = parseOrigins(form.allowed_origins_raw)
+      if (origins.length === 0) {
+        return m.admin_integrations_wizard_error_no_origins()
+      }
+      if (origins.some((o) => !isValidOrigin(o))) {
+        return m.admin_integrations_wizard_error_invalid_origins()
       }
       return null
     }
@@ -471,10 +478,11 @@ function NewIntegrationPage() {
           </section>
         )}
 
-        {step === 'settings' && integrationType === 'widget' && (
-          <section className="space-y-4">
+        {/* Step 4 (widget): Appearance — title, welcome, CSS */}
+        {step === 'appearance' && integrationType === 'widget' && (
+          <section className="space-y-6">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_setup_intro()}
+              {m.admin_integrations_wizard_appearance_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="widget-title">
@@ -508,39 +516,6 @@ function NewIntegrationPage() {
                 placeholder={m.admin_integrations_widget_welcome_placeholder()}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="widget-origins">
-                {m.admin_integrations_widget_origins_label()}
-              </Label>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_widget_origins_help()}
-              </p>
-              <textarea
-                id="widget-origins"
-                value={form.allowed_origins_raw}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, allowed_origins_raw: e.target.value }))
-                }
-                rows={4}
-                placeholder={m.admin_integrations_widget_origins_placeholder()}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm font-mono text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              {parseOrigins(form.allowed_origins_raw).length === 0 && (
-                <div className="flex items-start gap-1.5 text-xs text-[var(--color-muted-foreground)]">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
-                  {m.admin_integrations_widget_origins_empty_warning()}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* Step 5 (widget only): Styling + embed preview */}
-        {step === 'styling' && integrationType === 'widget' && (
-          <section className="space-y-6">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_styling_intro()}
-            </p>
 
             {/* CSS variables editor */}
             <div className="space-y-2">
@@ -618,7 +593,43 @@ function NewIntegrationPage() {
               )}
             </div>
 
-            {/* Embed snippet preview */}
+          </section>
+        )}
+
+        {/* Step 5 (widget): Embed — allowed origins + embed code preview */}
+        {step === 'embed' && integrationType === 'widget' && (
+          <section className="space-y-6">
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {m.admin_integrations_wizard_embed_intro()}
+            </p>
+
+            {/* Allowed origins */}
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-origins">
+                {m.admin_integrations_widget_origins_label()}
+              </Label>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_widget_origins_help()}
+              </p>
+              <textarea
+                id="widget-origins"
+                value={form.allowed_origins_raw}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, allowed_origins_raw: e.target.value }))
+                }
+                rows={4}
+                placeholder={m.admin_integrations_widget_origins_placeholder()}
+                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm font-mono text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              {parseOrigins(form.allowed_origins_raw).length === 0 && (
+                <div className="flex items-start gap-1.5 text-xs text-[var(--color-muted-foreground)]">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
+                  {m.admin_integrations_widget_origins_empty_warning()}
+                </div>
+              )}
+            </div>
+
+            {/* Embed code preview */}
             <div className="space-y-2 pt-4 border-t border-[var(--color-border)]">
               <Label>{m.admin_integrations_wizard_embed_preview_label()}</Label>
               <p className="text-xs text-[var(--color-muted-foreground)]">

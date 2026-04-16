@@ -1562,6 +1562,10 @@
   "admin_integrations_wizard_step_styling": "Styling",
   "admin_integrations_wizard_styling_intro": "Personalise how the widget looks on your site. All fields are optional — leave empty to use Klai defaults.",
   "admin_integrations_wizard_embed_preview_label": "Embed code",
-  "admin_integrations_wizard_embed_preview_help": "After you create the integration, you'll get a unique widget ID. Paste the final snippet into any HTML page on an allowed origin."
+  "admin_integrations_wizard_embed_preview_help": "After you create the integration, you'll get a unique widget ID. Paste the final snippet into any HTML page on an allowed origin.",
+  "admin_integrations_wizard_step_appearance": "Appearance",
+  "admin_integrations_wizard_step_embed": "Embed",
+  "admin_integrations_wizard_appearance_intro": "Customise how the widget looks and feels to visitors. Title and welcome message appear in the chat; colour variables override the defaults.",
+  "admin_integrations_wizard_embed_intro": "Install the widget on your website. Only the origins you list below are allowed to load it."
 
 }
