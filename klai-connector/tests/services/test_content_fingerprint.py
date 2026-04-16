@@ -5,8 +5,6 @@ All tests named after the Test Plan in the SPEC.
 
 from __future__ import annotations
 
-import pytest
-
 from app.services.content_fingerprint import (
     compute_content_fingerprint,
     find_boilerplate_clusters,
@@ -197,9 +195,9 @@ def test_find_boilerplate_clusters_ignores_small_clusters() -> None:
     small_cluster = [(f"https://wiki.example.com/dup-{i}", f"{small_base:016x}") for i in range(5)]
     # Use truly distinct fingerprints: spread across the full 64-bit space
     # by multiplying by a large prime to avoid accidental clustering.
-    _PRIME = 0x9E3779B97F4A7C15  # Fibonacci hashing constant, good spread
+    prime_spread = 0x9E3779B97F4A7C15  # Fibonacci hashing constant, good spread
     distinct = [
-        (f"https://wiki.example.com/unique-{i}", f"{(i * _PRIME) & 0xFFFFFFFFFFFFFFFF:016x}")
+        (f"https://wiki.example.com/unique-{i}", f"{(i * prime_spread) & 0xFFFFFFFFFFFFFFFF:016x}")
         for i in range(1, 96)
     ]
     all_fps = small_cluster + distinct

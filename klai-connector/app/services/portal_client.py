@@ -134,6 +134,55 @@ class PortalClient:
                 sync_run_id,
             )
 
+    async def report_quality_event(
+        self,
+        *,
+        connector_id: uuid.UUID,
+        sync_run_id: uuid.UUID,
+        org_id: str,
+        quality_status: str,
+        reason: str,
+        metric: float | int | None = None,
+    ) -> None:
+        """Emit a knowledge.sync_quality_degraded product event via portal.
+
+        # @MX:NOTE: [AUTO] SPEC-CRAWL-003 REQ-15 — product event on quality transitions.
+        # Best-effort: logs and swallows errors so sync failures don't block on event emission.
+
+        Args:
+            connector_id: Portal connector UUID.
+            sync_run_id: The sync run UUID for correlation.
+            org_id: Zitadel org ID (used as event org context).
+            quality_status: 'degraded' or 'failed'.
+            reason: 'canary_mismatch', 'boilerplate_cluster', or 'auth_walled_pages'.
+            metric: Similarity score (canary), cluster ratio (Layer C), or count (Layer B).
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{self._base_url}/internal/product-events",
+                    headers=self._headers(),
+                    json={
+                        "event_type": "knowledge.sync_quality_degraded",
+                        "org_id": org_id,
+                        "properties": {
+                            "connector_id": str(connector_id),
+                            "sync_run_id": str(sync_run_id),
+                            "quality_status": quality_status,
+                            "reason": reason,
+                            "metric": metric,
+                        },
+                    },
+                )
+                response.raise_for_status()
+        except Exception:
+            logger.warning(
+                "Failed to emit quality event to portal for connector %s (quality_status=%s, reason=%s)",
+                connector_id,
+                quality_status,
+                reason,
+            )
+
     async def update_credentials(
         self,
         connector_id: str,

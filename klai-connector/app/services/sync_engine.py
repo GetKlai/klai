@@ -13,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.base import DocumentRef
 from app.adapters.registry import AdapterRegistry
-from app.adapters.webcrawler import CrawlJobPendingError
+from app.adapters.webcrawler import CanaryMismatchError, CrawlJobPendingError
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
+from app.services.content_fingerprint import find_boilerplate_clusters
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.s3_storage import ImageStore
@@ -146,7 +147,7 @@ class SyncEngine:
 
             status = SyncStatus.COMPLETED
             cursor_state: dict[str, Any] | None = None
-            refs: list = []  # all discovered refs (for cursor_state synced_refs)
+            refs: list[DocumentRef] = []  # all discovered refs (for cursor_state synced_refs)
 
             try:
                 cursor_state = await adapter.get_cursor_state(portal_config)
@@ -287,6 +288,124 @@ class SyncEngine:
 
                 await adapter.post_sync(portal_config)
 
+                # Layer C: post-sync boilerplate-ratio check (SPEC-CRAWL-003 REQ-13).
+                # Runs on every sync with ≥30 pages. No connector config needed (REQ-14).
+                # Only pages with a non-empty content_fingerprint are analysed.
+                layer_c_min_pages = 30
+                fp_entries = [
+                    (r.source_url or r.ref, r.content_fingerprint)
+                    for r in refs if r.content_fingerprint
+                ]
+                if len(fp_entries) >= layer_c_min_pages:
+                    clusters = find_boilerplate_clusters(fp_entries)
+                    if clusters:
+                        # Build per-ref URL map for sample_urls in detail logs.
+                        fp_to_urls: dict[str, list[str]] = {}
+                        for r in refs:
+                            if r.content_fingerprint:
+                                fp_to_urls.setdefault(r.content_fingerprint, []).append(r.source_url or r.ref)
+
+                        total_pages = len(fp_entries)
+                        pages_in_clusters = sum(len(c) for c in clusters)
+                        largest_ratio = len(clusters[0]) / total_pages
+
+                        logger.warning(
+                            "Sync quality degraded: boilerplate clusters detected for connector %s "
+                            "(cluster_count=%d, pages_in_clusters=%d, largest_ratio=%.3f, total=%d)",
+                            connector_id,
+                            len(clusters),
+                            pages_in_clusters,
+                            largest_ratio,
+                            total_pages,
+                            extra={
+                                "connector_id": str(connector_id),
+                                "cluster_count": len(clusters),
+                                "pages_in_clusters": pages_in_clusters,
+                                "largest_cluster_ratio": largest_ratio,
+                                "total_pages": total_pages,
+                            },
+                        )
+                        for rank, cluster in enumerate(clusters[:3], start=1):
+                            sample_fp = cluster[0]
+                            sample_urls = fp_to_urls.get(sample_fp, [])[:3]
+                            logger.warning(
+                                "Boilerplate cluster detail for connector %s (rank=%d, size=%d, ratio=%.3f)",
+                                connector_id,
+                                rank,
+                                len(cluster),
+                                len(cluster) / total_pages,
+                                extra={
+                                    "connector_id": str(connector_id),
+                                    "cluster_rank": rank,
+                                    "cluster_size": len(cluster),
+                                    "cluster_ratio": len(cluster) / total_pages,
+                                    "sample_fingerprint": sample_fp,
+                                    "sample_urls": sample_urls,
+                                },
+                            )
+
+                        status = SyncStatus.COMPLETED  # backward-compat: status stays COMPLETED
+                        sync_run.quality_status = "degraded"
+                        await self._portal_client.report_quality_event(
+                            connector_id=connector_id,
+                            sync_run_id=sync_run_id,
+                            org_id=portal_config.zitadel_org_id,
+                            quality_status="degraded",
+                            reason="boilerplate_cluster",
+                            metric=largest_ratio,
+                        )
+
+            except CanaryMismatchError as exc:
+                # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-5 — Layer A fail-fast abort.
+                # @MX:REASON: AUTH_ERROR status + structured error_details per REQ-3 + REQ-5.
+                logger.error(
+                    "Sync aborted: canary fingerprint mismatch for connector %s "
+                    "(canary_url=%s, similarity=%.3f)",
+                    connector_id,
+                    exc.canary_url,
+                    exc.similarity,
+                    extra={
+                        "connector_id": str(connector_id),
+                        "canary_url": exc.canary_url,
+                        "similarity": exc.similarity,
+                        "expected": exc.expected,
+                        "actual": exc.actual,
+                    },
+                )
+                sync_run.status = SyncStatus.AUTH_ERROR
+                sync_run.quality_status = "failed"
+                sync_run.completed_at = datetime.now(UTC)
+                sync_run.error_details = [
+                    {
+                        "reason": "canary_mismatch",
+                        "canary_url": exc.canary_url,
+                        "expected_fingerprint": exc.expected,
+                        "actual_fingerprint": exc.actual,
+                        "similarity": exc.similarity,
+                    }
+                ]
+                await session.commit()
+                await self._portal_client.report_sync_status(
+                    connector_id=connector_id,
+                    sync_run_id=sync_run_id,
+                    sync_status=SyncStatus.AUTH_ERROR,
+                    completed_at=sync_run.completed_at,
+                    documents_total=0,
+                    documents_ok=0,
+                    documents_failed=0,
+                    bytes_processed=0,
+                    error_details=sync_run.error_details,
+                )
+                await self._portal_client.report_quality_event(
+                    connector_id=connector_id,
+                    sync_run_id=sync_run_id,
+                    org_id=portal_config.zitadel_org_id,
+                    quality_status="failed",
+                    reason="canary_mismatch",
+                    metric=exc.similarity,
+                )
+                return
+
             except CrawlJobPendingError as exc:
                 # Async crawl job not finished yet: mark as PENDING so the
                 # next scheduled sync resumes polling.
@@ -339,6 +458,10 @@ class SyncEngine:
             completed_at = datetime.now(UTC)
             sync_run.status = status
             sync_run.completed_at = completed_at
+            # SPEC-CRAWL-003 REQ-2: set quality_status on every completed/failed run.
+            # Layer C (degraded) will override this after cluster analysis in a later step.
+            if sync_run.quality_status is None:
+                sync_run.quality_status = "healthy" if status == SyncStatus.COMPLETED else None
             sync_run.documents_total = documents_total
             sync_run.documents_ok = documents_ok
             sync_run.documents_failed = documents_failed
