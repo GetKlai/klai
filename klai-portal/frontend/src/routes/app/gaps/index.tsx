@@ -228,7 +228,7 @@ function GapsPage() {
                           void navigate({
                             to: '/app/docs/$kbSlug',
                             params: { kbSlug: gap.nearest_kb_slug! },
-                            search: {},
+                            search: { page: undefined },
                           })
                         }
                         aria-label={m.gaps_action_add()}
@@ -244,7 +244,7 @@ function GapsPage() {
                             void navigate({
                               to: '/app/docs/$kbSlug',
                               params: { kbSlug: e.target.value },
-                              search: {},
+                              search: { page: undefined },
                             })
                             setActivePicker(null)
                           }
