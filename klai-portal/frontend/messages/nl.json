@@ -1556,6 +1556,10 @@
   "admin_integrations_widget_origins_help": "Alleen websites op deze domeinen kunnen deze widget laden. Vul de volledige URL in (inclusief https://), één per regel. Dit is een veiligheidsmaatregel: zonder toegestane domeinen wordt de widget overal geblokkeerd, zodat niemand anders jouw widget op hun site kan inbouwen.",
   "admin_integrations_section_widget_setup": "Widget instellen",
   "admin_integrations_col_type": "Type",
-  "admin_integrations_col_identifier": "Identifier"
+  "admin_integrations_col_identifier": "Identifier",
+  "admin_integrations_wizard_step_styling": "Vormgeving",
+  "admin_integrations_wizard_styling_intro": "Personaliseer hoe de widget eruitziet op je site. Alle velden zijn optioneel — laat leeg om de Klai standaardwaarden te gebruiken.",
+  "admin_integrations_wizard_embed_preview_label": "Embed code",
+  "admin_integrations_wizard_embed_preview_help": "Na het aanmaken van de integratie krijg je een unieke widget ID. Plak de uiteindelijke snippet in een HTML-pagina op een toegestane origin."
 
 }

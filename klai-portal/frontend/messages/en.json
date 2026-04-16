@@ -1558,6 +1558,10 @@
   "admin_integrations_widget_origins_help": "Only websites on these domains can load this widget. Enter the full URL (including https://), one per line. This is a security measure: without allowed origins the widget is blocked everywhere, so no one else can embed your widget on their site.",
   "admin_integrations_section_widget_setup": "Widget setup",
   "admin_integrations_col_type": "Type",
-  "admin_integrations_col_identifier": "Identifier"
+  "admin_integrations_col_identifier": "Identifier",
+  "admin_integrations_wizard_step_styling": "Styling",
+  "admin_integrations_wizard_styling_intro": "Personalise how the widget looks on your site. All fields are optional — leave empty to use Klai defaults.",
+  "admin_integrations_wizard_embed_preview_label": "Embed code",
+  "admin_integrations_wizard_embed_preview_help": "After you create the integration, you'll get a unique widget ID. Paste the final snippet into any HTML page on an allowed origin."
 
 }
