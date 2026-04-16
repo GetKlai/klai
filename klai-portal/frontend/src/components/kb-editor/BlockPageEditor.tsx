@@ -7,7 +7,7 @@ import { WikiLink } from '@/components/kb-editor/WikiLink'
 import { editorLogger } from '@/lib/logger'
 
 export type BlockPageEditorHandle = {
-  getMarkdown: () => string
+  getContent: () => string
   insertWikilink: (pageId: string, title: string, icon?: string) => void
 }
 
@@ -54,20 +54,37 @@ export const BlockPageEditor = forwardRef<
       editorLogger.debug('initialContent empty on mount')
       return
     }
-    // HTML content (saved after wikilink support): parse as HTML so custom
-    // inline specs (wikilink) are restored via their parse() method.
-    // Legacy markdown content (no leading '<'): fall back to markdown parser.
-    const format = initialContent.trimStart().startsWith('<') ? 'html' : 'markdown'
+    // Format detection (newest-first for fast path):
+    //   JSON  — saved by current code, lossless native BlockNote format
+    //   HTML  — saved by previous code (after wikilink support was added)
+    //   Markdown — saved by very first version of the editor
+    const trimmed = initialContent.trimStart()
+    const format = trimmed.startsWith('[') ? 'json'
+                 : trimmed.startsWith('<') ? 'html'
+                 : 'markdown'
     editorLogger.debug('Loading content', { format, length: initialContent.length })
-    const blocks = format === 'html'
-      ? editor.tryParseHTMLToBlocks(initialContent)
-      : editor.tryParseMarkdownToBlocks(initialContent)
+    let blocks: Parameters<typeof editor.replaceBlocks>[1]
+    if (format === 'json') {
+      try {
+        blocks = JSON.parse(initialContent) as Parameters<typeof editor.replaceBlocks>[1]
+      } catch (err) {
+        editorLogger.error('Failed to parse stored JSON content, falling back to empty', { err })
+        return
+      }
+    } else if (format === 'html') {
+      blocks = editor.tryParseHTMLToBlocks(initialContent)
+    } else {
+      blocks = editor.tryParseMarkdownToBlocks(initialContent)
+    }
     editor.replaceBlocks(editor.document, blocks)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useImperativeHandle(ref, () => ({
-    getMarkdown: () => editor.blocksToHTMLLossy(editor.document),
+    // Serialize as native BlockNote JSON — lossless (empty paragraphs, custom
+    // inline specs like WikiLink with all props) and round-trips without data loss.
+    // HTML and Markdown exports are for display/RSS only, not for persistence.
+    getContent: () => JSON.stringify(editor.document),
     insertWikilink: (pageId: string, title: string, icon?: string) => {
       editorLogger.debug('Inserting wikilink', { pageId, title, icon })
       editor.focus()

@@ -299,7 +299,7 @@ function KBEditorPage() {
     const title = editTitleRef.current
     const tok = tokenRef.current
     if (!path || !tok) return
-    const content = editorRef.current?.getMarkdown() ?? ''
+    const content = editorRef.current?.getContent() ?? ''
 
     const currentSlug = stripMdExt(path)
     const newSlug = slugify(title)
@@ -351,7 +351,7 @@ function KBEditorPage() {
 
   const saveAccess = useCallback(async () => {
     if (!selectedPath) return
-    const content = editorRef.current?.getMarkdown() ?? ''
+    const content = editorRef.current?.getContent() ?? ''
     const editAccess = accessMode === 'org' ? 'org' : accessUsers
     setAccessSaveStatus('saving')
     try {
