@@ -35,3 +35,20 @@ No email/name columns. Identity always fetched live from Zitadel. No drift, no s
 ## SSO cache
 - `_sso_cache` and `_pending_totp` are in-memory dicts — single instance only.
 - When scaling: replace with Redis-backed cache.
+
+## Management API: /oidc vs /oidc_config (HIGH)
+
+`PUT /management/v1/projects/{projectId}/apps/{appId}/oidc` returns 404.
+The read endpoint is `/oidc`; the write endpoint is `/oidc_config`.
+
+**Why:** Zitadel splits GET (read) and PUT (update) onto different path suffixes. Easy to confuse when scripting redirect URI changes.
+
+**Prevention:** Always use `/oidc_config` for Management API PUT calls that update OIDC app settings. Reference script: `klai-infra/scripts/zitadel-add-signup-redirect.py`.
+
+## Management API: X-Zitadel-Orgid required for org-scoped calls (HIGH)
+
+Management API calls without `X-Zitadel-Orgid` succeed but target the service account's default org (portal org), not the intended org.
+
+**Why:** The Zitadel Management API uses `X-Zitadel-Orgid` header to scope operations to a specific org. Without it, the service account's own org (`362757920133283846`) is used as context.
+
+**Prevention:** Always include `X-Zitadel-Orgid: {target_org_id}` in any Management API call that must operate on a specific org.
