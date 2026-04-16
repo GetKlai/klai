@@ -83,7 +83,7 @@ function stepLabel(current: number, total: number, label: string): string {
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
   beforeLoad: ({ params }) => {
-    throw redirect({ to: '/app/knowledge/$kbSlug_/add-source', params: { kbSlug: params.kbSlug } })
+    throw redirect({ to: '/app/knowledge/$kbSlug/add-source', params: { kbSlug: params.kbSlug } })
   },
   component: AddConnectorPage,
 })
