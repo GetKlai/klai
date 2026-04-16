@@ -159,6 +159,30 @@ function KBPageEditor() {
     return () => { doSaveRef.current = null }
   }, [doSaveRef, saveNow])
 
+  // Flush pending save on full-page navigation (address bar, browser back/forward).
+  // fetch with keepalive:true continues after the page unloads and supports auth headers.
+  // Sidebar navigation is handled by doSaveRef (called in route.tsx onSelect).
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!saveTimerRef.current) return
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+      const path = selectedPathRef.current
+      const tok = tokenRef.current
+      const content = editorRef.current?.getContent() ?? ''
+      if (!path || !tok) return
+      const slug = stripMdExt(path)
+      fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current }),
+        keepalive: true,
+      }).catch(() => { /* fire-and-forget */ })
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [orgSlug, kbSlug])
+
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(doSave, 1500)
