@@ -1,15 +1,11 @@
 """Notification helpers for sending emails via klai-mailer (SPEC-AUTH-006 R7/R16)."""
 
+import httpx
 import structlog
 
 from app.core.config import settings
 
 logger = structlog.get_logger()
-
-try:
-    import httpx
-except ImportError:
-    httpx = None  # type: ignore[assignment]
 
 
 async def notify_admin_join_request(

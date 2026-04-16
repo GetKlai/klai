@@ -128,6 +128,8 @@ async def approve_join_request(
             )
     else:
         # Bearer-based approval (admin UI)
+        if not credentials:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)
         _require_admin(caller_user)
 
