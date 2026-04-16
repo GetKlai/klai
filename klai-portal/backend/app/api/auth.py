@@ -39,6 +39,7 @@ from urllib.parse import urlparse
 import httpx
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
@@ -273,6 +274,15 @@ class PasskeyConfirmRequest(BaseModel):
 
 class EmailOTPConfirmRequest(BaseModel):
     code: str
+
+
+class IDPIntentRequest(BaseModel):
+    idp_id: str
+    auth_request_id: str
+
+
+class IDPIntentResponse(BaseModel):
+    auth_url: str
 
 
 # ---------------------------------------------------------------------------
@@ -719,3 +729,87 @@ async def email_otp_confirm(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to confirm email code, please try again later",
         ) from exc
+
+
+@router.post("/auth/idp-intent", response_model=IDPIntentResponse)
+async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
+    """Start a social login flow. Returns the IDP auth URL to redirect the user to."""
+    known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
+    if body.idp_id not in known_idps:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
+
+    success_url = (
+        f"{settings.portal_url}/api/auth/idp-callback"
+        f"?auth_request_id={body.auth_request_id}"
+    )
+    failure_url = f"{settings.portal_url}/login?authRequest={body.auth_request_id}"
+
+    try:
+        result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("create_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Login failed, please try again later",
+        ) from exc
+
+    auth_url = result.get("authUrl")
+    if not auth_url:
+        logger.error("create_idp_intent returned no authUrl: %s", result)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Login failed, please try again later",
+        )
+
+    return IDPIntentResponse(auth_url=auth_url)
+
+
+@router.get("/auth/idp-callback")
+async def idp_callback(
+    id: str,
+    token: str,
+    auth_request_id: str,
+) -> RedirectResponse:
+    """Handle the redirect back from a social IDP after authentication.
+
+    Zitadel appends ?id=<intentId>&token=<intentToken> to the success_url.
+    We create a session from the intent, finalize the auth request, set the SSO
+    cookie, and redirect to the OIDC callback URL — identical to the password flow.
+    """
+    failure_url = f"/login?authRequest={auth_request_id}"
+
+    try:
+        session = await zitadel.create_session_with_idp_intent(id, token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("create_session_with_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    session_id: str | None = session.get("sessionId")
+    session_token: str | None = session.get("sessionToken")
+
+    if not session_id or not session_token:
+        logger.error("create_session_with_idp_intent returned no session: %s", session)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    try:
+        callback_url = await zitadel.finalize_auth_request(
+            auth_request_id=auth_request_id,
+            session_id=session_id,
+            session_token=session_token,
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.exception("idp finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    redirect = RedirectResponse(url=_validate_callback_url(callback_url), status_code=302)
+    redirect.set_cookie(
+        key="klai_sso",
+        value=_encrypt_sso(session_id, session_token),
+        domain=f".{settings.domain}",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.sso_cookie_max_age,
+    )
+    emit_event("login", user_id=None, properties={"method": "idp"})
+    return redirect
