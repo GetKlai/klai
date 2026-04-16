@@ -145,6 +145,28 @@ class WebCrawlerAdapter(BaseAdapter):
                 logger.warning("Supplement crawl batch %d failed: %s", i // batch_size, exc)
         return refs
 
+    def _build_discovery_params(self, config: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG002
+        """Build CrawlerRunConfig params for BFS discovery phase.
+
+        No css_selector, no PruningContentFilter — BFS only needs links, not filtered prose.
+        """
+        return {
+            "cache_mode": "bypass",
+            "word_count_threshold": 0,
+            "wait_for": "js:() => document.body.innerText.trim().split(/\\s+/).length > 10",
+            "js_code_before_wait": _JS_REMOVE_CHROME,
+            "excluded_tags": ["nav", "footer", "header", "aside", "script", "style"],
+            "remove_consent_popups": True,
+            "remove_overlay_elements": True,
+            "page_timeout": 30000,
+            "markdown_generator": {
+                "type": "DefaultMarkdownGenerator",
+                "params": {
+                    "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
+                },
+            },
+        }
+
     def _build_page_crawl_params(self, config: dict[str, Any]) -> dict[str, Any]:
         """Build CrawlerRunConfig params for single-page crawling (no deep_crawl_strategy).
 
@@ -176,24 +198,37 @@ class WebCrawlerAdapter(BaseAdapter):
             params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
         return params
 
-    async def _start_crawl(self, config: dict[str, Any]) -> str:
-        """Submit a crawl job to Crawl4AI and return the task_id."""
+    async def _start_crawl(
+        self,
+        config: dict[str, Any],
+        crawl_params: dict[str, Any],
+        cookies: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Submit a BFS crawl job to Crawl4AI and return the task_id.
+
+        Args:
+            config: Connector config dict (provides base_url, max_depth, max_pages, path_prefix).
+            crawl_params: CrawlerRunConfig params built by the caller (e.g. _build_discovery_params).
+            cookies: Optional list of cookie dicts to inject via on_page_context_created hook.
+        """
         base_url: str = config["base_url"]
         max_depth: int = config.get("max_depth", 3)
         max_pages: int = min(config.get("max_pages", 200), 2000)
         allowed_path_prefix: str | None = config.get("path_prefix") or None
-
-        crawl_params = self._build_page_crawl_params(config)
 
         deep_crawl_params: dict[str, Any] = {
             "max_depth": max_depth,
             "max_pages": max_pages,
         }
         if allowed_path_prefix:
+            pattern = base_url.rstrip("/") + "/" + allowed_path_prefix.lstrip("/")
             deep_crawl_params["filter_chain"] = [
-                {"type": "URLPatternFilter", "params": {"patterns": [allowed_path_prefix]}},
+                {"type": "URLPatternFilter", "params": {"patterns": [pattern]}},
             ]
-        crawl_params["deep_crawl_strategy"] = {
+
+        # Don't mutate the caller's dict — work on a copy.
+        params = dict(crawl_params)
+        params["deep_crawl_strategy"] = {
             "type": "BFSDeepCrawlStrategy",
             "params": deep_crawl_params,
         }
@@ -202,9 +237,11 @@ class WebCrawlerAdapter(BaseAdapter):
             "urls": [base_url],
             "crawler_config": {
                 "type": "CrawlerRunConfig",
-                "params": crawl_params,
+                "params": params,
             },
         }
+        if cookies:
+            payload["hooks"] = _build_cookie_hooks(cookies)
 
         response = await self._http_client.post(
             f"{self._api_url}/crawl/job",
@@ -214,7 +251,7 @@ class WebCrawlerAdapter(BaseAdapter):
         response.raise_for_status()
         data = response.json()
         task_id: str = data["task_id"]
-        logger.info("Started crawl job %s for %s", task_id, base_url)
+        logger.info("Started crawl job", task_id=task_id, base_url=base_url)
         return task_id
 
     async def _poll_task(self, task_id: str) -> dict[str, Any]:
@@ -333,17 +370,21 @@ class WebCrawlerAdapter(BaseAdapter):
     async def list_documents(
         self, connector: Any, cursor_context: dict[str, Any] | None = None,
     ) -> list[DocumentRef]:
-        """List crawled pages from the target website.
+        """List crawled pages from the target website using a two-phase approach.
 
-        Strategy:
-        1. Crawl base_url directly to get the homepage + any pages BFS finds.
-        2. Fetch sitemap.xml and supplement with any URLs not yet crawled.
+        Phase 1 — BFS discovery via /crawl/job:
+            Submits a BFS job with no content_selector so the crawler follows all
+            links from base_url regardless of page structure. Collects all reachable
+            URLs within path_prefix (when set).
 
-        The Crawl4AI /crawl endpoint applies MemoryAdaptiveDispatcher + RateLimiter
-        internally, so multi-URL batches are processed safely at server side.
+        Phase 2 — Extraction re-crawl (only when content_selector is set):
+            Re-crawls the discovered URLs via /crawl (sync) with css_selector applied
+            so only the matching DOM element is extracted as markdown. Skipped when no
+            content_selector is configured; Phase 1 BFS markdown is used directly.
 
-        Uses a per-connector cache keyed by connector.connector_id to avoid
-        cross-contamination during concurrent syncs.
+        Phase 3 — Sitemap supplement:
+            Fetches sitemap.xml and crawls any URLs not yet in the cache, up to
+            max_pages. Runs after both phases regardless of content_selector.
         """
         connector_id = str(connector.connector_id)
         cache: dict[str, str] = {}
@@ -351,14 +392,32 @@ class WebCrawlerAdapter(BaseAdapter):
         config: dict[str, Any] = connector.config
         base_url: str = config.get("base_url", "")
         max_pages: int = min(config.get("max_pages", 200), 2000)
+        content_selector: str | None = config.get("content_selector") or None
         cookies: list[dict[str, Any]] | None = config.get("cookies") or None
         page_params = self._build_page_crawl_params(config)
 
-        # Phase 1: crawl base_url (gets homepage; BFS may find more on non-JS sites).
-        logger.info("Starting crawl of %s (max_pages=%d, authenticated=%s)", base_url, max_pages, bool(cookies))
-        refs = await self._crawl_pages_sync([base_url], page_params, cache, base_url=base_url, cookies=cookies)
+        logger.info(
+            "Starting crawl",
+            base_url=base_url,
+            max_pages=max_pages,
+            authenticated=bool(cookies),
+            has_selector=bool(content_selector),
+        )
 
-        # Phase 2: supplement with sitemap URLs not yet crawled.
+        # Phase 1: BFS discovery (no selector — finds all linked pages).
+        discovery_params = self._build_discovery_params(config)
+        task_id = await self._start_crawl(config, discovery_params, cookies)
+        result = await self._poll_task(task_id)
+        refs = self._process_results(result, cache, base_url=base_url)
+        logger.info("BFS discovery complete", urls_found=len(refs))
+
+        # Phase 2: extraction re-crawl (only when content_selector is configured).
+        if content_selector and refs:
+            urls = [ref.ref for ref in refs]
+            refs = await self._crawl_pages_sync(urls, page_params, cache, base_url=base_url, cookies=cookies)
+            logger.info("Extraction complete", pages_with_content=len(refs))
+
+        # Phase 3: sitemap supplement — fill remaining slots from sitemap.
         if len(refs) < max_pages:
             remaining = max_pages - len(refs)
             seen_urls = {ref.ref for ref in refs}
@@ -366,15 +425,16 @@ class WebCrawlerAdapter(BaseAdapter):
             supplement_urls = [u for u in sitemap_urls if u not in seen_urls][:remaining]
             if supplement_urls:
                 logger.info(
-                    "Supplementing with %d sitemap URLs (%d crawled so far)",
-                    len(supplement_urls), len(refs),
+                    "Supplementing with sitemap URLs",
+                    supplement_count=len(supplement_urls),
+                    crawled_so_far=len(refs),
                 )
                 supplement_refs = await self._crawl_pages_sync(
                     supplement_urls, page_params, cache, base_url=base_url, cookies=cookies,
                 )
                 refs.extend(supplement_refs)
 
-        logger.info("Crawl complete: %d pages from %s", len(refs), base_url)
+        logger.info("Crawl complete", total_pages=len(refs), base_url=base_url)
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
