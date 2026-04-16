@@ -28,6 +28,8 @@ import { DeletePageModal } from '@/components/kb-editor/DeletePageModal'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { notifications } from '@mantine/notifications'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export const Route = createFileRoute('/app/docs/$kbSlug')({
   component: () => (
     <ProductGuard product="knowledge">
@@ -97,14 +99,17 @@ function KBEditorLayout() {
   useEffect(() => { setLocalTree(null) }, [tree])
   const displayTree = localTree ?? tree
 
-  // Derive selectedPath from URL — strict resolveSlug, falls back gracefully when pageIndex is empty
+  // Derive selectedPath from URL — strict resolveSlug, never exposes a raw UUID as a slug
   const selectedPath = useMemo(() => {
     if (!pageId) return null
-    if (pageIndex.length === 0) return pageId // pageIndex not loaded yet — use as-is temporarily
+    if (pageIndex.length === 0) {
+      // pageIndex not loaded yet — UUID cannot be resolved, non-UUID slugs are used directly
+      return UUID_RE.test(pageId) ? null : pageId
+    }
     try {
       return resolveSlug(pageId, pageIndex)
     } catch (err) {
-      if (err instanceof PageNotInIndexError) return null // triggers "not found" UI in child
+      if (err instanceof PageNotInIndexError) return null
       return null
     }
   }, [pageId, pageIndex])
