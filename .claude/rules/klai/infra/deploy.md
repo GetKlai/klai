@@ -64,6 +64,14 @@ The `deploy-compose.yml` GitHub Actions workflow syncs `deploy/docker-compose.ym
 
 **Prevention:** Never put secrets in config files — always use environment variables. For services that don't support env var substitution in their config (like Garage), use a Docker entrypoint that renders the config, or mount a server-local config that CI does not touch. Test by checking `git diff deploy/` before pushing — if config files changed, verify they contain no placeholders.
 
+## Semgrep false positives on OAuth log messages (MED)
+
+Rule `python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure` matches on credential-adjacent keywords in the log *format string* (e.g. "OAuth token", "credentials", "refresh"), regardless of whether any actual secret is logged.
+
+**Why:** The rule is keyword-based, not value-based. Any log message that *describes* an OAuth operation triggers it even when only metadata (status codes, IDs) is logged.
+
+**Prevention:** Add `# nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure` on affected log lines. Affected files to watch: `app/api/oauth.py`, `app/adapters/oauth_base.py`, `app/services/portal_client.py`. When adding OAuth-related logging, check for credential-adjacent keywords in the format string and annotate proactively.
+
 ## Renovate
 Schedule: Monday 05:00 Amsterdam. Automerge: patch (any), minor (devDeps only).
 Docker images: grouped manual PR. Trigger: `gh workflow run renovate.yml`.

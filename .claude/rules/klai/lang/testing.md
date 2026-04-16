@@ -67,6 +67,21 @@ test may pass while asserting the wrong thing.
 **Prevention:** Trace the exact `db.execute` call sequence in the production code before
 writing the result list.
 
+## AsyncMock makes db.add() async — override it (MED)
+
+`AsyncMock` makes ALL methods async by default, including `db.add()`. SQLAlchemy's `Session.add()` is synchronous. Tests that call `await db.add(...)` or that never await `db.add()` produce `RuntimeWarning: coroutine was never awaited`.
+
+**Why:** `AsyncMock` does not distinguish between async and sync methods — everything becomes a coroutine.
+
+**Prevention:** After creating an `AsyncMock` for the DB session, explicitly override sync methods:
+
+```python
+db = AsyncMock()
+db.add = MagicMock()  # keep add() synchronous
+```
+
+This preserves async behavior for `db.execute`, `db.commit`, etc. while matching SQLAlchemy's actual interface.
+
 ## Frontend test patterns
 - UI bugfixes require browser verification — code reading scores zero.
 - After bulk migrations (>10 files): run `tsc --noEmit` + `npm run lint`.

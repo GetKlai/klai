@@ -9,7 +9,10 @@
     "build": "npm run i18n:compile && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "analyze": "npm run i18n:compile && ANALYZE=true vite build"
+    "analyze": "npm run i18n:compile && ANALYZE=true vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@blocknote/core": "^0.47.1",
@@ -61,14 +64,17 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^10.1.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^16.5.0",
+    "jsdom": "^29.0.2",
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
-    "vite": "^8.0.3"
+    "vite": "^8.0.3",
+    "vitest": "^4.1.4"
   }
 }

@@ -105,4 +105,32 @@ export const db = {
       [kbId, pagePath, userIds]
     );
   },
+
+  /**
+   * Check if an idempotency key has been used for a KB.
+   * Returns the page_slug of the previously created page, or null if key is new.
+   * Keys older than 24h are treated as expired (ignored).
+   */
+  async getIdempotencyKey(kbId: string, key: string): Promise<string | null> {
+    const { rows } = await pool.query(
+      `SELECT page_slug FROM docs.idempotency_keys
+       WHERE kb_id = $1 AND key = $2
+         AND created_at > now() - interval '24 hours'`,
+      [kbId, key]
+    );
+    return rows[0]?.page_slug ?? null;
+  },
+
+  /**
+   * Store an idempotency key for a page creation.
+   * No-op on conflict (key already stored — concurrent duplicate request).
+   */
+  async storeIdempotencyKey(kbId: string, key: string, pageSlug: string): Promise<void> {
+    await pool.query(
+      `INSERT INTO docs.idempotency_keys (kb_id, key, page_slug)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (kb_id, key) DO NOTHING`,
+      [kbId, key, pageSlug]
+    );
+  },
 };

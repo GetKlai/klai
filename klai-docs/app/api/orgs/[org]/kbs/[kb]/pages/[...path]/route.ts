@@ -10,6 +10,7 @@ import {
   serializeSidebar,
   removeSlugFromSidebar,
 } from "@/lib/markdown";
+import { buildPageIndex } from "@/lib/page-index";
 
 const uuidSchema = z.string().uuid();
 
@@ -38,8 +39,9 @@ async function resolveKB(orgSlug: string, kbSlug: string) {
 }
 
 // GET /api/orgs/{org}/kbs/{kb}/pages/{...path}
+// If path is a legacy slug (not a UUID), returns 308 redirect to the UUID-based path.
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
   const { org: orgSlug, kb: kbSlug, path } = await params;
@@ -48,7 +50,7 @@ export async function GET(
 
   // Private and personal KBs require authentication + org membership
   if (resolved.kb.kb_type === "personal" || resolved.kb.visibility === "private") {
-    const payload = await requireAuthOrService(_req);
+    const payload = await requireAuthOrService(req);
     if (!payload) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (payload.org_id && payload.org_id !== resolved.org.zitadel_org_id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -57,7 +59,24 @@ export async function GET(
     if (denied) return denied;
   }
 
-  const filePath = `${path.join("/")}.md`;
+  const pagePath = path.join("/");
+
+  // REQ-EVT-05: Legacy slug-based path → 308 redirect to UUID-based path.
+  // A path is treated as a slug (not a UUID) when it fails UUID validation.
+  const isUuid = uuidSchema.safeParse(pagePath).success;
+  if (!isUuid) {
+    // Look up the UUID for this slug from the page index
+    const entries = await buildPageIndex(resolved.kb.gitea_repo);
+    const entry = entries.find((e) => e.slug === pagePath);
+    if (entry?.id) {
+      const url = req.nextUrl.clone();
+      url.pathname = url.pathname.replace(pagePath, entry.id);
+      return NextResponse.redirect(url, 308);
+    }
+    // Slug not in index (may have been deleted) — fall through to serve by slug
+  }
+
+  const filePath = `${pagePath}.md`;
   const raw = await gitea.getFileContent(resolved.kb.gitea_repo, filePath);
   if (!raw) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -66,6 +85,8 @@ export async function GET(
 }
 
 // PUT /api/orgs/{org}/kbs/{kb}/pages/{...path}
+// For NEW pages: requires Idempotency-Key header, returns { page, pageIndex }.
+// For existing page updates: Idempotency-Key is optional, returns { ok: true }.
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<Params> }
@@ -90,6 +111,42 @@ export async function PUT(
     }
   }
 
+  const idempotencyKey = request.headers.get("Idempotency-Key");
+
+  const filePath = `${pagePath}.md`;
+  const file = await gitea.getFile(kb.gitea_repo, filePath);
+
+  // REQ-UNW-03: For new pages, Idempotency-Key is required.
+  const isNewPage = !file?.sha;
+  if (isNewPage && !idempotencyKey) {
+    return NextResponse.json(
+      { error: "Idempotency-Key header is required for page creation" },
+      { status: 400 }
+    );
+  }
+
+  // REQ-STA-01: Idempotency dedup — if key was used before, return the existing page.
+  if (isNewPage && idempotencyKey) {
+    const existingSlug = await db.getIdempotencyKey(kb.id, idempotencyKey);
+    if (existingSlug !== null) {
+      // Key already used: return the existing page + fresh pageIndex
+      const existingFilePath = `${existingSlug}.md`;
+      const existingRaw = await gitea.getFileContent(kb.gitea_repo, existingFilePath);
+      const existingParsed = existingRaw ? parsePage(existingRaw) : null;
+      const pageIndex = await buildPageIndex(kb.gitea_repo);
+      return NextResponse.json({
+        page: {
+          id: existingParsed?.frontmatter.id ?? null,
+          slug: existingSlug,
+          title: existingParsed?.frontmatter.title ?? existingSlug,
+          icon: existingParsed?.frontmatter.icon ?? null,
+        },
+        pageIndex,
+        idempotent: true,
+      });
+    }
+  }
+
   const { title, content, icon, sha, edit_access, frontmatter: extraFm } = await request.json();
 
   // Validate knowledge model fields if provided
@@ -103,11 +160,7 @@ export async function PUT(
     }
   }
 
-  const filePath = `${pagePath}.md`;
-
-  const file = await gitea.getFile(kb.gitea_repo, filePath);
   const currentSha = file?.sha ?? sha;
-  const isNewPage = !currentSha;
 
   // Read existing frontmatter to preserve fields (e.g. id, redirects)
   const existingRaw = !isNewPage ? await gitea.getFileContent(kb.gitea_repo, filePath) : null;
@@ -118,8 +171,7 @@ export async function PUT(
 
   const frontmatter: Record<string, unknown> = {
     ...existingFm,
-    // Spread extra knowledge model fields (e.g. from klai-knowledge-mcp) before
-    // applying mandatory fields — mandatory fields always win on conflict.
+    // Spread extra knowledge model fields before mandatory fields — mandatory always wins.
     ...(extraFm && typeof extraFm === "object" ? extraFm : {}),
     id: pageId,
     title: title ?? pagePath.split("/").at(-1),
@@ -151,8 +203,26 @@ export async function PUT(
         sidebarFile.sha
       );
     }
+
+    // Store idempotency key to prevent duplicate creation on retry
+    if (idempotencyKey) {
+      await db.storeIdempotencyKey(kb.id, idempotencyKey, pagePath);
+    }
+
+    // REQ-EVT-02: Return { page, pageIndex } so frontend can update synchronously
+    const pageIndex = await buildPageIndex(kb.gitea_repo);
+    return NextResponse.json({
+      page: {
+        id: pageId,
+        slug: pagePath,
+        title: (title ?? pagePath.split("/").at(-1)) as string,
+        icon: (icon ?? null) as string | null,
+      },
+      pageIndex,
+    });
   }
 
+  // Existing page update: maintain backward-compatible response
   return NextResponse.json({ ok: true });
 }
 
