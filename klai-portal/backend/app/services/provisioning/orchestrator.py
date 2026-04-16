@@ -262,6 +262,16 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         except Exception as exc:
             logger.warning("Could not create system groups for %s: %s", slug, exc)
 
+        # Step 11: Seed default prompt templates
+        try:
+            from app.services.default_templates import ensure_default_templates
+
+            await ensure_default_templates(org.id, first_user_id, db)
+            await db.commit()
+            logger.info("Seeded default templates for %s", slug)
+        except Exception as exc:
+            logger.warning("Could not seed default templates for %s: %s", slug, exc)
+
     except Exception as exc:
         logger.exception("Provisioning failed for org_id=%d: %s", org_id, exc)
         await _rollback(state)

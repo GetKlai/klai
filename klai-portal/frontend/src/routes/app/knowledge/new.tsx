@@ -79,7 +79,6 @@ function NewKnowledgeBasePage() {
   return (
     <div
       className="mx-auto max-w-3xl px-6 py-10"
-      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-8">

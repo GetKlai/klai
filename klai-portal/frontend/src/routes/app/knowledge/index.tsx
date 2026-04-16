@@ -83,10 +83,10 @@ function SourcesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="mx-auto max-w-3xl px-6 py-10">
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl font-semibold text-gray-900">
+        <h1 className="text-[26px] font-display-bold text-gray-900">
           {m.sources_page_title()}
         </h1>
         <div className="flex items-center gap-3">
@@ -240,7 +240,7 @@ function CollectionRow({
           params={{ kbSlug: kb.slug }}
           className="flex-1 min-w-0 group"
         >
-          <span className="text-sm font-medium text-gray-900 group-hover:underline">
+          <span className="text-[15px] font-display text-gray-900 group-hover:underline">
             {kb.name}
           </span>
           <span className="ml-2 text-xs text-gray-400">
@@ -250,12 +250,9 @@ function CollectionRow({
           </span>
         </Link>
 
-        {/* Indexed badge */}
+        {/* Sync badge */}
         {itemCount > 0 && (
-          <Badge
-            variant="outline"
-            className="text-[10px] font-medium border-green-200 bg-green-50 text-green-700"
-          >
+          <Badge variant="success">
             {m.sources_indexed()}
           </Badge>
         )}

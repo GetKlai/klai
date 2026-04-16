@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import _get_caller_org, bearer
 from app.core.database import get_db
 from app.models.templates import PortalTemplate
+from app.services.default_templates import ensure_default_templates
 
 logger = structlog.get_logger()
 
@@ -106,6 +107,10 @@ async def list_templates(
 ) -> list[TemplateOut]:
     """List templates visible to the caller: all global + own personal."""
     zitadel_user_id, org, _caller = await _get_caller_org(credentials, db)
+
+    # Lazy-seed defaults for existing orgs that have no templates yet
+    await ensure_default_templates(org.id, zitadel_user_id, db)
+    await db.commit()
 
     result = await db.execute(
         select(PortalTemplate).where(
