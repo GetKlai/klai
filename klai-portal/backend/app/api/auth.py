@@ -738,10 +738,7 @@ async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
     if body.idp_id not in known_idps:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
 
-    success_url = (
-        f"{settings.portal_url}/api/auth/idp-callback"
-        f"?auth_request_id={body.auth_request_id}"
-    )
+    success_url = f"{settings.portal_url}/api/auth/idp-callback?auth_request_id={body.auth_request_id}"
     failure_url = f"{settings.portal_url}/login?authRequest={body.auth_request_id}"
 
     try:

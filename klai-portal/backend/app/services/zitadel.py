@@ -494,7 +494,6 @@ class ZitadelClient:
         )
         put_resp.raise_for_status()
 
-
     # ── IDP (social login) ────────────────────────────────────────────────────
 
     async def create_idp_intent(self, idp_id: str, success_url: str, failure_url: str) -> dict:
