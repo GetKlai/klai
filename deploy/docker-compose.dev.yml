@@ -32,8 +32,9 @@ services:
       PORTAL_SECRETS_KEY: ${PORTAL_API_DEV_PORTAL_SECRETS_KEY}
       ENCRYPTION_KEY: ${PORTAL_API_DEV_ENCRYPTION_KEY}
       # IMAP disabled in dev to avoid competing with prod for the shared mailbox.
+      # Empty HOST + USERNAME is enough to disable; PORT stays valid int (default 993).
       IMAP_HOST: ""
-      IMAP_PORT: ""
+      IMAP_PORT: "993"
       IMAP_USERNAME: ""
       IMAP_POLL_INTERVAL_SECONDS: "60"
       IMAP_PASSWORD: ""
