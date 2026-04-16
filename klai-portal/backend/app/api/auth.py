@@ -30,6 +30,7 @@ scales horizontally.  Zitadel is the sole authority on session validity -- if th
 has expired there, ``finalize_auth_request`` will fail and the user sees the login form.
 """
 
+import asyncio
 import json
 import logging
 import secrets
@@ -997,18 +998,36 @@ async def idp_signup_callback(
             logger.exception("idp_signup_callback create_zitadel_user failed")
             return RedirectResponse(url=failure_url, status_code=302)
 
-    # 1c. Create Zitadel session with the resolved user_id + IDP intent
-    try:
-        session = await zitadel.create_session_for_user_idp(idp_user_id, id, token)
-    except httpx.HTTPStatusError as exc:
-        logger.exception(
-            "idp_signup_callback create_session failed %s: %s",
-            exc.response.status_code,
-            exc.response.text,
+    # 1c. Create Zitadel session with the resolved user_id + IDP intent.
+    # Zitadel uses event sourcing (CQRS): the user is written to the command side but the
+    # read side (queried by POST /v2/sessions) may lag briefly after creation. Retry on 404.
+    session = None
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        if attempt > 0:
+            await asyncio.sleep(attempt * 1.5)
+        try:
+            session = await zitadel.create_session_for_user_idp(idp_user_id, id, token)
+            break
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if exc.response.status_code == 404 and attempt < 3:
+                logger.warning(
+                    "idp_signup_callback create_session 404 on attempt %d, retrying",
+                    attempt + 1,
+                )
+                continue
+            logger.exception(
+                "idp_signup_callback create_session failed %s: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+    if session is None:
+        logger.error(
+            "idp_signup_callback create_session failed after retries: %s",
+            last_exc,
         )
-        return RedirectResponse(url=failure_url, status_code=302)
-    except Exception:
-        logger.exception("idp_signup_callback create_session failed (non-HTTP)")
         return RedirectResponse(url=failure_url, status_code=302)
 
     session_id: str | None = session.get("sessionId")
