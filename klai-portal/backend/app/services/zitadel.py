@@ -515,7 +515,16 @@ class ZitadelClient:
             json={"idpIntentToken": idp_intent_token},
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        logger.debug(
+            "retrieve_idp_intent response",
+            idp_intent_id=idp_intent_id,
+            keys=list(data.keys()),
+            idp_information_keys=list(data.get("idpInformation", {}).keys()),
+            raw_information_keys=list(data.get("idpInformation", {}).get("rawInformation", {}).keys()),
+            has_user_id=bool(data.get("userId")),
+        )
+        return data
 
     async def create_zitadel_user_from_idp(self, intent_data: dict, org_id: str) -> str:
         """Create a Zitadel human user from IDP intent data. Returns the new Zitadel userId.
