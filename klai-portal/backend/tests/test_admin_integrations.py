@@ -1,14 +1,15 @@
 """Tests for admin integration endpoints (SPEC-API-001 REQ-6).
 
 Uses a mock DB that auto-responds to all execute() calls with sensible defaults.
-Tests verify behavior through the return value and side effects, not through
-counting exact db.execute() calls.
+Tests verify behaviour through return values and side effects, not by counting
+exact db.execute() calls.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from helpers import FakeResult, setup_db
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -79,50 +80,12 @@ def _make_key_row(**overrides):
     return row
 
 
-def _make_kb_row(kb_id=1, name="Test KB", slug="test-kb"):
+def _make_kb_row(kb_id: int = 1, name: str = "Test KB", slug: str = "test-kb") -> MagicMock:
     row = MagicMock()
     row.id = kb_id
     row.name = name
     row.slug = slug
     return row
-
-
-class _FakeResult:
-    """A mock DB result that responds to all common access patterns."""
-
-    def __init__(self, rows=None, scalar_value=None):
-        self._rows = rows or []
-        self._scalar_value = scalar_value
-
-    def scalars(self):
-        mock = MagicMock()
-        mock.all.return_value = self._rows
-        return mock
-
-    def scalar_one_or_none(self):
-        return self._rows[0] if self._rows else None
-
-    def scalar(self):
-        return self._scalar_value
-
-    def fetchall(self):
-        return self._rows
-
-    def __iter__(self):
-        return iter(self._rows)
-
-
-def _setup_db(mock_db, results: list):
-    """Set up mock_db.execute to return results in order, cycling the last one."""
-    call_count = 0
-
-    async def _execute(*args, **kwargs):
-        nonlocal call_count
-        idx = min(call_count, len(results) - 1)
-        call_count += 1
-        return results[idx] if results else _FakeResult()
-
-    mock_db.execute = AsyncMock(side_effect=_execute)
 
 
 # ---------------------------------------------------------------------------
@@ -151,11 +114,11 @@ class TestCreateIntegration:
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
         kb = _make_kb_row()
-        _setup_db(
+        setup_db(
             mock_db,
             [
-                _FakeResult([kb]),  # _validate_kb_ids
-                _FakeResult(),  # remaining queries (inserts, refresh, etc.)
+                FakeResult([kb]),  # _validate_kb_ids
+                FakeResult(),      # remaining queries (inserts, refresh, etc.)
             ],
         )
 
@@ -180,7 +143,7 @@ class TestCreateIntegration:
     async def test_create_out_of_org_kb_returns_400(self, mock_db, mock_credentials, admin_user, mock_org):
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
-        _setup_db(mock_db, [_FakeResult()])  # no KBs found
+        setup_db(mock_db, [FakeResult()])  # no KBs found
 
         body = CreateIntegrationRequest(
             name="Test",
@@ -200,7 +163,7 @@ class TestCreateIntegration:
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
         kb = _make_kb_row()
-        _setup_db(mock_db, [_FakeResult([kb])])
+        setup_db(mock_db, [FakeResult([kb])])
 
         body = CreateIntegrationRequest(
             name="Test",
@@ -218,7 +181,7 @@ class TestCreateIntegration:
         from app.api.admin_integrations import CreateIntegrationRequest, create_integration
 
         kb = _make_kb_row()
-        _setup_db(mock_db, [_FakeResult([kb]), _FakeResult()])
+        setup_db(mock_db, [FakeResult([kb]), FakeResult()])
 
         body = CreateIntegrationRequest(
             name="Event Test",
@@ -260,11 +223,11 @@ class TestListIntegrations:
         count_row.partner_api_key_id = "uuid-1"
         count_row.cnt = 2
 
-        _setup_db(
+        setup_db(
             mock_db,
             [
-                _FakeResult([key_row]),  # list keys
-                _FakeResult([count_row]),  # count query
+                FakeResult([key_row]),    # list keys
+                FakeResult([count_row]),  # count query
             ],
         )
 
@@ -287,11 +250,11 @@ class TestUpdateIntegration:
         from app.api.admin_integrations import UpdateIntegrationRequest, update_integration
 
         key_row = _make_key_row()
-        _setup_db(
+        setup_db(
             mock_db,
             [
-                _FakeResult([key_row]),  # key lookup
-                _FakeResult(scalar_value=1),  # count query (fallback)
+                FakeResult([key_row]),          # key lookup
+                FakeResult(scalar_value=1),      # count query (fallback)
             ],
         )
 
@@ -311,12 +274,12 @@ class TestUpdateIntegration:
         key_row = _make_key_row()
         kb = _make_kb_row(kb_id=2, name="Other KB")
 
-        _setup_db(
+        setup_db(
             mock_db,
             [
-                _FakeResult([key_row]),  # key lookup
-                _FakeResult([kb]),  # kb validation
-                _FakeResult(),  # delete + insert
+                FakeResult([key_row]),  # key lookup
+                FakeResult([kb]),       # kb validation
+                FakeResult(),           # delete + insert
             ],
         )
 
@@ -334,7 +297,7 @@ class TestUpdateIntegration:
         from app.api.admin_integrations import UpdateIntegrationRequest, update_integration
 
         key_row = _make_key_row(active=False)
-        _setup_db(mock_db, [_FakeResult([key_row])])
+        setup_db(mock_db, [FakeResult([key_row])])
 
         body = UpdateIntegrationRequest(name="Try Update")
         with patch("app.api.admin_integrations._get_caller_org", return_value=("u", mock_org, admin_user)):
@@ -354,11 +317,11 @@ class TestRevokeIntegration:
         from app.api.admin_integrations import revoke_integration
 
         key_row = _make_key_row()
-        _setup_db(
+        setup_db(
             mock_db,
             [
-                _FakeResult([key_row]),  # key lookup
-                _FakeResult(scalar_value=1),  # count
+                FakeResult([key_row]),        # key lookup
+                FakeResult(scalar_value=1),    # count
             ],
         )
 
@@ -377,9 +340,60 @@ class TestRevokeIntegration:
         from app.api.admin_integrations import revoke_integration
 
         key_row = _make_key_row(active=False)
-        _setup_db(mock_db, [_FakeResult([key_row])])
+        setup_db(mock_db, [FakeResult([key_row])])
 
         with patch("app.api.admin_integrations._get_caller_org", return_value=("u", mock_org, admin_user)):
             with pytest.raises(HTTPException) as exc:
                 await revoke_integration(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
             assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/integrations/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteIntegration:
+    @pytest.mark.asyncio
+    async def test_delete_removes_integration(self, mock_db, mock_credentials, admin_user, mock_org):
+        from app.api.admin_integrations import delete_integration
+
+        key_row = _make_key_row()
+        setup_db(
+            mock_db,
+            [
+                FakeResult([key_row]),  # key lookup
+                FakeResult(),           # delete kb_access
+                FakeResult(),           # delete key
+            ],
+        )
+
+        with (
+            patch("app.api.admin_integrations._get_caller_org", return_value=("admin-user-123", mock_org, admin_user)),
+            patch("app.api.admin_integrations.emit_event") as mock_emit,
+        ):
+            await delete_integration(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
+
+        mock_db.commit.assert_called_once()
+        mock_emit.assert_called_once()
+        assert mock_emit.call_args[0][0] == "integration.deleted"
+
+    @pytest.mark.asyncio
+    async def test_delete_non_admin_returns_403(self, mock_db, mock_credentials, member_user, mock_org):
+        from app.api.admin_integrations import delete_integration
+
+        with patch("app.api.admin_integrations._get_caller_org", return_value=("u", mock_org, member_user)):
+            with pytest.raises(HTTPException) as exc:
+                await delete_integration(integration_id="uuid-1", credentials=mock_credentials, db=mock_db)
+            assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found_returns_404(self, mock_db, mock_credentials, admin_user, mock_org):
+        from app.api.admin_integrations import delete_integration
+
+        setup_db(mock_db, [FakeResult()])  # no key found
+
+        with patch("app.api.admin_integrations._get_caller_org", return_value=("u", mock_org, admin_user)):
+            with pytest.raises(HTTPException) as exc:
+                await delete_integration(integration_id="does-not-exist", credentials=mock_credentials, db=mock_db)
+            assert exc.value.status_code == 404

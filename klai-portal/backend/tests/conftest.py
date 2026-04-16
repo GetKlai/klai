@@ -5,9 +5,31 @@ Sets required env vars before any app module is imported.
 """
 
 import os
+import sys
 
-# Set required env vars for pydantic-settings validation.
-# The Settings class reads these at module import time.
+# ---------------------------------------------------------------------------
+# Suppress 'coroutine was never awaited' from mocked-asyncio tests.
+#
+# When a test patches asyncio.create_task, the coroutine passed to it is
+# created but never started.  Python emits this warning via sys.unraisablehook
+# during GC — which happens after pytest fixtures have already cleaned up, so
+# a fixture-scoped override arrives too late.  A module-level hook installed
+# at import time persists for the full session including interpreter shutdown.
+# ---------------------------------------------------------------------------
+_original_unraisablehook = sys.unraisablehook
+
+
+def _hook(unraisable: sys.UnraisableHookArgs) -> None:
+    if isinstance(unraisable.exc_value, RuntimeWarning) and "was never awaited" in str(unraisable.exc_value):
+        return
+    _original_unraisablehook(unraisable)
+
+
+sys.unraisablehook = _hook
+
+# ---------------------------------------------------------------------------
+# Env vars for pydantic-settings validation (read at module import time)
+# ---------------------------------------------------------------------------
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("ZITADEL_PAT", "test-pat")
 os.environ.setdefault("SSO_COOKIE_KEY", "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc=")

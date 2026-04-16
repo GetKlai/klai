@@ -116,7 +116,6 @@ async def list_knowledge_bases(
             "access_level": auth.kb_access[kb.id],
         }
         for kb in kbs
-        if kb.id in auth.kb_access
     ]
 
 

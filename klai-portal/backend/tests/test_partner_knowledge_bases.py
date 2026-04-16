@@ -1,4 +1,4 @@
-"""RED: Verify Partner API router skeleton + GET /partner/v1/knowledge-bases.
+"""Tests for GET /partner/v1/knowledge-bases.
 
 SPEC-API-001 REQ-4.1:
 - Returns only KBs in auth.kb_access, joined with PortalKnowledgeBase
@@ -6,43 +6,11 @@ SPEC-API-001 REQ-4.1:
 - Requires chat OR knowledge_append permission
 """
 
-from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
-
-
-@dataclass
-class FakeKB:
-    """Mimics a PortalKnowledgeBase row."""
-
-    id: int
-    name: str
-    slug: str
-    org_id: int
-
-
-def _make_auth(permissions: dict | None = None, kb_access: dict | None = None):
-    """Create a PartnerAuthContext for testing."""
-    from app.api.partner_dependencies import PartnerAuthContext
-
-    return PartnerAuthContext(
-        key_id="key-uuid-1",
-        org_id=42,
-        zitadel_org_id="zit-org-42",
-        permissions=permissions or {"chat": True, "feedback": True, "knowledge_append": False},
-        kb_access=kb_access or {10: "read", 20: "read_write"},
-        rate_limit_rpm=60,
-    )
-
-
-def _mock_scalars_all(values):
-    result = MagicMock()
-    scalars = MagicMock()
-    scalars.all.return_value = values
-    result.scalars.return_value = scalars
-    return result
+from helpers import FakeKB, FakeResult, make_partner_auth
 
 
 @pytest.mark.asyncio
@@ -50,16 +18,14 @@ async def test_list_knowledge_bases_returns_only_scoped():
     """Only KBs in auth.kb_access are returned; out-of-scope KBs absent."""
     from app.api.partner import list_knowledge_bases
 
-    auth = _make_auth(kb_access={10: "read", 20: "read_write"})
-
-    # DB has 3 KBs in org, but key only has access to 2
+    auth = make_partner_auth(kb_access={10: "read", 20: "read_write"})
     fake_kbs = [
         FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42),
         FakeKB(id=20, name="KB Beta", slug="kb-beta", org_id=42),
     ]
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_scalars_all(fake_kbs))
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
 
     result = await list_knowledge_bases(auth=auth, db=db)
 
@@ -67,7 +33,6 @@ async def test_list_knowledge_bases_returns_only_scoped():
     kb_ids = {kb["id"] for kb in result}
     assert kb_ids == {10, 20}
 
-    # Check access_level is included
     for kb in result:
         if kb["id"] == 10:
             assert kb["access_level"] == "read"
@@ -79,50 +44,46 @@ async def test_list_knowledge_bases_returns_only_scoped():
 
 @pytest.mark.asyncio
 async def test_list_knowledge_bases_requires_chat_or_knowledge_append():
-    """Permission check: needs chat OR knowledge_append."""
+    """Neither chat nor knowledge_append permission -> 403."""
     from app.api.partner import list_knowledge_bases
 
-    # Neither chat nor knowledge_append -> should raise 403
-    auth = _make_auth(
+    auth = make_partner_auth(
         permissions={"chat": False, "feedback": True, "knowledge_append": False},
         kb_access={10: "read"},
     )
 
-    db = AsyncMock()
-
     with pytest.raises(HTTPException) as exc_info:
-        await list_knowledge_bases(auth=auth, db=db)
+        await list_knowledge_bases(auth=auth, db=AsyncMock())
     assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_list_knowledge_bases_allows_knowledge_append_permission():
-    """knowledge_append permission alone is sufficient."""
+async def test_list_knowledge_bases_allows_knowledge_append_only():
+    """knowledge_append permission alone is sufficient (no chat needed)."""
     from app.api.partner import list_knowledge_bases
 
-    auth = _make_auth(
+    auth = make_partner_auth(
         permissions={"chat": False, "feedback": False, "knowledge_append": True},
         kb_access={10: "read"},
     )
-
     fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_scalars_all(fake_kbs))
+    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
 
     result = await list_knowledge_bases(auth=auth, db=db)
     assert len(result) == 1
 
 
 @pytest.mark.asyncio
-async def test_list_knowledge_bases_empty_access():
-    """Key with no KB access returns empty list."""
+async def test_list_knowledge_bases_empty_access_returns_empty():
+    """Key with no KB access returns empty list without hitting the DB."""
     from app.api.partner import list_knowledge_bases
 
-    auth = _make_auth(kb_access={})
+    auth = make_partner_auth(kb_access={})
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_mock_scalars_all([]))
-
     result = await list_knowledge_bases(auth=auth, db=db)
+
     assert result == []
+    db.execute.assert_not_called()
