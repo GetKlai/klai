@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
+    # Container name for the MongoDB instance (varies per docker-compose project name)
+    mongodb_container_name: str = "mongodb"
+
     # Secrets passed to new LibreChat containers (read from /opt/klai/.env)
     mongo_root_password: str = ""
     meili_master_key: str = ""
