@@ -122,6 +122,11 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     existing_slugs = {row[0] for row in slugs_result.fetchall() if row[0]}
 
     slug = _slugify_unique(org.name, existing_slugs)
+    # Capture mcp_servers now — ensure_default_knowledge_bases (step 6b) commits the session,
+    # which expires all ORM attributes. Accessing org.mcp_servers after that triggers a
+    # synchronous lazy-load in an async context → MissingGreenlet crash.
+    mcp_servers = org.mcp_servers
+    zitadel_org_id = org.zitadel_org_id
     logger.info("Provisioning tenant %s (org_id=%d)", slug, org_id)
 
     state = _ProvisionState(slug=slug)
@@ -156,7 +161,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
                 "/key/generate",
                 json={
                     "team_id": team_id,
-                    "metadata": {"org_id": org.zitadel_org_id},
+                    "metadata": {"org_id": zitadel_org_id},
                     "models": ["klai-llm", "klai-fallback"],
                 },
             )
@@ -185,8 +190,8 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             client_secret,
             litellm_api_key=litellm_team_key,
             mongo_password=mongo_tenant_password,
-            zitadel_org_id=org.zitadel_org_id,
-            mcp_servers=org.mcp_servers,
+            zitadel_org_id=zitadel_org_id,
+            mcp_servers=mcp_servers,
         )
         container_data_base = Path(settings.librechat_container_data_path)
         tenant_dir = container_data_base / slug
@@ -234,7 +239,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
 
         # Step 7: Start Docker container
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path, org.mcp_servers)
+        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path, mcp_servers)
         state.container_started = True
         logger.info("Started container librechat-%s", slug)
 
@@ -257,7 +262,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
 
         # Step 10: Create system groups
         try:
-            await create_system_groups(org.id, db)
+            await create_system_groups(org_id, db)
             logger.info("Created system groups for %s", slug)
         except Exception as exc:
             logger.warning("Could not create system groups for %s: %s", slug, exc)
