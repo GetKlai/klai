@@ -3,9 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import * as m from '@/paraglide/messages'
 import { Input } from '@/components/ui/input'
-import { DOCS_BASE, stripMdExt, slugify } from '@/lib/kb-editor/tree-utils'
+import { DOCS_BASE, stripMdExt, slugify, DEFAULT_ICON } from '@/lib/kb-editor/tree-utils'
 import { useKBEditor, resolveSlug, shortId, PageNotInIndexError } from '@/lib/kb-editor/KBEditorContext'
-import { DEFAULT_ICON } from '@/lib/kb-editor/tree-utils'
 import { apiFetch } from '@/lib/apiFetch'
 import { editorLogger } from '@/lib/logger'
 import { BlockPageEditor } from '@/components/kb-editor/BlockPageEditor'
@@ -16,6 +15,8 @@ import { EditorHeader } from '@/components/kb-editor/EditorHeader'
 export const Route = createLazyFileRoute('/app/docs/$kbSlug/$pageId')({
   component: KBPageEditor,
 })
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface PageData {
   frontmatter: { title?: string; description?: string; edit_access?: 'org' | string[]; icon?: string }
@@ -32,7 +33,6 @@ function KBPageEditor() {
   let selectedPath: string | null = null
   let pageNotFound = false
 
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (pageIndex.length === 0) {
     // pageIndex not yet loaded — use slug-based pageId as temp path, but never send a UUID
     // directly to the API (the API stores pages by slug, not UUID)
