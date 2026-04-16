@@ -212,8 +212,8 @@ function KBPageEditor() {
     if (!pageIndex.length) return
     const entry = pageIndex.find((p) => p.slug === selectedPath)
     const pid = shortId(entry)
-    if (pid && pid !== pageId && pid.length === 8) {
-      // Silently replace slug-based URL with ID-based URL
+    if (pid && pid !== pageId) {
+      // Silently replace slug-based URL with UUID-based URL
       navigateToPage(selectedPath)
     }
     // Only run when pageIndex loads/updates, not on every render
