@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     zitadel_org_id: str = ""
     zitadel_portal_app_id: str = "362901948573155339"  # "Klai Portal" OIDC app
     zitadel_portal_org_id: str = "362757920133283846"  # Org where all portal users live
+    zitadel_idp_google_id: str = ""  # ZITADEL_IDP_GOOGLE_ID — instance-level Google IDP
+    zitadel_idp_microsoft_id: str = ""  # ZITADEL_IDP_MICROSOFT_ID — instance-level Microsoft IDP
 
     # Database
     database_url: str = ""  # asyncpg DSN: postgresql+asyncpg://...
@@ -159,6 +161,11 @@ class Settings(BaseSettings):
     # to call the API with the user's cookies. Review carefully before modifying.
     cors_origins: str = "http://localhost:5174"
     cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
+
+    @property
+    def portal_url(self) -> str:
+        """Base URL of the portal (SPA + API proxy). Used for OAuth callback URLs."""
+        return self.frontend_url or f"https://portal.{self.domain}"
 
     @property
     def is_auth_dev_mode(self) -> bool:

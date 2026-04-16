@@ -495,5 +495,26 @@ class ZitadelClient:
         put_resp.raise_for_status()
 
 
+    # ── IDP (social login) ────────────────────────────────────────────────────
+
+    async def create_idp_intent(self, idp_id: str, success_url: str, failure_url: str) -> dict:
+        """Start an IDP intent flow. Returns { authUrl } to redirect the user to."""
+        resp = await self._http.post(
+            "/v2/idp_intents",
+            json={"idpId": idp_id, "urls": {"successUrl": success_url, "failureUrl": failure_url}},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def create_session_with_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
+        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }."""
+        resp = await self._http.post(
+            "/v2/sessions",
+            json={"checks": {"idpIntent": {"idpIntentId": idp_intent_id, "idpIntentToken": idp_intent_token}}},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 # Singleton — reused across requests
 zitadel = ZitadelClient()

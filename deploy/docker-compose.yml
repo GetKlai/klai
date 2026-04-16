@@ -328,6 +328,8 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
+      ZITADEL_IDP_GOOGLE_ID: ${ZITADEL_IDP_GOOGLE_ID}
+      ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
     networks:
       - klai-net
       - net-postgres
