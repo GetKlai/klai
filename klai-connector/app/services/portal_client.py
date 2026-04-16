@@ -166,7 +166,7 @@ class PortalClient:
                 )
                 response.raise_for_status()
         except Exception:
-            logger.exception(
+            logger.exception(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                 "Failed to write back refreshed credentials to portal for connector %s (has_expiry=%s)",
                 connector_id,
                 token_expiry is not None,

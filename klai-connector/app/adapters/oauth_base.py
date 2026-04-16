@@ -121,7 +121,7 @@ class OAuthAdapterBase(ABC):
                 )
 
             # @MX:NOTE: [AUTO] Never log refresh_token / access_token values.
-            logger.info(
+            logger.info(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                 "Refreshing OAuth token (connector=%s, provider=%s)",
                 connector_id,
                 type(self).__name__,

@@ -249,7 +249,7 @@ async def callback_provider(
                 token_response.raise_for_status()
                 tokens = token_response.json()
         except httpx.HTTPStatusError as exc:
-            logger.warning(
+            logger.warning(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                 "oauth_callback_token_exchange_failed: status=%s",
                 exc.response.status_code,
             )
