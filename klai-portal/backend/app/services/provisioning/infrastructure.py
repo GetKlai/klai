@@ -230,4 +230,6 @@ def _start_librechat_container(
             net = client.networks.get(net_name)
             net.connect(container_name)
         except Exception as exc:
-            logger.warning("container_network_connect_failed", container=container_name, network=net_name, error=str(exc))
+            logger.warning(
+                "container_network_connect_failed", container=container_name, network=net_name, error=str(exc)
+            )
