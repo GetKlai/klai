@@ -6,16 +6,16 @@ MongoDB, Caddy, Redis). They are synchronous where indicated (for use with
 run_in_executor).
 """
 
-import logging
 import time
 from pathlib import Path
 
 import docker
+import structlog
 
 from app.core.config import settings
 from app.services.provisioning.generators import _generate_librechat_yaml
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def _sync_remove_container(name: str) -> None:
@@ -109,21 +109,21 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
         exit_code, output = redis_container.exec_run(redis_cmd)
         if exit_code != 0:
             logger.warning(
-                "Redis FLUSHALL mislukt voor tenant %s (exit %d): %s",
-                slug,
-                exit_code,
-                output.decode(),
+                "redis_flushall_failed",
+                slug=slug,
+                exit_code=exit_code,
+                output=output.decode(),
             )
         else:
-            logger.info("Redis FLUSHALL voltooid voor tenant %s", slug)
+            logger.info("redis_flushed", slug=slug)
     except docker.errors.NotFound:  # type: ignore[attr-defined]
-        logger.warning("Redis container '%s' niet gevonden, FLUSHALL overgeslagen", settings.redis_container_name)
+        logger.warning("redis_container_not_found", container=settings.redis_container_name)
 
     # Restart the tenant's LibreChat container
     container_name = f"librechat-{slug}"
     container = client.containers.get(container_name)
     container.restart(timeout=10)
-    logger.info("Container %s herstart na config update", container_name)
+    logger.info("librechat_container_restarted", container=container_name)
 
     # Health check: wait up to 30s for container to reach running state
     deadline = time.monotonic() + 30
@@ -131,13 +131,13 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
         try:
             container.reload()
             if container.status == "running":
-                logger.info("Container %s is actief na herstart", container_name)
+                logger.info("librechat_container_running", container=container_name)
                 return
         except Exception as exc:
-            logger.debug("Container reload mislukt tijdens health check: %s", exc)
+            logger.debug("container_health_check_reload_failed", error=str(exc))
         time.sleep(3)
 
-    logger.warning("Container %s niet 'running' na 30s health check", container_name)
+    logger.warning("librechat_container_not_running", container=container_name, timeout_seconds=30)
 
 
 def _write_tenant_caddyfile(slug: str) -> None:
@@ -230,4 +230,4 @@ def _start_librechat_container(
             net = client.networks.get(net_name)
             net.connect(container_name)
         except Exception as exc:
-            logger.warning("Could not connect %s to %s: %s", container_name, net_name, exc)
+            logger.warning("container_network_connect_failed", container=container_name, network=net_name, error=str(exc))
