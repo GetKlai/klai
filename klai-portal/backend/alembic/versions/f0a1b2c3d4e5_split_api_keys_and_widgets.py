@@ -94,7 +94,7 @@ def upgrade() -> None:
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default=sa.text(
-                "'{\"allowed_origins\": [], \"title\": \"\", \"welcome_message\": \"\", \"css_variables\": {}}'::jsonb"
+                '\'{"allowed_origins": [], "title": "", "welcome_message": "", "css_variables": {}}\'::jsonb'
             ),
         ),
         sa.Column(

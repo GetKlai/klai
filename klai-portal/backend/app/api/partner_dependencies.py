@@ -163,9 +163,7 @@ async def get_partner_key(
 
     # Step 3: Compute hash and look up key (SPEC-WIDGET-002: no active filter)
     key_hash = hashlib.sha256(token.encode()).hexdigest()
-    result = await db.execute(
-        select(PartnerAPIKey).where(PartnerAPIKey.key_hash == key_hash)
-    )
+    result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.key_hash == key_hash))
     key_row = result.scalar_one_or_none()
 
     if key_row is None:
