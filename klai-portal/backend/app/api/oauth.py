@@ -26,7 +26,7 @@ from urllib.parse import urlencode
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,11 +131,12 @@ async def authorize_provider(
     kb_slug: str = Query(..., description="Knowledge base slug the new connector will sync into"),
     connector_id: str | None = Query(None, description="Existing connector UUID (reconnect flow)"),
     user_id: str = Depends(get_current_user_id),
-) -> RedirectResponse:
-    """Redirect the user's browser to the provider consent page.
+) -> JSONResponse:
+    """Return the provider consent URL and set the HttpOnly state cookie.
 
-    A signed state token is set as an HttpOnly cookie AND passed in the ?state=
-    query parameter. The callback requires both to match.
+    The frontend must navigate to ``authorize_url`` after receiving this response.
+    A signed state token is set as an HttpOnly cookie AND embedded in the ?state=
+    query parameter of the returned URL. The callback requires both to match.
     """
     if provider not in _SUPPORTED_PROVIDERS or not _provider_enabled(provider):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not enabled")
@@ -168,7 +169,11 @@ async def authorize_provider(
     else:  # pragma: no cover -- guarded by _SUPPORTED_PROVIDERS above
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown provider")
 
-    response = RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+    # Return the authorize URL as JSON so the frontend can navigate with a
+    # fetch call (which carries the Authorization header for auth checks).
+    # The state cookie is set on the JSON response; the browser stores it and
+    # sends it back when Google redirects to /api/oauth/{provider}/callback.
+    response = JSONResponse(content={"authorize_url": authorize_url})
 
     # Cookie is restricted to /api/oauth paths and short-lived.
     cookie_domain = f".{settings.domain}" if settings.domain else None

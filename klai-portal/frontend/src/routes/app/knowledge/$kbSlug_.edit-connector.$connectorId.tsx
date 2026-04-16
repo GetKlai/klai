@@ -57,6 +57,20 @@ function EditConnectorPage() {
     database_ids: '', max_pages: '500', new_access_token: '',
   })
   const [folderId, setFolderId] = useState('')
+  const [isReconnecting, setIsReconnecting] = useState(false)
+
+  async function handleGoogleDriveReconnect() {
+    setIsReconnecting(true)
+    try {
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(
+        `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`,
+        token,
+      )
+      window.location.href = authorize_url
+    } finally {
+      setIsReconnecting(false)
+    }
+  }
   const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
 
   useEffect(() => {
@@ -355,9 +369,8 @@ function EditConnectorPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => {
-                    window.location.href = `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`
-                  }}
+                  disabled={isReconnecting}
+                  onClick={() => { void handleGoogleDriveReconnect() }}
                 >
                   {m.admin_connectors_google_drive_reconnect()}
                 </Button>

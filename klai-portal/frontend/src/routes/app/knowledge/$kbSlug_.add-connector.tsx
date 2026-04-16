@@ -184,11 +184,16 @@ function AddConnectorPage() {
           allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
         }),
       })
-      return result
+      // Fetch the OAuth authorize URL (authenticated call sets the state cookie).
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(
+        `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`,
+        token,
+      )
+      return { authorizeUrl: authorize_url }
     },
-    onSuccess: (result) => {
+    onSuccess: ({ authorizeUrl }) => {
       void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
-      window.location.href = `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`
+      window.location.href = authorizeUrl
     },
   })
 

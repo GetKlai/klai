@@ -102,8 +102,10 @@ class TestAuthorizeEndpoint:
     """GET /api/oauth/google_drive/authorize redirects to Google and sets state cookie."""
 
     @pytest.mark.asyncio
-    async def test_authorize_redirects_to_google(self) -> None:
-        """Returns 302 redirect whose Location is on accounts.google.com."""
+    async def test_authorize_returns_authorize_url(self) -> None:
+        """Returns 200 JSON with authorize_url pointing to accounts.google.com."""
+        import json
+
         from app.api.oauth import authorize_provider
 
         with patch("app.api.oauth.settings") as mock_settings:
@@ -119,9 +121,9 @@ class TestAuthorizeEndpoint:
                 user_id="zitadel-user-1",
             )
 
-            assert response.status_code == 302
-            location = response.headers["location"]
-            assert location.startswith("https://accounts.google.com/")
+            assert response.status_code == 200
+            body = json.loads(response.body)
+            assert body["authorize_url"].startswith("https://accounts.google.com/")
 
     @pytest.mark.asyncio
     async def test_authorize_sets_state_cookie(self) -> None:
