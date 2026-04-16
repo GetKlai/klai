@@ -203,9 +203,15 @@ class WebCrawlerAdapter(BaseAdapter):
         Raises:
             CanaryMismatchError: If the live fingerprint similarity < _CANARY_SIMILARITY_THRESHOLD,
                 or if the canary page returned no content (similarity defaults to 0.0).
+            ValueError: If called without canary_url/canary_fingerprint set (programmer error).
         """
-        assert cfg.canary_url is not None  # caller guarantees this
-        assert cfg.canary_fingerprint is not None  # caller guarantees this
+        # Explicit guards — the caller in list_documents() already checks both are set,
+        # but assertions get stripped under `python -O`; raise an explicit ValueError
+        # so a contract violation is never silently converted to a False canary mismatch.
+        if cfg.canary_url is None or cfg.canary_fingerprint is None:
+            raise ValueError(
+                "_crawl_canary requires both canary_url and canary_fingerprint to be set"
+            )
 
         params: dict[str, Any] = {
             "cache_mode": "bypass",
@@ -236,7 +242,10 @@ class WebCrawlerAdapter(BaseAdapter):
         live_fp = compute_content_fingerprint(live_markdown)
         sim = similarity(live_fp, cfg.canary_fingerprint) if live_fp else 0.0
 
-        logger.info(
+        # SPEC-CRAWL-003 AC-3: canary pass is silent — no log on success. The
+        # sync engine logs the `error`-level event on a mismatch (REQ-5 path).
+        # Keep one `debug`-level trace for operator-side troubleshooting.
+        logger.debug(
             "canary_check",
             canary_url=cfg.canary_url,
             similarity=round(sim, 4),
@@ -326,13 +335,25 @@ class WebCrawlerAdapter(BaseAdapter):
             params["js_code_before_wait"] = _JS_REMOVE_CHROME
             params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
 
-        # @MX:NOTE: [AUTO] SPEC-CRAWL-003 Layer B — append CSS presence check to wait_for.
-        # Crawl4AI marks the result as failed when wait_for times out, which signals
-        # auth-walled pages when login_indicator_selector is not present in the DOM.
+        # @MX:NOTE: [AUTO] SPEC-CRAWL-003 Layer B — embed login-indicator CSS check
+        # INSIDE the existing JS wait_for so BOTH conditions must hold (REQ-8).
+        # Crawl4AI 0.8.6 `wait_for` accepts a single expression; the earlier `||`
+        # concatenation of `js:...` and `css:...` was not a supported multi-condition
+        # syntax and would silently fail to enforce the login indicator.
         if cfg.login_indicator_selector:
             base_wait = params.get("wait_for", "")
-            css_check = f"css:{cfg.login_indicator_selector}"
-            params["wait_for"] = f"{base_wait} || {css_check}" if base_wait else css_check
+            # Escape quotes/backslashes to prevent JS injection from the stored selector.
+            selector_escaped = (
+                cfg.login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
+            )
+            css_check_js = f"!!document.querySelector('{selector_escaped}')"
+            js_prefix = "js:() =>"
+            if base_wait.startswith(js_prefix):
+                body = base_wait[len(js_prefix):].strip()
+                params["wait_for"] = f"{js_prefix} ({body}) && {css_check_js}"
+            else:
+                # No pre-existing JS wait — require login indicator presence alone.
+                params["wait_for"] = f"{js_prefix} {css_check_js}"
 
         return params
 
@@ -677,8 +698,9 @@ class WebCrawlerAdapter(BaseAdapter):
 
         if self._auth_walled_count:
             logger.warning(
-                "auth_walled_pages_detected",
+                "Pages dropped due to missing login indicator",
                 auth_walled_count=self._auth_walled_count,
+                total_urls=len(refs) + self._auth_walled_count,
                 base_url=cfg.base_url,
             )
 

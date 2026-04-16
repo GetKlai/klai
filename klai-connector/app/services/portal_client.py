@@ -165,13 +165,11 @@ class PortalClient:
                     json={
                         "event_type": "knowledge.sync_quality_degraded",
                         "org_id": org_id,
-                        "properties": {
-                            "connector_id": str(connector_id),
-                            "sync_run_id": str(sync_run_id),
-                            "quality_status": quality_status,
-                            "reason": reason,
-                            "metric": metric,
-                        },
+                        "connector_id": str(connector_id),
+                        "sync_run_id": str(sync_run_id),
+                        "quality_status": quality_status,
+                        "reason": reason,
+                        "metric": metric,
                     },
                 )
                 response.raise_for_status()

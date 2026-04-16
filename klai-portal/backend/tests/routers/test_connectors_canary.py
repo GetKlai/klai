@@ -164,13 +164,26 @@ class TestWebcrawlerConfigLoginIndicatorSelector:
                 login_indicator_selector="",
             )
 
-    def test_selector_with_script_tag_invalid(self) -> None:
-        """login_indicator_selector containing 'script' → 422."""
+    def test_selector_with_javascript_uri_invalid(self) -> None:
+        """login_indicator_selector containing 'javascript:' → 422 (XSS vector)."""
         with pytest.raises(ValidationError):
             WebcrawlerConfig(
                 base_url="https://wiki.example.com",
-                login_indicator_selector="script[src]",
+                login_indicator_selector="a[href^=javascript:void(0)]",
             )
+
+    def test_selector_with_legitimate_script_class_valid(self) -> None:
+        """Legitimate CSS selectors with 'script' substring are accepted.
+
+        `.transcript`, `[data-script-version]`, and `script[type]` (element
+        selector) are all valid CSS — only HTML/JS injection shapes (`<script`,
+        `javascript:`) are rejected. See WebcrawlerConfig validator rationale.
+        """
+        cfg = WebcrawlerConfig(
+            base_url="https://wiki.example.com",
+            login_indicator_selector="[data-script-version]",
+        )
+        assert cfg.login_indicator_selector == "[data-script-version]"
 
     def test_selector_with_angle_bracket_invalid(self) -> None:
         """login_indicator_selector containing '<' → 422."""
@@ -188,12 +201,12 @@ class TestWebcrawlerConfigLoginIndicatorSelector:
                 login_indicator_selector="div > span",
             )
 
-    def test_selector_case_insensitive_script_check(self) -> None:
-        """login_indicator_selector with 'SCRIPT' (uppercase) → 422."""
+    def test_selector_case_insensitive_javascript_check(self) -> None:
+        """login_indicator_selector with 'JAVASCRIPT:' (uppercase) → 422."""
         with pytest.raises(ValidationError):
             WebcrawlerConfig(
                 base_url="https://wiki.example.com",
-                login_indicator_selector="SCRIPT[type]",
+                login_indicator_selector="a[href=JAVASCRIPT:alert(1)]",
             )
 
     def test_no_selector_valid(self) -> None:
