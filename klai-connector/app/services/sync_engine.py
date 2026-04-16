@@ -17,7 +17,6 @@ from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
-from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.s3_storage import ImageStore
@@ -244,11 +243,11 @@ class SyncEngine:
                             resume_ingested_refs.add(ref_key)
                             continue
 
-                        # Image extraction and upload (when Garage is configured).
+                        # Image upload (when Garage is configured). Each adapter
+                        # populates ref.images with absolute URLs; we just upload them.
                         image_urls: list[str] | None = None
                         if self._image_store and self._image_http:
-                            image_urls = await self._extract_and_upload_images(
-                                text=text,
+                            image_urls = await self._upload_images(
                                 parsed_images=parse_result.images,
                                 ref=ref,
                                 org_id=portal_config.zitadel_org_id,
@@ -383,39 +382,29 @@ class SyncEngine:
             error_details=error_details if error_details else None,
         )
 
-    async def _extract_and_upload_images(
+    async def _upload_images(
         self,
         *,
-        text: str,
         parsed_images: list[dict[str, str]],
         ref: Any,
         org_id: str,
         kb_slug: str,
     ) -> list[str]:
-        """Extract image URLs from document content and upload to S3.
+        """Upload adapter-provided and parser-embedded images to S3.
 
-        Each adapter is responsible for populating ref.images with resolved
-        absolute URLs (webcrawler via media["images"], Notion via image blocks).
-        Markdown inline images (e.g. GitHub) are resolved using ref.source_url.
+        Each adapter is responsible for populating ``ref.images`` with
+        resolved absolute URLs during list_documents()/fetch_document().
+        The sync engine is connector-agnostic: it only iterates ref.images.
         """
         assert self._image_store is not None
         assert self._image_http is not None
 
-        all_image_urls: list[tuple[str, str]] = []
-
-        # Adapter-provided images (webcrawler, Notion) — always absolute URLs.
+        image_urls: list[tuple[str, str]] = []
         if ref.images:
-            for img_ref in ref.images:
-                all_image_urls.append((img_ref.alt, img_ref.url))
-
-        # Markdown inline images (e.g. GitHub .md files). Resolve relative URLs
-        # using the document's source URL as base (set by each adapter in source_url).
-        base_url = ref.source_url or ""
-        for alt, url in extract_markdown_image_urls(text):
-            all_image_urls.append((alt, resolve_relative_url(url, base_url)))
+            image_urls = [(img.alt, img.url) for img in ref.images]
 
         return await download_and_upload_images(
-            image_urls=all_image_urls,
+            image_urls=image_urls,
             org_id=org_id,
             kb_slug=kb_slug,
             image_store=self._image_store,

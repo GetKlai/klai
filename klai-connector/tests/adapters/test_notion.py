@@ -229,3 +229,90 @@ async def test_rate_limit_backoff(
 
     assert len(refs) == 1
     assert mock_search.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# N. fetch_document populates ref.images directly (no side-channel cache)
+# ---------------------------------------------------------------------------
+
+
+def _image_block(block_id: str, url: str, caption: str = "") -> dict[str, Any]:
+    """Build a Notion image block as returned by the blocks.children API."""
+    return {
+        "object": "block",
+        "id": block_id,
+        "type": "image",
+        "image": {
+            "type": "external",
+            "external": {"url": url},
+            "caption": (
+                [{"type": "text", "text": {"content": caption}, "plain_text": caption}]
+                if caption
+                else []
+            ),
+        },
+    }
+
+
+async def test_fetch_document_sets_ref_images_directly(
+    notion_adapter: Any,
+    mock_connector: SimpleNamespace,
+) -> None:
+    """Image blocks discovered during fetch are attached to the DocumentRef."""
+    ref = DocumentRef(
+        path="Page One.md",
+        ref="page-abc-123",
+        size=0,
+        content_type="notion_page",
+        source_ref="page-abc-123",
+    )
+    blocks = [
+        _image_block("img-1", "https://cdn.notion.com/img/one.png", caption="first"),
+        _image_block("img-2", "https://cdn.notion.com/img/two.png"),
+    ]
+
+    with patch("app.adapters.notion.fetch_blocks_recursive", return_value=blocks):
+        await notion_adapter.fetch_document(ref, mock_connector)
+
+    assert ref.images is not None
+    assert len(ref.images) == 2
+    urls = [img.url for img in ref.images]
+    assert urls == [
+        "https://cdn.notion.com/img/one.png",
+        "https://cdn.notion.com/img/two.png",
+    ]
+    assert ref.images[0].alt == "first"
+    assert ref.images[0].source_path == "img-1"
+
+
+async def test_fetch_document_leaves_ref_images_none_when_no_images(
+    notion_adapter: Any,
+    mock_connector: SimpleNamespace,
+) -> None:
+    """A page without image blocks leaves DocumentRef.images unset."""
+    ref = DocumentRef(
+        path="Plain.md",
+        ref="page-plain",
+        size=0,
+        content_type="notion_page",
+        source_ref="page-plain",
+    )
+    blocks = [
+        {
+            "object": "block",
+            "id": "p-1",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": "hi"}}]},
+        },
+    ]
+
+    with patch("app.adapters.notion.fetch_blocks_recursive", return_value=blocks):
+        await notion_adapter.fetch_document(ref, mock_connector)
+
+    assert ref.images is None
+
+
+def test_adapter_has_no_image_cache_attribute(notion_adapter: Any) -> None:
+    """The legacy _image_cache side-channel must remain removed."""
+    assert not hasattr(notion_adapter, "_image_cache")
+    assert not hasattr(notion_adapter, "get_cached_images")
