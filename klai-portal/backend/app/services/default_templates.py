@@ -75,7 +75,9 @@ async def ensure_default_templates(
     """
     try:
         count_result = await db.execute(
-            select(func.count()).select_from(PortalTemplate).where(
+            select(func.count())
+            .select_from(PortalTemplate)
+            .where(
                 PortalTemplate.org_id == org_id,
             )
         )

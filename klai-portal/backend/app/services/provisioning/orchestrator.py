@@ -219,6 +219,11 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         except Exception as exc:
             logger.warning("Could not create personal KB for %s: %s", slug, exc)
 
+        # Default user_id used across all downstream seeding steps (templates, rules, KBs).
+        # Resolved from DB if available; falls back to "system" so later steps still run if
+        # the lookup fails.
+        first_user_id: str = "system"
+
         # Step 6b: Create default portal KB rows (org KB + admin's personal KB)
         try:
             from app.services.default_knowledge_bases import ensure_default_knowledge_bases

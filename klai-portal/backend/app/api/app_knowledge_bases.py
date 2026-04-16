@@ -1189,7 +1189,9 @@ class IngestResponse(BaseModel):
     status: str = "ingested"
 
 
-@router.post("/knowledge-bases/{kb_slug}/documents/text", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/text", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
 async def ingest_text(
     kb_slug: str,
     body: TextIngestRequest,
@@ -1213,7 +1215,9 @@ async def ingest_text(
     return IngestResponse(artifact_id=artifact_id)
 
 
-@router.post("/knowledge-bases/{kb_slug}/documents/upload", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/upload", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
 async def upload_document(
     kb_slug: str,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -1248,7 +1252,11 @@ async def upload_document(
     return IngestResponse(artifact_id=artifact_id)
 
 
-@router.post("/knowledge-bases/{kb_slug}/documents/upload-image", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/upload-image",
+    response_model=IngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_image(
     kb_slug: str,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -1286,7 +1294,9 @@ class YouTubeIngestRequest(BaseModel):
     title: str | None = None
 
 
-@router.post("/knowledge-bases/{kb_slug}/documents/youtube", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/youtube", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
 async def ingest_youtube(
     kb_slug: str,
     body: YouTubeIngestRequest,
@@ -1307,10 +1317,12 @@ async def ingest_youtube(
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
 
-        transcript_list = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, video_id)
+        transcript_list = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, video_id)  # type: ignore[attr-defined]
         content = "\n".join(entry["text"] for entry in transcript_list)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not fetch transcript: {e}") from None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not fetch transcript: {e}"
+        ) from None
     title = body.title or f"YouTube: {video_id}"
     artifact_id = await knowledge_ingest_client.ingest_document(
         org_id=org.zitadel_org_id,
@@ -1330,7 +1342,9 @@ class RSSIngestRequest(BaseModel):
     max_items: int = 50
 
 
-@router.post("/knowledge-bases/{kb_slug}/documents/rss", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/rss", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
 async def ingest_rss(
     kb_slug: str,
     body: RSSIngestRequest,
@@ -1357,7 +1371,7 @@ async def ingest_rss(
         entry_link = entry.get("link", "")
         parts.append(f"## {entry_title}\n{entry_content}\n\nSource: {entry_link}")
     content = "\n\n---\n\n".join(parts)
-    title = body.title or feed.feed.get("title", "RSS Feed")
+    title = body.title or feed.feed.get("title", "RSS Feed")  # type: ignore[attr-defined]
     artifact_id = await knowledge_ingest_client.ingest_document(
         org_id=org.zitadel_org_id,
         kb_slug=kb.slug,

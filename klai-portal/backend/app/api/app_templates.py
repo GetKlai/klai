@@ -199,7 +199,9 @@ async def update_template(
 
     # Only owner or admin can update
     if template.created_by != zitadel_user_id and caller.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can update this template")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can update this template"
+        )
 
     if body.name is not None:
         template.name = body.name
@@ -251,7 +253,9 @@ async def delete_template(
 
     # Only owner or admin can delete
     if template.created_by != zitadel_user_id and caller.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can delete this template")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can delete this template"
+        )
 
     await db.delete(template)
     await db.commit()
