@@ -510,9 +510,9 @@ class ZitadelClient:
 
         userId may be absent if the IDP did not link to an existing Zitadel user.
         """
-        resp = await self._http.get(
+        resp = await self._http.post(
             f"/v2/idp_intents/{idp_intent_id}",
-            params={"idpIntentToken": idp_intent_token},
+            json={"idpIntentToken": idp_intent_token},
         )
         resp.raise_for_status()
         return resp.json()
