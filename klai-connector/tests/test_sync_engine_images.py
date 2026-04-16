@@ -161,3 +161,72 @@ class TestDownloadAndUploadImages:
 
         assert len(result) == 1
         assert result[0] == "/kb-images/key"
+
+
+class TestUploadImagesIsConnectorAgnostic:
+    """SyncEngine._upload_images reads only ref.images — no connector-type dispatch."""
+
+    @pytest.mark.asyncio
+    async def test_uploads_ref_images_without_knowing_connector_type(self):
+        """Adapter-provided ref.images (absolute URLs) are uploaded as-is."""
+        from types import SimpleNamespace
+
+        from app.adapters.base import ImageRef
+        from app.services.sync_engine import SyncEngine
+
+        # Minimal SyncEngine stubs — we only exercise _upload_images.
+        engine = SyncEngine.__new__(SyncEngine)
+        engine._image_store = MagicMock()
+        engine._image_store.validate_image = MagicMock(return_value="image/png")
+
+        async def fake_upload(*args, **kwargs):
+            from app.services.s3_storage import ImageUploadResult
+            return ImageUploadResult(
+                object_key="k", public_url="/kb-images/k", deduplicated=False,
+            )
+
+        engine._image_store.upload_image = fake_upload
+
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+        mock_http = AsyncMock()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = png_bytes
+        mock_http.get = AsyncMock(return_value=resp)
+        engine._image_http = mock_http
+
+        ref = SimpleNamespace(
+            path="docs/guide.md",
+            source_url="https://github.com/acme/docs/blob/main/docs/guide.md",
+            images=[
+                ImageRef(url="https://cdn.example.com/logo.png", alt="logo", source_path=""),
+                ImageRef(url="https://cdn.example.com/icon.png", alt="icon", source_path=""),
+            ],
+        )
+
+        result = await engine._upload_images(
+            parsed_images=[],
+            ref=ref,
+            org_id="org-1",
+            kb_slug="kb-1",
+        )
+
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_images(self):
+        """ref.images=None and no parsed_images means nothing to upload."""
+        from types import SimpleNamespace
+
+        from app.services.sync_engine import SyncEngine
+
+        engine = SyncEngine.__new__(SyncEngine)
+        engine._image_store = MagicMock()
+        engine._image_http = AsyncMock()
+
+        ref = SimpleNamespace(path="x", source_url="", images=None)
+
+        result = await engine._upload_images(
+            parsed_images=[], ref=ref, org_id="o", kb_slug="k",
+        )
+        assert result == []

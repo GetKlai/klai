@@ -405,3 +405,88 @@ async def test_sitemap_supplement_still_runs(adapter: WebCrawlerAdapter) -> None
     ref_urls = {ref.ref for ref in refs}
     assert all(u in ref_urls for u in bfs_urls)
     assert all(u in ref_urls for u in sitemap_extra)
+
+
+# ---------------------------------------------------------------------------
+# 4. Image URL resolution — adapter owns conversion to absolute URLs
+# ---------------------------------------------------------------------------
+
+
+def _crawl_result_with_images(
+    url: str, images: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Build a Crawl4AI result payload with custom images under media.images."""
+    return {
+        "results": [
+            {
+                "url": url,
+                "markdown": {"fit_markdown": f"# {url}\n\nBody content with enough words to pass."},
+                "media": {"images": images},
+            }
+        ]
+    }
+
+
+class TestImageUrlResolution:
+    """Webcrawler populates DocumentRef.images with absolute URLs."""
+
+    def test_relative_image_src_is_resolved_to_absolute(
+        self, adapter: WebCrawlerAdapter,
+    ) -> None:
+        """``/img/foo.png`` becomes fully qualified against the page URL."""
+        cache: dict[str, str] = {}
+        data = _crawl_result_with_images(
+            "https://wiki.example.com/nl/article",
+            [{"src": "/img/foo.png", "alt": "Foo"}],
+        )
+
+        refs = adapter._process_results(data, cache, base_url="https://wiki.example.com")
+
+        assert len(refs) == 1
+        assert refs[0].images is not None
+        assert refs[0].images[0].url == "https://wiki.example.com/img/foo.png"
+        assert refs[0].images[0].alt == "Foo"
+
+    def test_absolute_image_src_is_preserved(
+        self, adapter: WebCrawlerAdapter,
+    ) -> None:
+        """Images already hosted on CDNs are not rewritten."""
+        cache: dict[str, str] = {}
+        data = _crawl_result_with_images(
+            "https://wiki.example.com/nl/article",
+            [{"src": "https://cdn.example.com/x.png", "alt": ""}],
+        )
+
+        refs = adapter._process_results(data, cache, base_url="https://wiki.example.com")
+
+        assert refs[0].images[0].url == "https://cdn.example.com/x.png"
+
+    def test_no_images_sets_images_to_none(
+        self, adapter: WebCrawlerAdapter,
+    ) -> None:
+        """An empty media.images list results in DocumentRef.images = None."""
+        cache: dict[str, str] = {}
+        data = _crawl_result_with_images(
+            "https://wiki.example.com/page",
+            [],
+        )
+
+        refs = adapter._process_results(data, cache, base_url="https://wiki.example.com")
+
+        assert refs[0].images is None
+
+    def test_images_without_src_are_dropped(
+        self, adapter: WebCrawlerAdapter,
+    ) -> None:
+        """Entries missing the ``src`` key are silently skipped."""
+        cache: dict[str, str] = {}
+        data = _crawl_result_with_images(
+            "https://wiki.example.com/page",
+            [{"src": "/ok.png", "alt": ""}, {"alt": "no src here"}],
+        )
+
+        refs = adapter._process_results(data, cache, base_url="https://wiki.example.com")
+
+        assert refs[0].images is not None
+        assert len(refs[0].images) == 1
+        assert refs[0].images[0].url == "https://wiki.example.com/ok.png"
