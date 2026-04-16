@@ -74,6 +74,7 @@ class ConnectorOut(BaseModel):
     is_enabled: bool
     last_sync_at: datetime | None
     last_sync_status: str | None
+    last_sync_documents_ok: int | None
     created_at: datetime
     created_by: str
     content_type: str | None
@@ -137,6 +138,7 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
         is_enabled=c.is_enabled,
         last_sync_at=c.last_sync_at,
         last_sync_status=c.last_sync_status,
+        last_sync_documents_ok=c.last_sync_documents_ok,
         created_at=c.created_at,
         created_by=c.created_by,
         content_type=c.content_type,

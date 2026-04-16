@@ -161,6 +161,11 @@ function ConnectorsTab() {
                   </td>
                   <td className="py-4 pr-4 align-top w-32">
                     <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
+                    {c.last_sync_documents_ok != null && c.last_sync_documents_ok > 0 && (
+                      <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                        {c.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
+                      </p>
+                    )}
                   </td>
                   {isOwner && (
                     <td className="py-4 align-top text-right w-28">
