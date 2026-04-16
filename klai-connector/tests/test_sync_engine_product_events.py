@@ -1,6 +1,11 @@
 """Tests for SyncEngine product event emission on quality_status transitions.
 
 SPEC-CRAWL-003 REQ-15: knowledge.sync_quality_degraded event on quality transitions.
+
+The connector writes directly to the shared ``product_events`` table via
+``app.services.events.emit_product_event`` (no HTTP endpoint — see commit
+that replaced the now-removed ``report_quality_event`` HTTP client method).
+These tests patch ``emit_product_event`` at the call site in sync_engine.
 """
 
 from __future__ import annotations
@@ -8,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.adapters.base import DocumentRef
 from app.adapters.webcrawler import CanaryMismatchError
@@ -51,22 +56,17 @@ def _make_session_mock(sync_run: SyncRun) -> AsyncMock:
     session_mock = AsyncMock()
     session_mock.get = AsyncMock(return_value=sync_run)
     session_mock.execute = AsyncMock(
-        return_value=MagicMock(
-            scalars=MagicMock(
-                return_value=MagicMock(first=MagicMock(return_value=None))
-            )
-        )
+        return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
     )
     session_mock.commit = AsyncMock()
     return session_mock
 
 
-def _make_sync_engine_with_portal(
+def _make_sync_engine(
     adapter_mock: MagicMock,
     session_mock: AsyncMock,
     portal_config: SimpleNamespace,
-) -> tuple[SyncEngine, AsyncMock]:
-    """Create engine and return (engine, portal_client_mock) for assertion."""
+) -> SyncEngine:
     registry = MagicMock()
     registry.get.return_value = adapter_mock
 
@@ -74,19 +74,17 @@ def _make_sync_engine_with_portal(
     portal_client = AsyncMock()
     portal_client.get_connector_config = AsyncMock(return_value=portal_config)
     portal_client.report_sync_status = AsyncMock()
-    portal_client.report_quality_event = AsyncMock()
 
     session_maker = MagicMock()
     session_maker.return_value.__aenter__ = AsyncMock(return_value=session_mock)
     session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    engine = SyncEngine(
+    return SyncEngine(
         session_maker=session_maker,
         registry=registry,
         ingest_client=ingest_client,
         portal_client=portal_client,
     )
-    return engine, portal_client
 
 
 class TestProductEventOnQualityTransition:
@@ -97,10 +95,12 @@ class TestProductEventOnQualityTransition:
         connector_id = uuid.uuid4()
         sync_run_id = uuid.uuid4()
         sync_run = _make_sync_run(sync_run_id, connector_id)
-        portal_config = _make_portal_config({
-            "canary_url": "https://wiki.example.com/known-page",
-            "canary_fingerprint": "0123456789abcdef",
-        })
+        portal_config = _make_portal_config(
+            {
+                "canary_url": "https://wiki.example.com/known-page",
+                "canary_fingerprint": "0123456789abcdef",
+            }
+        )
 
         adapter_mock = MagicMock()
         adapter_mock.get_cursor_state = AsyncMock(return_value={})
@@ -114,17 +114,19 @@ class TestProductEventOnQualityTransition:
         )
 
         session_mock = _make_session_mock(sync_run)
-        engine, portal_client = _make_sync_engine_with_portal(
-            adapter_mock, session_mock, portal_config
-        )
-        await engine._execute_sync(connector_id, sync_run_id)
+        engine = _make_sync_engine(adapter_mock, session_mock, portal_config)
 
-        assert portal_client.report_quality_event.called, (
-            "report_quality_event must be called on canary mismatch"
-        )
-        call_kwargs = portal_client.report_quality_event.call_args[1]
-        assert call_kwargs.get("quality_status") == "failed"
-        assert call_kwargs.get("reason") == "canary_mismatch"
+        with patch("app.services.sync_engine.emit_product_event") as emit_mock:
+            await engine._execute_sync(connector_id, sync_run_id)
+
+        assert emit_mock.called, "emit_product_event must be called on canary mismatch"
+        args, kwargs = emit_mock.call_args
+        assert args[0] == "knowledge.sync_quality_degraded"
+        assert kwargs.get("zitadel_org_id") == "org-001"
+        props = kwargs.get("properties") or {}
+        assert props.get("quality_status") == "failed"
+        assert props.get("reason") == "canary_mismatch"
+        assert props.get("metric") == 0.42
 
     async def test_quality_event_emitted_on_degraded(self) -> None:
         """test_quality_event_emitted_on_degraded — boilerplate cluster triggers product event."""
@@ -167,17 +169,20 @@ class TestProductEventOnQualityTransition:
         adapter_mock.post_sync = AsyncMock()
 
         session_mock = _make_session_mock(sync_run)
-        engine, portal_client = _make_sync_engine_with_portal(
-            adapter_mock, session_mock, portal_config
-        )
-        await engine._execute_sync(connector_id, sync_run_id)
+        engine = _make_sync_engine(adapter_mock, session_mock, portal_config)
 
-        assert portal_client.report_quality_event.called, (
-            "report_quality_event must be called on boilerplate cluster detection"
-        )
-        call_kwargs = portal_client.report_quality_event.call_args[1]
-        assert call_kwargs.get("quality_status") == "degraded"
-        assert call_kwargs.get("reason") == "boilerplate_cluster"
+        with patch("app.services.sync_engine.emit_product_event") as emit_mock:
+            await engine._execute_sync(connector_id, sync_run_id)
+
+        assert emit_mock.called, "emit_product_event must be called on boilerplate cluster detection"
+        args, kwargs = emit_mock.call_args
+        assert args[0] == "knowledge.sync_quality_degraded"
+        assert kwargs.get("zitadel_org_id") == "org-001"
+        props = kwargs.get("properties") or {}
+        assert props.get("quality_status") == "degraded"
+        assert props.get("reason") == "boilerplate_cluster"
+        # metric is largest_ratio — should be a float between 0 and 1
+        assert isinstance(props.get("metric"), float)
 
     async def test_no_quality_event_on_healthy_sync(self) -> None:
         """No quality event emitted when sync completes with quality_status='healthy'."""
@@ -192,11 +197,9 @@ class TestProductEventOnQualityTransition:
         adapter_mock.post_sync = AsyncMock()
 
         session_mock = _make_session_mock(sync_run)
-        engine, portal_client = _make_sync_engine_with_portal(
-            adapter_mock, session_mock, portal_config
-        )
-        await engine._execute_sync(connector_id, sync_run_id)
+        engine = _make_sync_engine(adapter_mock, session_mock, portal_config)
 
-        assert not portal_client.report_quality_event.called, (
-            "report_quality_event must NOT be called for healthy syncs"
-        )
+        with patch("app.services.sync_engine.emit_product_event") as emit_mock:
+            await engine._execute_sync(connector_id, sync_run_id)
+
+        assert not emit_mock.called, "emit_product_event must NOT be called for healthy syncs"
