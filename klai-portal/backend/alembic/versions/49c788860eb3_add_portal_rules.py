@@ -1,6 +1,6 @@
 """add portal_rules table
 
-Revision ID: g8b9c0d1e2f3
+Revision ID: 49c788860eb3
 Revises: f7a8b9c0d1e2
 Create Date: 2026-04-16
 
@@ -11,7 +11,7 @@ Mirrors portal_templates structure with rule_text instead of prompt_text.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "g8b9c0d1e2f3"
+revision = "49c788860eb3"
 down_revision = "f7a8b9c0d1e2"
 branch_labels = None
 depends_on = None

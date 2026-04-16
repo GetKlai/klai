@@ -163,6 +163,16 @@
         }
     }
 
+    # Dev environment API — route dev.getklai.com/api/* to its own portal-api-dev
+    # container. Must come BEFORE the general /api/* handler below.
+    @dev-api {
+        host dev.{$DOMAIN}
+        path /api/*
+    }
+    handle @dev-api {
+        reverse_proxy portal-api-dev:8010
+    }
+
     handle /api/* {
         reverse_proxy portal-api:8010
     }
@@ -222,6 +232,22 @@
             }
         }
         reverse_proxy docs-app:3010
+    }
+
+    # Dev Portal SPA — parallel static dist for dev.getklai.com
+    # Must come BEFORE the general portal handle below.
+    @dev-portal host dev.{$DOMAIN}
+    handle @dev-portal {
+        root * /srv/portal-dev
+
+        @dev-spa-assets path /assets/*
+        header @dev-spa-assets Cache-Control "public, max-age=31536000, immutable"
+
+        @dev-spa-html not path /assets/*
+        header @dev-spa-html Cache-Control "no-cache"
+
+        try_files {path} /index.html
+        file_server
     }
 
     # Portal SPA — static files (fallback for all *.${DOMAIN})
