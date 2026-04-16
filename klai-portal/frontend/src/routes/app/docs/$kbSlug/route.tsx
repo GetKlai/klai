@@ -37,7 +37,8 @@ export const Route = createFileRoute('/app/docs/$kbSlug')({
 function KBEditorLayout() {
   const { kbSlug } = Route.useParams()
   // Read child route param (strict: false = read params from any matched route)
-  const { pageId } = useParams({ strict: false }) as { pageId?: string }
+  const allParams = useParams({ strict: false })
+  const pageId = 'pageId' in allParams ? (allParams as { pageId: string }).pageId : undefined
   const navigate = useNavigate()
   const auth = useAuth()
   const token = auth.user?.access_token
