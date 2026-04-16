@@ -79,6 +79,7 @@
   "signup_social_expired": "Sessie verlopen. Begin opnieuw.",
   "signup_social_restart": "Opnieuw proberen",
   "signup_social_error_server": "Fout {status} — probeer opnieuw",
+  "signup_social_name_taken": "Deze naam is al in gebruik. Kies een andere naam.",
   "totp_heading": "Tweestapsverificatie",
   "totp_subheading": "Voer de 6-cijferige code in van je authenticator-app.",
   "totp_field_code": "Verificatiecode",

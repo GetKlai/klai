@@ -79,6 +79,7 @@
   "signup_social_expired": "Session expired. Please start again.",
   "signup_social_restart": "Try again",
   "signup_social_error_server": "Error {status} — please try again",
+  "signup_social_name_taken": "This organisation name is already in use. Please try a different name.",
   "totp_heading": "Two-step verification",
   "totp_subheading": "Enter the 6-digit code from your authenticator app.",
   "totp_field_code": "Verification code",
