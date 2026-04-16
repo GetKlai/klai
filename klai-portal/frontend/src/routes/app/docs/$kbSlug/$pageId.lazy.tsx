@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import * as m from '@/paraglide/messages'
 import { Input } from '@/components/ui/input'
 import { DOCS_BASE, stripMdExt, slugify } from '@/lib/kb-editor/tree-utils'
-import { useKBEditor, resolveSlug, shortId } from '@/lib/kb-editor/KBEditorContext'
+import { useKBEditor, resolveSlug, shortId, PageNotInIndexError } from '@/lib/kb-editor/KBEditorContext'
 import { DEFAULT_ICON } from '@/lib/kb-editor/tree-utils'
 import { apiFetch } from '@/lib/apiFetch'
 import { editorLogger } from '@/lib/logger'
@@ -27,8 +27,22 @@ function KBPageEditor() {
   const ctx = useKBEditor()
   const { orgSlug, token, pageIndex, refetchTree, refetchPageIndex, doSaveRef, setSaveStatus, setEditTitle, navigateToPage } = ctx
 
-  // Resolve slug from 8-char ID (or treat pageId as slug fallback)
-  const selectedPath = pageIndex.length > 0 ? resolveSlug(pageId, pageIndex) : pageId
+  // REQ-STA-04: Strict slug resolution — throws PageNotInIndexError when not found
+  let selectedPath: string | null = null
+  let pageNotFound = false
+
+  if (pageIndex.length === 0) {
+    // pageIndex not yet loaded — use pageId as temporary path to avoid false 404
+    selectedPath = pageId
+  } else {
+    try {
+      selectedPath = resolveSlug(pageId, pageIndex)
+    } catch (err) {
+      if (err instanceof PageNotInIndexError) {
+        pageNotFound = true
+      }
+    }
+  }
 
   const [currentPage, setCurrentPage] = useState<{
     title: string
@@ -68,7 +82,7 @@ function KBPageEditor() {
   const { data: page } = useQuery<PageData>({
     queryKey: ['docs-page', orgSlug, kbSlug, selectedPath],
     queryFn: async () => apiFetch<PageData>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token),
-    enabled: !!token && !!selectedPath,
+    enabled: !!token && !!selectedPath && !pageNotFound,
   })
 
   // Apply loaded page to editor
@@ -115,13 +129,17 @@ function KBPageEditor() {
         setSaveStatus('renamed')
         setTimeout(() => setSaveStatus('idle'), 2500)
         void refetchTree()
-        void refetchPageIndex()
-        // Navigate to new slug (will pick up ID on next pageIndex refresh)
-        navigateToPage(newSlug)
+        // REQ-EVT-03: Refresh pageIndex after rename, then navigate by UUID
+        const refreshed = await refetchPageIndex()
+        const freshIndex = refreshed.data ?? pageIndex
+        const entry = freshIndex.find((p) => p.slug === newSlug)
+        const targetId = shortId(entry)
+        navigateToPage(targetId || newSlug)
       } catch (err) {
         editorLogger.error('Page rename failed', { from: currentSlug, to: newSlug, err })
         setSaveStatus('error')
         setTimeout(() => setSaveStatus('idle'), 3000)
+        throw err // propagate so callers know save failed
       }
       return
     }
@@ -134,15 +152,15 @@ function KBPageEditor() {
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
       void refetchTree()
-      // Refresh pageIndex so ID becomes available for new pages
       void refetchPageIndex()
     } catch (err) {
       editorLogger.error('Page save failed', { slug: currentSlug, err })
       setSaveStatus('error')
       setTimeout(() => setSaveStatus('idle'), 3000)
+      throw err // propagate so callers know save failed
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage])
+  }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage, pageIndex])
 
   // saveNow clears pending timer and saves immediately — used by layout before page switch
   const saveNow = useCallback(async () => {
@@ -177,7 +195,7 @@ function KBPageEditor() {
         headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current }),
         keepalive: true,
-      }).catch(() => { /* fire-and-forget */ })
+      }).catch(() => { /* fire-and-forget on unload */ })
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
@@ -207,18 +225,34 @@ function KBPageEditor() {
     }
   }, [selectedPath, orgSlug, kbSlug, token, accessState.mode, accessState.users])
 
-  // Update URL to ID-based once pageIndex has the ID for this page
+  // Update URL to UUID once pageIndex has the UUID for this page (handles slug-based entry)
   useEffect(() => {
-    if (!pageIndex.length) return
+    if (!pageIndex.length || !selectedPath) return
     const entry = pageIndex.find((p) => p.slug === selectedPath)
     const pid = shortId(entry)
+    // Only redirect if we currently have a non-UUID pageId in the URL
     if (pid && pid !== pageId) {
-      // Silently replace slug-based URL with UUID-based URL
-      navigateToPage(selectedPath)
+      navigateToPage(pid)
     }
-    // Only run when pageIndex loads/updates, not on every render
+    // Only run when pageIndex loads/updates
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageIndex])
+
+  // REQ-STA-04: Page not found UI — shown when UUID/slug is not in pageIndex
+  if (pageNotFound) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-[var(--color-muted-foreground)]">
+        <p className="text-lg font-medium">{m.docs_page_not_found?.() ?? 'Page not found'}</p>
+        <p className="text-sm">{m.docs_page_not_found_desc?.() ?? 'This page does not exist or has been removed.'}</p>
+        <button
+          className="text-sm text-[var(--color-rl-accent-dark)] underline hover:opacity-80"
+          onClick={() => navigateToPage(null)}
+        >
+          {m.docs_back_to_kb?.() ?? 'Back to knowledge base'}
+        </button>
+      </div>
+    )
+  }
 
   return (
     <>
@@ -259,7 +293,10 @@ function KBPageEditor() {
           currentPageSlug={selectedPath ?? ''}
           onNavigateToPage={(slug) => {
             if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-            navigateToPage(slug)
+            // Resolve slug to UUID for navigation
+            const entry = pageIndex.find((p) => p.slug === slug)
+            const targetId = shortId(entry)
+            navigateToPage(targetId || slug)
           }}
           onRequestWikilinkPicker={() => setShowWikilinkPicker(true)}
         />
