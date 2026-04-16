@@ -1,4 +1,4 @@
-"""RED: Verify POST /partner/v1/feedback.
+"""Tests for POST /partner/v1/feedback.
 
 SPEC-API-001 TASK-010:
 - Rating validation (only thumbsUp/thumbsDown)
@@ -12,20 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
-
-
-def _make_auth(permissions: dict | None = None, kb_access: dict | None = None):
-    """Create a PartnerAuthContext for testing."""
-    from app.api.partner_dependencies import PartnerAuthContext
-
-    return PartnerAuthContext(
-        key_id="key-uuid-1",
-        org_id=42,
-        zitadel_org_id="zit-org-42",
-        permissions=permissions or {"chat": True, "feedback": True, "knowledge_append": False},
-        kb_access=kb_access or {10: "read"},
-        rate_limit_rpm=60,
-    )
+from helpers import make_partner_auth
 
 
 @pytest.mark.asyncio
@@ -47,16 +34,11 @@ async def test_feedback_permission_denied():
     """No feedback permission -> 403."""
     from app.api.partner import PartnerFeedbackRequest, submit_feedback
 
-    auth = _make_auth(permissions={"chat": True, "feedback": False, "knowledge_append": False})
-    db = AsyncMock()
-
-    req = PartnerFeedbackRequest(
-        message_id="msg-1",
-        rating="thumbsUp",
-    )
+    auth = make_partner_auth(permissions={"chat": True, "feedback": False, "knowledge_append": False})
+    req = PartnerFeedbackRequest(message_id="msg-1", rating="thumbsUp")
 
     with pytest.raises(HTTPException) as exc_info:
-        await submit_feedback(request=req, auth=auth, db=db)
+        await submit_feedback(request=req, auth=auth, db=AsyncMock())
     assert exc_info.value.status_code == 403
 
 
@@ -65,7 +47,7 @@ async def test_correlated_feedback_schedules_quality_update():
     """Correlated feedback: retrieval log found -> quality update scheduled."""
     from app.api.partner import PartnerFeedbackRequest, submit_feedback
 
-    auth = _make_auth()
+    auth = make_partner_auth()
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value=None)  # no idempotency key
     mock_redis.set = AsyncMock()
@@ -81,10 +63,7 @@ async def test_correlated_feedback_schedules_quality_update():
         "embedding_model_version": "bge-m3-v1",
     }
 
-    req = PartnerFeedbackRequest(
-        message_id="msg-1",
-        rating="thumbsUp",
-    )
+    req = PartnerFeedbackRequest(message_id="msg-1", rating="thumbsUp")
 
     with (
         patch("app.api.partner.get_redis_pool", return_value=mock_redis),
@@ -104,7 +83,7 @@ async def test_uncorrelated_feedback_no_quality_update():
     """Uncorrelated: no retrieval log -> no quality update, event still emitted."""
     from app.api.partner import PartnerFeedbackRequest, submit_feedback
 
-    auth = _make_auth()
+    auth = make_partner_auth()
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value=None)
     mock_redis.set = AsyncMock()
@@ -113,10 +92,7 @@ async def test_uncorrelated_feedback_no_quality_update():
     db.execute = AsyncMock()
     db.commit = AsyncMock()
 
-    req = PartnerFeedbackRequest(
-        message_id="msg-2",
-        rating="thumbsDown",
-    )
+    req = PartnerFeedbackRequest(message_id="msg-2", rating="thumbsDown")
 
     with (
         patch("app.api.partner.get_redis_pool", return_value=mock_redis),
@@ -129,36 +105,28 @@ async def test_uncorrelated_feedback_no_quality_update():
     assert result == {"ok": True}
     mock_schedule.assert_not_called()
     mock_emit.assert_called_once()
-    emit_kwargs = mock_emit.call_args[1]
-    assert emit_kwargs["properties"]["correlated"] is False
+    assert mock_emit.call_args[1]["properties"]["correlated"] is False
 
 
 @pytest.mark.asyncio
 async def test_idempotent_duplicate_returns_200():
     """Duplicate message_id -> 200 without inserting new row."""
+    from starlette.responses import Response as StarletteResponse
+
     from app.api.partner import PartnerFeedbackRequest, submit_feedback
 
-    auth = _make_auth()
+    auth = make_partner_auth()
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value="1")  # idempotency key exists
 
     db = AsyncMock()
-    db.execute = AsyncMock()
     db.commit = AsyncMock()
 
-    req = PartnerFeedbackRequest(
-        message_id="msg-1",
-        rating="thumbsUp",
-    )
+    req = PartnerFeedbackRequest(message_id="msg-1", rating="thumbsUp")
 
-    with (
-        patch("app.api.partner.get_redis_pool", return_value=mock_redis),
-    ):
-        from starlette.responses import Response as StarletteResponse
-
+    with patch("app.api.partner.get_redis_pool", return_value=mock_redis):
         result = await submit_feedback(request=req, auth=auth, db=db)
-        assert isinstance(result, StarletteResponse)
-        assert result.status_code == 200
 
-    # No DB write
+    assert isinstance(result, StarletteResponse)
+    assert result.status_code == 200
     db.commit.assert_not_called()

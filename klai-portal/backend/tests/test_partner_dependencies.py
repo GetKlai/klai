@@ -9,9 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from helpers import FakeResult, setup_db
 
 # ---------------------------------------------------------------------------
-# Fakes & helpers
+# Domain fakes (specific to this module's tests)
 # ---------------------------------------------------------------------------
 
 
@@ -48,38 +49,6 @@ def _make_request(token: str | None = None) -> MagicMock:
     request = MagicMock()
     request.headers = {"authorization": f"Bearer {token}"} if token else {}
     return request
-
-
-class _FakeResult:
-    """Auto-responds to all common DB result access patterns."""
-
-    def __init__(self, rows=None, scalar_value=None):
-        self._rows = rows or []
-        self._scalar_value = scalar_value
-
-    def scalars(self):
-        mock = MagicMock()
-        mock.all.return_value = self._rows
-        return mock
-
-    def scalar_one_or_none(self):
-        return self._rows[0] if self._rows else None
-
-    def scalar(self):
-        return self._scalar_value
-
-
-def _setup_db(mock_db: AsyncMock, results: list[_FakeResult]):
-    """Set up mock_db.execute to return results in order, cycling the last one."""
-    call_count = 0
-
-    async def _execute(*args, **kwargs):
-        nonlocal call_count
-        idx = min(call_count, len(results) - 1)
-        call_count += 1
-        return results[idx] if results else _FakeResult()
-
-    mock_db.execute = AsyncMock(side_effect=_execute)
 
 
 def _partner_patches(**overrides):
@@ -127,7 +96,7 @@ async def test_unknown_hash_returns_401():
     from app.api.partner_dependencies import get_partner_key
 
     db = AsyncMock()
-    _setup_db(db, [_FakeResult()])  # key not found
+    setup_db(db, [FakeResult()])  # key not found
 
     with pytest.raises(HTTPException) as exc:
         await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
@@ -140,7 +109,7 @@ async def test_inactive_key_returns_401_same_message():
     from app.api.partner_dependencies import get_partner_key
 
     db = AsyncMock()
-    _setup_db(db, [_FakeResult()])  # active=True filter means inactive returns None
+    setup_db(db, [FakeResult()])  # active=True filter means inactive returns None
 
     with pytest.raises(HTTPException) as exc:
         await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
@@ -157,13 +126,13 @@ async def test_valid_key_returns_auth_context():
     from app.api.partner_dependencies import PartnerAuthContext, get_partner_key
 
     db = AsyncMock()
-    _setup_db(
+    setup_db(
         db,
         [
-            _FakeResult([FakeKeyRow()]),  # key lookup
-            _FakeResult([FakeKbAccessRow()]),  # kb_access
-            _FakeResult([FakeOrg()]),  # org lookup
-            _FakeResult(),  # set_tenant + any further calls
+            FakeResult([FakeKeyRow()]),     # key lookup
+            FakeResult([FakeKbAccessRow()]),  # kb_access
+            FakeResult([FakeOrg()]),         # org lookup
+            FakeResult(),                    # set_tenant + any further calls
         ],
     )
 
@@ -183,13 +152,13 @@ async def test_rate_limited_returns_429():
     from app.api.partner_dependencies import get_partner_key
 
     db = AsyncMock()
-    _setup_db(
+    setup_db(
         db,
         [
-            _FakeResult([FakeKeyRow()]),
-            _FakeResult([FakeKbAccessRow()]),
-            _FakeResult([FakeOrg()]),
-            _FakeResult(),
+            FakeResult([FakeKeyRow()]),
+            FakeResult([FakeKbAccessRow()]),
+            FakeResult([FakeOrg()]),
+            FakeResult(),
         ],
     )
 
@@ -207,13 +176,13 @@ async def test_last_used_at_update_scheduled():
     from app.api.partner_dependencies import _pending, get_partner_key
 
     db = AsyncMock()
-    _setup_db(
+    setup_db(
         db,
         [
-            _FakeResult([FakeKeyRow()]),
-            _FakeResult([FakeKbAccessRow()]),
-            _FakeResult([FakeOrg()]),
-            _FakeResult(),
+            FakeResult([FakeKeyRow()]),
+            FakeResult([FakeKbAccessRow()]),
+            FakeResult([FakeOrg()]),
+            FakeResult(),
         ],
     )
 
