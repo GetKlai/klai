@@ -220,11 +220,11 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
     <div className="flex shrink-0 items-center gap-2 pl-4 pr-4 pt-5 pb-1">
       {collOpen && <div className="fixed inset-0 z-40" onClick={() => setCollOpen(false)} />}
 
-      <span className="text-sm text-gray-400 whitespace-nowrap">Chat met:</span>
+      <span className="text-[13px] text-gray-400 whitespace-nowrap">Chat met:</span>
 
       <div className="relative z-50 min-w-0">
         <button type="button" onClick={() => setCollOpen((v) => !v)}
-          className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors truncate">
+          className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-700 hover:text-gray-900 transition-colors truncate">
           <span className="truncate">{activeNames.length > 0 ? activeNames.join(', ') : 'Geen kennis geselecteerd'}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
         </button>
