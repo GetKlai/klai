@@ -17,6 +17,7 @@ import {
   KBEditorContext,
   resolveSlug,
   shortId,
+  PageNotInIndexError,
   type SaveStatus,
   type PageIndexEntry,
 } from '@/lib/kb-editor/KBEditorContext'
@@ -25,6 +26,7 @@ import { editorLogger, treeLogger } from '@/lib/logger'
 import { SidebarPanel } from '@/components/kb-editor/SidebarPanel'
 import { DeletePageModal } from '@/components/kb-editor/DeletePageModal'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { notifications } from '@mantine/notifications'
 
 export const Route = createFileRoute('/app/docs/$kbSlug')({
   component: () => (
@@ -34,9 +36,15 @@ export const Route = createFileRoute('/app/docs/$kbSlug')({
   ),
 })
 
+/** Response shape for new page creation (combined response from backend). REQ-EVT-02 */
+interface CreatePageResponse {
+  page: { id: string; slug: string; title: string; icon: string | null }
+  pageIndex: PageIndexEntry[]
+  idempotent?: boolean
+}
+
 function KBEditorLayout() {
   const { kbSlug } = Route.useParams()
-  // Read child route param (strict: false = read params from any matched route)
   const allParams = useParams({ strict: false })
   const pageId = 'pageId' in allParams ? (allParams as { pageId: string }).pageId : undefined
   const navigate = useNavigate()
@@ -51,6 +59,9 @@ function KBEditorLayout() {
   // Page's save+clear-timer function — registered by page via useEffect
   const doSaveRef = useRef<(() => Promise<void>) | null>(null)
 
+  // REQ-EVT-01: Prevent duplicate page creation on double-click
+  const creationLockRef = useRef(false)
+
   // Tree
   const { data: tree = [], refetch: refetchTree } = useQuery<NavNode[]>({
     queryKey: ['docs-tree', orgSlug, kbSlug],
@@ -58,8 +69,8 @@ function KBEditorLayout() {
     enabled: !!token,
   })
 
-  // PageIndex (id → slug mapping)
-  const { data: pageIndex = [], refetch: refetchPageIndex } = useQuery<PageIndexEntry[]>({
+  // PageIndex (id → slug mapping) — also settable synchronously for post-create update
+  const { data: fetchedPageIndex = [], refetch: refetchPageIndex } = useQuery<PageIndexEntry[]>({
     queryKey: ['docs-page-index', orgSlug, kbSlug],
     queryFn: async () => {
       try {
@@ -71,13 +82,32 @@ function KBEditorLayout() {
     enabled: !!token,
   })
 
+  // REQ-EVT-02: Synchronous pageIndex state that can be updated after page creation
+  // without waiting for a refetch round-trip.
+  const [localPageIndex, setLocalPageIndex] = useState<PageIndexEntry[] | null>(null)
+  useEffect(() => { setLocalPageIndex(null) }, [fetchedPageIndex])
+  const pageIndex = localPageIndex ?? fetchedPageIndex
+
+  const setPageIndex = useCallback((entries: PageIndexEntry[]) => {
+    setLocalPageIndex(entries)
+  }, [])
+
   // Optimistic local tree for drag-and-drop
   const [localTree, setLocalTree] = useState<NavNode[] | null>(null)
   useEffect(() => { setLocalTree(null) }, [tree])
   const displayTree = localTree ?? tree
 
-  // Derive selectedPath from URL (resolves 8-char ID or slug fallback)
-  const selectedPath = pageId ? resolveSlug(pageId, pageIndex) : null
+  // Derive selectedPath from URL — strict resolveSlug, falls back gracefully when pageIndex is empty
+  const selectedPath = useMemo(() => {
+    if (!pageId) return null
+    if (pageIndex.length === 0) return pageId // pageIndex not loaded yet — use as-is temporarily
+    try {
+      return resolveSlug(pageId, pageIndex)
+    } catch (err) {
+      if (err instanceof PageNotInIndexError) return null // triggers "not found" UI in child
+      return null
+    }
+  }, [pageId, pageIndex])
 
   // New-page UI state
   const [showNewPage, setShowNewPage] = useState(false)
@@ -87,16 +117,14 @@ function KBEditorLayout() {
   // Delete confirmation
   const [deletePagePath, setDeletePagePath] = useState<string | null>(null)
 
-  // Navigate to a page by its slug — resolves to 8-char ID when available
-  const navigateToPage = useCallback((slug: string | null) => {
-    if (!slug) {
+  // REQ-UBI-02: Navigate to a page by its UUID
+  const navigateToPage = useCallback((targetPageId: string | null) => {
+    if (!targetPageId) {
       void navigate({ to: '/app/docs/$kbSlug', params: { kbSlug } })
       return
     }
-    const entry = pageIndex.find((p) => p.slug === slug)
-    const pid = shortId(entry) || slug
-    void navigate({ to: '/app/docs/$kbSlug/$pageId', params: { kbSlug, pageId: pid } })
-  }, [kbSlug, navigate, pageIndex])
+    void navigate({ to: '/app/docs/$kbSlug/$pageId', params: { kbSlug, pageId: targetPageId } })
+  }, [kbSlug, navigate])
 
   // Drag-and-drop sidebar reorder
   const handleSidebarUpdate = useCallback(async (newTree: NavNode[]) => {
@@ -124,20 +152,46 @@ function KBEditorLayout() {
   const handleNewPage = useCallback(async (parentPath: string | null = null) => {
     if (!newPageTitle.trim()) return
 
+    // REQ-EVT-01: Prevent duplicate creation on double-click
+    if (creationLockRef.current) return
+    creationLockRef.current = true
+
     const baseSlug = slugify(newPageTitle)
     const existingSlugs = collectSlugs(displayTree)
     let slug = baseSlug
     let counter = 2
     while (existingSlugs.has(slug)) { slug = `${baseSlug}-${counter++}` }
 
-    // Save current page before switching
-    await doSaveRef.current?.()
+    // REQ-UNW-01: Pre-creation save — explicit null check, not silent optional chaining
+    if (doSaveRef.current !== null) {
+      try {
+        await doSaveRef.current()
+      } catch (err) {
+        editorLogger.error('Pre-creation save failed', { err })
+        notifications.show({
+          title: 'Save failed',
+          message: 'Could not save current page before creating a new one. Please retry.',
+          color: 'red',
+        })
+        creationLockRef.current = false
+        return
+      }
+    }
+    // If doSaveRef is null, editor is not mounted — proceed anyway (no content to save)
+
+    // REQ-UBI-01: Generate unique Idempotency-Key per user action
+    const idempotencyKey = crypto.randomUUID()
 
     try {
-      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`, token, {
-        method: 'PUT',
-        body: JSON.stringify({ title: newPageTitle, content: '' }),
-      })
+      const response = await apiFetch<CreatePageResponse>(
+        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`,
+        token,
+        {
+          method: 'PUT',
+          headers: { 'Idempotency-Key': idempotencyKey },
+          body: JSON.stringify({ title: newPageTitle, content: '' }),
+        }
+      )
 
       if (parentPath !== null) {
         const currentTree = localTree ?? tree
@@ -147,14 +201,38 @@ function KBEditorLayout() {
         await refetchTree()
       }
 
+      // REQ-EVT-02 / REQ-UBI-03: Update pageIndex synchronously before navigation
+      if (!response.pageIndex) {
+        // REQ-STA-02: pageIndex refresh failed / missing in response
+        editorLogger.error('Page created but pageIndex missing from response', { slug })
+        notifications.show({
+          title: 'Could not refresh page index',
+          message: 'Page was created but the page index could not be refreshed. Please reload.',
+          color: 'orange',
+        })
+        creationLockRef.current = false
+        return
+      }
+
+      setPageIndex(response.pageIndex)
+
       setNewPageTitle('')
       setShowNewPage(false)
       setNewPageParent(null)
-      navigateToPage(slug)
+
+      // Navigate using UUID from the combined response
+      navigateToPage(response.page.id)
     } catch (err) {
       editorLogger.error('Page creation failed', { slug, err })
+      notifications.show({
+        title: 'Page creation failed',
+        message: 'Could not create the new page. Please try again.',
+        color: 'red',
+      })
+    } finally {
+      creationLockRef.current = false
     }
-  }, [newPageTitle, orgSlug, kbSlug, token, displayTree, localTree, tree, handleSidebarUpdate, refetchTree, navigateToPage])
+  }, [newPageTitle, orgSlug, kbSlug, token, displayTree, localTree, tree, handleSidebarUpdate, refetchTree, setPageIndex, navigateToPage])
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -190,6 +268,7 @@ function KBEditorLayout() {
     token,
     displayTree,
     pageIndex,
+    setPageIndex,
     refetchTree,
     refetchPageIndex,
     doSaveRef,
@@ -199,7 +278,7 @@ function KBEditorLayout() {
     setEditTitle,
     navigateToPage,
     setDeletePagePath,
-  }), [orgSlug, kbSlug, token, displayTree, pageIndex, refetchTree, refetchPageIndex, saveStatus, editTitle, navigateToPage])
+  }), [orgSlug, kbSlug, token, displayTree, pageIndex, setPageIndex, refetchTree, refetchPageIndex, saveStatus, editTitle, navigateToPage])
 
   return (
     <KBEditorContext.Provider value={ctx}>
@@ -215,8 +294,34 @@ function KBEditorLayout() {
           onSelect={async (node) => {
             const newSlug = stripMdExt(node.path)
             if (newSlug === selectedPath) return
-            await doSaveRef.current?.()
-            navigateToPage(newSlug)
+
+            // REQ-EVT-04: Await pending save before navigating to another page
+            // REQ-UNW-01: Explicit null check — never silent skip
+            if (doSaveRef.current !== null) {
+              try {
+                await doSaveRef.current()
+              } catch (err) {
+                editorLogger.error('Pre-navigation save failed', { from: selectedPath, to: newSlug, err })
+                // REQ-STA-03: Show error, stay on current page
+                notifications.show({
+                  title: 'Save failed',
+                  message: 'Could not save before navigating. Changes may be lost. Retry navigation to continue.',
+                  color: 'red',
+                  autoClose: 6000,
+                })
+                return // REQ-STA-03: do NOT navigate with unsaved changes
+              }
+            }
+
+            // Look up target by slug, navigate by UUID
+            const entry = pageIndex.find((p) => p.slug === newSlug)
+            const targetId = shortId(entry)
+            if (targetId) {
+              navigateToPage(targetId)
+            } else {
+              // No UUID yet (draft page) — navigate by slug until UUID is assigned on first save
+              void navigate({ to: '/app/docs/$kbSlug/$pageId', params: { kbSlug, pageId: newSlug } })
+            }
           }}
           onSidebarUpdate={handleSidebarUpdate}
           onAddSubpage={handleAddSubpage}

@@ -1,29 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOrgAccess, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
-import * as gitea from "@/lib/gitea";
-import { parseSidebar, parsePage, type SidebarEntry } from "@/lib/markdown";
+import { buildPageIndex } from "@/lib/page-index";
+
+export type { PageIndexEntry } from "@/lib/page-index";
 
 type Params = { org: string; kb: string };
-
-/** Recursively collect all slugs from a sidebar entry tree. */
-function collectSlugs(entries: SidebarEntry[]): string[] {
-  const slugs: string[] = [];
-  for (const entry of entries) {
-    slugs.push(entry.slug);
-    if (entry.children?.length) {
-      slugs.push(...collectSlugs(entry.children));
-    }
-  }
-  return slugs;
-}
-
-export type PageIndexEntry = {
-  id: string | null;
-  slug: string;
-  title: string;
-  icon?: string;
-};
 
 // GET /api/orgs/{org}/kbs/{kb}/page-index
 // Returns all pages with their stable id, slug, and title.
@@ -42,28 +24,6 @@ export async function GET(
   const denied = checkKBAccess(kb, payload.sub);
   if (denied) return denied;
 
-  const sidebarRaw = await gitea.getFileContent(kb.gitea_repo, "_sidebar.yaml");
-  if (!sidebarRaw) return NextResponse.json([]);
-
-  const manifest = parseSidebar(sidebarRaw);
-  const slugs = collectSlugs(manifest.pages).slice(0, 100);
-
-  const entries: PageIndexEntry[] = [];
-
-  for (const slug of slugs) {
-    const raw = await gitea.getFileContent(kb.gitea_repo, `${slug}.md`);
-    if (!raw) continue;
-
-    const { frontmatter } = parsePage(raw);
-
-    const defaultTitle = slug.split("/").at(-1)!.replace(/-/g, " ");
-    entries.push({
-      id: frontmatter.id ?? null,
-      slug,
-      title: frontmatter.title ?? defaultTitle,
-      ...(frontmatter.icon ? { icon: frontmatter.icon } : {}),
-    });
-  }
-
+  const entries = await buildPageIndex(kb.gitea_repo);
   return NextResponse.json(entries);
 }
