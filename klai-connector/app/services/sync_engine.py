@@ -11,6 +11,7 @@ from gidgethub import BadRequest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.adapters.base import DocumentRef
 from app.adapters.registry import AdapterRegistry
 from app.adapters.webcrawler import CrawlJobPendingError
 from app.clients.knowledge_ingest import KnowledgeIngestClient
@@ -386,7 +387,7 @@ class SyncEngine:
         self,
         *,
         parsed_images: list[dict[str, str]],
-        ref: Any,
+        ref: DocumentRef,
         org_id: str,
         kb_slug: str,
     ) -> list[str]:
