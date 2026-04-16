@@ -16,13 +16,27 @@ export const Route = createFileRoute('/admin/integrations/new')({
   component: NewIntegrationPage,
 })
 
-// Step identifiers. Widget skips the "permissions" step.
+// Step identifiers. Widget skips the "permissions" step and adds "styling".
 type ApiStep = 'type' | 'details' | 'permissions' | 'kbs' | 'settings'
-type WidgetStep = 'type' | 'details' | 'kbs' | 'settings'
+type WidgetStep = 'type' | 'details' | 'kbs' | 'settings' | 'styling'
 type Step = ApiStep | WidgetStep
 
 const API_STEPS: ApiStep[] = ['type', 'details', 'permissions', 'kbs', 'settings']
-const WIDGET_STEPS: WidgetStep[] = ['type', 'details', 'kbs', 'settings']
+const WIDGET_STEPS: WidgetStep[] = ['type', 'details', 'kbs', 'settings', 'styling']
+
+const CSS_VAR_KEYS = [
+  '--klai-primary-color',
+  '--klai-text-color',
+  '--klai-background-color',
+  '--klai-border-radius',
+] as const
+
+type CssVarKey = (typeof CSS_VAR_KEYS)[number]
+
+interface CssVarRow {
+  key: CssVarKey | ''
+  value: string
+}
 
 interface FormState {
   name: string
@@ -34,10 +48,12 @@ interface FormState {
   kb_access: { kb_id: number; access_level: AccessLevel }[]
   // API settings
   rate_limit_rpm: number
-  // Widget appearance
+  // Widget setup
   allowed_origins_raw: string
   widget_title: string
   widget_welcome: string
+  // Widget styling
+  css_var_rows: CssVarRow[]
 }
 
 const INITIAL_FORM: FormState = {
@@ -51,6 +67,17 @@ const INITIAL_FORM: FormState = {
   allowed_origins_raw: '',
   widget_title: '',
   widget_welcome: '',
+  css_var_rows: [{ key: '', value: '' }],
+}
+
+function cssVarsToRecord(rows: CssVarRow[]): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const row of rows) {
+    if (row.key && row.value.trim()) {
+      result[row.key] = row.value.trim()
+    }
+  }
+  return result
 }
 
 function parseOrigins(raw: string): string[] {
@@ -93,9 +120,11 @@ function NewIntegrationPage() {
             ? m.admin_integrations_wizard_step_permissions()
             : s === 'kbs'
               ? m.admin_integrations_wizard_step_kb_access()
-              : integrationType === 'widget'
-                ? m.admin_integrations_wizard_step_setup()
-                : m.admin_integrations_wizard_step_rate_limit(),
+              : s === 'styling'
+                ? m.admin_integrations_wizard_step_styling()
+                : integrationType === 'widget'
+                  ? m.admin_integrations_wizard_step_setup()
+                  : m.admin_integrations_wizard_step_rate_limit(),
     onClick: () => setStep(s),
   }))
 
@@ -186,7 +215,7 @@ function NewIntegrationPage() {
             allowed_origins: parseOrigins(form.allowed_origins_raw),
             title: form.widget_title.trim(),
             welcome_message: form.widget_welcome.trim(),
-            css_variables: {},
+            css_variables: cssVarsToRecord(form.css_var_rows),
           }
         : undefined
 
@@ -502,6 +531,105 @@ function NewIntegrationPage() {
                   {m.admin_integrations_widget_origins_empty_warning()}
                 </div>
               )}
+            </div>
+          </section>
+        )}
+
+        {/* Step 5 (widget only): Styling + embed preview */}
+        {step === 'styling' && integrationType === 'widget' && (
+          <section className="space-y-6">
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {m.admin_integrations_wizard_styling_intro()}
+            </p>
+
+            {/* CSS variables editor */}
+            <div className="space-y-2">
+              <Label>{m.admin_integrations_widget_css_vars_label()}</Label>
+              <div className="space-y-2">
+                {form.css_var_rows.map((row, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <select
+                      value={row.key}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          css_var_rows: prev.css_var_rows.map((r, i) =>
+                            i === index
+                              ? { ...r, key: e.target.value as CssVarKey | '' }
+                              : r,
+                          ),
+                        }))
+                      }
+                      className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-[var(--color-foreground)] outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                    >
+                      <option value="">
+                        {m.admin_integrations_widget_css_var_placeholder()}
+                      </option>
+                      {CSS_VAR_KEYS.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      value={row.value}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          css_var_rows: prev.css_var_rows.map((r, i) =>
+                            i === index ? { ...r, value: e.target.value } : r,
+                          ),
+                        }))
+                      }
+                      placeholder="#000000"
+                      className="flex-1 text-xs font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          css_var_rows: prev.css_var_rows.filter((_, i) => i !== index),
+                        }))
+                      }
+                      className="text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
+                      aria-label={m.admin_integrations_widget_css_var_remove()}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {form.css_var_rows.length < CSS_VAR_KEYS.length && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      css_var_rows: [...prev.css_var_rows, { key: '', value: '' }],
+                    }))
+                  }
+                  className="text-xs"
+                >
+                  {m.admin_integrations_widget_css_var_add()}
+                </Button>
+              )}
+            </div>
+
+            {/* Embed snippet preview */}
+            <div className="space-y-2 pt-4 border-t border-[var(--color-border)]">
+              <Label>{m.admin_integrations_wizard_embed_preview_label()}</Label>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_wizard_embed_preview_help()}
+              </p>
+              <pre className="text-xs font-mono text-[var(--color-foreground)] bg-[var(--color-muted)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
+{`<script
+  src="https://cdn.getklai.com/widget/klai-chat.js"
+  data-widget-id="wgt_xxxxxxxxxxxxxxxxxxxx"
+></script>`}
+              </pre>
             </div>
           </section>
         )}
