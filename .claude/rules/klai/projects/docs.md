@@ -96,3 +96,27 @@ Existing pages stored as HTML or markdown still load correctly via this fallback
 - SPA sidebar navigation: use the `doSaveRef` pattern — layout holds a ref to the child page's `saveNow` function, calls it in `onSelect` before route change.
 
 **These two mechanisms must both be present.** One alone is not enough.
+
+## KB Editor (portal) — Gitea SHA conflict causes 500 PushRejected on concurrent saves (HIGH)
+
+Gitea requires the current file SHA with every PUT. If two concurrent saves both fetch the SHA
+server-side, they get the same value — the second write fails with 500 PushRejected.
+
+**Fix: client-owned SHA + promise queue**
+
+1. GET `/pages/[...path]` returns `sha` in the response — client seeds `shaRef` on page load
+2. Every PUT body includes `sha: shaRef.current` — server uses `sha ?? file?.sha` (client takes precedence, falls back to server-fetched on first save)
+3. PUT response returns the new SHA — client updates `shaRef` for the next save
+4. `saveQueueRef` (promise chain) ensures no two PUTs are ever in-flight simultaneously:
+   ```ts
+   const thisSave = saveQueueRef.current.catch(() => {}).then(async () => { /* PUT */ })
+   saveQueueRef.current = thisSave
+   ```
+5. `scheduleSave` must use `void doSave().catch(() => {})` — not bare `void doSave()` — to prevent unhandled rejection when no subsequent save chains onto the queue.
+
+**Why:** Server no longer fetches SHA from Gitea on existing-page PUTs. Client tracks the latest SHA
+and sends it, closing both the race window AND the extra Gitea round-trip.
+
+**Rule:** Never allow concurrent PUTs to the same Gitea file. Promise queue + client SHA is the
+canonical pattern. Do not replace with `isSavingRef` / `pendingSaveRef` booleans — they have a
+scheduling race where a save that starts after the guard check still runs concurrently.
