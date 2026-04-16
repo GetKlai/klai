@@ -1458,5 +1458,9 @@
   "admin_integrations_revoke_description": "Weet je het zeker? De API-sleutel stopt onmiddellijk met werken. Deze actie kan niet ongedaan worden gemaakt.",
   "admin_integrations_revoke_confirm": "Intrekken",
 
-  "admin_integrations_delete_confirm": "{name} verwijderen?"
+  "admin_integrations_delete_confirm": "{name} verwijderen?",
+
+  "docs_page_not_found": "Pagina niet gevonden",
+  "docs_page_not_found_desc": "Deze pagina bestaat niet of is verwijderd.",
+  "docs_back_to_kb": "Terug naar kennisbank"
 }

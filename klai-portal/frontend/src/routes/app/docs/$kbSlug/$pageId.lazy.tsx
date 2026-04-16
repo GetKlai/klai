@@ -242,13 +242,13 @@ function KBPageEditor() {
   if (pageNotFound) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-[var(--color-muted-foreground)]">
-        <p className="text-lg font-medium">{m.docs_page_not_found?.() ?? 'Page not found'}</p>
-        <p className="text-sm">{m.docs_page_not_found_desc?.() ?? 'This page does not exist or has been removed.'}</p>
+        <p className="text-lg font-medium">{m.docs_page_not_found()}</p>
+        <p className="text-sm">{m.docs_page_not_found_desc()}</p>
         <button
           className="text-sm text-[var(--color-rl-accent-dark)] underline hover:opacity-80"
           onClick={() => navigateToPage(null)}
         >
-          {m.docs_back_to_kb?.() ?? 'Back to knowledge base'}
+          {m.docs_back_to_kb()}
         </button>
       </div>
     )

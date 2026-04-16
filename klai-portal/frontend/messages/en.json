@@ -1460,5 +1460,9 @@
 
   "admin_integrations_delete_confirm": "Delete {name}?",
 
-  "admin_integrations_view_logs": "View logs in Grafana"
+  "admin_integrations_view_logs": "View logs in Grafana",
+
+  "docs_page_not_found": "Page not found",
+  "docs_page_not_found_desc": "This page does not exist or has been removed.",
+  "docs_back_to_kb": "Back to knowledge base"
 }
