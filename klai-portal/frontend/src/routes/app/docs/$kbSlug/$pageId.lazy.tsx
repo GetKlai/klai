@@ -69,6 +69,7 @@ function KBPageEditor() {
 
   const editorRef = useRef<BlockPageEditorHandle>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isSavingRef = useRef(false)
 
   // Stable refs for async save
   const tokenRef = useRef(token)
@@ -112,11 +113,14 @@ function KBPageEditor() {
   }, [page, setSaveStatus])
 
   const doSave = useCallback(async () => {
+    // Guard: prevent concurrent saves — two in-flight PUTs cause a Gitea SHA conflict (500)
+    if (isSavingRef.current) return
+    isSavingRef.current = true
     const path = selectedPathRef.current
     const title = titleRef.current
     const tok = tokenRef.current
     const icon = iconRef.current
-    if (!path || !tok) return
+    if (!path || !tok) { isSavingRef.current = false; return }
     const content = editorRef.current?.getContent() ?? ''
 
     const currentSlug = stripMdExt(path)
@@ -145,6 +149,8 @@ function KBPageEditor() {
         setSaveStatus('error')
         setTimeout(() => setSaveStatus('idle'), 3000)
         throw err // propagate so callers know save failed
+      } finally {
+        isSavingRef.current = false
       }
       return
     }
@@ -163,6 +169,8 @@ function KBPageEditor() {
       setSaveStatus('error')
       setTimeout(() => setSaveStatus('idle'), 3000)
       throw err // propagate so callers know save failed
+    } finally {
+      isSavingRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage, pageIndex])
@@ -208,7 +216,10 @@ function KBPageEditor() {
 
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(doSave, 1500)
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      void doSave()
+    }, 1500)
   }, [doSave])
 
   const saveAccess = useCallback(async () => {
