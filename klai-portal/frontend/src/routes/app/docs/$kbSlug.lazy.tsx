@@ -106,7 +106,7 @@ function KBEditorPage() {
 
   const setSelectedPath = (path: string | null) => {
     setCurrentPage((p) => ({ ...p, path }))
-    void navigate({ search: (_prev) => path ? { page: path } : {}, replace: true })
+    void navigate({ search: { page: path ?? undefined }, replace: true })
   }
   const setEditTitle = (title: string) =>
     setCurrentPage((p) => ({ ...p, title }))
