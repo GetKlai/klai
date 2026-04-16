@@ -56,7 +56,7 @@ function OverviewTab() {
               <span className="text-sm text-[var(--color-foreground)]">{docsLabel}</span>
             </div>
             {kb.gitea_repo_slug && (
-              <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }}>
+              <Link to="/app/docs/$kbSlug" params={{ kbSlug: kb.slug }} search={{}}>
                 <Button variant="outline" size="sm">{m.knowledge_detail_view_in_docs()}</Button>
               </Link>
             )}

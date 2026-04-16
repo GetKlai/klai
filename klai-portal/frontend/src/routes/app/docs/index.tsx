@@ -99,7 +99,7 @@ function DocsPage() {
                 <td
                   className="py-4 pr-4 align-top text-[var(--color-foreground)] font-medium cursor-pointer hover:underline"
                   onClick={() =>
-                    navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })
+                    navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug }, search: {} })
                   }
                 >
                   {kb.name}
