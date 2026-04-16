@@ -514,6 +514,19 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_session(self, session_id: str, session_token: str) -> dict:
+        """Fetch full session details including factors.user.id and IDP profile data.
+
+        Used after create_session_with_idp_intent to retrieve the Zitadel user ID
+        and profile (firstName, lastName, email) from the IDP.
+        """
+        resp = await self._http.get(
+            f"/v2/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 # Singleton — reused across requests
 zitadel = ZitadelClient()

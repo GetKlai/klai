@@ -34,14 +34,14 @@ import json
 import logging
 import secrets
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -283,6 +283,24 @@ class IDPIntentRequest(BaseModel):
 
 class IDPIntentResponse(BaseModel):
     auth_url: str
+
+
+_SUPPORTED_LOCALES = {"nl", "en"}
+
+
+class IDPIntentSignupRequest(BaseModel):
+    idp_id: str
+    locale: str = "nl"
+
+    @field_validator("locale")
+    @classmethod
+    def valid_locale(cls, v: str) -> str:
+        return v if v in _SUPPORTED_LOCALES else "nl"
+
+
+# Pending social signup cookie name — short-lived, Fernet-encrypted
+_IDP_PENDING_COOKIE = "klai_idp_pending"
+_IDP_PENDING_MAX_AGE = 600  # 10 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -810,3 +828,154 @@ async def idp_callback(
     )
     emit_event("login", user_id=None, properties={"method": "idp"})
     return redirect
+
+
+# ---------------------------------------------------------------------------
+# Social SIGNUP endpoints (SPEC-AUTH-001)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/auth/idp-intent-signup", response_model=IDPIntentResponse)
+async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
+    """Start a social signup flow. Returns the IDP auth URL to redirect the user to.
+
+    Unlike idp-intent (login), this endpoint does not require an auth_request_id —
+    the user is not yet in an OIDC session. After IDP callback we detect new vs
+    existing users and branch accordingly.
+    """
+    known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
+    if body.idp_id not in known_idps:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
+
+    success_url = f"{settings.portal_url}/api/auth/idp-signup-callback?locale={body.locale}"
+    failure_url = f"{settings.portal_url}/{body.locale}/signup?error=idp_failed"
+
+    try:
+        result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("create_idp_intent (signup) failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Signup failed, please try again later",
+        ) from exc
+
+    auth_url = result.get("authUrl")
+    if not auth_url:
+        logger.error("create_idp_intent (signup) returned no authUrl: %s", result)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Signup failed, please try again later",
+        )
+
+    return IDPIntentResponse(auth_url=auth_url)
+
+
+@router.get("/auth/idp-signup-callback")
+async def idp_signup_callback(
+    id: str,
+    token: str,
+    locale: str = Query(default="nl"),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Handle the redirect back from a social IDP during signup.
+
+    Zitadel appends ?id=<intentId>&token=<intentToken> to the success_url.
+    The ?locale=<nl|en> param is embedded in success_url by idp_intent_signup.
+
+    - New user  → store session in encrypted cookie → redirect to /signup/social form
+    - Existing user → set SSO cookie → redirect to / (auto-login via sso-complete)
+    - Failure   → redirect to /{locale}/signup?error=idp_failed
+    """
+    locale = locale if locale in _SUPPORTED_LOCALES else "nl"
+    failure_url = f"{settings.portal_url}/{locale}/signup?error=idp_failed"
+
+    # 1. Create Zitadel session from the IDP intent
+    try:
+        session = await zitadel.create_session_with_idp_intent(id, token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "idp_signup_callback create_session failed %s: %s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    session_id: str | None = session.get("sessionId")
+    session_token: str | None = session.get("sessionToken")
+    if not session_id or not session_token:
+        logger.error("idp_signup_callback: no session in response: %s", session)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    # 2. Fetch full session to get the Zitadel user ID and IDP profile
+    try:
+        session_detail = await zitadel.get_session(session_id, session_token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "idp_signup_callback get_session failed %s: %s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    session_obj = session_detail.get("session", {})
+    factors = session_obj.get("factors", {})
+    user_factor = factors.get("user", {})
+    zitadel_user_id: str = user_factor.get("id", "")
+    if not zitadel_user_id:
+        logger.error("idp_signup_callback: no user.id in session factors: %s", session_detail)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    # Extract IDP display name + email for the social form pre-fill (non-sensitive)
+    human_factor = factors.get("intent", {})
+    idp_info = human_factor.get("idpInformation", {})
+    raw_info = idp_info.get("rawInformation", {})
+    first_name: str = raw_info.get("given_name") or user_factor.get("displayName", "").split(" ")[0]
+    last_name: str = raw_info.get("family_name") or (" ".join(user_factor.get("displayName", "").split(" ")[1:]) or "")
+    email: str = raw_info.get("email") or user_factor.get("loginName", "")
+
+    # 3. Check if a PortalUser already exists for this Zitadel user
+    existing_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+
+    if existing_user is not None:
+        # Existing user — just log them in via the SSO cookie
+        logger.info("idp_signup_callback: existing user %s, setting SSO cookie", zitadel_user_id)
+        response = RedirectResponse(url=f"{settings.portal_url}/", status_code=302)
+        response.set_cookie(
+            key="klai_sso",
+            value=_encrypt_sso(session_id, session_token),
+            domain=f".{settings.domain}",
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=settings.sso_cookie_max_age,
+        )
+        emit_event("login", user_id=zitadel_user_id, properties={"method": "idp"})
+        return response
+
+    # 4. New user — store pending session in encrypted cookie, redirect to company name form
+    pending_payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_token": session_token,
+            "zitadel_user_id": zitadel_user_id,
+        }
+    ).encode()
+    encrypted_pending = _fernet.encrypt(pending_payload).decode()
+
+    social_url = (
+        f"{settings.portal_url}/{locale}/signup/social"
+        f"?first_name={quote(first_name)}&last_name={quote(last_name)}&email={quote(email)}"
+    )
+    response = RedirectResponse(url=social_url, status_code=302)
+    cookie_domain = f".{settings.domain}" if settings.domain else None
+    response.set_cookie(
+        key=_IDP_PENDING_COOKIE,
+        value=encrypted_pending,
+        max_age=_IDP_PENDING_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        domain=cookie_domain,
+        path="/",
+    )
+    return response
