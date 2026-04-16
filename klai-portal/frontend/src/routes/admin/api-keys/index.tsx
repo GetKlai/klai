@@ -8,17 +8,16 @@ import {
 import { useState } from 'react'
 import { Plus, Loader2, Eye, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
-import { useIntegrations, useDeleteIntegration } from './-hooks'
-import type { IntegrationResponse } from './-types'
+import { useApiKeys, useDeleteApiKey } from './-hooks'
+import type { ApiKeyResponse } from './-types'
 
-export const Route = createFileRoute('/admin/integrations/')({
-  component: IntegrationsPage,
+export const Route = createFileRoute('/admin/api-keys/')({
+  component: ApiKeysPage,
 })
 
 function formatRelativeTime(isoString: string | null): string {
@@ -32,39 +31,24 @@ function formatRelativeTime(isoString: string | null): string {
   })
 }
 
-function StatusBadge({ active }: { active: boolean }) {
-  return active ? (
-    <Badge variant="success">{m.admin_integrations_status_active()}</Badge>
-  ) : (
-    <Badge variant="destructive">{m.admin_integrations_status_revoked()}</Badge>
-  )
-}
+const columnHelper = createColumnHelper<ApiKeyResponse>()
 
-function TypeBadge({ integrationType }: { integrationType: IntegrationResponse['integration_type'] }) {
-  if (integrationType === 'widget') {
-    return <Badge variant="default">{m.admin_integrations_type_badge_widget()}</Badge>
-  }
-  return <Badge variant="secondary">{m.admin_integrations_type_badge_api()}</Badge>
-}
-
-const columnHelper = createColumnHelper<IntegrationResponse>()
-
-function IntegrationsPage() {
+function ApiKeysPage() {
   const navigate = useNavigate()
-  const { data, isLoading, error, refetch } = useIntegrations()
-  const deleteMutation = useDeleteIntegration()
+  const { data, isLoading, error, refetch } = useApiKeys()
+  const deleteMutation = useDeleteApiKey()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  const integrations = Array.isArray(data) ? data : []
+  const apiKeys = Array.isArray(data) ? data : []
 
   const columns = [
     columnHelper.accessor('name', {
-      header: () => m.admin_integrations_col_name(),
+      header: () => m.admin_api_keys_col_name(),
       cell: (info) => (
         <button
           onClick={() =>
             navigate({
-              to: '/admin/integrations/$id',
+              to: '/admin/api-keys/$id',
               params: { id: String(info.row.original.id) },
             })
           }
@@ -74,22 +58,22 @@ function IntegrationsPage() {
         </button>
       ),
     }),
-    columnHelper.accessor('integration_type', {
-      header: () => m.admin_integrations_col_type(),
-      cell: (info) => <TypeBadge integrationType={info.getValue()} />,
-    }),
-    columnHelper.accessor('active', {
-      header: () => m.admin_integrations_col_status(),
-      cell: (info) => <StatusBadge active={info.getValue()} />,
+    columnHelper.accessor('key_prefix', {
+      header: () => m.admin_api_keys_col_key_prefix(),
+      cell: (info) => (
+        <code className="text-xs font-mono text-[var(--color-muted-foreground)]">
+          {info.getValue()}...
+        </code>
+      ),
     }),
     columnHelper.accessor('kb_access_count', {
-      header: () => m.admin_integrations_col_kb_access(),
+      header: () => m.admin_api_keys_col_kb_access(),
       cell: (info) => (
         <span className="text-sm tabular-nums">{info.getValue()}</span>
       ),
     }),
     columnHelper.accessor('last_used_at', {
-      header: () => m.admin_integrations_col_last_used(),
+      header: () => m.admin_api_keys_col_last_used(),
       cell: (info) => (
         <span className="text-sm text-[var(--color-muted-foreground)] whitespace-nowrap tabular-nums">
           {formatRelativeTime(info.getValue())}
@@ -105,9 +89,12 @@ function IntegrationsPage() {
           <InlineDeleteConfirm
             isConfirming={isConfirming}
             isPending={deleteMutation.isPending}
-            label={m.admin_integrations_delete_confirm({ name: row.original.name })}
+            label={m.admin_api_keys_delete_confirm({ name: row.original.name })}
             cancelLabel={m.admin_users_cancel()}
-            onConfirm={() => { deleteMutation.mutate(String(row.original.id)); setConfirmDeleteId(null) }}
+            onConfirm={() => {
+              deleteMutation.mutate(String(row.original.id))
+              setConfirmDeleteId(null)
+            }}
             onCancel={() => setConfirmDeleteId(null)}
           >
             <div className="flex items-start justify-end gap-2 mt-px">
@@ -121,7 +108,7 @@ function IntegrationsPage() {
               <button
                 onClick={() =>
                   navigate({
-                    to: '/admin/integrations/$id',
+                    to: '/admin/api-keys/$id',
                     params: { id: String(row.original.id) },
                   })
                 }
@@ -137,9 +124,9 @@ function IntegrationsPage() {
     }),
   ]
 
-  // eslint-disable-next-line react-hooks/incompatible-library -- useReactTable returns functions that React Compiler cannot memoize safely; this is expected TanStack Table behaviour
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: integrations,
+    data: apiKeys,
     columns,
     getCoreRowModel: getCoreRowModel(),
   })
@@ -148,14 +135,14 @@ function IntegrationsPage() {
     <div className="p-6 space-y-6 max-w-5xl">
       <div className="flex items-start justify-between">
         <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
-          {m.admin_integrations_title()}
+          {m.admin_api_keys_title()}
         </h1>
         <Button
           size="sm"
-          onClick={() => void navigate({ to: '/admin/integrations/new' })}
+          onClick={() => void navigate({ to: '/admin/api-keys/new' })}
         >
           <Plus className="h-4 w-4 mr-2" />
-          {m.admin_integrations_create()}
+          {m.admin_api_keys_create()}
         </Button>
       </div>
 
@@ -167,15 +154,15 @@ function IntegrationsPage() {
       ) : isLoading ? (
         <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-          {m.admin_integrations_loading()}
+          {m.admin_api_keys_loading()}
         </p>
-      ) : integrations.length === 0 ? (
+      ) : apiKeys.length === 0 ? (
         <div className="py-12 text-center space-y-3">
           <p className="text-sm font-medium text-[var(--color-foreground)]">
-            {m.admin_integrations_empty()}
+            {m.admin_api_keys_empty()}
           </p>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {m.admin_integrations_empty_description()}
+            {m.admin_api_keys_empty_description()}
           </p>
         </div>
       ) : (

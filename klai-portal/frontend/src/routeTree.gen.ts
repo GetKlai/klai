@@ -41,10 +41,11 @@ import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/in
 import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
 import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
+import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
-import { Route as AdminIntegrationsIndexRouteImport } from './routes/admin/integrations/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
+import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
 import { Route as LocaleSignupIndexRouteImport } from './routes/$locale/signup/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
@@ -54,12 +55,14 @@ import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
 import { Route as AppFocusNewRouteImport } from './routes/app/focus/new'
 import { Route as AppFocusNotebookIdRouteImport } from './routes/app/focus/$notebookId'
 import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
+import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
+import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
 import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
-import { Route as AdminIntegrationsNewRouteImport } from './routes/admin/integrations/new'
-import { Route as AdminIntegrationsIdRouteImport } from './routes/admin/integrations/$id'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
+import { Route as AdminApiKeysNewRouteImport } from './routes/admin/api-keys/new'
+import { Route as AdminApiKeysIdRouteImport } from './routes/admin/api-keys/$id'
 import { Route as LocaleSignupSocialRouteImport } from './routes/$locale/signup/social'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
@@ -244,6 +247,11 @@ const AppDocsIndexRoute = AppDocsIndexRouteImport.update({
   path: '/docs/',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AdminWidgetsIndexRoute = AdminWidgetsIndexRouteImport.update({
+  id: '/widgets/',
+  path: '/widgets/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
   id: '/users/',
   path: '/users/',
@@ -254,14 +262,14 @@ const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
   path: '/mcps/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminIntegrationsIndexRoute = AdminIntegrationsIndexRouteImport.update({
-  id: '/integrations/',
-  path: '/integrations/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
   id: '/groups/',
   path: '/groups/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminApiKeysIndexRoute = AdminApiKeysIndexRouteImport.update({
+  id: '/api-keys/',
+  path: '/api-keys/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const LocaleSignupIndexRoute = LocaleSignupIndexRouteImport.update({
@@ -312,6 +320,16 @@ const AppDocsNewRoute = AppDocsNewRouteImport.update({
   path: '/docs/new',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AdminWidgetsNewRoute = AdminWidgetsNewRouteImport.update({
+  id: '/widgets/new',
+  path: '/widgets/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminWidgetsIdRoute = AdminWidgetsIdRouteImport.update({
+  id: '/widgets/$id',
+  path: '/widgets/$id',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
   id: '/users/invite',
   path: '/users/invite',
@@ -327,19 +345,19 @@ const AdminMcpsServerIdRoute = AdminMcpsServerIdRouteImport.update({
   path: '/mcps/$serverId',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminIntegrationsNewRoute = AdminIntegrationsNewRouteImport.update({
-  id: '/integrations/new',
-  path: '/integrations/new',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminIntegrationsIdRoute = AdminIntegrationsIdRouteImport.update({
-  id: '/integrations/$id',
-  path: '/integrations/$id',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
 const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
   id: '/groups/new',
   path: '/groups/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminApiKeysNewRoute = AdminApiKeysNewRouteImport.update({
+  id: '/api-keys/new',
+  path: '/api-keys/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminApiKeysIdRoute = AdminApiKeysIdRouteImport.update({
+  id: '/api-keys/$id',
+  path: '/api-keys/$id',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const LocaleSignupSocialRoute = LocaleSignupSocialRouteImport.update({
@@ -502,12 +520,14 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/$locale/signup/social': typeof LocaleSignupSocialRoute
+  '/admin/api-keys/$id': typeof AdminApiKeysIdRoute
+  '/admin/api-keys/new': typeof AdminApiKeysNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
-  '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
-  '/admin/integrations/new': typeof AdminIntegrationsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/widgets/$id': typeof AdminWidgetsIdRoute
+  '/admin/widgets/new': typeof AdminWidgetsNewRoute
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
@@ -517,10 +537,11 @@ export interface FileRoutesByFullPath {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup/': typeof LocaleSignupIndexRoute
+  '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
-  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
+  '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
@@ -573,12 +594,14 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/$locale/signup/social': typeof LocaleSignupSocialRoute
+  '/admin/api-keys/$id': typeof AdminApiKeysIdRoute
+  '/admin/api-keys/new': typeof AdminApiKeysNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
-  '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
-  '/admin/integrations/new': typeof AdminIntegrationsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/widgets/$id': typeof AdminWidgetsIdRoute
+  '/admin/widgets/new': typeof AdminWidgetsNewRoute
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
@@ -588,10 +611,11 @@ export interface FileRoutesByTo {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup': typeof LocaleSignupIndexRoute
+  '/admin/api-keys': typeof AdminApiKeysIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
-  '/admin/integrations': typeof AdminIntegrationsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
+  '/admin/widgets': typeof AdminWidgetsIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
   '/app/focus': typeof AppFocusIndexRoute
   '/app/gaps': typeof AppGapsIndexRoute
@@ -650,12 +674,14 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
   '/$locale/signup/social': typeof LocaleSignupSocialRoute
+  '/admin/api-keys/$id': typeof AdminApiKeysIdRoute
+  '/admin/api-keys/new': typeof AdminApiKeysNewRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
-  '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
-  '/admin/integrations/new': typeof AdminIntegrationsNewRoute
   '/admin/mcps/$serverId': typeof AdminMcpsServerIdRoute
   '/admin/mcps/new': typeof AdminMcpsNewRoute
   '/admin/users/invite': typeof AdminUsersInviteRoute
+  '/admin/widgets/$id': typeof AdminWidgetsIdRoute
+  '/admin/widgets/new': typeof AdminWidgetsNewRoute
   '/app/docs/new': typeof AppDocsNewRoute
   '/app/focus/$notebookId': typeof AppFocusNotebookIdRoute
   '/app/focus/new': typeof AppFocusNewRoute
@@ -665,10 +691,11 @@ export interface FileRoutesById {
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
   '/$locale/signup/': typeof LocaleSignupIndexRoute
+  '/admin/api-keys/': typeof AdminApiKeysIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
-  '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
+  '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
@@ -728,12 +755,14 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/$locale/signup/social'
+    | '/admin/api-keys/$id'
+    | '/admin/api-keys/new'
     | '/admin/groups/new'
-    | '/admin/integrations/$id'
-    | '/admin/integrations/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/users/invite'
+    | '/admin/widgets/$id'
+    | '/admin/widgets/new'
     | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
@@ -743,10 +772,11 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup/'
+    | '/admin/api-keys/'
     | '/admin/groups/'
-    | '/admin/integrations/'
     | '/admin/mcps/'
     | '/admin/users/'
+    | '/admin/widgets/'
     | '/app/docs/'
     | '/app/focus/'
     | '/app/gaps/'
@@ -799,12 +829,14 @@ export interface FileRouteTypes {
     | '/app'
     | '/$locale/password/forgot'
     | '/$locale/signup/social'
+    | '/admin/api-keys/$id'
+    | '/admin/api-keys/new'
     | '/admin/groups/new'
-    | '/admin/integrations/$id'
-    | '/admin/integrations/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/users/invite'
+    | '/admin/widgets/$id'
+    | '/admin/widgets/new'
     | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
@@ -814,10 +846,11 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup'
+    | '/admin/api-keys'
     | '/admin/groups'
-    | '/admin/integrations'
     | '/admin/mcps'
     | '/admin/users'
+    | '/admin/widgets'
     | '/app/docs'
     | '/app/focus'
     | '/app/gaps'
@@ -875,12 +908,14 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
     | '/$locale/signup/social'
+    | '/admin/api-keys/$id'
+    | '/admin/api-keys/new'
     | '/admin/groups/new'
-    | '/admin/integrations/$id'
-    | '/admin/integrations/new'
     | '/admin/mcps/$serverId'
     | '/admin/mcps/new'
     | '/admin/users/invite'
+    | '/admin/widgets/$id'
+    | '/admin/widgets/new'
     | '/app/docs/new'
     | '/app/focus/$notebookId'
     | '/app/focus/new'
@@ -890,10 +925,11 @@ export interface FileRouteTypes {
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
     | '/$locale/signup/'
+    | '/admin/api-keys/'
     | '/admin/groups/'
-    | '/admin/integrations/'
     | '/admin/mcps/'
     | '/admin/users/'
+    | '/admin/widgets/'
     | '/app/docs/'
     | '/app/focus/'
     | '/app/gaps/'
@@ -1166,6 +1202,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocsIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/admin/widgets/': {
+      id: '/admin/widgets/'
+      path: '/widgets'
+      fullPath: '/admin/widgets/'
+      preLoaderRoute: typeof AdminWidgetsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/users/': {
       id: '/admin/users/'
       path: '/users'
@@ -1180,18 +1223,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMcpsIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/integrations/': {
-      id: '/admin/integrations/'
-      path: '/integrations'
-      fullPath: '/admin/integrations/'
-      preLoaderRoute: typeof AdminIntegrationsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/groups/': {
       id: '/admin/groups/'
       path: '/groups'
       fullPath: '/admin/groups/'
       preLoaderRoute: typeof AdminGroupsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/api-keys/': {
+      id: '/admin/api-keys/'
+      path: '/api-keys'
+      fullPath: '/admin/api-keys/'
+      preLoaderRoute: typeof AdminApiKeysIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/$locale/signup/': {
@@ -1257,6 +1300,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocsNewRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/admin/widgets/new': {
+      id: '/admin/widgets/new'
+      path: '/widgets/new'
+      fullPath: '/admin/widgets/new'
+      preLoaderRoute: typeof AdminWidgetsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/widgets/$id': {
+      id: '/admin/widgets/$id'
+      path: '/widgets/$id'
+      fullPath: '/admin/widgets/$id'
+      preLoaderRoute: typeof AdminWidgetsIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/users/invite': {
       id: '/admin/users/invite'
       path: '/users/invite'
@@ -1278,25 +1335,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMcpsServerIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/integrations/new': {
-      id: '/admin/integrations/new'
-      path: '/integrations/new'
-      fullPath: '/admin/integrations/new'
-      preLoaderRoute: typeof AdminIntegrationsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/integrations/$id': {
-      id: '/admin/integrations/$id'
-      path: '/integrations/$id'
-      fullPath: '/admin/integrations/$id'
-      preLoaderRoute: typeof AdminIntegrationsIdRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/groups/new': {
       id: '/admin/groups/new'
       path: '/groups/new'
       fullPath: '/admin/groups/new'
       preLoaderRoute: typeof AdminGroupsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/api-keys/new': {
+      id: '/admin/api-keys/new'
+      path: '/api-keys/new'
+      fullPath: '/admin/api-keys/new'
+      preLoaderRoute: typeof AdminApiKeysNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/api-keys/$id': {
+      id: '/admin/api-keys/$id'
+      path: '/api-keys/$id'
+      fullPath: '/admin/api-keys/$id'
+      preLoaderRoute: typeof AdminApiKeysIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/$locale/signup/social': {
@@ -1497,16 +1554,19 @@ interface AdminRouteRouteChildren {
   AdminJoinRequestsRoute: typeof AdminJoinRequestsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  AdminApiKeysIdRoute: typeof AdminApiKeysIdRoute
+  AdminApiKeysNewRoute: typeof AdminApiKeysNewRoute
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
-  AdminIntegrationsIdRoute: typeof AdminIntegrationsIdRoute
-  AdminIntegrationsNewRoute: typeof AdminIntegrationsNewRoute
   AdminMcpsServerIdRoute: typeof AdminMcpsServerIdRoute
   AdminMcpsNewRoute: typeof AdminMcpsNewRoute
   AdminUsersInviteRoute: typeof AdminUsersInviteRoute
+  AdminWidgetsIdRoute: typeof AdminWidgetsIdRoute
+  AdminWidgetsNewRoute: typeof AdminWidgetsNewRoute
+  AdminApiKeysIndexRoute: typeof AdminApiKeysIndexRoute
   AdminGroupsIndexRoute: typeof AdminGroupsIndexRoute
-  AdminIntegrationsIndexRoute: typeof AdminIntegrationsIndexRoute
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
+  AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
   AdminGroupsGroupIdEditRoute: typeof AdminGroupsGroupIdEditRoute
   AdminUsersUserIdEditRoute: typeof AdminUsersUserIdEditRoute
@@ -1519,16 +1579,19 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminJoinRequestsRoute: AdminJoinRequestsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
+  AdminApiKeysIdRoute: AdminApiKeysIdRoute,
+  AdminApiKeysNewRoute: AdminApiKeysNewRoute,
   AdminGroupsNewRoute: AdminGroupsNewRoute,
-  AdminIntegrationsIdRoute: AdminIntegrationsIdRoute,
-  AdminIntegrationsNewRoute: AdminIntegrationsNewRoute,
   AdminMcpsServerIdRoute: AdminMcpsServerIdRoute,
   AdminMcpsNewRoute: AdminMcpsNewRoute,
   AdminUsersInviteRoute: AdminUsersInviteRoute,
+  AdminWidgetsIdRoute: AdminWidgetsIdRoute,
+  AdminWidgetsNewRoute: AdminWidgetsNewRoute,
+  AdminApiKeysIndexRoute: AdminApiKeysIndexRoute,
   AdminGroupsIndexRoute: AdminGroupsIndexRoute,
-  AdminIntegrationsIndexRoute: AdminIntegrationsIndexRoute,
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
+  AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
   AdminGroupsGroupIdEditRoute: AdminGroupsGroupIdEditRoute,
   AdminUsersUserIdEditRoute: AdminUsersUserIdEditRoute,
