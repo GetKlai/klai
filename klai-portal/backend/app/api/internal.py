@@ -208,6 +208,7 @@ async def receive_sync_status(
     await set_tenant(db, connector.org_id)
     connector.last_sync_at = body.completed_at
     connector.last_sync_status = body.status
+    connector.last_sync_documents_ok = body.documents_ok
     await db.commit()
 
     if body.status == "success":
