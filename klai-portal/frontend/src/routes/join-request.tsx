@@ -39,9 +39,10 @@ function JoinRequestPage() {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
+      if (!auth.user) throw new Error('Not authenticated')
       const res = await fetch('/api/auth/join-request', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${auth.user!.access_token}` },
+        headers: { Authorization: `Bearer ${auth.user.access_token}` },
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -123,7 +124,7 @@ function JoinRequestPage() {
 
       {submitMutation.error && (
         <p className="text-sm text-[var(--color-destructive)]">
-          {String(submitMutation.error)}
+          {submitMutation.error instanceof Error ? submitMutation.error.message : String(submitMutation.error)}
         </p>
       )}
 
