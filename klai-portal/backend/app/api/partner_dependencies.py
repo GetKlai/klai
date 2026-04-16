@@ -50,11 +50,7 @@ class PartnerAuthContext:
 async def _update_last_used(key_id: str, db: AsyncSession) -> None:
     """Update last_used_at timestamp (fire-and-forget)."""
     try:
-        await db.execute(
-            update(PartnerAPIKey)
-            .where(PartnerAPIKey.id == key_id)
-            .values(last_used_at=datetime.now(UTC))
-        )
+        await db.execute(update(PartnerAPIKey).where(PartnerAPIKey.id == key_id).values(last_used_at=datetime.now(UTC)))
         await db.commit()
     except Exception:
         logger.exception("Failed to update last_used_at", partner_key_id=key_id)
@@ -74,7 +70,7 @@ async def get_partner_key(
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
-    token = auth_header[len("Bearer "):]
+    token = auth_header[len("Bearer ") :]
 
     # Step 2: Validate prefix
     if not token.startswith("pk_live_"):
@@ -99,17 +95,13 @@ async def get_partner_key(
 
     # Step 5: Load KB access entries
     kb_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(
-            PartnerApiKeyKbAccess.partner_api_key_id == key_row.id
-        )
+        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key_row.id)
     )
     kb_rows = kb_result.scalars().all()
     kb_access = {row.kb_id: row.access_level for row in kb_rows}
 
     # Step 6: Resolve org_id -> zitadel_org_id
-    org_result = await db.execute(
-        select(PortalOrg).where(PortalOrg.id == key_row.org_id)
-    )
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
@@ -183,11 +175,7 @@ def validate_kb_access(
     if requested_kb_ids is None:
         # Fall back to all KBs the key has access to with sufficient level
         required_rank = _LEVEL_RANK.get(required_level, 1)
-        return [
-            kb_id
-            for kb_id, level in auth.kb_access.items()
-            if _LEVEL_RANK.get(level, 0) >= required_rank
-        ]
+        return [kb_id for kb_id, level in auth.kb_access.items() if _LEVEL_RANK.get(level, 0) >= required_rank]
 
     required_rank = _LEVEL_RANK.get(required_level, 1)
     for kb_id in requested_kb_ids:

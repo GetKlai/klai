@@ -31,12 +31,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
-    op.create_unique_constraint(
-        "uq_portal_template_org_slug", "portal_templates", ["org_id", "slug"]
-    )
-    op.create_index(
-        "ix_portal_template_org_id", "portal_templates", ["org_id"]
-    )
+    op.create_unique_constraint("uq_portal_template_org_slug", "portal_templates", ["org_id", "slug"])
+    op.create_index("ix_portal_template_org_id", "portal_templates", ["org_id"])
 
 
 def downgrade() -> None:

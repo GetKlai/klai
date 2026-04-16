@@ -61,7 +61,9 @@ async def ensure_default_rules(
     """
     try:
         count_result = await db.execute(
-            select(func.count()).select_from(PortalRule).where(
+            select(func.count())
+            .select_from(PortalRule)
+            .where(
                 PortalRule.org_id == org_id,
             )
         )

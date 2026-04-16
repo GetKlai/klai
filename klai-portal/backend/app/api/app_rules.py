@@ -199,7 +199,9 @@ async def update_rule(
 
     # Only owner or admin can update
     if rule.created_by != zitadel_user_id and caller.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can update this rule")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can update this rule"
+        )
 
     if body.name is not None:
         rule.name = body.name
@@ -251,7 +253,9 @@ async def delete_rule(
 
     # Only owner or admin can delete
     if rule.created_by != zitadel_user_id and caller.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can delete this rule")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator or an admin can delete this rule"
+        )
 
     await db.delete(rule)
     await db.commit()
