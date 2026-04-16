@@ -12,6 +12,7 @@ import { useIntegration, useUpdateIntegration, useRevokeIntegration } from './-h
 import type { AccessLevel } from './-types'
 import { KbAccessEditor } from './_components/KbAccessEditor'
 import { RevokeConfirmDialog } from './_components/RevokeConfirmDialog'
+import { WidgetTab } from './_components/WidgetTab'
 
 export const Route = createFileRoute('/admin/integrations/$id')({
   component: IntegrationDetailPage,
@@ -135,6 +136,8 @@ function IntegrationDetailPage() {
 
   if (!integration || !form) return null
 
+  const isWidget = integration.integration_type === 'widget'
+
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
@@ -163,8 +166,8 @@ function IntegrationDetailPage() {
         </Button>
       </div>
 
+      {/* Shared basics section (name/description) */}
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Basics */}
         <section className="space-y-4">
           <h2 className="text-sm font-medium text-[var(--color-foreground)]">
             {m.admin_integrations_section_basics()}
@@ -195,115 +198,119 @@ function IntegrationDetailPage() {
             />
           </div>
 
-          {/* Key prefix (read-only) */}
-          <div className="space-y-1.5">
-            <Label>{m.admin_integrations_col_key_prefix()}</Label>
-            <code className="block text-xs font-mono text-[var(--color-muted-foreground)] py-2">
-              {integration.key_prefix}...
-            </code>
-          </div>
-        </section>
-
-        {/* Permissions */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-            {m.admin_integrations_section_permissions()}
-          </h2>
-          <div className="space-y-4">
-            <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
-              <input
-                type="checkbox"
-                checked={form.chat}
-                onChange={(e) => setForm({ ...form, chat: e.target.checked })}
-                disabled={isDisabled}
-                className="accent-[var(--color-accent)] mt-0.5"
-              />
-              <div>
-                <span className="font-medium">{m.admin_integrations_perm_chat()}</span>
-                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                  {m.admin_integrations_perm_chat_description()}
-                </p>
-              </div>
-            </label>
-            <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
-              <input
-                type="checkbox"
-                checked={form.feedback}
-                onChange={(e) => setForm({ ...form, feedback: e.target.checked })}
-                disabled={isDisabled}
-                className="accent-[var(--color-accent)] mt-0.5"
-              />
-              <div>
-                <span className="font-medium">{m.admin_integrations_perm_feedback()}</span>
-                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                  {m.admin_integrations_perm_feedback_description()}
-                </p>
-              </div>
-            </label>
-            <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
-              <input
-                type="checkbox"
-                checked={form.knowledge_append}
-                onChange={(e) => handleKnowledgeAppendChange(e.target.checked)}
-                disabled={isDisabled}
-                className="accent-[var(--color-accent)] mt-0.5"
-              />
-              <div>
-                <span className="font-medium">{m.admin_integrations_perm_knowledge_append()}</span>
-                <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                  {m.admin_integrations_perm_knowledge_append_description()}
-                </p>
-              </div>
-            </label>
-          </div>
-        </section>
-
-        {/* KB Access */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-            {m.admin_integrations_section_kb_access()}
-          </h2>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
-            {m.admin_integrations_kb_intro()}
-          </p>
-          <KbAccessEditor
-            value={form.kb_access}
-            onChange={(kb_access) => setForm({ ...form, kb_access })}
-            knowledgeAppendEnabled={form.knowledge_append}
-            disabled={isDisabled}
-          />
-        </section>
-
-        {/* Rate limit */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-            {m.admin_integrations_section_rate_limit()}
-          </h2>
-          <div className="space-y-1.5">
-            <Label htmlFor="rate-limit">
-              {m.admin_integrations_field_rate_limit()}
-            </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="rate-limit"
-                type="number"
-                min={10}
-                max={600}
-                value={form.rate_limit_rpm}
-                onChange={(e) =>
-                  setForm({ ...form, rate_limit_rpm: Number(e.target.value) })
-                }
-                disabled={isDisabled}
-                className="max-w-[8rem]"
-              />
-              <span className="text-sm text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_rate_limit_unit()}
-              </span>
+          {/* Key prefix (read-only) — only for API integrations */}
+          {!isWidget && (
+            <div className="space-y-1.5">
+              <Label>{m.admin_integrations_col_key_prefix()}</Label>
+              <code className="block text-xs font-mono text-[var(--color-muted-foreground)] py-2">
+                {integration.key_prefix}...
+              </code>
             </div>
-          </div>
+          )}
         </section>
 
-        {updateMutation.error && (
+        {/* API-type only: permissions, KB access, rate limit */}
+        {!isWidget && (
+          <>
+            <section className="space-y-4">
+              <h2 className="text-sm font-medium text-[var(--color-foreground)]">
+                {m.admin_integrations_section_permissions()}
+              </h2>
+              <div className="space-y-4">
+                <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={form.chat}
+                    onChange={(e) => setForm({ ...form, chat: e.target.checked })}
+                    disabled={isDisabled}
+                    className="accent-[var(--color-accent)] mt-0.5"
+                  />
+                  <div>
+                    <span className="font-medium">{m.admin_integrations_perm_chat()}</span>
+                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                      {m.admin_integrations_perm_chat_description()}
+                    </p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={form.feedback}
+                    onChange={(e) => setForm({ ...form, feedback: e.target.checked })}
+                    disabled={isDisabled}
+                    className="accent-[var(--color-accent)] mt-0.5"
+                  />
+                  <div>
+                    <span className="font-medium">{m.admin_integrations_perm_feedback()}</span>
+                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                      {m.admin_integrations_perm_feedback_description()}
+                    </p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={form.knowledge_append}
+                    onChange={(e) => handleKnowledgeAppendChange(e.target.checked)}
+                    disabled={isDisabled}
+                    className="accent-[var(--color-accent)] mt-0.5"
+                  />
+                  <div>
+                    <span className="font-medium">{m.admin_integrations_perm_knowledge_append()}</span>
+                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                      {m.admin_integrations_perm_knowledge_append_description()}
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-sm font-medium text-[var(--color-foreground)]">
+                {m.admin_integrations_section_kb_access()}
+              </h2>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_kb_intro()}
+              </p>
+              <KbAccessEditor
+                value={form.kb_access}
+                onChange={(kb_access) => setForm({ ...form, kb_access })}
+                knowledgeAppendEnabled={form.knowledge_append}
+                disabled={isDisabled}
+              />
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-sm font-medium text-[var(--color-foreground)]">
+                {m.admin_integrations_section_rate_limit()}
+              </h2>
+              <div className="space-y-1.5">
+                <Label htmlFor="rate-limit">
+                  {m.admin_integrations_field_rate_limit()}
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="rate-limit"
+                    type="number"
+                    min={10}
+                    max={600}
+                    value={form.rate_limit_rpm}
+                    onChange={(e) =>
+                      setForm({ ...form, rate_limit_rpm: Number(e.target.value) })
+                    }
+                    disabled={isDisabled}
+                    className="max-w-[8rem]"
+                  />
+                  <span className="text-sm text-[var(--color-muted-foreground)]">
+                    {m.admin_integrations_rate_limit_unit()}
+                  </span>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+
+        {updateMutation.error && !isWidget && (
           <p className="text-sm text-[var(--color-destructive)]">
             {updateMutation.error instanceof Error
               ? updateMutation.error.message
@@ -311,7 +318,7 @@ function IntegrationDetailPage() {
           </p>
         )}
 
-        {!isRevoked && (
+        {!isRevoked && !isWidget && (
           <div className="pt-2">
             <Button
               type="submit"
@@ -325,6 +332,13 @@ function IntegrationDetailPage() {
           </div>
         )}
       </form>
+
+      {/* Widget-type: widget configuration */}
+      {isWidget && (
+        <div className="mt-6 pt-6 border-t border-[var(--color-border)]">
+          <WidgetTab integration={integration} />
+        </div>
+      )}
 
       {/* Revoke section */}
       {!isRevoked && (

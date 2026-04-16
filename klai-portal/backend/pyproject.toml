@@ -20,6 +20,7 @@ dependencies = [
     "pyyaml>=6.0",
     "structlog>=25.0",
     "redis[hiredis]>=5.0",
+    "pyjwt>=2.8",
 ]
 
 [project.optional-dependencies]

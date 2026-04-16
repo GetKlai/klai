@@ -7,12 +7,13 @@ Authenticated via partner API keys (Bearer pk_live_...).
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,8 +26,10 @@ from app.api.partner_dependencies import (
     validate_kb_access,
 )
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
+from app.models.portal import PortalOrg
 from app.services.events import emit_event
 from app.services.partner_chat import (
     chat_completion_non_streaming,
@@ -36,6 +39,7 @@ from app.services.partner_chat import (
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
+from app.services.widget_auth import generate_session_token, origin_allowed
 
 logger = structlog.get_logger()
 
@@ -373,3 +377,155 @@ async def append_knowledge(
         "chunks_created": ingest_result.get("chunks_created"),
         "status": ingest_result.get("status", "ingested"),
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /partner/v1/widget-config  (SPEC-WIDGET-001 Task 2)
+# Public endpoint — NO auth dependency
+# ---------------------------------------------------------------------------
+
+
+@router.get("/widget-config")
+async def widget_config(
+    id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return widget bootstrap configuration and a short-lived session token.
+
+    # @MX:WARN: [AUTO] Public endpoint — no authentication required
+    # @MX:REASON: Origin validated via origin_allowed(); token TTL 1h; no sensitive data returned
+    # @MX:SPEC: SPEC-WIDGET-001 REQ-2
+
+    SPEC-WIDGET-001 REQ-2: Public endpoint, no API key required.
+    - Looks up widget by widget_id (id param) with integration_type='widget'
+    - Validates Origin header against allowed_origins (fail-closed)
+    - Generates HS256 JWT session token (1 hour TTL)
+    - Returns CORS headers for matched origin (never *)
+
+    Error codes:
+        404 - widget_id not found or integration_type != 'widget'
+        403 - missing or disallowed Origin
+        503 - WIDGET_JWT_SECRET not configured
+    """
+    # Check JWT secret is configured
+    if not settings.widget_jwt_secret:
+        logger.warning("widget_jwt_secret_not_configured")
+        return Response(
+            content='{"detail":"Widget authentication not configured"}',
+            status_code=503,
+            media_type="application/json",
+        )
+
+    # Look up widget key by widget_id and integration_type='widget'
+    result = await db.execute(
+        select(PartnerAPIKey).where(
+            PartnerAPIKey.widget_id == id,
+            PartnerAPIKey.integration_type == "widget",
+            PartnerAPIKey.active.is_(True),
+        )
+    )
+    key_row = result.scalar_one_or_none()
+
+    if key_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+
+    # Validate Origin header
+    origin = request.headers.get("origin", "")
+    widget_config_data = key_row.widget_config or {}
+    allowed_origins = widget_config_data.get("allowed_origins", [])
+
+    if not origin or not origin_allowed(origin, allowed_origins):
+        return Response(
+            content='{"detail":"Origin not allowed"}',
+            status_code=403,
+            media_type="application/json",
+        )
+
+    # Load org and set tenant BEFORE KB access query (ensures RLS context is active)
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+    await set_tenant(db, org.id)
+
+    # Load KB access for this key (after RLS tenant is set)
+    kb_result = await db.execute(
+        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key_row.id)
+    )
+    kb_rows = kb_result.scalars().all()
+    kb_ids = [row.kb_id for row in kb_rows]
+
+    # Generate session token
+    session_token = generate_session_token(
+        wgt_id=key_row.widget_id or id,
+        org_id=key_row.org_id,
+        kb_ids=kb_ids,
+        secret=settings.widget_jwt_secret,
+    )
+
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+    body = {
+        "title": widget_config_data.get("title", ""),
+        "welcome_message": widget_config_data.get("welcome_message", ""),
+        "css_variables": widget_config_data.get("css_variables", {}),
+        "chat_endpoint": "/partner/v1/chat/completions",
+        "session_token": session_token,
+        "session_expires_at": expires_at.isoformat(),
+    }
+
+    headers = {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
+
+    return Response(
+        content=json.dumps(body),
+        status_code=200,
+        media_type="application/json",
+        headers=headers,
+    )
+
+
+@router.options("/widget-config")
+async def widget_config_preflight(
+    id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Handle OPTIONS preflight for widget-config CORS.
+
+    SPEC-WIDGET-001: Return 204 with CORS headers for valid origins.
+    Returns CORS headers without verifying JWT secret (preflight only).
+    """
+    result = await db.execute(
+        select(PartnerAPIKey).where(
+            PartnerAPIKey.widget_id == id,
+            PartnerAPIKey.integration_type == "widget",
+            PartnerAPIKey.active.is_(True),
+        )
+    )
+    key_row = result.scalar_one_or_none()
+
+    if key_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+
+    origin = request.headers.get("origin", "")
+    widget_config_data = key_row.widget_config or {}
+    allowed_origins = widget_config_data.get("allowed_origins", [])
+
+    if not origin or not origin_allowed(origin, allowed_origins):
+        return Response(status_code=204)
+
+    headers = {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Max-Age": "86400",
+        "Vary": "Origin",
+    }
+
+    return Response(status_code=204, headers=headers)

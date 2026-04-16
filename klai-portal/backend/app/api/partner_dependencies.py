@@ -14,17 +14,20 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 
+import jwt
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.services.partner_keys import verify_partner_key
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
+from app.services.widget_auth import decode_session_token
 
 logger = structlog.get_logger()
 
@@ -67,6 +70,76 @@ async def _update_last_used(key_id: str, org_id: int) -> None:
         logger.exception("Failed to update last_used_at", partner_key_id=key_id)
 
 
+async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthContext:
+    """Authenticate via widget JWT session token.
+
+    # @MX:ANCHOR: Widget session token auth path
+    # @MX:REASON: Called from get_partner_key for non-pk_live_ tokens; must be secure
+
+    Raises 401 for invalid/expired tokens.
+    Raises 401 if WIDGET_JWT_SECRET is not configured.
+
+    Args:
+        token: Raw Bearer token value (not starting with pk_live_)
+        db: Database session (used to load org for set_tenant)
+
+    Returns:
+        PartnerAuthContext built from JWT claims
+    """
+    if not settings.widget_jwt_secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    try:
+        payload = decode_session_token(token, settings.widget_jwt_secret)
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR) from exc
+
+    org_id: int = payload.get("org_id", 0)
+    wgt_id: str = payload.get("wgt_id", "")
+    kb_ids: list[int] = payload.get("kb_ids", [])
+
+    if not org_id or not wgt_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    # Load org for zitadel_org_id and set RLS tenant
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+    await set_tenant(db, org.id)
+
+    # Build kb_access with read-only access for all JWT kb_ids
+    kb_access = {kb_id: "read" for kb_id in kb_ids}
+
+    # Apply rate limiting using wgt_id as the key (same limit as pk_live_ path)
+    _SESSION_RATE_LIMIT_RPM = 60
+    redis_pool = await get_redis_pool()
+    if redis_pool:
+        allowed, retry_after = await check_rate_limit(redis_pool, wgt_id, _SESSION_RATE_LIMIT_RPM)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}},
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    structlog.contextvars.bind_contextvars(
+        wgt_id=wgt_id,
+        org_id=org_id,
+    )
+
+    return PartnerAuthContext(
+        key_id=wgt_id,
+        org_id=org_id,
+        zitadel_org_id=org.zitadel_org_id,
+        permissions={"chat": True, "feedback": False, "knowledge_append": False},
+        kb_access=kb_access,
+        rate_limit_rpm=_SESSION_RATE_LIMIT_RPM,
+    )
+
+
 async def get_partner_key(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -83,9 +156,9 @@ async def get_partner_key(
 
     token = auth_header[len("Bearer ") :]
 
-    # Step 2: Validate prefix
+    # Step 2a: Try JWT session token if not a pk_live_ key
     if not token.startswith("pk_live_"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+        return await _auth_via_session_token(token, db)
 
     # Step 3: Compute hash and look up key (active only — inactive returns None)
     key_hash = hashlib.sha256(token.encode()).hexdigest()

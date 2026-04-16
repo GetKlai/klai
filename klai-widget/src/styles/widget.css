@@ -1,0 +1,314 @@
+/* All styles are scoped to the Shadow DOM — no leakage to host page */
+
+:host {
+  /* CSS custom properties with defaults — override via css_variables from widget config */
+  --klai-primary-color: #2563eb;
+  --klai-text-color: #111827;
+  --klai-background-color: #ffffff;
+  --klai-border-radius: 12px;
+  --klai-font-family: system-ui, -apple-system, sans-serif;
+  --klai-bubble-size: 56px;
+  --klai-window-width: 380px;
+  --klai-window-height: 560px;
+  --klai-z-index: 2147483647;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Chat bubble (floating action button) */
+.klai-bubble {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: var(--klai-bubble-size);
+  height: var(--klai-bubble-size);
+  border-radius: 50%;
+  background-color: var(--klai-primary-color);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: var(--klai-z-index);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.klai-bubble:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.klai-bubble:focus-visible {
+  outline: 3px solid var(--klai-primary-color);
+  outline-offset: 3px;
+}
+
+.klai-bubble svg {
+  width: 24px;
+  height: 24px;
+  fill: #ffffff;
+}
+
+/* Chat window */
+.klai-window {
+  position: fixed;
+  bottom: 88px;
+  right: 20px;
+  width: var(--klai-window-width);
+  height: var(--klai-window-height);
+  background-color: var(--klai-background-color);
+  border-radius: var(--klai-border-radius);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  z-index: var(--klai-z-index);
+  overflow: hidden;
+  font-family: var(--klai-font-family);
+  color: var(--klai-text-color);
+}
+
+/* Window header */
+.klai-header {
+  padding: 16px;
+  background-color: var(--klai-primary-color);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.klai-header-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.klai-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #ffffff;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.klai-close-btn:hover {
+  opacity: 1;
+}
+
+.klai-close-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.klai-close-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: #ffffff;
+  stroke-width: 2;
+  fill: none;
+}
+
+/* Message list */
+.klai-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-behavior: smooth;
+}
+
+.klai-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.klai-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.klai-messages::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+/* Individual messages */
+.klai-message {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.klai-message--user {
+  align-self: flex-end;
+  background-color: var(--klai-primary-color);
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+.klai-message--assistant {
+  align-self: flex-start;
+  background-color: #f3f4f6;
+  color: var(--klai-text-color);
+  border-bottom-left-radius: 4px;
+}
+
+/* Error message */
+.klai-error {
+  align-self: center;
+  text-align: center;
+  font-size: 13px;
+  color: #dc2626;
+  padding: 8px 12px;
+  background-color: #fef2f2;
+  border-radius: 8px;
+  max-width: 90%;
+}
+
+/* Typing indicator */
+.klai-typing {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 14px;
+  background-color: #f3f4f6;
+  border-radius: 14px;
+  border-bottom-left-radius: 4px;
+}
+
+.klai-typing-dot {
+  width: 7px;
+  height: 7px;
+  background-color: #9ca3af;
+  border-radius: 50%;
+  animation: klai-bounce 1.2s ease-in-out infinite;
+}
+
+.klai-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.klai-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes klai-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+/* Input area */
+.klai-input-area {
+  padding: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+  background-color: var(--klai-background-color);
+}
+
+.klai-textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--klai-font-family);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--klai-text-color);
+  background-color: var(--klai-background-color);
+  min-height: 42px;
+  max-height: 120px;
+  overflow-y: auto;
+  transition: border-color 0.15s;
+}
+
+.klai-textarea:focus {
+  outline: none;
+  border-color: var(--klai-primary-color);
+}
+
+.klai-textarea::placeholder {
+  color: #9ca3af;
+}
+
+.klai-textarea:disabled {
+  background-color: #f9fafb;
+  cursor: not-allowed;
+}
+
+.klai-send-btn,
+.klai-stop-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+
+.klai-send-btn {
+  background-color: var(--klai-primary-color);
+  color: #ffffff;
+}
+
+.klai-send-btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.klai-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.klai-send-btn:focus-visible,
+.klai-stop-btn:focus-visible {
+  outline: 2px solid var(--klai-primary-color);
+  outline-offset: 2px;
+}
+
+.klai-send-btn svg,
+.klai-stop-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.klai-stop-btn {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+.klai-stop-btn:hover {
+  background-color: #fee2e2;
+}

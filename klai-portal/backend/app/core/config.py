@@ -165,6 +165,11 @@ class Settings(BaseSettings):
     imap_poll_interval_seconds: int = 60
     invite_bot_rate_limit_per_user_per_day: int = 10
 
+    # Widget JWT secret (SPEC-WIDGET-001)
+    # Generate with: openssl rand -hex 32
+    # When empty, widget endpoints return 503.
+    widget_jwt_secret: str = ""  # PORTAL_API_WIDGET_JWT_SECRET
+
     # CORS — static origins + wildcard regex for tenant subdomains
     # SECURITY-CRITICAL: This regex controls which origins can make credentialed
     # cross-origin requests. A permissive pattern (e.g. .*) would allow any site
