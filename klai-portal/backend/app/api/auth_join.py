@@ -54,11 +54,14 @@ async def create_join_request(
     display_name = info.get("name", info.get("preferred_username", ""))
 
     # C5.2: one pending per zitadel_user_id (idempotent)
+    # with_for_update prevents two concurrent requests from both inserting a duplicate
     pending_result = await db.execute(
-        select(PortalJoinRequest).where(
+        select(PortalJoinRequest)
+        .where(
             PortalJoinRequest.zitadel_user_id == user_id,
             PortalJoinRequest.status == "pending",
         )
+        .with_for_update()
     )
     existing = pending_result.scalar_one_or_none()
     if existing:

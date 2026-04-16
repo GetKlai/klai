@@ -39,7 +39,6 @@ class JoinRequestItem(BaseModel):
     display_name: str | None
     status: str
     requested_at: str
-    approval_token: str
 
 
 class JoinRequestsResponse(BaseModel):
@@ -83,7 +82,6 @@ async def list_join_requests(
                 display_name=row.display_name,
                 status=row.status,
                 requested_at=str(row.requested_at),
-                approval_token=row.approval_token,
             )
             for row in rows
         ]
@@ -123,6 +121,11 @@ async def approve_join_request(
 
         reviewer = "email-link"
         org_id = jr.org_id
+        if not org_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This request has no organisation assigned. Approve it from the admin panel.",
+            )
     else:
         # Bearer-based approval (admin UI)
         zitadel_user_id, org, caller_user = await _get_caller_org(credentials, db)

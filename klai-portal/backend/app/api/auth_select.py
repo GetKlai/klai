@@ -5,7 +5,7 @@ POST /api/auth/select-workspace  -- no Bearer required, uses ref from Redis
 """
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,16 @@ router = APIRouter(prefix="/api", tags=["auth"])
 pending_session_svc = PendingSessionService()
 
 
+class PendingSessionOrg(BaseModel):
+    id: int
+    name: str
+    slug: str
+
+
+class PendingSessionResponse(BaseModel):
+    orgs: list[PendingSessionOrg]
+
+
 class SelectWorkspaceRequest(BaseModel):
     ref: str
     org_id: int
@@ -31,6 +41,36 @@ class SelectWorkspaceRequest(BaseModel):
 
 class SelectWorkspaceResponse(BaseModel):
     workspace_url: str
+
+
+@router.get("/auth/pending-session", response_model=PendingSessionResponse)
+async def get_pending_session(
+    ref: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> PendingSessionResponse:
+    """Return the orgs available for a pending multi-org session (non-consuming).
+
+    Used by the select-workspace page to show workspace names before the user
+    submits their choice.
+    """
+    session_data = await pending_session_svc.retrieve(ref)
+    if not session_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or expired",
+        )
+
+    org_ids: list[int] = session_data.get("org_ids", [])
+    result = await db.execute(select(PortalOrg).where(PortalOrg.id.in_(org_ids)))
+    orgs_by_id = {org.id: org for org in result.scalars().all()}
+
+    return PendingSessionResponse(
+        orgs=[
+            PendingSessionOrg(id=oid, name=orgs_by_id[oid].name, slug=orgs_by_id[oid].slug)
+            for oid in org_ids
+            if oid in orgs_by_id
+        ]
+    )
 
 
 @router.post("/auth/select-workspace", response_model=SelectWorkspaceResponse)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation } from '@tanstack/react-query'
@@ -34,8 +34,12 @@ function JoinRequestPage() {
     enabled: !!auth.user,
   })
 
-  // Pre-fill display name from /api/me once loaded
-  const prefillName = me?.display_name ?? me?.email?.split('@')[0] ?? ''
+  // Pre-fill display name from /api/me once loaded (only if the user hasn't typed anything)
+  useEffect(() => {
+    if (me && !displayName) {
+      setDisplayName(me.display_name ?? me.email?.split('@')[0] ?? '')
+    }
+  }, [me]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -115,7 +119,7 @@ function JoinRequestPage() {
           <Input
             id="jr-name"
             type="text"
-            value={displayName || prefillName}
+            value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             maxLength={100}
           />
