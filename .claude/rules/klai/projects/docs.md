@@ -1,6 +1,9 @@
 ---
 paths:
   - "klai-docs/**"
+  - "klai-portal/frontend/src/routes/app/docs/**"
+  - "klai-portal/frontend/src/components/kb-editor/**"
+  - "klai-portal/frontend/src/lib/kb-editor/**"
 ---
 # Docs App (klai-docs) Pitfalls
 
@@ -29,3 +32,29 @@ paths:
 - `requireOrgAccess()` on ALL org-scoped routes — verify `X-Org-ID` matches DB record.
 - Personal KBs: `checkKBAccess(kb, userId)` on authenticated routes.
 - Public endpoints: return 404 for personal KBs (never 403 — leaks existence).
+
+## KB Editor (portal) — BlockNote persistence (HIGH)
+
+**Never use `blocksToHTMLLossy` for saving page content.** It silently drops empty paragraphs,
+nested block structure, and custom inline node props (e.g. WikiLink's `kbSlug`).
+It is a display-only serializer, not a persistence format.
+
+**Use:** `JSON.stringify(editor.document)` — BlockNote's native lossless format.
+
+**On load — format detection by prefix:**
+```typescript
+const trimmed = initialContent.trimStart()
+const format = trimmed.startsWith('[') ? 'json'
+             : trimmed.startsWith('<') ? 'html'
+             : 'markdown'
+```
+Existing pages stored as HTML or markdown still load correctly via this fallback.
+
+## KB Editor (portal) — Save on navigation (HIGH)
+
+**`beforeunload` fires for full-page navigation (address bar, browser back), NOT for TanStack Router SPA navigation.**
+
+- Full-page unload: use `fetch` with `keepalive: true`. This supports `Authorization` headers and continues after the page unloads. `navigator.sendBeacon` cannot set auth headers — do not use it.
+- SPA sidebar navigation: use the `doSaveRef` pattern — layout holds a ref to the child page's `saveNow` function, calls it in `onSelect` before route change.
+
+**These two mechanisms must both be present.** One alone is not enough.
