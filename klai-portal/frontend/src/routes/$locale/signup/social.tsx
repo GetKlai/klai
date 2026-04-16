@@ -27,7 +27,7 @@ function SocialSignupPage() {
 
   // Guard: if no identity info in URL, redirect back to signup
   if (!email) {
-    navigate({ to: '/$locale/signup', params: { locale } })
+    void navigate({ to: '/$locale/signup', params: { locale } })
     return null
   }
 
