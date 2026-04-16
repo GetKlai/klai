@@ -244,7 +244,7 @@ def test_generate_widget_id_format():
     widget_id = generate_widget_id()
 
     assert widget_id.startswith("wgt_"), f"widget_id must start with 'wgt_', got: {widget_id}"
-    suffix = widget_id[len("wgt_"):]
+    suffix = widget_id[len("wgt_") :]
     assert len(suffix) == 40, f"suffix must be 40 chars, got {len(suffix)}: {suffix}"
     assert suffix == suffix.lower(), "suffix must be lowercase"
     int(suffix, 16)  # raises ValueError if not valid hex
