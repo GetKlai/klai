@@ -516,7 +516,7 @@ class ZitadelClient:
         )
         resp.raise_for_status()
         data = resp.json()
-        logger.debug(
+        logger.info(
             "retrieve_idp_intent %s: top_keys=%s idpInformation_keys=%s rawInformation_keys=%s has_userId=%s",
             idp_intent_id,
             list(data.keys()),
