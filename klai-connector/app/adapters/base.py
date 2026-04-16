@@ -52,6 +52,9 @@ class DocumentRef:
     source_url: str = ""
     last_edited: str = ""  # ISO 8601 from source (used by sync engine for reconciliation)
     images: list[ImageRef] | None = None
+    # @MX:NOTE: [AUTO] SPEC-CRAWL-003 REQ-12 — 16-char lowercase hex SimHash fingerprint,
+    # empty string when page has <20 words. Populated by WebCrawlerAdapter._process_results.
+    content_fingerprint: str = ""
 
 
 class BaseAdapter(ABC):

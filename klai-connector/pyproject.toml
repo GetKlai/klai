@@ -23,6 +23,7 @@ dependencies = [
     "minio>=7.2.0",
     "filetype>=1.2.0",
     "msal>=1.31",
+    "trafilatura>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]
@@ -58,3 +59,8 @@ typeCheckingMode = "strict"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
+]

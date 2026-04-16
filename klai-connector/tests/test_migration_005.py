@@ -26,7 +26,7 @@ import sqlalchemy as sa
 def _load_migration_module() -> types.ModuleType:
     """Load migration 005 from the alembic/versions directory by file path."""
     versions_dir = pathlib.Path(__file__).parent.parent / "alembic" / "versions"
-    path = versions_dir / "migration_005_add_sync_run_quality_status.py"
+    path = versions_dir / "005_add_sync_run_quality_status.py"
     assert path.exists(), f"Migration file not found: {path}"
     spec = importlib.util.spec_from_file_location("migration_005", path)
     assert spec is not None and spec.loader is not None

@@ -15,6 +15,7 @@ import structlog
 
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
+from app.services.content_fingerprint import compute_content_fingerprint, similarity
 from app.services.image_utils import resolve_relative_url
 
 logger = structlog.get_logger(__name__)
@@ -60,6 +61,11 @@ class _CrawlConfig:
     path_prefix: str | None
     content_selector: str | None
     cookies: list[dict[str, Any]] | None
+    # @MX:NOTE: [AUTO] SPEC-CRAWL-003 Layer A — both must be set to enable canary check.
+    canary_url: str | None
+    canary_fingerprint: str | None
+    # @MX:NOTE: [AUTO] SPEC-CRAWL-003 Layer B — CSS selector for login indicator.
+    login_indicator_selector: str | None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> _CrawlConfig:
@@ -70,6 +76,9 @@ class _CrawlConfig:
             path_prefix=d.get("path_prefix") or None,
             content_selector=d.get("content_selector") or None,
             cookies=d.get("cookies") or None,
+            canary_url=d.get("canary_url") or None,
+            canary_fingerprint=d.get("canary_fingerprint") or None,
+            login_indicator_selector=d.get("login_indicator_selector") or None,
         )
 
 
@@ -111,6 +120,42 @@ class CrawlJobPendingError(Exception):
         super().__init__(f"Crawl job {task_id} still pending (started {job_started_at})")
 
 
+# Similarity threshold below which the canary check aborts the sync (Layer A).
+# @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-4 — threshold must stay at 0.80.
+# @MX:REASON: lowering causes false negatives; raising causes false positives on minor edits.
+_CANARY_SIMILARITY_THRESHOLD = 0.80
+
+
+class CanaryMismatchError(Exception):
+    """Raised when the live canary page fingerprint deviates too far from the stored fingerprint.
+
+    Layer A fail-fast guard per SPEC-CRAWL-003 REQ-4. The sync engine catches this
+    exception and records quality_status='canary_failed' on the sync run.
+
+    Attributes:
+        similarity: Computed similarity between live and stored fingerprints (0.0–1.0).
+        expected: The stored reference fingerprint hex string.
+        actual: The fingerprint computed from the live page (empty string if page was empty).
+        canary_url: The URL that was checked.
+    """
+
+    def __init__(
+        self,
+        similarity: float,
+        expected: str,
+        actual: str,
+        canary_url: str,
+    ) -> None:
+        self.similarity = similarity
+        self.expected = expected
+        self.actual = actual
+        self.canary_url = canary_url
+        super().__init__(
+            f"Canary fingerprint mismatch at {canary_url}: "
+            f"similarity={similarity:.2f} (threshold={_CANARY_SIMILARITY_THRESHOLD})"
+        )
+
+
 class WebCrawlerAdapter(BaseAdapter):
     """Web crawler adapter that uses Crawl4AI for deep-crawl website ingestion.
 
@@ -133,6 +178,9 @@ class WebCrawlerAdapter(BaseAdapter):
         # Per-connector cache: {connector_id: {url: markdown}}
         # Populated by list_documents(), consumed by fetch_document(), freed by post_sync().
         self._crawl_cache: dict[str, dict[str, str]] = {}
+        # @MX:NOTE: [AUTO] SPEC-CRAWL-003 Layer B — count of pages skipped due to auth wall.
+        # Reset at the start of each list_documents() call. Read by the sync engine.
+        self._auth_walled_count: int = 0
 
     async def aclose(self) -> None:
         """Close the persistent HTTP client."""
@@ -145,6 +193,64 @@ class WebCrawlerAdapter(BaseAdapter):
         if self._api_key:
             return {"Authorization": f"Bearer {self._api_key}"}
         return {}
+
+    async def _crawl_canary(self, cfg: _CrawlConfig) -> None:
+        """Layer A: fetch the canary URL and compare its fingerprint to the stored value.
+
+        # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-4 — fail-fast guard before BFS.
+        # @MX:REASON: CanaryMismatchError must propagate to sync engine without modification.
+
+        Raises:
+            CanaryMismatchError: If the live fingerprint similarity < _CANARY_SIMILARITY_THRESHOLD,
+                or if the canary page returned no content (similarity defaults to 0.0).
+        """
+        assert cfg.canary_url is not None  # caller guarantees this
+        assert cfg.canary_fingerprint is not None  # caller guarantees this
+
+        params: dict[str, Any] = {
+            "cache_mode": "bypass",
+            "word_count_threshold": 0,
+            "page_timeout": 30000,
+        }
+        payload: dict[str, Any] = {
+            "urls": [cfg.canary_url],
+            "crawler_config": {"type": "CrawlerRunConfig", "params": params},
+        }
+        if cfg.cookies:
+            payload["hooks"] = _build_cookie_hooks(cfg.cookies)
+
+        response = await self._http_client.post(
+            f"{self._api_url}/crawl",
+            json=payload,
+            headers=self._auth_headers(),
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        # Extract markdown from the first result
+        pages: list[dict[str, Any]] = result.get("results", [])
+        live_markdown = ""
+        if pages:
+            live_markdown = _extract_markdown(pages[0])
+
+        live_fp = compute_content_fingerprint(live_markdown)
+        sim = similarity(live_fp, cfg.canary_fingerprint) if live_fp else 0.0
+
+        logger.info(
+            "canary_check",
+            canary_url=cfg.canary_url,
+            similarity=round(sim, 4),
+            threshold=_CANARY_SIMILARITY_THRESHOLD,
+            live_fingerprint=live_fp or "(empty)",
+        )
+
+        if sim < _CANARY_SIMILARITY_THRESHOLD:
+            raise CanaryMismatchError(
+                similarity=sim,
+                expected=cfg.canary_fingerprint,
+                actual=live_fp,
+                canary_url=cfg.canary_url,
+            )
 
     async def _fetch_sitemap_urls(self, base_url: str) -> list[str]:
         """Fetch same-domain URLs from sitemap.xml. Returns [] on any error."""
@@ -219,6 +325,15 @@ class WebCrawlerAdapter(BaseAdapter):
         else:
             params["js_code_before_wait"] = _JS_REMOVE_CHROME
             params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
+
+        # @MX:NOTE: [AUTO] SPEC-CRAWL-003 Layer B — append CSS presence check to wait_for.
+        # Crawl4AI marks the result as failed when wait_for times out, which signals
+        # auth-walled pages when login_indicator_selector is not present in the DOM.
+        if cfg.login_indicator_selector:
+            base_wait = params.get("wait_for", "")
+            css_check = f"css:{cfg.login_indicator_selector}"
+            params["wait_for"] = f"{base_wait} || {css_check}" if base_wait else css_check
+
         return params
 
     async def _start_crawl(
@@ -314,12 +429,17 @@ class WebCrawlerAdapter(BaseAdapter):
         data: dict[str, Any],
         cache: dict[str, str],
         base_url: str,
+        login_indicator_selector: str | None = None,
     ) -> list[DocumentRef]:
         """Convert Crawl4AI results into DocumentRef objects and populate the cache.
 
         Accepts both BFS task result payloads (``{"result": {"results": [...]}}`` after
         unwrapping in _poll_task) and sync /crawl responses (``{"results": [...]}``).
         Skips pages with empty markdown or from a different domain.
+
+        Layer B: when login_indicator_selector is set, pages with success=False are counted
+        as auth-walled (increments self._auth_walled_count) and excluded from the refs.
+        Layer C: attaches content_fingerprint to each DocumentRef (SPEC-CRAWL-003 REQ-12).
         """
         # Normalize: sync /crawl uses "results", BFS task result uses "result" (already
         # unwrapped to the inner dict by _poll_task, so also has "results").
@@ -337,6 +457,14 @@ class WebCrawlerAdapter(BaseAdapter):
 
         for page in pages:
             url: str = page.get("url", "")
+
+            # Layer B: skip auth-walled pages when login_indicator_selector is configured.
+            # Crawl4AI sets success=False when the wait_for CSS selector never appeared.
+            if login_indicator_selector and not page.get("success", True):
+                if url:
+                    self._auth_walled_count += 1
+                continue
+
             markdown = _extract_markdown(page)
 
             if not url or not markdown.strip():
@@ -368,6 +496,9 @@ class WebCrawlerAdapter(BaseAdapter):
                     if img.get("src")
                 ] or None
 
+            # Layer C prep: compute SimHash fingerprint for post-sync cluster analysis.
+            fp = compute_content_fingerprint(markdown)
+
             refs.append(
                 DocumentRef(
                     path=path,
@@ -377,6 +508,7 @@ class WebCrawlerAdapter(BaseAdapter):
                     source_ref=url,
                     source_url=url,
                     images=images,
+                    content_fingerprint=fp,
                 )
             )
 
@@ -396,6 +528,7 @@ class WebCrawlerAdapter(BaseAdapter):
         cache: dict[str, str],
         base_url: str,
         cookies: list[dict[str, Any]] | None = None,
+        login_indicator_selector: str | None = None,
     ) -> list[DocumentRef]:
         """Crawl a list of URLs via the synchronous /crawl endpoint and return DocumentRefs.
 
@@ -423,7 +556,11 @@ class WebCrawlerAdapter(BaseAdapter):
                     timeout=300.0,
                 )
                 response.raise_for_status()
-                refs.extend(self._process_results(response.json(), cache, base_url=base_url))
+                refs.extend(self._process_results(
+                    response.json(), cache,
+                    base_url=base_url,
+                    login_indicator_selector=login_indicator_selector,
+                ))
             except Exception as exc:
                 logger.warning("batch_crawl_failed", batch_index=i // 100, error=str(exc))
         return refs
@@ -436,7 +573,11 @@ class WebCrawlerAdapter(BaseAdapter):
         """Phase 1: BFS discovery — finds all linked pages without content filtering."""
         task_id = await self._start_crawl(cfg, self._build_discovery_params(), cfg.cookies)
         result = await self._poll_task(task_id)
-        refs = self._process_results(result, cache, base_url=cfg.base_url)
+        refs = self._process_results(
+            result, cache,
+            base_url=cfg.base_url,
+            login_indicator_selector=cfg.login_indicator_selector,
+        )
         logger.info("discovery_complete", url_count=len(refs), base_url=cfg.base_url)
         return refs
 
@@ -455,7 +596,10 @@ class WebCrawlerAdapter(BaseAdapter):
         if not cfg.content_selector or not refs:
             return refs
         urls = [ref.ref for ref in refs]
-        extracted = await self._batch_crawl_urls(urls, page_params, cache, cfg.base_url, cfg.cookies)
+        extracted = await self._batch_crawl_urls(
+            urls, page_params, cache, cfg.base_url, cfg.cookies,
+            login_indicator_selector=cfg.login_indicator_selector,
+        )
         logger.info("extraction_complete", page_count=len(extracted), base_url=cfg.base_url)
         return extracted
 
@@ -485,6 +629,7 @@ class WebCrawlerAdapter(BaseAdapter):
         )
         extra = await self._batch_crawl_urls(
             supplement_urls, page_params, cache, cfg.base_url, cfg.cookies,
+            login_indicator_selector=cfg.login_indicator_selector,
         )
         return [*refs, *extra]
 
@@ -506,6 +651,7 @@ class WebCrawlerAdapter(BaseAdapter):
         connector_id = str(connector.connector_id)
         cache: dict[str, str] = {}
         self._crawl_cache[connector_id] = cache
+        self._auth_walled_count = 0
 
         cfg = _CrawlConfig.from_dict(connector.config)
         page_params = self._build_page_crawl_params(cfg)
@@ -516,11 +662,25 @@ class WebCrawlerAdapter(BaseAdapter):
             max_pages=cfg.max_pages,
             authenticated=bool(cfg.cookies),
             has_selector=bool(cfg.content_selector),
+            has_canary=bool(cfg.canary_url and cfg.canary_fingerprint),
+            has_login_indicator=bool(cfg.login_indicator_selector),
         )
+
+        # Layer A: fail-fast canary check before running the full BFS.
+        # Raises CanaryMismatchError if the live page has drifted too far from stored fingerprint.
+        if cfg.canary_url and cfg.canary_fingerprint:
+            await self._crawl_canary(cfg)
 
         refs = await self._run_discovery(cfg, cache)
         refs = await self._run_extraction(cfg, refs, cache, page_params)
         refs = await self._run_sitemap_supplement(cfg, refs, cache, page_params)
+
+        if self._auth_walled_count:
+            logger.warning(
+                "auth_walled_pages_detected",
+                auth_walled_count=self._auth_walled_count,
+                base_url=cfg.base_url,
+            )
 
         logger.info("crawl_complete", page_count=len(refs), base_url=cfg.base_url)
         return refs
