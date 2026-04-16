@@ -100,7 +100,12 @@ class WebcrawlerConfig(BaseModel):
                     f"got: {self.canary_url!r}"
                 )
 
-        # login_indicator_selector: non-empty, no angle brackets, no 'script'
+        # login_indicator_selector: non-empty, no angle brackets, no javascript: URI.
+        # SPEC intent is to block HTML/JS injection in a CSS selector field. Angle
+        # brackets cover `<script>` injection; the javascript: check catches
+        # `a[href^=javascript:...]` exploit attempts. Do NOT ban the substring
+        # `script` alone — that would reject legitimate selectors like `.transcript`
+        # or `[data-script-version]`.
         if self.login_indicator_selector is not None:
             sel = self.login_indicator_selector
             if not sel:
@@ -109,9 +114,9 @@ class WebcrawlerConfig(BaseModel):
                 raise ValueError(
                     "login_indicator_selector must not contain '<' or '>'"
                 )
-            if "script" in sel.lower():
+            if "javascript:" in sel.lower():
                 raise ValueError(
-                    "login_indicator_selector must not contain 'script'"
+                    "login_indicator_selector must not contain 'javascript:' URIs"
                 )
 
         return self

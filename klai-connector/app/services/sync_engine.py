@@ -299,20 +299,19 @@ class SyncEngine:
                 if len(fp_entries) >= layer_c_min_pages:
                     clusters = find_boilerplate_clusters(fp_entries)
                     if clusters:
-                        # Build per-ref URL map for sample_urls in detail logs.
-                        fp_to_urls: dict[str, list[str]] = {}
-                        for r in refs:
-                            if r.content_fingerprint:
-                                fp_to_urls.setdefault(r.content_fingerprint, []).append(r.source_url or r.ref)
+                        # URL -> fingerprint map for sample_fingerprint lookup in detail logs.
+                        # Clusters themselves are lists of URLs (see find_boilerplate_clusters
+                        # return type), so sample_urls is cluster[:3] directly.
+                        url_to_fp = dict(fp_entries)
 
                         total_pages = len(fp_entries)
                         pages_in_clusters = sum(len(c) for c in clusters)
                         largest_ratio = len(clusters[0]) / total_pages
 
                         logger.warning(
-                            "Sync quality degraded: boilerplate clusters detected for connector %s "
-                            "(cluster_count=%d, pages_in_clusters=%d, largest_ratio=%.3f, total=%d)",
-                            connector_id,
+                            "Sync quality degraded: boilerplate clusters detected "
+                            "(cluster_count=%d, pages_in_clusters=%d, "
+                            "largest_ratio=%.3f, total=%d)",
                             len(clusters),
                             pages_in_clusters,
                             largest_ratio,
@@ -326,11 +325,10 @@ class SyncEngine:
                             },
                         )
                         for rank, cluster in enumerate(clusters[:3], start=1):
-                            sample_fp = cluster[0]
-                            sample_urls = fp_to_urls.get(sample_fp, [])[:3]
+                            sample_urls = cluster[:3]
+                            sample_fp = url_to_fp.get(sample_urls[0], "") if sample_urls else ""
                             logger.warning(
-                                "Boilerplate cluster detail for connector %s (rank=%d, size=%d, ratio=%.3f)",
-                                connector_id,
+                                "Boilerplate cluster detail (rank=%d, size=%d, ratio=%.3f)",
                                 rank,
                                 len(cluster),
                                 len(cluster) / total_pages,
@@ -359,9 +357,8 @@ class SyncEngine:
                 # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-5 — Layer A fail-fast abort.
                 # @MX:REASON: AUTH_ERROR status + structured error_details per REQ-3 + REQ-5.
                 logger.error(
-                    "Sync aborted: canary fingerprint mismatch for connector %s "
+                    "Sync aborted: canary fingerprint mismatch "
                     "(canary_url=%s, similarity=%.3f)",
-                    connector_id,
                     exc.canary_url,
                     exc.similarity,
                     extra={
