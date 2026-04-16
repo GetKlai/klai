@@ -9,7 +9,7 @@ tenant/user is safe (INSERT ... ON CONFLICT DO NOTHING pattern).
 """
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,6 +130,12 @@ async def ensure_default_knowledge_bases(
     Called from tenant provisioning. Non-fatal: logs warning on failure.
     """
     try:
+        # Provisioning runs with the admin's org_id in the session; override it so
+        # RLS WITH CHECK (derived from USING) accepts inserts for the new tenant.
+        await db.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, false)"),
+            {"org_id": str(org_id)},
+        )
         await create_default_org_kb(org_id, created_by=user_id, db=db)
         await create_default_personal_kb(user_id, org_id, db=db)
         await db.commit()
