@@ -32,9 +32,9 @@ export function useKBEditor(): KBEditorCtxValue {
   return ctx
 }
 
-/** Resolve a page ID (full UUID or prefix) to its slug. Falls back to treating id as slug. */
+/** Resolve a page UUID to its slug. Falls back to treating pageId as slug (for new/unsaved pages). */
 export function resolveSlug(pageId: string, pageIndex: PageIndexEntry[]): string {
-  const match = pageIndex.find((p) => p.id && p.id.startsWith(pageId))
+  const match = pageIndex.find((p) => p.id === pageId)
   return match?.slug ?? pageId
 }
 
