@@ -70,6 +70,7 @@ function KBPageEditor() {
   const editorRef = useRef<BlockPageEditorHandle>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isSavingRef = useRef(false)
+  const pendingSaveRef = useRef(false)
 
   // Stable refs for async save
   const tokenRef = useRef(token)
@@ -113,9 +114,11 @@ function KBPageEditor() {
   }, [page, setSaveStatus])
 
   const doSave = useCallback(async () => {
-    // Guard: prevent concurrent saves — two in-flight PUTs cause a Gitea SHA conflict (500)
-    if (isSavingRef.current) return
+    // Guard: prevent concurrent saves — two in-flight PUTs cause a Gitea SHA conflict (500).
+    // If a save is already running, queue exactly one follow-up so the latest content is not lost.
+    if (isSavingRef.current) { pendingSaveRef.current = true; return }
     isSavingRef.current = true
+    pendingSaveRef.current = false
     const path = selectedPathRef.current
     const title = titleRef.current
     const tok = tokenRef.current
@@ -171,6 +174,8 @@ function KBPageEditor() {
       throw err // propagate so callers know save failed
     } finally {
       isSavingRef.current = false
+      // If content changed while this save was in flight, run one more save now
+      if (pendingSaveRef.current) void doSave()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage, pageIndex])
