@@ -383,7 +383,7 @@ function EditConnectorPage() {
               )}
               {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
                 <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-3 space-y-1.5">
-                  <p className="text-xs font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_ai_selector_found()}</p>
+                  <p className="text-xs font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_ai_selector_use()}</p>
                   <code className="text-xs text-[var(--color-accent-dark)] font-mono">{previewResult.content_selector}</code>
                 </div>
               )}
