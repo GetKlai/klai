@@ -517,12 +517,12 @@ class ZitadelClient:
         resp.raise_for_status()
         data = resp.json()
         logger.debug(
-            "retrieve_idp_intent response",
-            idp_intent_id=idp_intent_id,
-            keys=list(data.keys()),
-            idp_information_keys=list(data.get("idpInformation", {}).keys()),
-            raw_information_keys=list(data.get("idpInformation", {}).get("rawInformation", {}).keys()),
-            has_user_id=bool(data.get("userId")),
+            "retrieve_idp_intent %s: top_keys=%s idpInformation_keys=%s rawInformation_keys=%s has_userId=%s",
+            idp_intent_id,
+            list(data.keys()),
+            list(data.get("idpInformation", {}).keys()),
+            list(data.get("idpInformation", {}).get("rawInformation", {}).keys()),
+            bool(data.get("userId")),
         )
         return data
 
