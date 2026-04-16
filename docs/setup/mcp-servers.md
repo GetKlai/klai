@@ -55,7 +55,7 @@ It is **cross-platform** — all platform-specific settings live in local config
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
+      "args": ["@playwright/mcp@0.0.70", "--config", ".claude/playwright-config-win.json"],
       "env": {}
     },
     "codeindex": {
@@ -97,102 +97,74 @@ It is **cross-platform** — all platform-specific settings live in local config
 
 ## 3. Set up Playwright (per machine)
 
-Playwright uses a **local config file** for platform-specific settings. This file is gitignored —
-each developer creates their own from the example.
+Playwright uses **platform-specific config files** committed to git. The `.mcp.json` points to
+the Windows config by default. Mac developers update the `--config` arg to point to the Mac file.
 
-```bash
-cp .playwright-mcp/config.example.json .playwright-mcp/config.json
+| Platform | Config file |
+|----------|-------------|
+| **Windows** | `.claude/playwright-config-win.json` |
+| **macOS** | `.claude/playwright-config-mac.json` |
+
+Update `.mcp.json` to point to the right file for your platform:
+
+```json
+"args": ["@playwright/mcp@0.0.70", "--config", ".claude/playwright-config-mac.json"]
 ```
 
-Then edit `.playwright-mcp/config.json` and set `executablePath` and `storageState` for your
-platform:
+### Config files
 
-| Platform | `executablePath` |
-|----------|------------------|
-| **macOS** | `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser` |
-| **Windows** | `C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe` |
-| **Linux** | `/usr/bin/brave-browser` |
-
-**Example config (macOS):**
+**Windows** (`.claude/playwright-config-win.json`):
 
 ```json
 {
-  "browser": "chromium",
-  "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-  "isolated": true,
-  "launchOptions": {
-    "ignoreDefaultArgs": ["--no-sandbox"]
-  },
-  "contextOptions": {
-    "storageState": "/Users/yourname/.claude/mcp-brave-storageState.json"
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "C:\\Users\\yourname\\.claude\\mcp-brave-profile"
   }
 }
 ```
 
-**Example config (Windows):**
+**macOS** (`.claude/playwright-config-mac.json`):
 
 ```json
 {
-  "browser": "chromium",
-  "executablePath": "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
-  "isolated": true,
-  "launchOptions": {
-    "ignoreDefaultArgs": ["--no-sandbox"]
-  },
-  "contextOptions": {
-    "storageState": "C:/Users/yourname/.claude/mcp-brave-storageState.json"
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "/Users/yourname/.claude/mcp-brave-profile"
   }
 }
 ```
 
-> **Note:** All paths must be absolute. Use forward slashes on all platforms (including Windows).
-> No `~` expansion in JSON — write the full path.
+Update `yourname` to match your local username.
 
-### How it works: isolated mode + storageState
+### How it works: bundled Chromium + userDataDir
 
-`"isolated": true` creates a fresh browser context per Claude Code session and **closes it
-automatically on disconnect**. This means:
+Playwright uses its **bundled Chromium** (not Brave or Chrome). This avoids a Windows limitation
+where Brave/Chrome cannot run two simultaneous instances with different user profiles — the second
+instance becomes a background process with no visible window.
 
-- Browser and tabs close when the Claude Code session ends — no lingering Brave windows.
-- Multiple Claude Code windows can run in parallel without profile locking.
+Login state persists across Claude Code sessions via `userDataDir` — a directory on disk where
+Chromium stores cookies, localStorage, and session data. The profile accumulates logins over time;
+you only need to log in once per site.
 
-Login state persists across sessions via `storageState.json` — a JSON snapshot of cookies and
-localStorage that is loaded at context creation.
+### First-time login
 
-### First-time setup: initialize the session file
-
-Run the setup script once to create the `storageState.json` file. If you have an existing
-persistent profile, it exports your current login cookies. If not, it creates an empty file.
-
-```bash
-node scripts/export-mcp-session.mjs
-```
-
-Then restart Claude Code.
-
-### Refreshing the session (after login expiry)
-
-If your login expires (e.g., after 30 days), log in again during a test session, then re-run:
-
-```bash
-node scripts/export-mcp-session.mjs
-```
-
-This re-exports the updated cookies from the last active profile or prompts for a fresh login.
+On first use, Playwright opens Chromium at the login page. Log in manually in that window.
+Credentials are saved to `userDataDir` automatically. Subsequent sessions start logged in.
 
 ### Starting from scratch
 
-Delete the storageState file to reset to a logged-out state:
+Delete the profile directory to reset to a logged-out state:
 
 ```bash
-# macOS / Linux
-rm ~/.claude/mcp-brave-storageState.json
-
 # Windows (Git Bash)
-rm ~/AppData/../.claude/mcp-brave-storageState.json
+rm -rf ~/.claude/mcp-brave-profile
+
+# macOS / Linux
+rm -rf ~/.claude/mcp-brave-profile
 ```
 
-Then re-run `node scripts/export-mcp-session.mjs` (creates empty file) and log in on first use.
+Then restart Claude Code. Log in again on first use.
 
 For session management rules (when to open/close the browser), see
 `.claude/rules/klai/lang/testing.md`.
@@ -362,11 +334,9 @@ uvx mcp-grafana --help
    on every startup → MCP timeout → Serena never available. Fix: use `"command": "serena"`.
 3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
    file patterns.
-4. **Playwright config missing** — `config.json` not found. Fix: `cp .playwright-mcp/config.example.json .playwright-mcp/config.json` and edit paths.
-5. **Playwright storageState missing** — `storageState.json` not found → MCP fails on startup. Fix: `node scripts/export-mcp-session.mjs` then restart Claude Code.
-6. **Playwright opens Chrome instead of Brave** — `"browser": "chromium"` missing from `config.json`. Fix: add that field.
-7. **Playwright browser not closing** — `"isolated": true` missing from `config.json`. Without it, the browser stays open across sessions.
-8. **Brave warns "unsupported command-line flag: --no-sandbox"** — Playwright injects `--no-sandbox` by default for all Chromium launches. Brave treats it as unsupported. Fix: add `"launchOptions": { "ignoreDefaultArgs": ["--no-sandbox"] }` to `config.json`.
+4. **Playwright config missing** — config file not found. Fix: verify `.claude/playwright-config-win.json` or `.claude/playwright-config-mac.json` exists (both are committed to git). Check `--config` arg in `.mcp.json` points to the right platform file.
+5. **Playwright browser runs as background process, no visible window** — Brave/Chrome is already running. Playwright cannot launch a second instance of the same browser with a different profile on Windows. Fix: use bundled `"browserName": "chromium"` (no `executablePath`).
+6. **Playwright browser window not visible after login** — `userDataDir` path incorrect or doesn't exist yet. Fix: verify the path in the config file matches your username and that the parent directory (`~/.claude/`) exists.
 9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
 10. **CodeIndex stale index** — Index behind HEAD. Symptoms: impact analysis misses recent code. Fix: `codeindex update && node scripts/codeindex-enrich.mjs`
 11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.

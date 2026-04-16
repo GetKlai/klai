@@ -16,15 +16,10 @@
       "env": {}
     },
     "playwright": {
-      "$comment": "Browser automation for E2E spot-checks. Uses persistent Brave profile for login state. CLI flags (not config.json) to avoid format drift.",
+      "$comment": "Browser automation. Uses local .playwright-mcp/config.json (gitignored, per machine). Copy from config.example.json and set storageState path.",
       "type": "stdio",
       "command": "npx",
-      "args": [
-        "@playwright/mcp@0.0.70",
-        "--browser", "chromium",
-        "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        "--user-data-dir", "/Users/mark/.claude/mcp-brave-profile"
-      ],
+      "args": ["@playwright/mcp@0.0.70", "--config", ".playwright-mcp/config.json"],
       "env": {}
     },
     "playwright-isolated": {
@@ -56,9 +51,10 @@
       }
     },
     "victorialogs": {
-      "$comment": "LogsQL queries against VictoriaLogs. Requires SSH tunnel: ./scripts/victorialogs-tunnel.sh",
+      "$comment": "LogsQL queries against VictoriaLogs. Requires SSH tunnel: ./scripts/victorialogs-tunnel.sh. Binary must be at ~/bin/mcp-victorialogs (Mac) or %USERPROFILE%\\bin\\mcp-victorialogs.exe (Windows). Set VICTORIALOGS_BASIC_AUTH_B64 in shell profile.",
       "type": "stdio",
-      "command": "/Users/mark/bin/mcp-victorialogs",
+      "command": "node",
+      "args": [".claude/scripts/victorialogs-launcher.mjs"],
       "env": {
         "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428",
         "VL_INSTANCE_HEADERS": "Authorization=Basic ${VICTORIALOGS_BASIC_AUTH_B64}"
