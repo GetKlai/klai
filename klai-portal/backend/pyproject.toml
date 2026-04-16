@@ -20,6 +20,13 @@ dependencies = [
     "pyyaml>=6.0",
     "structlog>=25.0",
     "redis[hiredis]>=5.0",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "youtube-transcript-api>=0.6",
+    "feedparser>=6.0",
+    "pillow>=11.0",
+    "pytesseract>=0.3",
 ]
 
 [project.optional-dependencies]

@@ -1220,21 +1220,22 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     file: UploadFile = File(...),
 ) -> IngestResponse:
-    """Upload a text-based file into a KB. Supports .txt, .md, .csv, .json, .xml.
+    """Upload a file into a KB. Supports PDF, DOCX, XLSX, TXT, MD, CSV, JSON, XML.
     Requires contributor or owner role.
     """
+    from app.services.file_parser import parse_file
+
     caller_id, org, _ = await _get_caller_org(credentials, db)
     kb = await _get_kb_or_404(kb_slug, org.id, db)
     user_id = caller_id if kb.owner_type == "user" else None
     raw = await file.read()
-    try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
+    filename = file.filename or "untitled"
+    content = parse_file(raw, filename)
+    if not content.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File must be UTF-8 encoded text. PDF and Word support coming soon.",
+            detail="Could not extract text from file.",
         )
-    filename = file.filename or "untitled"
     artifact_id = await knowledge_ingest_client.ingest_document(
         org_id=org.zitadel_org_id,
         kb_slug=kb.slug,
@@ -1243,6 +1244,128 @@ async def upload_document(
         user_id=user_id,
         source_type="manual_upload",
         content_type=file.content_type or "text/plain",
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+@router.post("/knowledge-bases/{kb_slug}/documents/upload-image", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+async def upload_image(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+) -> IngestResponse:
+    """Upload an image and extract text via OCR."""
+    from app.services.file_parser import parse_image_ocr
+
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    raw = await file.read()
+    filename = file.filename or "image.png"
+    content = parse_image_ocr(raw, filename)
+    if not content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from image.",
+        )
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=filename,
+        user_id=user_id,
+        source_type="image_ocr",
+        content_type="text/plain",
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+class YouTubeIngestRequest(BaseModel):
+    url: str
+    title: str | None = None
+
+
+@router.post("/knowledge-bases/{kb_slug}/documents/youtube", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+async def ingest_youtube(
+    kb_slug: str,
+    body: YouTubeIngestRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestResponse:
+    """Extract transcript from YouTube video and ingest."""
+    import re
+
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    # Extract video ID
+    match = re.search(r"(?:v=|youtu\.be/|/embed/|/v/)([a-zA-Z0-9_-]{11})", body.url)
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid YouTube URL")
+    video_id = match.group(1)
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        transcript_list = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, video_id)
+        content = "\n".join(entry["text"] for entry in transcript_list)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not fetch transcript: {e}") from None
+    title = body.title or f"YouTube: {video_id}"
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=title,
+        user_id=user_id,
+        source_type="youtube_transcript",
+        content_type="meeting_transcript",
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+class RSSIngestRequest(BaseModel):
+    url: str
+    title: str | None = None
+    max_items: int = 50
+
+
+@router.post("/knowledge-bases/{kb_slug}/documents/rss", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+async def ingest_rss(
+    kb_slug: str,
+    body: RSSIngestRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestResponse:
+    """Parse RSS feed and ingest entries as documents."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    try:
+        import feedparser
+
+        feed = await asyncio.to_thread(feedparser.parse, body.url)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not parse RSS feed: {e}") from None
+    if not feed.entries:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No entries found in RSS feed")
+    # Combine entries into one document
+    parts = []
+    for entry in feed.entries[: body.max_items]:
+        entry_title = entry.get("title", "Untitled")
+        entry_content = entry.get("summary", entry.get("description", ""))
+        entry_link = entry.get("link", "")
+        parts.append(f"## {entry_title}\n{entry_content}\n\nSource: {entry_link}")
+    content = "\n\n---\n\n".join(parts)
+    title = body.title or feed.feed.get("title", "RSS Feed")
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=title,
+        user_id=user_id,
+        source_type="rss_feed",
+        content_type="kb_article",
     )
     return IngestResponse(artifact_id=artifact_id)
 

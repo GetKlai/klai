@@ -76,26 +76,26 @@ const DIRECT_UPLOAD: SourceTypeOption[] = [
   { type: 'file',  label: m.add_source_type_file,  description: m.add_source_type_file_desc,  Icon: FileUp },
   { type: 'url',   label: m.add_source_type_url,   description: m.add_source_type_url_desc,   Icon: Globe },
   { type: 'text',  label: m.add_source_type_text,  description: m.add_source_type_text_desc,  Icon: Type },
-  { type: 'image', label: m.add_source_type_image, description: m.add_source_type_image_desc, Icon: Image, comingSoon: true },
+  { type: 'image', label: m.add_source_type_image, description: m.add_source_type_image_desc, Icon: Image },
 ]
 
 const WEBSITE_MEDIA: SourceTypeOption[] = [
   { type: 'web_crawler', label: m.add_source_type_website, description: m.add_source_type_website_desc, Icon: Globe },
-  { type: 'youtube',     label: m.add_source_type_youtube, description: m.add_source_type_youtube_desc, Icon: SiYoutube, comingSoon: true },
-  { type: 'rss',         label: m.add_source_type_rss,     description: m.add_source_type_rss_desc,     Icon: Rss,       comingSoon: true },
+  { type: 'youtube',     label: m.add_source_type_youtube, description: m.add_source_type_youtube_desc, Icon: SiYoutube },
+  { type: 'rss',         label: m.add_source_type_rss,     description: m.add_source_type_rss_desc,     Icon: Rss },
 ]
 
 const GOOGLE: SourceTypeOption[] = [
-  { type: 'google_drive',   label: m.add_source_type_google_drive,   description: m.add_source_type_google_drive_desc,   Icon: SiGoogledrive,  comingSoon: true },
-  { type: 'gmail',          label: m.add_source_type_gmail,          description: m.add_source_type_gmail_desc,          Icon: SiGmail,        comingSoon: true },
-  { type: 'google_sheets',  label: m.add_source_type_google_sheets,  description: m.add_source_type_google_sheets_desc,  Icon: SiGooglesheets, comingSoon: true },
+  { type: 'google_drive',   label: m.add_source_type_google_drive,   description: m.add_source_type_google_drive_desc,   Icon: SiGoogledrive },
+  { type: 'gmail',          label: m.add_source_type_gmail,          description: m.add_source_type_gmail_desc,          Icon: SiGmail },
+  { type: 'google_sheets',  label: m.add_source_type_google_sheets,  description: m.add_source_type_google_sheets_desc,  Icon: SiGooglesheets },
 ]
 
 const PRODUCTIVITY: SourceTypeOption[] = [
   { type: 'notion',      label: m.add_source_type_notion,      description: m.add_source_type_notion_desc,      Icon: SiNotion },
-  { type: 'confluence',  label: m.add_source_type_confluence,  description: m.add_source_type_confluence_desc,  Icon: SiConfluence, comingSoon: true },
-  { type: 'slack',       label: m.add_source_type_slack,       description: m.add_source_type_slack_desc,       Icon: MessageSquare, comingSoon: true },
-  { type: 'airtable',    label: m.add_source_type_airtable,    description: m.add_source_type_airtable_desc,    Icon: SiAirtable,   comingSoon: true },
+  { type: 'confluence',  label: m.add_source_type_confluence,  description: m.add_source_type_confluence_desc,  Icon: SiConfluence },
+  { type: 'slack',       label: m.add_source_type_slack,       description: m.add_source_type_slack_desc,       Icon: MessageSquare },
+  { type: 'airtable',    label: m.add_source_type_airtable,    description: m.add_source_type_airtable_desc,    Icon: SiAirtable },
 ]
 
 const DEVELOPMENT: SourceTypeOption[] = [
@@ -163,6 +163,46 @@ function AddSourcePage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
 
+  // Image (same as file but image-only)
+  const [selectedImages, setSelectedImages] = useState<File[]>([])
+
+  // YouTube
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+
+  // RSS
+  const [rssUrl, setRssUrl] = useState('')
+  const [rssMaxItems, setRssMaxItems] = useState('50')
+
+  // Confluence
+  const [confluenceConfig, setConfluenceConfig] = useState({
+    base_url: '', email: '', api_token: '', space_keys: '',
+  })
+
+  // Slack
+  const [slackConfig, setSlackConfig] = useState({
+    bot_token: '', channel_ids: '',
+  })
+
+  // Airtable
+  const [airtableConfig, setAirtableConfig] = useState({
+    api_key: '', base_id: '', table_names: '',
+  })
+
+  // Google Drive
+  const [googleDriveConfig, setGoogleDriveConfig] = useState({
+    service_account_json: '', folder_ids: '',
+  })
+
+  // Gmail
+  const [gmailConfig, setGmailConfig] = useState({
+    service_account_json: '', user_email: '', query: '',
+  })
+
+  // Google Sheets
+  const [googleSheetsConfig, setGoogleSheetsConfig] = useState({
+    service_account_json: '', spreadsheet_ids: '',
+  })
+
   // Fetch KB name for the header
   const { data: kb } = useQuery({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -187,6 +227,16 @@ function AddSourcePage() {
     setUrlValue('')
     setTextContent('')
     setSelectedFiles([])
+    setSelectedImages([])
+    setYoutubeUrl('')
+    setRssUrl('')
+    setRssMaxItems('50')
+    setConfluenceConfig({ base_url: '', email: '', api_token: '', space_keys: '' })
+    setSlackConfig({ bot_token: '', channel_ids: '' })
+    setAirtableConfig({ api_key: '', base_id: '', table_names: '' })
+    setGoogleDriveConfig({ service_account_json: '', folder_ids: '' })
+    setGmailConfig({ service_account_json: '', user_email: '', query: '' })
+    setGoogleSheetsConfig({ service_account_json: '', spreadsheet_ids: '' })
   }
 
   // -- Connector create mutation ---
@@ -223,6 +273,45 @@ function AddSourcePage() {
         if (ids.length > 0) config.database_ids = ids
         if (notionConfig.max_pages && notionConfig.max_pages !== '500')
           config.max_pages = Number(notionConfig.max_pages)
+      }
+
+      if (sourceType === 'confluence') {
+        config.base_url = confluenceConfig.base_url
+        config.email = confluenceConfig.email
+        config.api_token = confluenceConfig.api_token
+        const keys = confluenceConfig.space_keys.split(',').map((s) => s.trim()).filter(Boolean)
+        if (keys.length > 0) config.space_keys = keys
+      }
+
+      if (sourceType === 'slack') {
+        config.bot_token = slackConfig.bot_token
+        const ids = slackConfig.channel_ids.split(',').map((s) => s.trim()).filter(Boolean)
+        if (ids.length > 0) config.channel_ids = ids
+      }
+
+      if (sourceType === 'airtable') {
+        config.api_key = airtableConfig.api_key
+        config.base_id = airtableConfig.base_id
+        const tables = airtableConfig.table_names.split(',').map((s) => s.trim()).filter(Boolean)
+        if (tables.length > 0) config.table_names = tables
+      }
+
+      if (sourceType === 'google_drive') {
+        config.service_account_json = googleDriveConfig.service_account_json
+        const ids = googleDriveConfig.folder_ids.split(',').map((s) => s.trim()).filter(Boolean)
+        if (ids.length > 0) config.folder_ids = ids
+      }
+
+      if (sourceType === 'gmail') {
+        config.service_account_json = gmailConfig.service_account_json
+        config.user_email = gmailConfig.user_email
+        config.query = gmailConfig.query
+      }
+
+      if (sourceType === 'google_sheets') {
+        config.service_account_json = googleSheetsConfig.service_account_json
+        const ids = googleSheetsConfig.spreadsheet_ids.split(',').map((s) => s.trim()).filter(Boolean)
+        if (ids.length > 0) config.spreadsheet_ids = ids
       }
 
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
@@ -298,6 +387,52 @@ function AddSourcePage() {
         const formData = new FormData()
         formData.append('file', file)
         await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/upload`, token, {
+          method: 'POST',
+          body: formData,
+        })
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      goBack()
+    },
+  })
+
+  // -- YouTube ingest mutation ---
+  const youtubeIngestMutation = useMutation({
+    mutationFn: async () => {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/youtube`, token, {
+        method: 'POST',
+        body: JSON.stringify({ url: youtubeUrl, title: name || undefined }),
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      goBack()
+    },
+  })
+
+  // -- RSS ingest mutation ---
+  const rssIngestMutation = useMutation({
+    mutationFn: async () => {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/rss`, token, {
+        method: 'POST',
+        body: JSON.stringify({ url: rssUrl, title: name || undefined, max_items: Number(rssMaxItems) }),
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      goBack()
+    },
+  })
+
+  // -- Image upload mutation ---
+  const imageUploadMutation = useMutation({
+    mutationFn: async () => {
+      for (const file of selectedImages) {
+        const formData = new FormData()
+        formData.append('file', file)
+        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/upload-image`, token, {
           method: 'POST',
           body: formData,
         })
@@ -530,6 +665,394 @@ function AddSourcePage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Image upload form ──────────────────────────────────────── */}
+      {sourceType === 'image' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Afbeelding uploaden</p>
+
+          {/* Drop zone */}
+          <div
+            onDrop={(e) => {
+              e.preventDefault()
+              setIsDragOver(false)
+              const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+              if (files.length > 0) setSelectedImages((prev) => [...prev, ...files])
+            }}
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
+            onDragLeave={() => setIsDragOver(false)}
+            className={`rounded-lg border-2 border-dashed py-12 text-center transition-colors ${
+              isDragOver ? 'border-gray-400 bg-gray-50' : 'border-gray-200'
+            }`}
+          >
+            <Image className="h-8 w-8 text-gray-300 mx-auto mb-3" />
+            <p className="text-sm font-medium text-gray-900">Sleep afbeeldingen hierheen</p>
+            <p className="text-xs text-gray-400 mt-1">of</p>
+            <label className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              <Upload className="h-4 w-4" />
+              Kies afbeeldingen
+              <input
+                type="file"
+                multiple
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="sr-only"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? [])
+                  if (files.length > 0) setSelectedImages((prev) => [...prev, ...files])
+                }}
+              />
+            </label>
+            <p className="text-xs text-gray-400 mt-3">PNG, JPEG, GIF, WebP</p>
+          </div>
+
+          {/* Selected images */}
+          {selectedImages.length > 0 && (
+            <div className="space-y-1">
+              {selectedImages.map((f, i) => (
+                <div key={`${f.name}-${i}`} className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5">
+                  <Image className="h-4 w-4 text-gray-400 shrink-0" />
+                  <span className="text-sm text-gray-900 flex-1 truncate">{f.name}</span>
+                  <span className="text-xs text-gray-400">{(f.size / 1024).toFixed(0)} KB</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImages((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-xs text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {imageUploadMutation.error && (
+            <p className="text-sm text-[var(--color-destructive)]">
+              {imageUploadMutation.error instanceof Error ? imageUploadMutation.error.message : m.admin_connectors_error_create_generic()}
+            </p>
+          )}
+          <div className="flex items-center gap-3 pt-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={selectedImages.length === 0 || imageUploadMutation.isPending}
+              onClick={() => imageUploadMutation.mutate()}
+              className="rounded-lg bg-gray-900 text-white hover:bg-gray-800"
+            >
+              {imageUploadMutation.isPending
+                ? m.admin_connectors_create_submit_loading()
+                : `Upload (${selectedImages.length})`}
+            </Button>
+            <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+              {m.admin_connectors_webcrawler_back()}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── YouTube form ─────────────────────────────────────────────── */}
+      {sourceType === 'youtube' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; YouTube video</p>
+          <form onSubmit={(e) => { e.preventDefault(); youtubeIngestMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="yt-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()} (optioneel)</Label>
+              <Input id="yt-name" placeholder="Bijv. Product demo" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="yt-url" className="text-sm font-medium text-gray-900">YouTube URL</Label>
+              <Input id="yt-url" type="url" required placeholder="https://youtube.com/watch?v=..." value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {youtubeIngestMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {youtubeIngestMutation.error instanceof Error ? youtubeIngestMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={youtubeIngestMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {youtubeIngestMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── RSS form ─────────────────────────────────────────────────── */}
+      {sourceType === 'rss' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; RSS Feed</p>
+          <form onSubmit={(e) => { e.preventDefault(); rssIngestMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="rss-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()} (optioneel)</Label>
+              <Input id="rss-name" placeholder="Bijv. Tech blog" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="rss-url" className="text-sm font-medium text-gray-900">Feed URL</Label>
+              <Input id="rss-url" type="url" required placeholder="https://example.com/feed.xml" value={rssUrl} onChange={(e) => setRssUrl(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="rss-max" className="text-sm font-medium text-gray-900">Max items</Label>
+              <Input id="rss-max" type="number" min="1" max="200" value={rssMaxItems} onChange={(e) => setRssMaxItems(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {rssIngestMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {rssIngestMutation.error instanceof Error ? rssIngestMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={rssIngestMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {rssIngestMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Confluence form ──────────────────────────────────────────── */}
+      {sourceType === 'confluence' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Confluence configuratie</p>
+          <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="conf-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="conf-name" required placeholder="Bijv. Engineering wiki" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="conf-url" className="text-sm font-medium text-gray-900">Confluence URL</Label>
+              <Input id="conf-url" type="url" required placeholder="https://company.atlassian.net" value={confluenceConfig.base_url} onChange={(e) => setConfluenceConfig((p) => ({ ...p, base_url: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="conf-email" className="text-sm font-medium text-gray-900">E-mail</Label>
+              <Input id="conf-email" type="email" required placeholder="user@company.com" value={confluenceConfig.email} onChange={(e) => setConfluenceConfig((p) => ({ ...p, email: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="conf-token" className="text-sm font-medium text-gray-900">API Token</Label>
+              <Input id="conf-token" type="password" required placeholder="Atlassian API token" value={confluenceConfig.api_token} onChange={(e) => setConfluenceConfig((p) => ({ ...p, api_token: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="conf-spaces" className="text-sm font-medium text-gray-900">Space keys (optioneel, komma-gescheiden)</Label>
+              <Input id="conf-spaces" placeholder="ENG, PROD, HR" value={confluenceConfig.space_keys} onChange={(e) => setConfluenceConfig((p) => ({ ...p, space_keys: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {createConnectorMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {createConnectorMutation.error instanceof Error ? createConnectorMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={createConnectorMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {createConnectorMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Slack form ───────────────────────────────────────────────── */}
+      {sourceType === 'slack' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Slack configuratie</p>
+          <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="slack-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="slack-name" required placeholder="Bijv. Team kanalen" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="slack-token" className="text-sm font-medium text-gray-900">Bot Token</Label>
+              <Input id="slack-token" type="password" required placeholder="xoxb-..." value={slackConfig.bot_token} onChange={(e) => setSlackConfig((p) => ({ ...p, bot_token: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="slack-channels" className="text-sm font-medium text-gray-900">Channel IDs (optioneel, komma-gescheiden)</Label>
+              <Input id="slack-channels" placeholder="C01ABC123, C02DEF456" value={slackConfig.channel_ids} onChange={(e) => setSlackConfig((p) => ({ ...p, channel_ids: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {createConnectorMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {createConnectorMutation.error instanceof Error ? createConnectorMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={createConnectorMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {createConnectorMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Airtable form ────────────────────────────────────────────── */}
+      {sourceType === 'airtable' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Airtable configuratie</p>
+          <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="at-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="at-name" required placeholder="Bijv. Product database" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="at-key" className="text-sm font-medium text-gray-900">API Key</Label>
+              <Input id="at-key" type="password" required placeholder="pat..." value={airtableConfig.api_key} onChange={(e) => setAirtableConfig((p) => ({ ...p, api_key: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="at-base" className="text-sm font-medium text-gray-900">Base ID</Label>
+              <Input id="at-base" required placeholder="app..." value={airtableConfig.base_id} onChange={(e) => setAirtableConfig((p) => ({ ...p, base_id: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="at-tables" className="text-sm font-medium text-gray-900">Table names (optioneel, komma-gescheiden)</Label>
+              <Input id="at-tables" placeholder="Products, Contacts" value={airtableConfig.table_names} onChange={(e) => setAirtableConfig((p) => ({ ...p, table_names: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {createConnectorMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {createConnectorMutation.error instanceof Error ? createConnectorMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={createConnectorMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {createConnectorMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Google Drive form ────────────────────────────────────────── */}
+      {sourceType === 'google_drive' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Google Drive configuratie</p>
+          <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="gd-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="gd-name" required placeholder="Bijv. Gedeelde documenten" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gd-sa" className="text-sm font-medium text-gray-900">Service Account JSON</Label>
+              <textarea
+                id="gd-sa"
+                required
+                className="flex min-h-[120px] w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 font-mono placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                placeholder='{"type": "service_account", ...}'
+                value={googleDriveConfig.service_account_json}
+                onChange={(e) => setGoogleDriveConfig((p) => ({ ...p, service_account_json: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gd-folders" className="text-sm font-medium text-gray-900">Folder IDs (optioneel, komma-gescheiden)</Label>
+              <Input id="gd-folders" placeholder="1abc..., 2def..." value={googleDriveConfig.folder_ids} onChange={(e) => setGoogleDriveConfig((p) => ({ ...p, folder_ids: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {createConnectorMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {createConnectorMutation.error instanceof Error ? createConnectorMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={createConnectorMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {createConnectorMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Gmail form ───────────────────────────────────────────────── */}
+      {sourceType === 'gmail' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Gmail configuratie</p>
+          <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="gm-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="gm-name" required placeholder="Bijv. Support inbox" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gm-sa" className="text-sm font-medium text-gray-900">Service Account JSON</Label>
+              <textarea
+                id="gm-sa"
+                required
+                className="flex min-h-[120px] w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 font-mono placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                placeholder='{"type": "service_account", ...}'
+                value={gmailConfig.service_account_json}
+                onChange={(e) => setGmailConfig((p) => ({ ...p, service_account_json: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gm-email" className="text-sm font-medium text-gray-900">User e-mail</Label>
+              <Input id="gm-email" type="email" required placeholder="user@company.com" value={gmailConfig.user_email} onChange={(e) => setGmailConfig((p) => ({ ...p, user_email: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gm-query" className="text-sm font-medium text-gray-900">Zoekquery (optioneel)</Label>
+              <Input id="gm-query" placeholder="label:important after:2024/01/01" value={gmailConfig.query} onChange={(e) => setGmailConfig((p) => ({ ...p, query: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {createConnectorMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {createConnectorMutation.error instanceof Error ? createConnectorMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={createConnectorMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {createConnectorMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Google Sheets form ───────────────────────────────────────── */}
+      {sourceType === 'google_sheets' && (
+        <div className="space-y-6">
+          <p className="text-sm text-gray-400">Stap 2 van 2 &mdash; Google Sheets configuratie</p>
+          <form onSubmit={(e) => { e.preventDefault(); createConnectorMutation.mutate() }} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="gs-name" className="text-sm font-medium text-gray-900">{m.admin_connectors_field_name()}</Label>
+              <Input id="gs-name" required placeholder="Bijv. Product spreadsheet" value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gs-sa" className="text-sm font-medium text-gray-900">Service Account JSON</Label>
+              <textarea
+                id="gs-sa"
+                required
+                className="flex min-h-[120px] w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 font-mono placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                placeholder='{"type": "service_account", ...}'
+                value={googleSheetsConfig.service_account_json}
+                onChange={(e) => setGoogleSheetsConfig((p) => ({ ...p, service_account_json: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gs-ids" className="text-sm font-medium text-gray-900">Spreadsheet IDs (komma-gescheiden)</Label>
+              <Input id="gs-ids" required placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms" value={googleSheetsConfig.spreadsheet_ids} onChange={(e) => setGoogleSheetsConfig((p) => ({ ...p, spreadsheet_ids: e.target.value }))} className="rounded-lg border border-gray-200 text-sm" />
+            </div>
+            {createConnectorMutation.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {createConnectorMutation.error instanceof Error ? createConnectorMutation.error.message : m.admin_connectors_error_create_generic()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-2">
+              <Button type="submit" size="sm" disabled={createConnectorMutation.isPending} className="rounded-lg bg-gray-900 text-white hover:bg-gray-800">
+                {createConnectorMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+              </Button>
+              <button type="button" onClick={() => setSourceType(null)} className="text-sm text-gray-400 hover:text-gray-900 transition-colors">
+                {m.admin_connectors_webcrawler_back()}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

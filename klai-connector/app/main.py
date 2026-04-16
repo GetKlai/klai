@@ -10,9 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import update
 
 import app.core.database as _db
+from app.adapters.airtable import AirtableAdapter
+from app.adapters.confluence import ConfluenceAdapter
 from app.adapters.github import GitHubAdapter
+from app.adapters.gmail import GmailAdapter
+from app.adapters.google_drive import GoogleDriveAdapter
+from app.adapters.google_sheets import GoogleSheetsAdapter
 from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
+from app.adapters.slack import SlackAdapter
 from app.adapters.webcrawler import WebCrawlerAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
@@ -71,6 +77,12 @@ def create_app() -> FastAPI:
         registry.register("github", GitHubAdapter(settings))
         registry.register("web_crawler", WebCrawlerAdapter(settings))
         registry.register("notion", NotionAdapter(settings))
+        registry.register("confluence", ConfluenceAdapter(settings))
+        registry.register("slack", SlackAdapter(settings))
+        registry.register("airtable", AirtableAdapter(settings))
+        registry.register("google_drive", GoogleDriveAdapter(settings))
+        registry.register("gmail", GmailAdapter(settings))
+        registry.register("google_sheets", GoogleSheetsAdapter(settings))
         app.state.registry = registry
 
         # Knowledge-ingest client
