@@ -20,6 +20,7 @@ export const Route = createLazyFileRoute('/app/docs/$kbSlug/$pageId')({
 interface PageData {
   frontmatter: { title?: string; description?: string; edit_access?: 'org' | string[]; icon?: string }
   content: string
+  sha?: string
 }
 
 function KBPageEditor() {
@@ -69,8 +70,13 @@ function KBPageEditor() {
 
   const editorRef = useRef<BlockPageEditorHandle>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isSavingRef = useRef(false)
-  const pendingSaveRef = useRef(false)
+  // Promise queue: serializes saves so no two PUTs are ever in-flight simultaneously.
+  // Combined with shaRef (client-owned SHA), eliminates both the scheduling race and
+  // the server-side SHA fetch race that caused Gitea PushRejected (500) errors.
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // Current file SHA — sent with every PUT; updated from the PUT response.
+  // The server uses this instead of fetching SHA from Gitea, closing the race window.
+  const shaRef = useRef<string | null>(null)
   const isMountedRef = useRef(true)
   useEffect(() => () => { isMountedRef.current = false }, [])
 
@@ -105,6 +111,7 @@ function KBPageEditor() {
       icon: page.frontmatter.icon ?? DEFAULT_ICON,
       editorKey: p.editorKey + 1,
     }))
+    shaRef.current = page.sha ?? null
     setSaveStatus('idle')
     setAccessState({
       show: false,
@@ -116,70 +123,66 @@ function KBPageEditor() {
   }, [page, setSaveStatus])
 
   const doSave = useCallback(async () => {
-    // Guard: prevent concurrent saves — two in-flight PUTs cause a Gitea SHA conflict (500).
-    // If a save is already running, queue exactly one follow-up so the latest content is not lost.
-    if (isSavingRef.current) { pendingSaveRef.current = true; return }
-    isSavingRef.current = true
-    pendingSaveRef.current = false
-    const path = selectedPathRef.current
-    const title = titleRef.current
-    const tok = tokenRef.current
-    const icon = iconRef.current
-    if (!path || !tok) { isSavingRef.current = false; return }
-    const content = editorRef.current?.getContent() ?? ''
+    const thisSave = saveQueueRef.current.catch(() => {}).then(async () => {
+      if (!isMountedRef.current) return
+      const path = selectedPathRef.current
+      const title = titleRef.current
+      const tok = tokenRef.current
+      const icon = iconRef.current
+      if (!path || !tok) return
+      const content = editorRef.current?.getContent() ?? ''
 
-    const currentSlug = stripMdExt(path)
-    const newSlug = slugify(title)
+      const currentSlug = stripMdExt(path)
+      const newSlug = slugify(title)
 
-    setSaveStatus('saving')
+      setSaveStatus('saving')
 
-    if (newSlug !== currentSlug) {
+      if (newSlug !== currentSlug) {
+        try {
+          await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`, tok, {
+            method: 'POST',
+            body: JSON.stringify({ newSlug, title, content, icon }),
+          })
+          selectedPathRef.current = newSlug
+          setSaveStatus('renamed')
+          setTimeout(() => setSaveStatus('idle'), 2500)
+          void refetchTree()
+          // REQ-EVT-03: Refresh pageIndex after rename, then navigate by UUID
+          const refreshed = await refetchPageIndex()
+          const freshIndex = refreshed.data ?? pageIndex
+          const entry = freshIndex.find((p) => p.slug === newSlug)
+          const targetId = shortId(entry)
+          navigateToPage(targetId || newSlug)
+        } catch (err) {
+          editorLogger.error('Page rename failed', { from: currentSlug, to: newSlug, err })
+          setSaveStatus('error')
+          setTimeout(() => setSaveStatus('idle'), 3000)
+          throw err
+        }
+        return
+      }
+
       try {
-        await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`, tok, {
-          method: 'POST',
-          body: JSON.stringify({ newSlug, title, content, icon }),
-        })
-        selectedPathRef.current = newSlug
-        setSaveStatus('renamed')
-        setTimeout(() => setSaveStatus('idle'), 2500)
+        const result = await apiFetch<{ ok: boolean; sha: string | null }>(
+          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
+            method: 'PUT',
+            body: JSON.stringify({ title, content, icon, sha: shaRef.current }),
+          }
+        )
+        if (result.sha) shaRef.current = result.sha
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus('idle'), 2000)
         void refetchTree()
-        // REQ-EVT-03: Refresh pageIndex after rename, then navigate by UUID
-        const refreshed = await refetchPageIndex()
-        const freshIndex = refreshed.data ?? pageIndex
-        const entry = freshIndex.find((p) => p.slug === newSlug)
-        const targetId = shortId(entry)
-        navigateToPage(targetId || newSlug)
+        void refetchPageIndex()
       } catch (err) {
-        editorLogger.error('Page rename failed', { from: currentSlug, to: newSlug, err })
+        editorLogger.error('Page save failed', { slug: currentSlug, err })
         setSaveStatus('error')
         setTimeout(() => setSaveStatus('idle'), 3000)
-        throw err // propagate so callers know save failed
-      } finally {
-        isSavingRef.current = false
+        throw err
       }
-      return
-    }
-
-    try {
-      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
-        method: 'PUT',
-        body: JSON.stringify({ title, content, icon }),
-      })
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus('idle'), 2000)
-      void refetchTree()
-      void refetchPageIndex()
-    } catch (err) {
-      editorLogger.error('Page save failed', { slug: currentSlug, err })
-      setSaveStatus('error')
-      setTimeout(() => setSaveStatus('idle'), 3000)
-      throw err // propagate so callers know save failed
-    } finally {
-      isSavingRef.current = false
-      // If content changed while this save was in flight, run one more save now.
-      // Guard: skip if unmounted — editorRef would be null, causing empty content to be saved.
-      if (pendingSaveRef.current && isMountedRef.current) void doSave()
-    }
+    })
+    saveQueueRef.current = thisSave
+    return thisSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage, pageIndex])
 
@@ -214,7 +217,7 @@ function KBPageEditor() {
       fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current }),
+        body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current, sha: shaRef.current }),
         keepalive: true,
       }).catch(() => { /* fire-and-forget on unload */ })
     }
@@ -236,10 +239,13 @@ function KBPageEditor() {
     const editAccess = accessState.mode === 'org' ? 'org' : accessState.users
     setAccessState((a) => ({ ...a, saveStatus: 'saving' }))
     try {
-      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token, {
-        method: 'PUT',
-        body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current, edit_access: editAccess }),
-      })
+      const result = await apiFetch<{ ok: boolean; sha: string | null }>(
+        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token, {
+          method: 'PUT',
+          body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current, edit_access: editAccess, sha: shaRef.current }),
+        }
+      )
+      if (result.sha) shaRef.current = result.sha
       setAccessState((a) => ({ ...a, saveStatus: 'saved' }))
       setTimeout(() => setAccessState((a) => ({ ...a, saveStatus: 'idle' })), 2000)
     } catch (err) {
