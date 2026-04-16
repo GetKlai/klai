@@ -1,116 +1,40 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2 } from 'lucide-react'
-import { toast } from 'sonner'
+import { ArrowLeft, Info, Shield, Settings, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
-import { useIntegration, useUpdateIntegration, useRevokeIntegration } from './-hooks'
-import type { AccessLevel } from './-types'
-import { KbAccessEditor } from './_components/KbAccessEditor'
-import { RevokeConfirmDialog } from './_components/RevokeConfirmDialog'
-import { WidgetTab } from './_components/WidgetTab'
+import { useIntegration } from './-hooks'
+import { GeneralTab } from './_components/tabs/GeneralTab'
+import { AccessTab } from './_components/tabs/AccessTab'
+import { SettingsTab } from './_components/tabs/SettingsTab'
+import { DangerTab } from './_components/tabs/DangerTab'
+
+type IntegrationTab = 'general' | 'access' | 'settings' | 'danger'
+
+const VALID_TABS = new Set<IntegrationTab>(['general', 'access', 'settings', 'danger'])
+
+type DetailSearch = {
+  tab?: IntegrationTab
+}
 
 export const Route = createFileRoute('/admin/integrations/$id')({
+  validateSearch: (search: Record<string, unknown>): DetailSearch => ({
+    tab: (VALID_TABS as Set<string>).has(search.tab as string)
+      ? (search.tab as IntegrationTab)
+      : undefined,
+  }),
   component: IntegrationDetailPage,
 })
 
-interface FormState {
-  name: string
-  description: string
-  chat: boolean
-  feedback: boolean
-  knowledge_append: boolean
-  rate_limit_rpm: number
-  kb_access: { kb_id: number; access_level: AccessLevel }[]
-}
-
 function IntegrationDetailPage() {
   const { id } = Route.useParams()
+  const search = Route.useSearch()
   const navigate = useNavigate()
 
   const { data: integration, isLoading, error, refetch } = useIntegration(id)
-  const updateMutation = useUpdateIntegration(id)
-  const revokeMutation = useRevokeIntegration(id)
 
-  const [form, setForm] = useState<FormState | null>(null)
-  const [showRevokeDialog, setShowRevokeDialog] = useState(false)
-
-  // Populate form when integration data loads
-  useEffect(() => {
-    if (integration && !form) {
-      setForm({
-        name: integration.name,
-        description: integration.description ?? '',
-        chat: integration.permissions.chat,
-        feedback: integration.permissions.feedback,
-        knowledge_append: integration.permissions.knowledge_append,
-        rate_limit_rpm: integration.rate_limit_rpm,
-        kb_access: integration.kb_access.map((ka) => ({
-          kb_id: ka.kb_id,
-          access_level: ka.access_level,
-        })),
-      })
-    }
-  }, [integration, form])
-
-  const isRevoked = integration?.active === false
-  const isDisabled = isRevoked || updateMutation.isPending
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!form) return
-    updateMutation.mutate(
-      {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        permissions: {
-          chat: form.chat,
-          feedback: form.feedback,
-          knowledge_append: form.knowledge_append,
-        },
-        rate_limit_rpm: form.rate_limit_rpm,
-        kb_access: form.kb_access,
-      },
-      {
-        onSuccess: () => {
-          toast.success(m.admin_integrations_success_updated())
-        },
-      },
-    )
-  }
-
-  function handleRevoke() {
-    revokeMutation.mutate(undefined, {
-      onSuccess: () => {
-        setShowRevokeDialog(false)
-        toast.success(m.admin_integrations_success_revoked())
-        // Reset form to reflect revoked state
-        setForm(null)
-      },
-    })
-  }
-
-  // When knowledge_append is toggled off, downgrade any read_write to read
-  function handleKnowledgeAppendChange(checked: boolean) {
-    if (!form) return
-    setForm({
-      ...form,
-      knowledge_append: checked,
-      kb_access: checked
-        ? form.kb_access
-        : form.kb_access.map((row) =>
-            row.access_level === 'read_write'
-              ? { ...row, access_level: 'read' as AccessLevel }
-              : row,
-          ),
-    })
-  }
-
-  // Grafana link removed — not exposed to customers
+  const activeTab: IntegrationTab = search.tab ?? 'general'
 
   if (isLoading) {
     return (
@@ -134,25 +58,58 @@ function IntegrationDetailPage() {
     )
   }
 
-  if (!integration || !form) return null
+  if (!integration) return null
 
+  const isRevoked = integration.active === false
   const isWidget = integration.integration_type === 'widget'
 
+  const tabs: {
+    id: IntegrationTab
+    label: string
+    icon: React.ElementType
+  }[] = [
+    { id: 'general', label: m.admin_integrations_tab_general(), icon: Info },
+    { id: 'access', label: m.admin_integrations_tab_access(), icon: Shield },
+    { id: 'settings', label: m.admin_integrations_tab_settings(), icon: Settings },
+    { id: 'danger', label: m.admin_integrations_tab_danger(), icon: AlertTriangle },
+  ]
+
+  function setTab(tab: IntegrationTab) {
+    void navigate({
+      to: '/admin/integrations/$id',
+      params: { id },
+      search: { tab },
+    })
+  }
+
   return (
-    <div className="p-6 max-w-lg">
-      <div className="flex items-start justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
-            {integration.name}
-          </h1>
-          {isRevoked ? (
-            <Badge variant="destructive">
-              {m.admin_integrations_status_revoked()}
+    <div className="p-6 max-w-4xl space-y-8">
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-3">
+            <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+              {integration.name}
+            </h1>
+            <Badge variant={isWidget ? 'accent' : 'default'}>
+              {isWidget
+                ? m.admin_integrations_type_badge_widget()
+                : m.admin_integrations_type_badge_api()}
             </Badge>
-          ) : (
-            <Badge variant="success">
-              {m.admin_integrations_status_active()}
-            </Badge>
+            {isRevoked ? (
+              <Badge variant="destructive">
+                {m.admin_integrations_status_revoked()}
+              </Badge>
+            ) : (
+              <Badge variant="success">
+                {m.admin_integrations_status_active()}
+              </Badge>
+            )}
+          </div>
+          {integration.description && (
+            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+              {integration.description}
+            </p>
           )}
         </div>
         <Button
@@ -162,210 +119,40 @@ function IntegrationDetailPage() {
           onClick={() => navigate({ to: '/admin/integrations' })}
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.admin_users_cancel()}
+          {m.admin_integrations_back_to_list()}
         </Button>
       </div>
 
-      {/* Shared basics section (name/description) */}
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <section className="space-y-4">
-          <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-            {m.admin_integrations_section_basics()}
-          </h2>
-          <div className="space-y-1.5">
-            <Label htmlFor="integration-name">
-              {m.admin_integrations_field_name()}
-            </Label>
-            <Input
-              id="integration-name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required
-              disabled={isDisabled}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="integration-description">
-              {m.admin_integrations_field_description()}
-            </Label>
-            <textarea
-              id="integration-description"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              rows={3}
-              disabled={isDisabled}
-              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </div>
+      {/* Tab bar */}
+      <div className="border-b border-[var(--color-border)]">
+        <nav className="-mb-px flex gap-6">
+          {tabs.map(({ id: tabId, label, icon: TabIcon }) => {
+            const isActive = tabId === activeTab
+            return (
+              <button
+                key={tabId}
+                type="button"
+                onClick={() => setTab(tabId)}
+                className={[
+                  'flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors',
+                  isActive
+                    ? 'border-[var(--color-accent)] text-[var(--color-foreground)]'
+                    : 'border-transparent text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                ].join(' ')}
+              >
+                <TabIcon className="h-4 w-4" />
+                {label}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
 
-          {/* Key prefix (read-only) — only for API integrations */}
-          {!isWidget && (
-            <div className="space-y-1.5">
-              <Label>{m.admin_integrations_col_key_prefix()}</Label>
-              <code className="block text-xs font-mono text-[var(--color-muted-foreground)] py-2">
-                {integration.key_prefix}...
-              </code>
-            </div>
-          )}
-        </section>
-
-        {/* API-type only: permissions, KB access, rate limit */}
-        {!isWidget && (
-          <>
-            <section className="space-y-4">
-              <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-                {m.admin_integrations_section_permissions()}
-              </h2>
-              <div className="space-y-4">
-                <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={form.chat}
-                    onChange={(e) => setForm({ ...form, chat: e.target.checked })}
-                    disabled={isDisabled}
-                    className="accent-[var(--color-accent)] mt-0.5"
-                  />
-                  <div>
-                    <span className="font-medium">{m.admin_integrations_perm_chat()}</span>
-                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                      {m.admin_integrations_perm_chat_description()}
-                    </p>
-                  </div>
-                </label>
-                <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={form.feedback}
-                    onChange={(e) => setForm({ ...form, feedback: e.target.checked })}
-                    disabled={isDisabled}
-                    className="accent-[var(--color-accent)] mt-0.5"
-                  />
-                  <div>
-                    <span className="font-medium">{m.admin_integrations_perm_feedback()}</span>
-                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                      {m.admin_integrations_perm_feedback_description()}
-                    </p>
-                  </div>
-                </label>
-                <label className="flex items-start gap-2 text-sm text-[var(--color-foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={form.knowledge_append}
-                    onChange={(e) => handleKnowledgeAppendChange(e.target.checked)}
-                    disabled={isDisabled}
-                    className="accent-[var(--color-accent)] mt-0.5"
-                  />
-                  <div>
-                    <span className="font-medium">{m.admin_integrations_perm_knowledge_append()}</span>
-                    <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                      {m.admin_integrations_perm_knowledge_append_description()}
-                    </p>
-                  </div>
-                </label>
-              </div>
-            </section>
-
-            <section className="space-y-4">
-              <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-                {m.admin_integrations_section_kb_access()}
-              </h2>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_kb_intro()}
-              </p>
-              <KbAccessEditor
-                value={form.kb_access}
-                onChange={(kb_access) => setForm({ ...form, kb_access })}
-                knowledgeAppendEnabled={form.knowledge_append}
-                disabled={isDisabled}
-              />
-            </section>
-
-            <section className="space-y-4">
-              <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-                {m.admin_integrations_section_rate_limit()}
-              </h2>
-              <div className="space-y-1.5">
-                <Label htmlFor="rate-limit">
-                  {m.admin_integrations_field_rate_limit()}
-                </Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="rate-limit"
-                    type="number"
-                    min={10}
-                    max={600}
-                    value={form.rate_limit_rpm}
-                    onChange={(e) =>
-                      setForm({ ...form, rate_limit_rpm: Number(e.target.value) })
-                    }
-                    disabled={isDisabled}
-                    className="max-w-[8rem]"
-                  />
-                  <span className="text-sm text-[var(--color-muted-foreground)]">
-                    {m.admin_integrations_rate_limit_unit()}
-                  </span>
-                </div>
-              </div>
-            </section>
-          </>
-        )}
-
-        {updateMutation.error && !isWidget && (
-          <p className="text-sm text-[var(--color-destructive)]">
-            {updateMutation.error instanceof Error
-              ? updateMutation.error.message
-              : m.admin_integrations_error_generic()}
-          </p>
-        )}
-
-        {!isRevoked && !isWidget && (
-          <div className="pt-2">
-            <Button
-              type="submit"
-              disabled={updateMutation.isPending || !form.name.trim()}
-            >
-              {updateMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              {m.admin_integrations_save()}
-            </Button>
-          </div>
-        )}
-      </form>
-
-      {/* Widget-type: widget configuration */}
-      {isWidget && (
-        <div className="mt-6 pt-6 border-t border-[var(--color-border)]">
-          <WidgetTab integration={integration} />
-        </div>
-      )}
-
-      {/* Revoke section */}
-      {!isRevoked && (
-        <div className="mt-6 pt-6 border-t border-[var(--color-border)]">
-          <h2 className="text-sm font-medium text-[var(--color-destructive)] mb-2">
-            {m.admin_integrations_revoke_section_title()}
-          </h2>
-          <p className="text-sm text-[var(--color-muted-foreground)] mb-4">
-            {m.admin_integrations_revoke_section_description()}
-          </p>
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            onClick={() => setShowRevokeDialog(true)}
-          >
-            {m.admin_integrations_revoke_button()}
-          </Button>
-        </div>
-      )}
-
-      <RevokeConfirmDialog
-        open={showRevokeDialog}
-        isPending={revokeMutation.isPending}
-        onConfirm={handleRevoke}
-        onCancel={() => setShowRevokeDialog(false)}
-      />
+      {/* Active tab content */}
+      {activeTab === 'general' && <GeneralTab integration={integration} />}
+      {activeTab === 'access' && <AccessTab integration={integration} />}
+      {activeTab === 'settings' && <SettingsTab integration={integration} />}
+      {activeTab === 'danger' && <DangerTab integration={integration} />}
     </div>
   )
 }

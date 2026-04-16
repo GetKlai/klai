@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Copy, AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
-import type { IntegrationDetailResponse, WidgetConfig } from '../-types'
-import { useUpdateIntegration } from '../-hooks'
-import { EmbedSnippet } from './EmbedSnippet'
+import type { IntegrationDetailResponse, WidgetConfig } from '../../-types'
+import { useUpdateIntegration } from '../../-hooks'
 
 const CSS_VAR_KEYS = [
   '--klai-primary-color',
@@ -60,20 +59,25 @@ function cssVarsToRecord(rows: CssVarRow[]): Record<string, string> {
   return result
 }
 
-interface WidgetTabProps {
+interface SettingsTabProps {
   integration: IntegrationDetailResponse
 }
 
-export function WidgetTab({ integration }: WidgetTabProps) {
+export function SettingsTab({ integration }: SettingsTabProps) {
   const updateMutation = useUpdateIntegration(String(integration.id))
+  const isWidget = integration.integration_type === 'widget'
+  const isDisabled = integration.active === false || updateMutation.isPending
 
+  // API state
+  const [rateLimit, setRateLimit] = useState(integration.rate_limit_rpm)
+
+  // Widget state
   const widgetConfig = integration.widget_config ?? {
     allowed_origins: [],
     title: '',
     welcome_message: '',
     css_variables: {},
   }
-
   const [originsRaw, setOriginsRaw] = useState(
     widgetConfig.allowed_origins.join('\n'),
   )
@@ -83,8 +87,8 @@ export function WidgetTab({ integration }: WidgetTabProps) {
     cssVarsFromRecord(widgetConfig.css_variables),
   )
 
-  // Sync state when integration data refreshes
   useEffect(() => {
+    setRateLimit(integration.rate_limit_rpm)
     const cfg = integration.widget_config ?? {
       allowed_origins: [],
       title: '',
@@ -95,90 +99,100 @@ export function WidgetTab({ integration }: WidgetTabProps) {
     setTitle(cfg.title)
     setWelcomeMessage(cfg.welcome_message)
     setCssVarRows(cssVarsFromRecord(cfg.css_variables))
-  }, [integration.widget_config])
+  }, [integration])
 
   const origins = parseOrigins(originsRaw)
   const invalidOrigins = origins.filter((o) => !isValidOrigin(o))
-  const isDisabled = integration.active === false
 
-  function handleCopyWidgetId() {
-    if (!integration.widget_id) return
-    void navigator.clipboard.writeText(integration.widget_id)
-    toast.success(m.admin_integrations_widget_embed_copied())
-  }
-
-  function handleSave() {
-    const config: WidgetConfig = {
-      allowed_origins: origins,
-      title: title.trim(),
-      welcome_message: welcomeMessage.trim(),
-      css_variables: cssVarsToRecord(cssVarRows),
-    }
-    updateMutation.mutate(
-      { widget_config: config },
-      {
-        onSuccess: () => {
-          toast.success(m.admin_integrations_success_updated())
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (isWidget) {
+      const config: WidgetConfig = {
+        allowed_origins: origins,
+        title: title.trim(),
+        welcome_message: welcomeMessage.trim(),
+        css_variables: cssVarsToRecord(cssVarRows),
+      }
+      updateMutation.mutate(
+        { widget_config: config },
+        {
+          onSuccess: () => {
+            toast.success(m.admin_integrations_success_updated())
+          },
         },
-      },
-    )
+      )
+    } else {
+      updateMutation.mutate(
+        { rate_limit_rpm: rateLimit },
+        {
+          onSuccess: () => {
+            toast.success(m.admin_integrations_success_updated())
+          },
+        },
+      )
+    }
   }
 
-  function handleAddCssRow() {
-    setCssVarRows((prev) => [...prev, { key: '', value: '' }])
-  }
+  if (!isWidget) {
+    // API: rate limit only
+    return (
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <section className="space-y-4">
+          <h2 className="text-sm font-medium text-[var(--color-foreground)]">
+            {m.admin_integrations_section_rate_limit()}
+          </h2>
+          <div className="space-y-1.5">
+            <Label htmlFor="rate-limit">
+              {m.admin_integrations_field_rate_limit()}
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="rate-limit"
+                type="number"
+                min={10}
+                max={600}
+                value={rateLimit}
+                onChange={(e) => setRateLimit(Number(e.target.value))}
+                disabled={isDisabled}
+                className="max-w-[8rem]"
+              />
+              <span className="text-sm text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_rate_limit_unit()}
+              </span>
+            </div>
+          </div>
+        </section>
 
-  function handleRemoveCssRow(index: number) {
-    setCssVarRows((prev) => prev.filter((_, i) => i !== index))
-  }
+        {updateMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {updateMutation.error instanceof Error
+              ? updateMutation.error.message
+              : m.admin_integrations_error_generic()}
+          </p>
+        )}
 
-  function handleCssRowKeyChange(index: number, key: CssVarKey | '') {
-    setCssVarRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, key } : row)),
-    )
-  }
-
-  function handleCssRowValueChange(index: number, value: string) {
-    setCssVarRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, value } : row)),
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Widget ID */}
-      <section className="space-y-2">
-        <Label>{m.admin_integrations_widget_id_label()}</Label>
-        <div className="flex items-center gap-2">
-          <code className="block flex-1 text-xs font-mono text-[var(--color-muted-foreground)] bg-[var(--color-muted)] border border-[var(--color-border)] rounded-md px-3 py-2">
-            {integration.widget_id ?? '—'}
-          </code>
-          {integration.widget_id && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleCopyWidgetId}
-              className="shrink-0"
-            >
-              <Copy className="h-4 w-4 mr-1.5" />
-              {m.admin_integrations_widget_id_copy()}
+        {integration.active && (
+          <div className="pt-2">
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {m.admin_integrations_save()}
             </Button>
-          )}
-        </div>
-      </section>
+          </div>
+        )}
+      </form>
+    )
+  }
 
-      {/* Embed snippet */}
-      {integration.widget_id && (
-        <EmbedSnippet
-          widgetId={integration.widget_id}
-          title={title || undefined}
-          welcomeMessage={welcomeMessage || undefined}
-        />
-      )}
-
-      {/* Widget config form */}
+  // Widget: appearance
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
+        <h2 className="text-sm font-medium text-[var(--color-foreground)]">
+          {m.admin_integrations_section_widget_appearance()}
+        </h2>
+
         {/* Allowed origins */}
         <div className="space-y-1.5">
           <Label htmlFor="widget-origins">
@@ -241,7 +255,11 @@ export function WidgetTab({ integration }: WidgetTabProps) {
                 <select
                   value={row.key}
                   onChange={(e) =>
-                    handleCssRowKeyChange(index, e.target.value as CssVarKey | '')
+                    setCssVarRows((prev) =>
+                      prev.map((r, i) =>
+                        i === index ? { ...r, key: e.target.value as CssVarKey | '' } : r,
+                      ),
+                    )
                   }
                   disabled={isDisabled}
                   className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-[var(--color-foreground)] outline-none focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -255,14 +273,20 @@ export function WidgetTab({ integration }: WidgetTabProps) {
                 </select>
                 <Input
                   value={row.value}
-                  onChange={(e) => handleCssRowValueChange(index, e.target.value)}
+                  onChange={(e) =>
+                    setCssVarRows((prev) =>
+                      prev.map((r, i) => (i === index ? { ...r, value: e.target.value } : r)),
+                    )
+                  }
                   disabled={isDisabled}
                   placeholder="#000000"
                   className="flex-1 text-xs font-mono"
                 />
                 <button
                   type="button"
-                  onClick={() => handleRemoveCssRow(index)}
+                  onClick={() =>
+                    setCssVarRows((prev) => prev.filter((_, i) => i !== index))
+                  }
                   disabled={isDisabled}
                   className="text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors disabled:opacity-40"
                   aria-label={m.admin_integrations_widget_css_var_remove()}
@@ -277,7 +301,7 @@ export function WidgetTab({ integration }: WidgetTabProps) {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={handleAddCssRow}
+              onClick={() => setCssVarRows((prev) => [...prev, { key: '', value: '' }])}
               className="text-xs"
             >
               {m.admin_integrations_widget_css_var_add()}
@@ -294,13 +318,9 @@ export function WidgetTab({ integration }: WidgetTabProps) {
         </p>
       )}
 
-      {!isDisabled && (
+      {integration.active && (
         <div className="pt-2">
-          <Button
-            type="button"
-            onClick={handleSave}
-            disabled={updateMutation.isPending}
-          >
+          <Button type="submit" disabled={updateMutation.isPending}>
             {updateMutation.isPending && (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             )}
@@ -308,6 +328,6 @@ export function WidgetTab({ integration }: WidgetTabProps) {
           </Button>
         </div>
       )}
-    </div>
+    </form>
   )
 }
