@@ -19,6 +19,7 @@ from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.content_fingerprint import find_boilerplate_clusters
+from app.services.events import emit_product_event
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.s3_storage import ImageStore
@@ -128,9 +129,7 @@ class SyncEngine:
                 )
                 sync_run.status = SyncStatus.FAILED
                 sync_run.completed_at = datetime.now(UTC)
-                sync_run.error_details = [
-                    {"error": f"Unsupported connector type: {portal_config.connector_type!r}"}
-                ]
+                sync_run.error_details = [{"error": f"Unsupported connector type: {portal_config.connector_type!r}"}]
                 await session.commit()
                 await self._portal_client.report_sync_status(
                     connector_id=connector_id,
@@ -158,9 +157,7 @@ class SyncEngine:
                 # Resume state: refs already ingested in an interrupted run.
                 resume_ingested_refs: set[str] = set()
                 if last_pending and last_pending.cursor_state:
-                    resume_ingested_refs = set(
-                        last_pending.cursor_state.get("ingested_refs", [])
-                    )
+                    resume_ingested_refs = set(last_pending.cursor_state.get("ingested_refs", []))
                     if resume_ingested_refs:
                         logger.info(
                             "Resuming interrupted sync for connector %s: %d refs already ingested, skipping",
@@ -223,7 +220,10 @@ class SyncEngine:
                 if documents_skipped:
                     logger.info(
                         "Reconciliation for connector %s: %d to sync, %d unchanged (skipped), %d total discovered",
-                        connector_id, len(refs_to_sync), documents_skipped, len(refs),
+                        connector_id,
+                        len(refs_to_sync),
+                        documents_skipped,
+                        len(refs),
                     )
 
                 for ref in refs_to_sync:
@@ -233,13 +233,15 @@ class SyncEngine:
                         content_bytes = await adapter.fetch_document(ref, portal_config)
                         bytes_processed += len(content_bytes)
                         parse_result = parse_document_with_images(
-                            content_bytes, ref.path.split("/")[-1],
+                            content_bytes,
+                            ref.path.split("/")[-1],
                         )
                         text = parse_result.text
                         if len(text.strip()) < 50:
                             logger.info(
                                 "Skipping short document (path=%s, chars=%d)",
-                                ref.path, len(text.strip()),
+                                ref.path,
+                                len(text.strip()),
                             )
                             documents_ok += 1
                             resume_ingested_refs.add(ref_key)
@@ -249,12 +251,15 @@ class SyncEngine:
                         # populates ref.images with absolute URLs; we just upload them.
                         image_urls: list[str] | None = None
                         if self._image_store and self._image_http:
-                            image_urls = await self._upload_images(
-                                parsed_images=parse_result.images,
-                                ref=ref,
-                                org_id=portal_config.zitadel_org_id,
-                                kb_slug=portal_config.kb_slug,
-                            ) or None  # Convert empty list to None
+                            image_urls = (
+                                await self._upload_images(
+                                    parsed_images=parse_result.images,
+                                    ref=ref,
+                                    org_id=portal_config.zitadel_org_id,
+                                    kb_slug=portal_config.kb_slug,
+                                )
+                                or None
+                            )  # Convert empty list to None
 
                         await self._ingest_client.ingest_document(
                             org_id=portal_config.zitadel_org_id,
@@ -292,10 +297,7 @@ class SyncEngine:
                 # Runs on every sync with ≥30 pages. No connector config needed (REQ-14).
                 # Only pages with a non-empty content_fingerprint are analysed.
                 layer_c_min_pages = 30
-                fp_entries = [
-                    (r.source_url or r.ref, r.content_fingerprint)
-                    for r in refs if r.content_fingerprint
-                ]
+                fp_entries = [(r.source_url or r.ref, r.content_fingerprint) for r in refs if r.content_fingerprint]
                 if len(fp_entries) >= layer_c_min_pages:
                     clusters = find_boilerplate_clusters(fp_entries)
                     if clusters:
@@ -344,21 +346,25 @@ class SyncEngine:
 
                         status = SyncStatus.COMPLETED  # backward-compat: status stays COMPLETED
                         sync_run.quality_status = "degraded"
-                        await self._portal_client.report_quality_event(
-                            connector_id=connector_id,
-                            sync_run_id=sync_run_id,
-                            org_id=portal_config.zitadel_org_id,
-                            quality_status="degraded",
-                            reason="boilerplate_cluster",
-                            metric=largest_ratio,
+                        # SPEC-CRAWL-003 REQ-15: emit product event via direct DB
+                        # write (product_events table is on the shared klai DB).
+                        emit_product_event(
+                            "knowledge.sync_quality_degraded",
+                            zitadel_org_id=portal_config.zitadel_org_id,
+                            properties={
+                                "connector_id": str(connector_id),
+                                "sync_run_id": str(sync_run_id),
+                                "quality_status": "degraded",
+                                "reason": "boilerplate_cluster",
+                                "metric": largest_ratio,
+                            },
                         )
 
             except CanaryMismatchError as exc:
                 # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-5 — Layer A fail-fast abort.
                 # @MX:REASON: AUTH_ERROR status + structured error_details per REQ-3 + REQ-5.
                 logger.error(
-                    "Sync aborted: canary fingerprint mismatch "
-                    "(canary_url=%s, similarity=%.3f)",
+                    "Sync aborted: canary fingerprint mismatch (canary_url=%s, similarity=%.3f)",
                     exc.canary_url,
                     exc.similarity,
                     extra={
@@ -393,13 +399,16 @@ class SyncEngine:
                     bytes_processed=0,
                     error_details=sync_run.error_details,
                 )
-                await self._portal_client.report_quality_event(
-                    connector_id=connector_id,
-                    sync_run_id=sync_run_id,
-                    org_id=portal_config.zitadel_org_id,
-                    quality_status="failed",
-                    reason="canary_mismatch",
-                    metric=exc.similarity,
+                emit_product_event(
+                    "knowledge.sync_quality_degraded",
+                    zitadel_org_id=portal_config.zitadel_org_id,
+                    properties={
+                        "connector_id": str(connector_id),
+                        "sync_run_id": str(sync_run_id),
+                        "quality_status": "failed",
+                        "reason": "canary_mismatch",
+                        "metric": exc.similarity,
+                    },
                 )
                 return
 
@@ -470,8 +479,7 @@ class SyncEngine:
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
                 cursor_state["synced_refs"] = sorted(
-                    (r.source_ref or r.path) for r in refs
-                    if (r.source_ref or r.path) not in failed_refs
+                    (r.source_ref or r.path) for r in refs if (r.source_ref or r.path) not in failed_refs
                 )
             sync_run.cursor_state = cursor_state
             await session.commit()
@@ -544,9 +552,7 @@ class SyncEngine:
                 await session.commit()
 
     @staticmethod
-    async def _get_last_successful_run(
-        session: AsyncSession, connector_id: uuid.UUID
-    ) -> SyncRun | None:
+    async def _get_last_successful_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:
         """Retrieve the most recent successful sync run for a connector."""
         result = await session.execute(
             select(SyncRun)
@@ -560,9 +566,7 @@ class SyncEngine:
         return result.scalars().first()
 
     @staticmethod
-    async def _get_last_pending_run(
-        session: AsyncSession, connector_id: uuid.UUID
-    ) -> SyncRun | None:
+    async def _get_last_pending_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:
         """Retrieve the most recent PENDING sync run for a connector."""
         result = await session.execute(
             select(SyncRun)
