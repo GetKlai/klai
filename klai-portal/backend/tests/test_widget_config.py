@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fakes & helpers
@@ -421,8 +420,6 @@ async def test_widget_config_invalid_origin_returns_403():
 @pytest.mark.asyncio
 async def test_widget_config_empty_allowed_origins_returns_403():
     """SPEC-WIDGET-001: empty allowed_origins list returns 403 (fail-closed)."""
-    import json
-
     from app.api.partner import widget_config
 
     fake_key = FakeWidgetKey()
