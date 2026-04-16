@@ -968,9 +968,40 @@ async def idp_signup_callback(
     locale = locale if locale in _SUPPORTED_LOCALES else "nl"
     failure_url = f"{settings.portal_url}/{locale}/signup?error=idp_failed"
 
-    # 1. Create Zitadel session from the IDP intent
+    # 1. Retrieve the IDP intent to get user info and optional Zitadel userId
     try:
-        session = await zitadel.create_session_with_idp_intent(id, token)
+        intent_data = await zitadel.retrieve_idp_intent(id, token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "idp_signup_callback retrieve_idp_intent failed %s: %s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    idp_user_id: str | None = intent_data.get("userId")
+
+    # 1b. New user — no Zitadel account yet. Create one from the IDP profile.
+    if not idp_user_id:
+        try:
+            idp_user_id = await zitadel.create_zitadel_user_from_idp(
+                intent_data, settings.zitadel_portal_org_id
+            )
+            logger.info("idp_signup_callback: created Zitadel user %s from IDP", idp_user_id)
+        except httpx.HTTPStatusError as exc:
+            logger.exception(
+                "idp_signup_callback create_zitadel_user failed %s: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+        except Exception:
+            logger.exception("idp_signup_callback create_zitadel_user failed")
+            return RedirectResponse(url=failure_url, status_code=302)
+
+    # 1c. Create Zitadel session with the resolved user_id + IDP intent
+    try:
+        session = await zitadel.create_session_for_user_idp(idp_user_id, id, token)
     except httpx.HTTPStatusError as exc:
         logger.exception(
             "idp_signup_callback create_session failed %s: %s",

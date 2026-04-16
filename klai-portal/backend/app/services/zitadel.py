@@ -517,20 +517,57 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def create_session_with_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
-        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }.
+    async def create_zitadel_user_from_idp(self, intent_data: dict, org_id: str) -> str:
+        """Create a Zitadel human user from IDP intent data. Returns the new Zitadel userId.
 
-        Retrieves the linked userId from the intent first — required since newer versions of the
-        Zitadel sessions API require an explicit user check alongside the IDP intent check.
+        Used during social signup when no existing Zitadel user is linked to the IDP intent.
+        The email is marked verified (trusted from the IDP) and the IDP is linked immediately.
         """
-        intent = await self.retrieve_idp_intent(idp_intent_id, idp_intent_token)
-        user_id: str | None = intent.get("userId")
-        if not user_id:
-            logger.error(
-                "IDP intent %s returned no userId — cannot create session",
-                idp_intent_id,
-            )
-            raise ValueError(f"No user linked to IDP intent {idp_intent_id}")
+        raw_info = intent_data.get("idpInformation", {}).get("rawInformation", {})
+        idp_link = intent_data.get("idpLink", {})
+
+        email: str = raw_info.get("email", "") or idp_link.get("userName", "")
+        given_name: str = raw_info.get("given_name", "")
+        family_name: str = raw_info.get("family_name", "")
+        if not given_name and raw_info.get("name"):
+            parts = raw_info["name"].split(" ", 1)
+            given_name = parts[0]
+            family_name = parts[1] if len(parts) > 1 else ""
+        display_name: str = raw_info.get("name", f"{given_name} {family_name}".strip()) or email.split("@")[0]
+
+        if not email:
+            raise ValueError("Cannot create Zitadel user: no email in IDP intent data")
+
+        resp = await self._http.post(
+            "/v2/users/human",
+            headers={"x-zitadel-orgid": org_id},
+            json={
+                "username": email,
+                "profile": {
+                    "givenName": given_name or email.split("@")[0],
+                    "familyName": family_name,
+                    "displayName": display_name,
+                },
+                "email": {
+                    "email": email,
+                    "isVerified": True,
+                },
+                "idpLinks": [
+                    {
+                        "idpId": idp_link.get("idpId", ""),
+                        "userId": idp_link.get("userId", ""),
+                        "userName": idp_link.get("userName", email),
+                    }
+                ],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["userId"]
+
+    async def create_session_for_user_idp(
+        self, user_id: str, idp_intent_id: str, idp_intent_token: str
+    ) -> dict:
+        """Create a Zitadel session for a known user_id using a completed IDP intent."""
         resp = await self._http.post(
             "/v2/sessions",
             json={
@@ -542,6 +579,24 @@ class ZitadelClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def create_session_with_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
+        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }.
+
+        Retrieves the linked userId from the intent first — required since newer versions of the
+        Zitadel sessions API require an explicit user check alongside the IDP intent check.
+        Raises ValueError if no userId is linked (e.g. first-time social signup — caller must
+        create the Zitadel user first via create_zitadel_user_from_idp).
+        """
+        intent = await self.retrieve_idp_intent(idp_intent_id, idp_intent_token)
+        user_id: str | None = intent.get("userId")
+        if not user_id:
+            logger.error(
+                "IDP intent %s returned no userId — cannot create session",
+                idp_intent_id,
+            )
+            raise ValueError(f"No user linked to IDP intent {idp_intent_id}")
+        return await self.create_session_for_user_idp(user_id, idp_intent_id, idp_intent_token)
 
     async def get_session(self, session_id: str, session_token: str) -> dict:
         """Fetch full session details including factors.user.id and IDP profile data.
