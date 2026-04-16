@@ -10,6 +10,7 @@ import re
 import secrets
 import unicodedata
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 
@@ -186,7 +187,7 @@ MEILI_HOST=http://meilisearch:7700
 MEILI_MASTER_KEY={settings.meili_master_key}
 
 # Redis (session persistence across container restarts)
-REDIS_URI=redis://:{settings.redis_password}@redis:6379
+REDIS_URI=redis://:{quote(settings.redis_password, safe="")}@redis:6379
 
 # AI routing via LiteLLM
 LITELLM_API_KEY={litellm_api_key}
