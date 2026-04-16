@@ -1,4 +1,4 @@
-import { createLazyFileRoute } from '@tanstack/react-router'
+import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -42,6 +42,8 @@ interface PageData {
 
 function KBEditorPage() {
   const { kbSlug } = Route.useParams()
+  const { page: initialPage } = Route.useSearch()
+  const navigate = useNavigate()
   const auth = useAuth()
   const token = auth.user?.access_token
   const orgSlug = getOrgSlug()
@@ -52,7 +54,7 @@ function KBEditorPage() {
     content: string
     icon: string
     editorKey: number
-  }>({ path: null, title: '', content: '', icon: DEFAULT_ICON, editorKey: 0 })
+  }>({ path: initialPage ?? null, title: '', content: '', icon: DEFAULT_ICON, editorKey: 0 })
 
   const [uiState, setUiState] = useState<{
     saveStatus: 'idle' | 'saving' | 'saved' | 'renamed' | 'error'
@@ -102,8 +104,10 @@ function KBEditorPage() {
   const newUserId = accessState.newUserId
   const accessSaveStatus = accessState.saveStatus
 
-  const setSelectedPath = (path: string | null) =>
+  const setSelectedPath = (path: string | null) => {
     setCurrentPage((p) => ({ ...p, path }))
+    void navigate({ search: (_prev) => path ? { page: path } : {}, replace: true })
+  }
   const setEditTitle = (title: string) =>
     setCurrentPage((p) => ({ ...p, title }))
   const setEditContent = (content: string) =>
