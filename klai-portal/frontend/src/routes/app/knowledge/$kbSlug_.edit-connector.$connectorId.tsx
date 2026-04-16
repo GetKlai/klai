@@ -262,8 +262,6 @@ function EditConnectorPage() {
         </Button>
       </div>
 
-      <div>
-
           {/* Web crawler */}
           {connector?.connector_type === 'web_crawler' && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
@@ -556,7 +554,6 @@ function EditConnectorPage() {
           {!connector && (
             <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_loading()}</p>
           )}
-      </div>
     </div>
   )
 }
