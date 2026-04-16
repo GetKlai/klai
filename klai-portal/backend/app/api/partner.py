@@ -28,7 +28,6 @@ from app.api.partner_dependencies import (
 from app.core.config import settings
 from app.core.database import get_db, set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services.events import emit_event
