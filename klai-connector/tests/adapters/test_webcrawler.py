@@ -9,8 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.adapters.webcrawler import WebCrawlerAdapter
-
+from app.adapters.webcrawler import WebCrawlerAdapter, _CrawlConfig
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -157,8 +156,7 @@ async def test_list_documents_without_selector_skips_extraction(adapter: WebCraw
 
 def test_build_discovery_params_no_selector(adapter: WebCrawlerAdapter) -> None:
     """Discovery params must not contain css_selector or PruningContentFilter."""
-    config = {"base_url": "https://example.com", "content_selector": ".article"}
-    params = adapter._build_discovery_params(config)
+    params = adapter._build_discovery_params()
 
     assert "css_selector" not in params
     md_gen = params.get("markdown_generator", {})
@@ -168,12 +166,12 @@ def test_build_discovery_params_no_selector(adapter: WebCrawlerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. URLPatternFilter constructed as base_url + "/" + path_prefix
+# 4. URLPatternFilter constructed as path-only wildcard pattern
 # ---------------------------------------------------------------------------
 
 
 async def test_start_crawl_injects_path_prefix_filter(adapter: WebCrawlerAdapter) -> None:
-    """AC-3: URLPatternFilter pattern = base_url.rstrip('/') + '/' + path_prefix.lstrip('/')."""
+    """AC-3: URLPatternFilter pattern = '/' + path_prefix.strip('/') + '/*'."""
     config = {
         "base_url": "https://wiki.example.com",
         "path_prefix": "/en",
@@ -192,8 +190,9 @@ async def test_start_crawl_injects_path_prefix_filter(adapter: WebCrawlerAdapter
 
     adapter._http_client.post = capture_post  # type: ignore[method-assign]
 
-    crawl_params = adapter._build_discovery_params(config)
-    await adapter._start_crawl(config, crawl_params)
+    cfg = _CrawlConfig.from_dict(config)
+    crawl_params = adapter._build_discovery_params()
+    await adapter._start_crawl(cfg, crawl_params)
 
     deep_strategy = captured_payload["crawler_config"]["params"]["deep_crawl_strategy"]
     filter_chain = deep_strategy["params"]["filter_chain"]
@@ -228,8 +227,9 @@ async def test_start_crawl_no_path_prefix_no_filter(adapter: WebCrawlerAdapter) 
 
     adapter._http_client.post = capture_post  # type: ignore[method-assign]
 
-    crawl_params = adapter._build_discovery_params(config)
-    await adapter._start_crawl(config, crawl_params)
+    cfg = _CrawlConfig.from_dict(config)
+    crawl_params = adapter._build_discovery_params()
+    await adapter._start_crawl(cfg, crawl_params)
 
     deep_strategy = captured_payload["crawler_config"]["params"]["deep_crawl_strategy"]
     assert "filter_chain" not in deep_strategy["params"]
@@ -257,8 +257,9 @@ async def test_start_crawl_injects_cookies(adapter: WebCrawlerAdapter) -> None:
 
     adapter._http_client.post = capture_post  # type: ignore[method-assign]
 
-    crawl_params = adapter._build_discovery_params(config)
-    await adapter._start_crawl(config, crawl_params, cookies=cookies)
+    cfg = _CrawlConfig.from_dict(config)
+    crawl_params = adapter._build_discovery_params()
+    await adapter._start_crawl(cfg, crawl_params, cookies=cookies)
 
     assert "hooks" in captured_payload
     hook_code = captured_payload["hooks"]["code"]["on_page_context_created"]
