@@ -41,6 +41,32 @@ After ANY Playwright testing, close all tabs then `browser_close()`. Brave locks
   testing middleware that reads optional headers. Otherwise the mock returns a MagicMock
   object that passes truthiness checks.
 
+## Coroutine-never-awaited when mocking asyncio.create_task (MED)
+
+Patching `asyncio.create_task` with `MagicMock` creates a coroutine that is never
+awaited. Python fires `RuntimeWarning` via `sys.unraisablehook` during GC — after
+pytest fixtures have torn down, so `warnings.filterwarnings` does not catch it.
+
+**Why:** `sys.unraisablehook` fires at interpreter shutdown, outside pytest's capture scope.
+
+**Prevention:** Replace the function that *produces* the coroutine with `MagicMock` —
+no coroutine is created, no warning fires.
+
+```python
+@pytest.fixture(autouse=True)
+def _mock_retrieval_log(monkeypatch):
+    monkeypatch.setattr("app.api.partner.write_retrieval_log", MagicMock())
+```
+
+## setup_db result order must match db.execute call order (MED)
+
+`setup_db(mock_db, [r1, r2, r3])` feeds results sequentially to each `db.execute` call
+(last element cycles). A wrong order returns the right type with the wrong data — the
+test may pass while asserting the wrong thing.
+
+**Prevention:** Trace the exact `db.execute` call sequence in the production code before
+writing the result list.
+
 ## Frontend test patterns
 - UI bugfixes require browser verification — code reading scores zero.
 - After bulk migrations (>10 files): run `tsc --noEmit` + `npm run lint`.
