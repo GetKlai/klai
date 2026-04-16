@@ -51,6 +51,13 @@ Propagation: up to 24h. Check: `dig getklai.com` or dnschecker.org.
 Env vars: update SOPS + Coolify UI separately (not auto-synced).
 Always check build logs after redeploy — trigger ≠ success.
 
+## Portal URL (CRIT — never guess this)
+**`https://my.getklai.com`** — this is where ALL users log in. One URL for everyone.
+- `{tenant}.getklai.com` = per-tenant portal view (e.g. `getklai.getklai.com` = the "getklai" tenant)
+- `FRONTEND_URL` in portal-api env MUST be `https://my.getklai.com`
+- OAuth redirect URIs (Google, Microsoft) MUST point to `https://my.getklai.com/api/oauth/.../callback`
+- Do NOT assume the portal URL from Caddy wildcard routing or Zitadel redirect URI config
+
 ## Disaster recovery
 All secrets in git (SOPS-encrypted). Full recovery: `deploy.sh all` → scp configs → `docker compose up -d`.
 Prerequisite: `~/.config/sops/age/keys.txt` must be present.
