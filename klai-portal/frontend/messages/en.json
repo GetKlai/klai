@@ -1548,6 +1548,14 @@
   "admin_integrations_tab_danger": "Danger zone",
   "admin_integrations_section_widget_embed": "Widget ID and embed snippet",
   "admin_integrations_section_widget_appearance": "Appearance",
-  "admin_integrations_back_to_list": "Back to integrations"
+  "admin_integrations_back_to_list": "Back to integrations",
+  "admin_integrations_wizard_step_setup": "Setup",
+  "admin_integrations_wizard_setup_intro": "Set up how your widget looks to visitors and which websites are allowed to embed it.",
+  "admin_integrations_widget_title_help": "Shown in the chat header. Example: 'Klai Help' or 'Chat with support'.",
+  "admin_integrations_widget_title_placeholder": "Klai Help",
+  "admin_integrations_widget_welcome_help": "The first message visitors see when they open the chat. Keep it short and inviting.",
+  "admin_integrations_widget_welcome_placeholder": "Hi! How can I help you today?",
+  "admin_integrations_widget_origins_help": "Only websites on these domains can load this widget. Enter the full URL (including https://), one per line. This is a security measure: without allowed origins the widget is blocked everywhere, so no one else can embed your widget on their site.",
+  "admin_integrations_section_widget_setup": "Widget setup"
 
 }

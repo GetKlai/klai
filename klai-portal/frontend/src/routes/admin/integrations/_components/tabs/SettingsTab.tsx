@@ -188,16 +188,54 @@ export function SettingsTab({ integration }: SettingsTabProps) {
   // Widget: appearance
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Setup: title, welcome, origins */}
       <section className="space-y-4">
         <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-          {m.admin_integrations_section_widget_appearance()}
+          {m.admin_integrations_section_widget_setup()}
         </h2>
+
+        {/* Title */}
+        <div className="space-y-1.5">
+          <Label htmlFor="widget-title">
+            {m.admin_integrations_widget_title_label()}
+          </Label>
+          <p className="text-xs text-[var(--color-muted-foreground)]">
+            {m.admin_integrations_widget_title_help()}
+          </p>
+          <Input
+            id="widget-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            disabled={isDisabled}
+            placeholder={m.admin_integrations_widget_title_placeholder()}
+          />
+        </div>
+
+        {/* Welcome message */}
+        <div className="space-y-1.5">
+          <Label htmlFor="widget-welcome">
+            {m.admin_integrations_widget_welcome_label()}
+          </Label>
+          <p className="text-xs text-[var(--color-muted-foreground)]">
+            {m.admin_integrations_widget_welcome_help()}
+          </p>
+          <Input
+            id="widget-welcome"
+            value={welcomeMessage}
+            onChange={(e) => setWelcomeMessage(e.target.value)}
+            disabled={isDisabled}
+            placeholder={m.admin_integrations_widget_welcome_placeholder()}
+          />
+        </div>
 
         {/* Allowed origins */}
         <div className="space-y-1.5">
           <Label htmlFor="widget-origins">
             {m.admin_integrations_widget_origins_label()}
           </Label>
+          <p className="text-xs text-[var(--color-muted-foreground)]">
+            {m.admin_integrations_widget_origins_help()}
+          </p>
           <textarea
             id="widget-origins"
             value={originsRaw}
@@ -219,34 +257,13 @@ export function SettingsTab({ integration }: SettingsTabProps) {
             </div>
           )}
         </div>
+      </section>
 
-        {/* Title */}
-        <div className="space-y-1.5">
-          <Label htmlFor="widget-title">
-            {m.admin_integrations_widget_title_label()}
-          </Label>
-          <Input
-            id="widget-title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            disabled={isDisabled}
-          />
-        </div>
-
-        {/* Welcome message */}
-        <div className="space-y-1.5">
-          <Label htmlFor="widget-welcome">
-            {m.admin_integrations_widget_welcome_label()}
-          </Label>
-          <Input
-            id="widget-welcome"
-            value={welcomeMessage}
-            onChange={(e) => setWelcomeMessage(e.target.value)}
-            disabled={isDisabled}
-          />
-        </div>
-
-        {/* CSS variables */}
+      {/* Appearance: CSS variables */}
+      <section className="space-y-4">
+        <h2 className="text-sm font-medium text-[var(--color-foreground)]">
+          {m.admin_integrations_section_widget_appearance()}
+        </h2>
         <div className="space-y-2">
           <Label>{m.admin_integrations_widget_css_vars_label()}</Label>
           <div className="space-y-2">
