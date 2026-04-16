@@ -7,7 +7,7 @@ from typing import Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -1171,6 +1171,80 @@ async def crawl_preview(
         content_selector=result.get("content_selector"),
         selector_source=result.get("selector_source"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct content ingest (text paste, file upload)
+# ---------------------------------------------------------------------------
+
+
+class TextIngestRequest(BaseModel):
+    title: str
+    content: str
+    content_type: str = "text/plain"
+
+
+class IngestResponse(BaseModel):
+    artifact_id: str
+    status: str = "ingested"
+
+
+@router.post("/knowledge-bases/{kb_slug}/documents/text", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+async def ingest_text(
+    kb_slug: str,
+    body: TextIngestRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestResponse:
+    """Ingest pasted text content into a KB. Requires contributor or owner role."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    # Personal KBs: pass user_id so content is user-scoped in Qdrant
+    user_id = caller_id if kb.owner_type == "user" else None
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=body.content,
+        title=body.title,
+        user_id=user_id,
+        source_type="manual_paste",
+        content_type=body.content_type,
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+@router.post("/knowledge-bases/{kb_slug}/documents/upload", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+) -> IngestResponse:
+    """Upload a text-based file into a KB. Supports .txt, .md, .csv, .json, .xml.
+    Requires contributor or owner role.
+    """
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be UTF-8 encoded text. PDF and Word support coming soon.",
+        )
+    filename = file.filename or "untitled"
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=filename,
+        user_id=user_id,
+        source_type="manual_upload",
+        content_type=file.content_type or "text/plain",
+    )
+    return IngestResponse(artifact_id=artifact_id)
 
 
 # ---------------------------------------------------------------------------
