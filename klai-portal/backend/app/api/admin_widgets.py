@@ -139,9 +139,7 @@ async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> 
 
 async def _count_kb_access(widget_id: str, db: AsyncSession) -> int:
     result = await db.execute(
-        select(func.count())
-        .select_from(WidgetKbAccess)
-        .where(WidgetKbAccess.widget_id == widget_id)
+        select(func.count()).select_from(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget_id)
     )
     return result.scalar() or 0
 
@@ -196,9 +194,7 @@ async def create_widget(
     # Build detail response with KB names
     kb_access_list: list[dict] = []
     if body.kb_ids:
-        kb_result = await db.execute(
-            select(PortalKnowledgeBase).where(PortalKnowledgeBase.id.in_(body.kb_ids))
-        )
+        kb_result = await db.execute(select(PortalKnowledgeBase).where(PortalKnowledgeBase.id.in_(body.kb_ids)))
         kbs = {kb.id: kb for kb in kb_result.scalars().all()}
         kb_access_list = [
             {"kb_id": kb_id, "kb_name": kbs[kb_id].name, "kb_slug": kbs[kb_id].slug}

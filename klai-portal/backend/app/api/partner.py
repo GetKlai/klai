@@ -418,9 +418,7 @@ async def widget_config(
         )
 
     # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
-    result = await db.execute(
-        select(Widget).where(Widget.widget_id == id)
-    )
+    result = await db.execute(select(Widget).where(Widget.widget_id == id))
     widget_row = result.scalar_one_or_none()
 
     if widget_row is None:
@@ -446,9 +444,7 @@ async def widget_config(
     await set_tenant(db, org.id)
 
     # Load KB access for this widget (after RLS tenant is set)
-    kb_result = await db.execute(
-        select(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget_row.id)
-    )
+    kb_result = await db.execute(select(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget_row.id))
     kb_rows = kb_result.scalars().all()
     kb_ids = [row.kb_id for row in kb_rows]
 
@@ -496,9 +492,7 @@ async def widget_config_preflight(
     SPEC-WIDGET-001: Return 204 with CORS headers for valid origins.
     Returns CORS headers without verifying JWT secret (preflight only).
     """
-    result = await db.execute(
-        select(Widget).where(Widget.widget_id == id)
-    )
+    result = await db.execute(select(Widget).where(Widget.widget_id == id))
     widget_row = result.scalar_one_or_none()
 
     if widget_row is None:
