@@ -4,6 +4,20 @@ paths:
 ---
 # Portal Backend Patterns
 
+## FRONTEND_URL controls OAuth redirect URIs (CRIT)
+
+`FRONTEND_URL` in portal-api env is NOT cosmetic — it is used to construct OAuth callback URLs
+(Google Drive, Microsoft, etc.). A wrong value causes `redirect_uri_mismatch` for every user.
+
+- Must match the actual login domain: `https://my.getklai.com`
+- Registered Google/Microsoft OAuth redirect URIs must match exactly: `https://my.getklai.com/api/oauth/.../callback`
+- `config.py` falls back to `https://portal.{domain}` if FRONTEND_URL is empty — this fallback is wrong for production
+- `{tenant}.getklai.com` is NOT the portal URL — that is the per-tenant view; `my.getklai.com` is the login URL
+
+**Why:** Root cause of April 2026 incident: `FRONTEND_URL=https://getklai.com` → callback pointed to `getklai.com` which is unrouted → 50x OAuth errors per affected user.
+
+**Prevention:** After any domain change, verify: `docker exec portal-api printenv FRONTEND_URL` matches `https://my.getklai.com`. Never derive the portal URL from Caddy wildcard config or Zitadel redirect URIs — check servers.md.
+
 ## SQLAlchemy + RLS (CRIT)
 - SQLAlchemy ORM adds implicit `RETURNING` to all inserts — breaks RLS tables with separate SELECT/INSERT policies.
 - Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
@@ -41,6 +55,18 @@ result = await db.execute(
 )
 org = result.scalar_one_or_none()
 ```
+
+## Locale propagation pattern
+
+Propagate locale through OAuth/redirect flows via query parameter, not browser state. Pattern used in IDP intent signup:
+
+1. Frontend sends `locale` in the request body
+2. Backend validates with a `@field_validator` against `_SUPPORTED_LOCALES`, defaulting to `"nl"`
+3. Locale is embedded in the `success_url` as a query param before redirecting to Zitadel
+4. Callback reads it as `locale: str = Query(default="nl")` and validates again
+5. All redirects and cookie payloads carry the locale forward
+
+**Rule:** OAuth callback endpoints must not rely on session state or browser cookies for locale — it must travel through the redirect URL as a validated query parameter.
 
 ## portal-api scripts/ not in Docker image (MED)
 `klai-portal/backend/scripts/` is NOT copied into the container (no `COPY scripts/` in Dockerfile).
