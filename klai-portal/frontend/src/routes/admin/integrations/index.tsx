@@ -61,29 +61,22 @@ function IntegrationsPage() {
     columnHelper.accessor('name', {
       header: () => m.admin_integrations_col_name(),
       cell: (info) => (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() =>
-              navigate({
-                to: '/admin/integrations/$id',
-                params: { id: String(info.row.original.id) },
-              })
-            }
-            className="font-medium text-[var(--color-foreground)] hover:text-[var(--color-accent)] transition-colors text-left"
-          >
-            {info.getValue()}
-          </button>
-          <TypeBadge integrationType={info.row.original.integration_type} />
-        </div>
+        <button
+          onClick={() =>
+            navigate({
+              to: '/admin/integrations/$id',
+              params: { id: String(info.row.original.id) },
+            })
+          }
+          className="font-medium text-[var(--color-foreground)] hover:text-[var(--color-accent)] transition-colors text-left"
+        >
+          {info.getValue()}
+        </button>
       ),
     }),
-    columnHelper.accessor('key_prefix', {
-      header: () => m.admin_integrations_col_key_prefix(),
-      cell: (info) => (
-        <code className="text-xs font-mono text-[var(--color-muted-foreground)]">
-          {info.getValue()}...
-        </code>
-      ),
+    columnHelper.accessor('integration_type', {
+      header: () => m.admin_integrations_col_type(),
+      cell: (info) => <TypeBadge integrationType={info.getValue()} />,
     }),
     columnHelper.accessor('active', {
       header: () => m.admin_integrations_col_status(),

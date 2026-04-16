@@ -1554,6 +1554,8 @@
   "admin_integrations_widget_welcome_help": "Het eerste bericht dat bezoekers zien wanneer ze de chat openen. Houd het kort en uitnodigend.",
   "admin_integrations_widget_welcome_placeholder": "Hoi! Waarmee kan ik je helpen?",
   "admin_integrations_widget_origins_help": "Alleen websites op deze domeinen kunnen deze widget laden. Vul de volledige URL in (inclusief https://), één per regel. Dit is een veiligheidsmaatregel: zonder toegestane domeinen wordt de widget overal geblokkeerd, zodat niemand anders jouw widget op hun site kan inbouwen.",
-  "admin_integrations_section_widget_setup": "Widget instellen"
+  "admin_integrations_section_widget_setup": "Widget instellen",
+  "admin_integrations_col_type": "Type",
+  "admin_integrations_col_identifier": "Identifier"
 
 }
