@@ -1,0 +1,64 @@
+# Release workflow — builds klai-chat.js and uploads to CDN.
+# CDN credentials are NOT configured yet (stub workflow).
+# To activate: add HETZNER_ACCESS_KEY and HETZNER_SECRET_KEY secrets,
+# then uncomment the upload step.
+
+name: Release Widget
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: klai-widget/package-lock.json
+
+      - name: Install dependencies
+        working-directory: klai-widget
+        run: npm ci
+
+      - name: Build bundle
+        working-directory: klai-widget
+        run: npm run build
+
+      - name: Check bundle size
+        working-directory: klai-widget
+        run: node scripts/check-bundle-size.mjs
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: klai-chat-js
+          path: klai-widget/dist/klai-chat.js
+
+      # CDN upload stub — activate when credentials are available
+      # - name: Upload to CDN
+      #   working-directory: klai-widget
+      #   env:
+      #     HETZNER_ACCESS_KEY: ${{ secrets.HETZNER_ACCESS_KEY }}
+      #     HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
+      #   run: |
+      #     TAG=${GITHUB_REF#refs/tags/}
+      #     aws s3 cp dist/klai-chat.js \
+      #       s3://cdn-getklai-com/widget/${TAG}/klai-chat.js \
+      #       --endpoint-url https://fsn1.your-objectstorage.com \
+      #       --content-type application/javascript \
+      #       --cache-control "public, max-age=31536000, immutable"
+      #     # Also update the "latest" pointer
+      #     aws s3 cp dist/klai-chat.js \
+      #       s3://cdn-getklai-com/widget/latest/klai-chat.js \
+      #       --endpoint-url https://fsn1.your-objectstorage.com \
+      #       --content-type application/javascript \
+      #       --cache-control "public, max-age=300"

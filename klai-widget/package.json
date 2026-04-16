@@ -1,0 +1,22 @@
+{
+  "name": "klai-widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Klai embeddable chat widget",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "check-size": "node scripts/check-bundle-size.mjs"
+  },
+  "dependencies": {
+    "@microsoft/fetch-event-source": "^2.0.1",
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "terser": "^5.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0",
+    "vite-plugin-solid": "^2.10.0"
+  }
+}

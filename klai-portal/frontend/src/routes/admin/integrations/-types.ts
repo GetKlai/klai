@@ -2,6 +2,15 @@
 
 export type AccessLevel = 'none' | 'read' | 'read_write'
 
+export type IntegrationType = 'api' | 'widget'
+
+export interface WidgetConfig {
+  allowed_origins: string[]
+  title: string
+  welcome_message: string
+  css_variables: Record<string, string>
+}
+
 export interface KbAccess {
   kb_id: number
   kb_name: string
@@ -15,6 +24,9 @@ export interface IntegrationResponse {
   description: string | null
   key_prefix: string
   active: boolean
+  integration_type: IntegrationType
+  widget_id?: string
+  widget_config?: WidgetConfig
   permissions: {
     chat: boolean
     feedback: boolean
@@ -34,6 +46,7 @@ export interface IntegrationDetailResponse extends IntegrationResponse {
 export interface CreateIntegrationRequest {
   name: string
   description: string | null
+  integration_type: IntegrationType
   permissions: {
     chat: boolean
     feedback: boolean
@@ -57,6 +70,7 @@ export interface UpdateIntegrationRequest {
   }
   rate_limit_rpm?: number
   kb_access?: { kb_id: number; access_level: AccessLevel }[]
+  widget_config?: WidgetConfig
 }
 
 export interface OrgKnowledgeBase {

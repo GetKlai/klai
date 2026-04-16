@@ -3,8 +3,14 @@
 SPEC-API-001 REQ-1.2, REQ-1.3:
 - PartnerAPIKey: org-scoped API key with SHA-256 hashed storage
 - PartnerApiKeyKbAccess: junction table for per-KB access levels
+
+SPEC-WIDGET-001 Task 1:
+- integration_type: 'api' (default) or 'widget'
+- widget_id: unique public identifier for widget integrations (wgt_ + 40 hex chars)
+- widget_config: JSONB with allowed_origins, title, welcome_message, css_variables
 """
 
+import secrets
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
@@ -12,6 +18,15 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+
+
+def generate_widget_id() -> str:
+    """Generate a unique widget identifier.
+
+    Format: wgt_ + 40 lowercase hexadecimal characters.
+    Uses secrets.token_hex(20) for cryptographically secure randomness.
+    """
+    return f"wgt_{secrets.token_hex(20)}"
 
 
 class PartnerAPIKey(Base):
@@ -45,6 +60,22 @@ class PartnerAPIKey(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # SPEC-WIDGET-001 Task 1: integration type and widget fields
+    integration_type: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        server_default="api",
+    )
+    widget_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        unique=True,
+    )
+    widget_config: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
 
 
 class PartnerApiKeyKbAccess(Base):

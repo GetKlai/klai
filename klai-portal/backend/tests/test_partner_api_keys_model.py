@@ -2,6 +2,8 @@
 
 SPEC-API-001 REQ-1.2, REQ-1.3:
 - Table names, column types, PKs, nullability, defaults, FK targets, indexes.
+SPEC-WIDGET-001 Task 1:
+- integration_type, widget_id, widget_config columns and helpers.
 """
 
 from sqlalchemy import inspect as sa_inspect
@@ -171,3 +173,94 @@ def test_partner_api_keys_inherits_from_base():
 
     assert issubclass(PartnerAPIKey, Base)
     assert issubclass(PartnerApiKeyKbAccess, Base)
+
+
+# ---------------------------------------------------------------------------
+# SPEC-WIDGET-001 Task 1: New columns on PartnerAPIKey
+# ---------------------------------------------------------------------------
+
+
+def test_partner_api_key_has_integration_type_column():
+    """SPEC-WIDGET-001: integration_type column exists, String, not null."""
+    from app.models.partner_api_keys import PartnerAPIKey
+
+    mapper = sa_inspect(PartnerAPIKey)
+    columns = {c.key: c for c in mapper.columns}
+
+    assert "integration_type" in columns, "integration_type column missing from PartnerAPIKey"
+    col = columns["integration_type"]
+    assert not col.nullable, "integration_type must be NOT NULL"
+
+
+def test_partner_api_key_has_widget_id_column():
+    """SPEC-WIDGET-001: widget_id column exists, nullable, unique."""
+    from app.models.partner_api_keys import PartnerAPIKey
+
+    mapper = sa_inspect(PartnerAPIKey)
+    columns = {c.key: c for c in mapper.columns}
+
+    assert "widget_id" in columns, "widget_id column missing from PartnerAPIKey"
+    col = columns["widget_id"]
+    assert col.nullable, "widget_id must be nullable (only set for widget integration type)"
+    assert col.unique, "widget_id must be unique"
+
+
+def test_partner_api_key_has_widget_config_column():
+    """SPEC-WIDGET-001: widget_config column exists as JSONB, nullable."""
+    from app.models.partner_api_keys import PartnerAPIKey
+
+    mapper = sa_inspect(PartnerAPIKey)
+    columns = {c.key: c for c in mapper.columns}
+
+    assert "widget_config" in columns, "widget_config column missing from PartnerAPIKey"
+    col = columns["widget_config"]
+    assert isinstance(col.type, JSONB), "widget_config must be JSONB type"
+    assert col.nullable, "widget_config must be nullable"
+
+
+def test_integration_type_default_value():
+    """SPEC-WIDGET-001: integration_type defaults to 'api'."""
+    from app.models.partner_api_keys import PartnerAPIKey
+
+    mapper = sa_inspect(PartnerAPIKey)
+    columns = {c.key: c for c in mapper.columns}
+    col = columns["integration_type"]
+
+    # server_default is a text clause; check it contains 'api'
+    assert col.server_default is not None, "integration_type must have a server_default of 'api'"
+    server_default_str = str(col.server_default.arg)
+    assert "api" in server_default_str, f"server_default should be 'api', got: {server_default_str}"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-WIDGET-001: widget_id generator helper
+# ---------------------------------------------------------------------------
+
+
+def test_generate_widget_id_format():
+    """SPEC-WIDGET-001: generate_widget_id() returns wgt_ + 40 hex chars."""
+    from app.models.partner_api_keys import generate_widget_id
+
+    widget_id = generate_widget_id()
+
+    assert widget_id.startswith("wgt_"), f"widget_id must start with 'wgt_', got: {widget_id}"
+    suffix = widget_id[len("wgt_"):]
+    assert len(suffix) == 40, f"suffix must be 40 chars, got {len(suffix)}: {suffix}"
+    assert suffix == suffix.lower(), "suffix must be lowercase"
+    int(suffix, 16)  # raises ValueError if not valid hex
+
+
+def test_generate_widget_id_unique():
+    """SPEC-WIDGET-001: generate_widget_id() produces different IDs each call."""
+    from app.models.partner_api_keys import generate_widget_id
+
+    ids = {generate_widget_id() for _ in range(10)}
+    assert len(ids) == 10, "generate_widget_id() must return unique IDs each call"
+
+
+def test_generate_widget_id_length():
+    """SPEC-WIDGET-001: total length is 44 chars (4 prefix + 40 hex)."""
+    from app.models.partner_api_keys import generate_widget_id
+
+    widget_id = generate_widget_id()
+    assert len(widget_id) == 44, f"Total length must be 44, got {len(widget_id)}"

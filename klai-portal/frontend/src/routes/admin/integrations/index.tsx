@@ -40,6 +40,13 @@ function StatusBadge({ active }: { active: boolean }) {
   )
 }
 
+function TypeBadge({ integrationType }: { integrationType: IntegrationResponse['integration_type'] }) {
+  if (integrationType === 'widget') {
+    return <Badge variant="default">{m.admin_integrations_type_badge_widget()}</Badge>
+  }
+  return <Badge variant="secondary">{m.admin_integrations_type_badge_api()}</Badge>
+}
+
 const columnHelper = createColumnHelper<IntegrationResponse>()
 
 function IntegrationsPage() {
@@ -54,17 +61,20 @@ function IntegrationsPage() {
     columnHelper.accessor('name', {
       header: () => m.admin_integrations_col_name(),
       cell: (info) => (
-        <button
-          onClick={() =>
-            navigate({
-              to: '/admin/integrations/$id',
-              params: { id: String(info.row.original.id) },
-            })
-          }
-          className="font-medium text-[var(--color-foreground)] hover:text-[var(--color-accent)] transition-colors text-left"
-        >
-          {info.getValue()}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() =>
+              navigate({
+                to: '/admin/integrations/$id',
+                params: { id: String(info.row.original.id) },
+              })
+            }
+            className="font-medium text-[var(--color-foreground)] hover:text-[var(--color-accent)] transition-colors text-left"
+          >
+            {info.getValue()}
+          </button>
+          <TypeBadge integrationType={info.row.original.integration_type} />
+        </div>
       ),
     }),
     columnHelper.accessor('key_prefix', {
