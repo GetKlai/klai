@@ -51,6 +51,8 @@ function SocialSignupPage() {
         const data = await resp.json().catch(() => ({}))
         if (resp.status === 400 && data?.detail?.toLowerCase().includes('expired')) {
           setError(m.signup_social_expired())
+        } else if (resp.status === 409) {
+          setError(m.signup_social_name_taken())
         } else {
           setError(m.signup_social_error_server({ status: String(resp.status) }))
         }

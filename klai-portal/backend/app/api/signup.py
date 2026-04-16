@@ -315,6 +315,16 @@ async def signup_social(
             user_id=zitadel_user_id,
             role="org:owner",
         )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            # Grant already exists from a previous partial attempt — safe to continue.
+            logger.warning("Social signup: role grant already exists for user %s, continuing", zitadel_user_id)
+        else:
+            logger.exception("Social signup: role grant failed for user %s: %s", zitadel_user_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Creation failed, please try again later",
+            ) from exc
     except Exception as exc:
         logger.exception("Social signup: role grant failed for user %s: %s", zitadel_user_id, exc)
         raise HTTPException(
