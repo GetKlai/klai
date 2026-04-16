@@ -38,7 +38,7 @@ Genereer een JSON-object met:
 {question_focus}
 
 Reply with ONLY a JSON object, no markdown, no explanation:
-{"context_prefix": "<string>", "questions": ["<string>", ...]}"""
+{{"context_prefix": "<string>", "questions": ["<string>", ...]}}"""
 
 
 class EnrichmentError(Exception):
