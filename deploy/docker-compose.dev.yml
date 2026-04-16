@@ -1,0 +1,59 @@
+# Dev override: parallel portal-api-dev running alongside prod portal-api.
+#
+# Usage on core-01:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d portal-api-dev
+#
+# Isolation:
+# - Own container (portal-api-dev)
+# - Own image tag (:dev, built from feat/* branches)
+# - Own database (klai_dev on shared postgres instance)
+# - Own env file (.env.dev) with distinct secrets
+# - Shared infra: postgres instance, redis, mongodb, qdrant, zitadel, connector, knowledge-ingest
+#
+# dev.getklai.com Caddy block routes /api/* -> portal-api-dev:8010
+# getklai.getklai.com routes /api/* -> portal-api:8010 (unchanged)
+
+services:
+  portal-api-dev:
+    image: ghcr.io/getklai/portal-api:dev
+    restart: unless-stopped
+    volumes:
+      - caddy-tenants:/caddy/tenants
+      - ./librechat:/librechat
+    environment:
+      DOMAIN: ${DOMAIN}
+      ZITADEL_PAT: ${PORTAL_API_DEV_ZITADEL_PAT}
+      DATABASE_URL: postgresql+asyncpg://portal_api_dev:${PORTAL_API_DEV_DB_PASSWORD}@postgres:5432/klai_dev
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      INTERNAL_SECRET: ${PORTAL_API_DEV_INTERNAL_SECRET}
+      SSO_COOKIE_KEY: ${PORTAL_API_DEV_SSO_COOKIE_KEY}
+      VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
+      VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
+      PORTAL_SECRETS_KEY: ${PORTAL_API_DEV_PORTAL_SECRETS_KEY}
+      ENCRYPTION_KEY: ${PORTAL_API_DEV_ENCRYPTION_KEY}
+      # IMAP disabled in dev to avoid competing with prod for the shared mailbox.
+      IMAP_HOST: ""
+      IMAP_PORT: ""
+      IMAP_USERNAME: ""
+      IMAP_POLL_INTERVAL_SECONDS: "60"
+      IMAP_PASSWORD: ""
+      LIBRECHAT_MONGO_ROOT_URI: ${LIBRECHAT_MONGO_ROOT_URI}
+      KLAI_CONNECTOR_SECRET: ${PORTAL_API_DEV_KLAI_CONNECTOR_SECRET}
+      GITHUB_ADMIN_PAT: ${GITHUB_ADMIN_PAT}
+      GITHUB_ORG: GetKlai
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      ZITADEL_IDP_GOOGLE_ID: ${ZITADEL_IDP_GOOGLE_ID}
+      ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
+      FRONTEND_URL: https://dev.getklai.com
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
+      MONGODB_CONTAINER_NAME: ${MONGODB_CONTAINER_NAME}
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+    networks:
+      - klai-net
+      - net-postgres
+      - net-mongodb
+      - net-redis
+      - socket-proxy

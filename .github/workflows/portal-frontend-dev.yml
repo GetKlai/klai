@@ -1,0 +1,57 @@
+name: Build and deploy portal-frontend-dev
+
+# Builds the portal frontend from feat/* branches and deploys to /srv/portal-dev/
+# on core-01. Served by Caddy on dev.getklai.com (separate dist from production).
+
+on:
+  push:
+    branches:
+      - 'feat/**'
+    paths:
+      - 'klai-portal/frontend/**'
+      - '.github/workflows/portal-frontend-dev.yml'
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: klai-portal/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: klai-portal/frontend
+
+      - name: Lint (ESLint)
+        run: npm run lint
+        working-directory: klai-portal/frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: klai-portal/frontend
+        env:
+          VITE_OIDC_AUTHORITY: https://auth.getklai.com
+          VITE_OIDC_CLIENT_ID: "362901948573220875"
+          VITE_API_BASE_URL: ""
+          VITE_CONNECTOR_API_BASE_URL: https://connector.getklai.com
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CORE01_DEPLOY_KEY }}
+
+      - name: Add core-01 to known_hosts
+        run: ssh-keyscan -H ${{ secrets.CORE01_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy dist to core-01 (/srv/portal-dev/)
+        run: |
+          rsync -av --delete klai-portal/frontend/dist/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/portal-dev/
