@@ -13,6 +13,11 @@ interface KbAccessEditorProps {
   onChange: (value: KbAccessRow[]) => void
   knowledgeAppendEnabled: boolean
   disabled?: boolean
+  /**
+   * Hide the read_write column entirely. Used by widget-type integrations
+   * where write access is never allowed (bot can only query).
+   */
+  hideReadWrite?: boolean
 }
 
 function getAccessLevel(
@@ -43,6 +48,7 @@ export function KbAccessEditor({
   onChange,
   knowledgeAppendEnabled,
   disabled = false,
+  hideReadWrite = false,
 }: KbAccessEditorProps) {
   const { data: kbsData, isLoading } = useOrgKnowledgeBases()
   const kbs: OrgKnowledgeBase[] = (kbsData?.knowledge_bases ?? []).filter(
@@ -83,9 +89,11 @@ export function KbAccessEditor({
           <th className="py-3 pr-4 text-center text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
             {m.admin_integrations_kb_read()}
           </th>
-          <th className="py-3 text-center text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
-            {m.admin_integrations_kb_read_write()}
-          </th>
+          {!hideReadWrite && (
+            <th className="py-3 text-center text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+              {m.admin_integrations_kb_read_write()}
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -119,21 +127,23 @@ export function KbAccessEditor({
                   className="accent-[var(--color-accent)]"
                 />
               </td>
-              <td className="py-3 text-center align-middle">
-                <input
-                  type="radio"
-                  name={`kb-access-${kb.id}`}
-                  checked={currentLevel === 'read_write'}
-                  onChange={() => handleChange(kb.id, 'read_write')}
-                  disabled={disabled || !knowledgeAppendEnabled}
-                  className="accent-[var(--color-accent)]"
-                  title={
-                    !knowledgeAppendEnabled
-                      ? m.admin_integrations_kb_read_write_disabled_hint()
-                      : undefined
-                  }
-                />
-              </td>
+              {!hideReadWrite && (
+                <td className="py-3 text-center align-middle">
+                  <input
+                    type="radio"
+                    name={`kb-access-${kb.id}`}
+                    checked={currentLevel === 'read_write'}
+                    onChange={() => handleChange(kb.id, 'read_write')}
+                    disabled={disabled || !knowledgeAppendEnabled}
+                    className="accent-[var(--color-accent)]"
+                    title={
+                      !knowledgeAppendEnabled
+                        ? m.admin_integrations_kb_read_write_disabled_hint()
+                        : undefined
+                    }
+                  />
+                </td>
+              )}
             </tr>
           )
         })}

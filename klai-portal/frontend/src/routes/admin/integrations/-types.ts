@@ -54,6 +54,7 @@ export interface CreateIntegrationRequest {
   }
   rate_limit_rpm: number
   kb_access: { kb_id: number; access_level: AccessLevel }[]
+  widget_config?: WidgetConfig
 }
 
 export interface CreateIntegrationResponse extends IntegrationDetailResponse {
