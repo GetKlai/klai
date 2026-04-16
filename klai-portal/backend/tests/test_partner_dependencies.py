@@ -129,10 +129,10 @@ async def test_valid_key_returns_auth_context():
     setup_db(
         db,
         [
-            FakeResult([FakeKeyRow()]),     # key lookup
+            FakeResult([FakeKeyRow()]),  # key lookup
             FakeResult([FakeKbAccessRow()]),  # kb_access
-            FakeResult([FakeOrg()]),         # org lookup
-            FakeResult(),                    # set_tenant + any further calls
+            FakeResult([FakeOrg()]),  # org lookup
+            FakeResult(),  # set_tenant + any further calls
         ],
     )
 
