@@ -56,6 +56,32 @@ Success Criteria:
 - TRUST 5 quality gates passed
 - MX tags added for new code (NOTE, ANCHOR, WARN as appropriate)
 
+### Re-planning Gate
+
+Detect when implementation is stuck or diverging from SPEC and trigger re-assessment.
+
+Triggers:
+- 3+ iterations with no new SPEC acceptance criteria met
+- Test coverage dropping instead of increasing across iterations
+- New errors introduced exceed errors fixed in a cycle
+- Agent explicitly reports inability to meet a SPEC requirement
+
+Communication path:
+- Implementation agent (manager-ddd/tdd) detects trigger condition
+- Agent returns structured stagnation report to MoAI (agents cannot call AskUserQuestion)
+- MoAI presents gap analysis to user via AskUserQuestion with options:
+  - Continue with current approach (minor adjustments needed)
+  - Revise SPEC (requirements need refinement)
+  - Try alternative approach (re-delegate to manager-strategy)
+  - Pause for manual intervention (user takes over)
+
+Detection method:
+- Append acceptance criteria completion count and error count delta to `.moai/specs/SPEC-{ID}/progress.md` at the end of each iteration
+- Compare against previous entry to detect stagnation
+- Flag stagnation when acceptance criteria completion rate is zero for 3+ consecutive entries
+
+Integration: Referenced by run.md Phase 2.7 and loop.md iteration checks
+
 ## Sync Phase
 
 Generate documentation and prepare for deployment.
@@ -107,13 +133,15 @@ When team mode is enabled (workflow.team.enabled and AGENT_TEAMS env), phases ca
 
 | Phase | Sub-agent Mode | Team Mode | Condition |
 |-------|---------------|-----------|-----------|
-| Plan | manager-spec (single) | team-researcher + team-analyst + team-architect (parallel) | Complexity >= threshold |
-| Run | manager-ddd/tdd (sequential) | team-backend-dev + team-frontend-dev + team-tester (parallel) | Domains >= 3 or files >= 10 |
+| Plan | manager-spec (single) | Dynamic teammates: researcher + analyst + architect (parallel, general-purpose) | Complexity >= threshold |
+| Run | manager-ddd/tdd (sequential) | Dynamic teammates: backend-dev + frontend-dev + tester (parallel, general-purpose) | Domains >= 3 or files >= 10 |
 | Sync | manager-docs (single) | manager-docs (always sub-agent) | N/A |
+
+All teammates are spawned dynamically via `Agent(subagent_type: "general-purpose")` with runtime overrides from `workflow.yaml` role profiles. No static team agent definitions are used. See `.claude/skills/moai/team/run.md` for complete orchestration.
 
 ### Team Mode Plan Phase
 - TeamCreate for parallel research team
-- Teammates explore codebase deeply, analyze requirements, design approach
+- Spawn general-purpose teammates with mode: "plan" (read-only)
 - researcher teammate produces research.md with deep codebase analysis
 - analyst teammate validates requirements against research findings
 - architect teammate designs solution using reference implementations found in research
@@ -124,8 +152,8 @@ When team mode is enabled (workflow.team.enabled and AGENT_TEAMS env), phases ca
 ### Team Mode Run Phase
 - TeamCreate for implementation team
 - Task decomposition with file ownership boundaries
-- [HARD] Implementation teammates (backend-dev, frontend-dev, tester) MUST use `isolation: "worktree"` for parallel file safety
-- [HARD] Read-only teammates (quality) MUST NOT use isolation — permissionMode: plan is sufficient
+- [HARD] Implementation teammates (role_profiles: implementer, tester) MUST use `isolation: "worktree"` for parallel file safety
+- [HARD] Read-only teammates (role_profiles: reviewer) MUST NOT use isolation — mode: "plan" is sufficient
 - Teammates self-claim tasks from shared list
 - Quality validation after all implementation completes
 - Worktree cleanup via `git worktree prune` after team shutdown
@@ -158,14 +186,14 @@ When to prefer sub-agent mode:
 
 Detailed team orchestration steps are defined in dedicated workflow files:
 
-- Plan phase: @.claude/skills/moai/team/plan.md
-- Run phase: @.claude/skills/moai/team/run.md
-- Fix phase: @.claude/skills/moai/team/debug.md
-- Review: @.claude/skills/moai/team/review.md
+- Plan phase: .claude/skills/moai/team/plan.md
+- Run phase: .claude/skills/moai/team/run.md
+- Fix phase: .claude/skills/moai/team/debug.md
+- Review: .claude/skills/moai/team/review.md
 
 ### Known Limitations
 
-For complete limitations list, see @CLAUDE.md Section 15.
+For complete limitations list, see CLAUDE.md Section 15.
 
 ### Prerequisites
 

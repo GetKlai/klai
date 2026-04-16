@@ -35,13 +35,14 @@ Development methodology: Domain-Driven Development (ANALYZE-PRESERVE-IMPROVE)
 - Make small, incremental changes
 - Run characterization tests after each change
 - Refactor with test validation
+- After IMPROVE: Skill("simplify") executes automatically (see run.md Phase 2.10). This is mandatory and not a separate step for the agent — it is orchestrated by MoAI.
 
 Success Criteria:
 - All SPEC requirements implemented
 - Characterization tests passing
 - Behavior snapshots stable (no regression)
 - 85%+ code coverage achieved
-- TRUST 5 gates passed (see @.claude/rules/moai/core/moai-constitution.md)
+- TRUST 5 gates passed (see .claude/rules/moai/core/moai-constitution.md)
 
 ## TDD Mode (default)
 
@@ -61,13 +62,14 @@ Development methodology: Test-Driven Development (RED-GREEN-REFACTOR)
 - Clean up implementation while keeping tests green
 - Extract patterns, remove duplication
 - Apply SOLID principles where appropriate
+- After REFACTOR: Skill("simplify") executes automatically (see run.md Phase 2.10). This is mandatory and not a separate step for the agent — it is orchestrated by MoAI.
 
 Success Criteria:
 - All SPEC requirements implemented
 - All tests passing (RED-GREEN-REFACTOR complete)
 - Minimum coverage per commit: 80% (configurable)
 - No test written after implementation code
-- TRUST 5 gates passed (see @.claude/rules/moai/core/moai-constitution.md)
+- TRUST 5 gates passed (see .claude/rules/moai/core/moai-constitution.md)
 
 ### Brownfield Enhancement (for existing codebases)
 
@@ -80,6 +82,45 @@ When TDD is selected for a project with existing code, the RED phase is enhanced
 
 This ensures TDD on brownfield projects still respects existing behavior without requiring a separate methodology mode.
 
+## Pre-submission Self-Review
+
+Before marking implementation complete, review the full changeset for simplicity and correctness.
+
+This gate runs after Skill("simplify") and before completion markers. It applies to both DDD and TDD modes.
+
+Steps:
+- Review full diff against SPEC acceptance criteria
+- Ask: "Is there a simpler approach that achieves the same result?"
+- Ask: "Would removing any of these changes still satisfy the SPEC?"
+- Check for unnecessary abstractions, premature generalization, or over-engineering
+- If a simpler approach exists, implement it before presenting to user
+- If no simplification found, proceed to completion
+
+Scope:
+- Applies to the aggregate of all changes in the current Run phase
+- Does not re-run tests (Skill("simplify") already validated test passing)
+- If a simpler approach is implemented, re-run tests to verify the simplification does not break anything
+- Focus is architectural elegance and minimal footprint, not code style
+
+Skip conditions:
+- Single-file changes under 50 lines
+- Bug fixes with reproduction test (already minimal by Rule 4)
+- Changes explicitly approved in annotation cycle (user reviewed and accepted the approach during Plan Phase annotation iterations)
+
+## Drift Guard
+
+After each methodology cycle (DDD IMPROVE or TDD REFACTOR), a drift check runs automatically:
+
+1. Compares planned files (from tasks.md) against actual modifications
+2. Calculates scope drift percentage
+3. Logs results to progress.md
+4. Triggers re-planning if cumulative drift exceeds 30%
+
+This check is non-blocking for drift <= 30%. It warns but does not stop implementation.
+For drift > 30%, it triggers the existing Re-planning Gate (Phase 2.7) for scope review.
+
+The drift guard applies to both DDD and TDD modes identically.
+
 ## Team Mode Methodology
 
 When --team flag is used, the methodology applies at the teammate level:
@@ -91,7 +132,7 @@ When --team flag is used, the methodology applies at the teammate level:
 
 Team-specific rules:
 - Methodology is shared across all teammates via the SPEC document
-- team-quality agent validates methodology compliance after all implementation completes
+- team-validator agent validates methodology compliance after all implementation completes
 - File ownership prevents cross-teammate conflicts during parallel development
 - team-tester exclusively owns test files regardless of methodology
 
