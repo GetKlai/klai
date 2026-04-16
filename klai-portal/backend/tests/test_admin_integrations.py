@@ -118,7 +118,7 @@ class TestCreateIntegration:
             mock_db,
             [
                 FakeResult([kb]),  # _validate_kb_ids
-                FakeResult(),      # remaining queries (inserts, refresh, etc.)
+                FakeResult(),  # remaining queries (inserts, refresh, etc.)
             ],
         )
 
@@ -226,7 +226,7 @@ class TestListIntegrations:
         setup_db(
             mock_db,
             [
-                FakeResult([key_row]),    # list keys
+                FakeResult([key_row]),  # list keys
                 FakeResult([count_row]),  # count query
             ],
         )
@@ -253,8 +253,8 @@ class TestUpdateIntegration:
         setup_db(
             mock_db,
             [
-                FakeResult([key_row]),          # key lookup
-                FakeResult(scalar_value=1),      # count query (fallback)
+                FakeResult([key_row]),  # key lookup
+                FakeResult(scalar_value=1),  # count query (fallback)
             ],
         )
 
@@ -278,8 +278,8 @@ class TestUpdateIntegration:
             mock_db,
             [
                 FakeResult([key_row]),  # key lookup
-                FakeResult([kb]),       # kb validation
-                FakeResult(),           # delete + insert
+                FakeResult([kb]),  # kb validation
+                FakeResult(),  # delete + insert
             ],
         )
 
@@ -320,8 +320,8 @@ class TestRevokeIntegration:
         setup_db(
             mock_db,
             [
-                FakeResult([key_row]),        # key lookup
-                FakeResult(scalar_value=1),    # count
+                FakeResult([key_row]),  # key lookup
+                FakeResult(scalar_value=1),  # count
             ],
         )
 
@@ -363,8 +363,8 @@ class TestDeleteIntegration:
             mock_db,
             [
                 FakeResult([key_row]),  # key lookup
-                FakeResult(),           # delete kb_access
-                FakeResult(),           # delete key
+                FakeResult(),  # delete kb_access
+                FakeResult(),  # delete key
             ],
         )
 
