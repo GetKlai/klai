@@ -40,6 +40,7 @@ import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
 import { Route as AdminIntegrationsIndexRouteImport } from './routes/admin/integrations/index'
 import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
+import { Route as LocaleSignupIndexRouteImport } from './routes/$locale/signup/index'
 import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
 import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
@@ -55,6 +56,7 @@ import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serv
 import { Route as AdminIntegrationsNewRouteImport } from './routes/admin/integrations/new'
 import { Route as AdminIntegrationsIdRouteImport } from './routes/admin/integrations/$id'
 import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
+import { Route as LocaleSignupSocialRouteImport } from './routes/$locale/signup/social'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
 import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
 import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
@@ -230,6 +232,11 @@ const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
   path: '/groups/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const LocaleSignupIndexRoute = LocaleSignupIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LocaleSignupRoute,
+} as any)
 const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
   id: '/transcribe/add',
   path: '/transcribe/add',
@@ -309,6 +316,11 @@ const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
   id: '/groups/new',
   path: '/groups/new',
   getParentRoute: () => AdminRouteRoute,
+} as any)
+const LocaleSignupSocialRoute = LocaleSignupSocialRouteImport.update({
+  id: '/social',
+  path: '/social',
+  getParentRoute: () => LocaleSignupRoute,
 } as any)
 const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
   id: '/password/forgot',
@@ -427,7 +439,7 @@ export interface FileRoutesByFullPath {
   '/provisioning': typeof ProvisioningRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
-  '/$locale/signup': typeof LocaleSignupRoute
+  '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -441,6 +453,7 @@ export interface FileRoutesByFullPath {
   '/app/': typeof AppIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/$locale/signup/social': typeof LocaleSignupSocialRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
   '/admin/integrations/new': typeof AdminIntegrationsNewRoute
@@ -456,6 +469,7 @@ export interface FileRoutesByFullPath {
   '/app/meetings/start': typeof AppMeetingsStartRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
+  '/$locale/signup/': typeof LocaleSignupIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
@@ -492,7 +506,6 @@ export interface FileRoutesByTo {
   '/provisioning': typeof ProvisioningRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
-  '/$locale/signup': typeof LocaleSignupRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -505,6 +518,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/$locale/signup/social': typeof LocaleSignupSocialRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
   '/admin/integrations/new': typeof AdminIntegrationsNewRoute
@@ -520,6 +534,7 @@ export interface FileRoutesByTo {
   '/app/meetings/start': typeof AppMeetingsStartRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
+  '/$locale/signup': typeof LocaleSignupIndexRoute
   '/admin/groups': typeof AdminGroupsIndexRoute
   '/admin/integrations': typeof AdminIntegrationsIndexRoute
   '/admin/mcps': typeof AdminMcpsIndexRoute
@@ -559,7 +574,7 @@ export interface FileRoutesById {
   '/provisioning': typeof ProvisioningRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
-  '/$locale/signup': typeof LocaleSignupRoute
+  '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
@@ -573,6 +588,7 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugRouteRouteWithChildren
   '/$locale/password/forgot': typeof LocalePasswordForgotRoute
+  '/$locale/signup/social': typeof LocaleSignupSocialRoute
   '/admin/groups/new': typeof AdminGroupsNewRoute
   '/admin/integrations/$id': typeof AdminIntegrationsIdRoute
   '/admin/integrations/new': typeof AdminIntegrationsNewRoute
@@ -588,6 +604,7 @@ export interface FileRoutesById {
   '/app/meetings/start': typeof AppMeetingsStartRoute
   '/app/transcribe/$transcriptionId': typeof AppTranscribeTranscriptionIdRoute
   '/app/transcribe/add': typeof AppTranscribeAddRoute
+  '/$locale/signup/': typeof LocaleSignupIndexRoute
   '/admin/groups/': typeof AdminGroupsIndexRoute
   '/admin/integrations/': typeof AdminIntegrationsIndexRoute
   '/admin/mcps/': typeof AdminMcpsIndexRoute
@@ -642,6 +659,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
+    | '/$locale/signup/social'
     | '/admin/groups/new'
     | '/admin/integrations/$id'
     | '/admin/integrations/new'
@@ -657,6 +675,7 @@ export interface FileRouteTypes {
     | '/app/meetings/start'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
+    | '/$locale/signup/'
     | '/admin/groups/'
     | '/admin/integrations/'
     | '/admin/mcps/'
@@ -693,7 +712,6 @@ export interface FileRouteTypes {
     | '/provisioning'
     | '/signup'
     | '/verify'
-    | '/$locale/signup'
     | '/admin/billing'
     | '/admin/settings'
     | '/app/account'
@@ -706,6 +724,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/$locale/password/forgot'
+    | '/$locale/signup/social'
     | '/admin/groups/new'
     | '/admin/integrations/$id'
     | '/admin/integrations/new'
@@ -721,6 +740,7 @@ export interface FileRouteTypes {
     | '/app/meetings/start'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
+    | '/$locale/signup'
     | '/admin/groups'
     | '/admin/integrations'
     | '/admin/mcps'
@@ -773,6 +793,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/app/knowledge/$kbSlug'
     | '/$locale/password/forgot'
+    | '/$locale/signup/social'
     | '/admin/groups/new'
     | '/admin/integrations/$id'
     | '/admin/integrations/new'
@@ -788,6 +809,7 @@ export interface FileRouteTypes {
     | '/app/meetings/start'
     | '/app/transcribe/$transcriptionId'
     | '/app/transcribe/add'
+    | '/$locale/signup/'
     | '/admin/groups/'
     | '/admin/integrations/'
     | '/admin/mcps/'
@@ -1052,6 +1074,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminGroupsIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/$locale/signup/': {
+      id: '/$locale/signup/'
+      path: '/'
+      fullPath: '/$locale/signup/'
+      preLoaderRoute: typeof LocaleSignupIndexRouteImport
+      parentRoute: typeof LocaleSignupRoute
+    }
     '/app/transcribe/add': {
       id: '/app/transcribe/add'
       path: '/transcribe/add'
@@ -1156,6 +1185,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/groups/new'
       preLoaderRoute: typeof AdminGroupsNewRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/$locale/signup/social': {
+      id: '/$locale/signup/social'
+      path: '/social'
+      fullPath: '/$locale/signup/social'
+      preLoaderRoute: typeof LocaleSignupSocialRouteImport
+      parentRoute: typeof LocaleSignupRoute
     }
     '/$locale/password/forgot': {
       id: '/$locale/password/forgot'
@@ -1293,13 +1329,27 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface LocaleSignupRouteChildren {
+  LocaleSignupSocialRoute: typeof LocaleSignupSocialRoute
+  LocaleSignupIndexRoute: typeof LocaleSignupIndexRoute
+}
+
+const LocaleSignupRouteChildren: LocaleSignupRouteChildren = {
+  LocaleSignupSocialRoute: LocaleSignupSocialRoute,
+  LocaleSignupIndexRoute: LocaleSignupIndexRoute,
+}
+
+const LocaleSignupRouteWithChildren = LocaleSignupRoute._addFileChildren(
+  LocaleSignupRouteChildren,
+)
+
 interface LocaleRouteRouteChildren {
-  LocaleSignupRoute: typeof LocaleSignupRoute
+  LocaleSignupRoute: typeof LocaleSignupRouteWithChildren
   LocalePasswordForgotRoute: typeof LocalePasswordForgotRoute
 }
 
 const LocaleRouteRouteChildren: LocaleRouteRouteChildren = {
-  LocaleSignupRoute: LocaleSignupRoute,
+  LocaleSignupRoute: LocaleSignupRouteWithChildren,
   LocalePasswordForgotRoute: LocalePasswordForgotRoute,
 }
 
