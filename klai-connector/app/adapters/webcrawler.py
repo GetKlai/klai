@@ -202,10 +202,19 @@ class WebCrawlerAdapter(BaseAdapter):
             "remove_consent_popups": True,
             "remove_overlay_elements": True,
             "page_timeout": 30000,
+            # Lower threshold to capture wiki content images (score=2: format+alt).
+            # Default (2) requires score > 2, filtering out images with only
+            # format-in-URL + alt-text = 2. Threshold=1 passes score ≥ 2.
+            "image_score_threshold": 1,
             "markdown_generator": {"type": "DefaultMarkdownGenerator", "params": md_gen_params},
         }
         if cfg.content_selector:
-            params["css_selector"] = cfg.content_selector
+            # Use target_elements instead of css_selector so the browser captures the full
+            # page HTML (including images outside the selector). css_selector applies the
+            # filter at the Playwright level via document.querySelectorAll().outerHTML,
+            # which means images outside the element are never seen by the scraper.
+            # target_elements scopes only the markdown output, not image detection.
+            params["target_elements"] = [cfg.content_selector]
         else:
             params["js_code_before_wait"] = _JS_REMOVE_CHROME
             params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]

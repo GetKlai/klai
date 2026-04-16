@@ -432,7 +432,7 @@ class SyncEngine:
                 branch = connector_config.get("branch", "main")
                 base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
                 url = resolve_relative_url(url, base)
-            elif connector_type == "webcrawler":
+            elif connector_type == "web_crawler":
                 url = resolve_relative_url(url, ref.source_ref or ref.source_url or "")
             resolved.append((alt, url))
 
