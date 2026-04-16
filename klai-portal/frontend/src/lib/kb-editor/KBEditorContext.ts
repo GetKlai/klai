@@ -18,7 +18,7 @@ export interface KBEditorCtxValue {
   setSaveStatus: (s: SaveStatus) => void
   editTitle: string
   setEditTitle: (t: string) => void
-  // Navigate to page by slug (layout resolves slug → short ID)
+  // Navigate to page by slug (layout resolves slug → full UUID)
   navigateToPage: (slug: string | null) => void
   // Trigger delete confirmation modal (owned by layout)
   setDeletePagePath: (path: string | null) => void
@@ -32,13 +32,13 @@ export function useKBEditor(): KBEditorCtxValue {
   return ctx
 }
 
-/** Resolve a short 8-char page ID to its slug. Falls back to treating id as slug. */
+/** Resolve a page ID (full UUID or prefix) to its slug. Falls back to treating id as slug. */
 export function resolveSlug(pageId: string, pageIndex: PageIndexEntry[]): string {
   const match = pageIndex.find((p) => p.id && p.id.startsWith(pageId))
   return match?.slug ?? pageId
 }
 
-/** Get the short ID for a slug. Falls back to slug itself when id is null. */
+/** Get the stable page ID for URL routing. Falls back to slug when id is null. */
 export function shortId(entry: PageIndexEntry | undefined): string {
-  return entry?.id ? entry.id.slice(0, 8) : (entry?.slug ?? '')
+  return entry?.id ?? entry?.slug ?? ''
 }
