@@ -1,8 +1,8 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle } from 'lucide-react'
-import { Sidebar } from '@/components/layout/Sidebar'
+import { MessageSquare, BookOpen, Sliders, Scale, Users, Puzzle, CreditCard, Settings } from 'lucide-react'
+import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -18,12 +18,18 @@ function AdminLayout() {
   const isAdmin = user?.isAdmin === true
   const isGroupAdmin = user?.isGroupAdmin === true
 
-  const adminNav = [
-    { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },
-    { to: '/admin/users', label: m.admin_nav_users(), icon: Users },
-    { to: '/admin/groups', label: m.admin_nav_groups(), icon: FolderKanban },
+  /* Same nav structure as the app layout for a consistent sidebar */
+  const adminNav: NavItem[] = [
+    { to: '/app', label: 'Chat', icon: MessageSquare, end: true },
+    { to: '/app/knowledge', label: m.sidebar_knowledge(), icon: BookOpen },
+    { to: '/app/templates', label: 'Templates', icon: Sliders },
+    { to: '/app/rules', label: m.sidebar_rules(), icon: Scale },
+    { to: '/admin/users', label: m.sidebar_team(), icon: Users },
+    { to: '/admin/mcps', label: m.sidebar_mcps(), icon: Puzzle },
+  ]
+
+  const accountItems: NavItem[] = [
     { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
-    { to: '/admin/mcps', label: m.admin_nav_mcps(), icon: Puzzle },
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
   ]
 
@@ -52,7 +58,7 @@ function AdminLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar navItems={adminNav} />
+      <Sidebar navItems={adminNav} accountItems={accountItems} />
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>

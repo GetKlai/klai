@@ -1,11 +1,11 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, BookOpen, Sliders } from 'lucide-react'
+import { MessageSquare, BookOpen, Sliders, Scale, Users, Puzzle, CreditCard, Settings } from 'lucide-react'
 import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'
 import { HelpButton } from '@/components/help/HelpButton'
-// i18n messages used by child components via Sidebar
+import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
 const PRODUCT_ROUTES: Record<string, string[]> = {
@@ -27,20 +27,35 @@ function AppLayout() {
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()
 
-  const allNavItems: NavItem[] = [
+  const productNavItems: NavItem[] = [
     { to: '/app', label: 'Chat', icon: MessageSquare, end: true },
-    { to: '/app/knowledge', label: 'Kennis', icon: BookOpen },
+    { to: '/app/knowledge', label: m.sidebar_knowledge(), icon: BookOpen },
     { to: '/app/templates', label: 'Templates', icon: Sliders },
+    { to: '/app/rules', label: m.sidebar_rules(), icon: Scale },
+  ]
+
+  const adminNavItems: NavItem[] = [
+    { to: '/admin/users', label: m.sidebar_team(), icon: Users },
+    { to: '/admin/mcps', label: m.sidebar_mcps(), icon: Puzzle },
+  ]
+
+  const accountItems: NavItem[] = [
+    { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
+    { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
   ]
 
   const isAdmin = user?.isAdmin === true
+  const isGroupAdmin = user?.isGroupAdmin === true
   const products = user?.products ?? []
-  const appNav = isAdmin
-    ? allNavItems
-    : allNavItems.filter((item) => {
+  const filteredProductNav = isAdmin
+    ? productNavItems
+    : productNavItems.filter((item) => {
         const required = PRODUCT_ROUTES[item.to ?? '']
         return !required || required.some((p) => products.includes(p))
       })
+  const appNav = (isAdmin || isGroupAdmin)
+    ? [...filteredProductNav, ...adminNavItems]
+    : filteredProductNav
 
   useEffect(() => {
     if (auth.isLoading || userLoading) return
@@ -63,8 +78,8 @@ function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar navItems={appNav} />
-      <main className="flex-1 overflow-y-auto bg-white" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <Sidebar navItems={appNav} accountItems={(isAdmin || isGroupAdmin) ? accountItems : undefined} />
+      <main className="flex-1 overflow-y-auto bg-white" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         <SessionBanner />
         <Outlet />
       </main>
