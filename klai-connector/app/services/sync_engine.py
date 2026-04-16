@@ -417,6 +417,12 @@ class SyncEngine:
                 for img_ref in adapter.get_cached_images(ref.ref):
                     raw_urls.append((img_ref.alt, img_ref.url))
 
+        # For adapters that populate DocumentRef.images directly (e.g. webcrawler via
+        # media["images"] from crawl4ai — bypasses PruningContentFilter stripping).
+        if ref.images:
+            for img_ref in ref.images:
+                raw_urls.append((img_ref.alt, img_ref.url))
+
         # Resolve relative URLs based on connector type.
         resolved: list[tuple[str, str]] = []
         for alt, url in raw_urls:

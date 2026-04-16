@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
-from app.adapters.base import BaseAdapter, DocumentRef
+from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
 
 logger = structlog.get_logger(__name__)
@@ -341,6 +341,19 @@ class WebCrawlerAdapter(BaseAdapter):
 
             cache[url] = markdown
             content_type = "pdf_document" if url.lower().endswith(".pdf") else "kb_article"
+
+            # Extract images from crawl4ai media field — independent of PruningContentFilter.
+            # fit_markdown strips image blocks (score 0.0 against 0.45 threshold), so we
+            # cannot rely on ![alt](url) patterns in the markdown text for webcrawler pages.
+            raw_images = page.get("media", {}).get("images", [])
+            images: list[ImageRef] | None = None
+            if raw_images:
+                images = [
+                    ImageRef(url=img["src"], alt=img.get("alt", ""), source_path="")
+                    for img in raw_images
+                    if img.get("src")
+                ] or None
+
             refs.append(
                 DocumentRef(
                     path=path,
@@ -349,6 +362,7 @@ class WebCrawlerAdapter(BaseAdapter):
                     content_type=content_type,
                     source_ref=url,
                     source_url=url,
+                    images=images,
                 )
             )
 
