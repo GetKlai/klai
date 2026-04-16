@@ -515,36 +515,43 @@ class ZitadelClient:
             json={"idpIntentToken": idp_intent_token},
         )
         resp.raise_for_status()
-        data = resp.json()
-        logger.info(
-            "retrieve_idp_intent %s: top_keys=%s idpInformation_keys=%s rawInformation_keys=%s has_userId=%s",
-            idp_intent_id,
-            list(data.keys()),
-            list(data.get("idpInformation", {}).keys()),
-            list(data.get("idpInformation", {}).get("rawInformation", {}).keys()),
-            bool(data.get("userId")),
-        )
-        return data
+        return resp.json()
 
     async def create_zitadel_user_from_idp(self, intent_data: dict, org_id: str) -> str:
         """Create a Zitadel human user from IDP intent data. Returns the new Zitadel userId.
 
         Used during social signup when no existing Zitadel user is linked to the IDP intent.
         The email is marked verified (trusted from the IDP) and the IDP is linked immediately.
-        """
-        raw_info = intent_data.get("idpInformation", {}).get("rawInformation", {})
-        idp_link = intent_data.get("idpLink", {})
 
-        email: str = raw_info.get("email", "") or idp_link.get("userName", "")
-        given_name: str = raw_info.get("given_name", "")
-        family_name: str = raw_info.get("family_name", "")
-        if not given_name and raw_info.get("name"):
-            parts = raw_info["name"].split(" ", 1)
+        Zitadel v2 IDP intent structure (POST /v2/idp_intents/{id}):
+          idpInformation.idpId          — Zitadel IDP config ID
+          idpInformation.userId         — IDP-side user ID (e.g. Google sub)
+          idpInformation.userName       — IDP-side username / email
+          idpInformation.rawInformation.User — raw OIDC user info dict
+        """
+        idp_info = intent_data.get("idpInformation", {})
+        raw_user = idp_info.get("rawInformation", {}).get("User", {})
+
+        idp_id: str = idp_info.get("idpId", "")
+        idp_user_id: str = idp_info.get("userId", "")
+        idp_user_name: str = idp_info.get("userName", "")
+
+        # email: raw OIDC profile has it directly; fall back to IDP userName
+        email: str = raw_user.get("email", "") or idp_user_name
+        given_name: str = raw_user.get("given_name", "")
+        family_name: str = raw_user.get("family_name", "")
+        if not given_name and raw_user.get("name"):
+            parts = raw_user["name"].split(" ", 1)
             given_name = parts[0]
             family_name = parts[1] if len(parts) > 1 else ""
-        display_name: str = raw_info.get("name", f"{given_name} {family_name}".strip()) or email.split("@")[0]
+        display_name: str = raw_user.get("name", f"{given_name} {family_name}".strip()) or email.split("@")[0]
 
         if not email:
+            logger.error(
+                "create_zitadel_user_from_idp: no email in intent — idp_info_keys=%s raw_user_keys=%s",
+                list(idp_info.keys()),
+                list(raw_user.keys()),
+            )
             raise ValueError("Cannot create Zitadel user: no email in IDP intent data")
 
         resp = await self._http.post(
@@ -563,9 +570,9 @@ class ZitadelClient:
                 },
                 "idpLinks": [
                     {
-                        "idpId": idp_link.get("idpId", ""),
-                        "userId": idp_link.get("userId", ""),
-                        "userName": idp_link.get("userName", email),
+                        "idpId": idp_id,
+                        "userId": idp_user_id,
+                        "userName": idp_user_name or email,
                     }
                 ],
             },
