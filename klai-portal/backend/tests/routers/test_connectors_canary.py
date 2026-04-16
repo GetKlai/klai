@@ -22,9 +22,7 @@ class TestWebcrawlerConfigCanaryXOR:
                 canary_url="https://wiki.example.com/known-page",
             )
         errors = exc_info.value.errors()
-        assert any("canary" in str(e).lower() for e in errors), (
-            f"Expected canary error, got: {errors}"
-        )
+        assert any("canary" in str(e).lower() for e in errors), f"Expected canary error, got: {errors}"
 
     def test_canary_xor_fingerprint_only(self) -> None:
         """canary_fingerprint set without canary_url → 422."""
@@ -34,9 +32,7 @@ class TestWebcrawlerConfigCanaryXOR:
                 canary_fingerprint="abc1234567890abc",
             )
         errors = exc_info.value.errors()
-        assert any("canary" in str(e).lower() for e in errors), (
-            f"Expected canary error, got: {errors}"
-        )
+        assert any("canary" in str(e).lower() for e in errors), f"Expected canary error, got: {errors}"
 
     def test_canary_both_set_valid(self) -> None:
         """canary_url and canary_fingerprint both set → valid."""
