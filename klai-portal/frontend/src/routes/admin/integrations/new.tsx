@@ -94,7 +94,7 @@ function NewIntegrationPage() {
             : s === 'kbs'
               ? m.admin_integrations_wizard_step_kb_access()
               : integrationType === 'widget'
-                ? m.admin_integrations_wizard_step_appearance()
+                ? m.admin_integrations_wizard_step_setup()
                 : m.admin_integrations_wizard_step_rate_limit(),
     onClick: () => setStep(s),
   }))
@@ -445,12 +445,47 @@ function NewIntegrationPage() {
         {step === 'settings' && integrationType === 'widget' && (
           <section className="space-y-4">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_appearance_intro()}
+              {m.admin_integrations_wizard_setup_intro()}
             </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-title">
+                {m.admin_integrations_widget_title_label()}
+              </Label>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_widget_title_help()}
+              </p>
+              <Input
+                id="widget-title"
+                value={form.widget_title}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, widget_title: e.target.value }))
+                }
+                placeholder={m.admin_integrations_widget_title_placeholder()}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-welcome">
+                {m.admin_integrations_widget_welcome_label()}
+              </Label>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_widget_welcome_help()}
+              </p>
+              <Input
+                id="widget-welcome"
+                value={form.widget_welcome}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, widget_welcome: e.target.value }))
+                }
+                placeholder={m.admin_integrations_widget_welcome_placeholder()}
+              />
+            </div>
             <div className="space-y-1.5">
               <Label htmlFor="widget-origins">
                 {m.admin_integrations_widget_origins_label()}
               </Label>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                {m.admin_integrations_widget_origins_help()}
+              </p>
               <textarea
                 id="widget-origins"
                 value={form.allowed_origins_raw}
@@ -467,30 +502,6 @@ function NewIntegrationPage() {
                   {m.admin_integrations_widget_origins_empty_warning()}
                 </div>
               )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="widget-title">
-                {m.admin_integrations_widget_title_label()}
-              </Label>
-              <Input
-                id="widget-title"
-                value={form.widget_title}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, widget_title: e.target.value }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="widget-welcome">
-                {m.admin_integrations_widget_welcome_label()}
-              </Label>
-              <Input
-                id="widget-welcome"
-                value={form.widget_welcome}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, widget_welcome: e.target.value }))
-                }
-              />
             </div>
           </section>
         )}
