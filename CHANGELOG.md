@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased] — 2026-04-16 — SPEC-KB-IMAGE-001: Adapter-owned image URL resolution (refactor)
+
+### Changed
+
+- **`klai-connector/app/adapters/webcrawler.py`**: `_process_results()` resolveert nu relatieve image URLs naar absoluut t.o.v. de pagina-URL, direct bij het ophalen van resultaten. Geen connector-type dispatch meer in `sync_engine` voor webcrawler URLs.
+- **`klai-connector/app/adapters/notion.py`**: Verwijderd `_image_cache` side-channel en `get_cached_images()` methode. `fetch_document()` zet `ref.images` nu direct (conform het BaseAdapter contract).
+- **`klai-connector/app/adapters/github.py`**: `source_url` is nu de GitHub blob-view URL (`https://github.com/{owner}/{repo}/blob/{branch}/{path}`) voor gebruikerszichtbare citaties. De raw URL (`raw.githubusercontent.com`) wordt alleen intern gebruikt in `fetch_document()` als basis voor het resolven van markdown image URLs. Nieuwe statische helper `_extract_markdown_images()` vult `ref.images` met absolute URLs voor `.md` en `.rst` bestanden.
+- **`klai-connector/app/services/sync_engine.py`**: `_extract_and_upload_images()` hernoemd naar `_upload_images()`. Alle connector-type dispatch verwijderd. `text` parameter verwijderd. `extract_markdown_image_urls()` en `resolve_relative_url` imports verwijderd. Parameter `ref` getypt als `DocumentRef` in plaats van `Any`.
+- **`klai-connector/app/adapters/base.py`**: Docstrings documenteren nu expliciet het contract: `ImageRef.url` MUST be absolute HTTP(S); `DocumentRef.images` is URL-based only (DOCX/PDF embeds gaan via de parser pipeline, niet via dit veld). Docstrings toegevoegd voor `source_url` en `last_edited` velden op `DocumentRef`.
+
+### Added
+
+- **18 nieuwe unit tests** verdeeld over 4 testbestanden:
+  - `tests/adapters/test_github_images.py` (NIEUW) — 9 tests voor markdown URL resolution (relatief, absoluut, dot-slash, branch handling, data URI skipping, leading-slash urljoin semantics)
+  - `tests/adapters/test_webcrawler.py::TestImageUrlResolution` — 4 tests voor `_process_results()` absolute URL conversie
+  - `tests/adapters/test_notion.py` — 3 tests voor `ref.images` populatie + afwezigheid van legacy `_image_cache`
+  - `tests/test_sync_engine_images.py::TestUploadImagesIsConnectorAgnostic` — 2 tests voor connector-agnostic upload
+
+> Dit is een refactor. Er zijn geen nieuwe gebruikerszichtbare features. Extern gedrag is ongewijzigd.
+
 ## [Unreleased] — 2026-04-06 — SPEC-KB-026: Taxonomy Integration Hardening
 
 ### Fixed — SPEC-KB-026: Taxonomy Integration Hardening (6 bugs)
