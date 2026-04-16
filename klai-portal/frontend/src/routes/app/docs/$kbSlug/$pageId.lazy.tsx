@@ -98,7 +98,7 @@ function KBPageEditor() {
     const tok = tokenRef.current
     const icon = iconRef.current
     if (!path || !tok) return
-    const content = editorRef.current?.getMarkdown() ?? ''
+    const content = editorRef.current?.getContent() ?? ''
 
     const currentSlug = stripMdExt(path)
     const newSlug = slugify(title)
@@ -166,7 +166,7 @@ function KBPageEditor() {
 
   const saveAccess = useCallback(async () => {
     if (!selectedPath) return
-    const content = editorRef.current?.getMarkdown() ?? ''
+    const content = editorRef.current?.getContent() ?? ''
     const editAccess = accessState.mode === 'org' ? 'org' : accessState.users
     setAccessState((a) => ({ ...a, saveStatus: 'saving' }))
     try {
