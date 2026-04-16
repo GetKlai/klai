@@ -201,7 +201,7 @@ async def test_start_crawl_injects_path_prefix_filter(adapter: WebCrawlerAdapter
     filters = filter_chain["params"]["filters"]
     assert len(filters) == 1
     assert filters[0]["type"] == "URLPatternFilter"
-    assert filters[0]["params"]["patterns"] == ["https://wiki.example.com/en"]
+    assert filters[0]["params"]["patterns"] == ["/en/*"]
 
 
 # ---------------------------------------------------------------------------

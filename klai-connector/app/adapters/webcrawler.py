@@ -221,7 +221,10 @@ class WebCrawlerAdapter(BaseAdapter):
             "max_pages": max_pages,
         }
         if allowed_path_prefix:
-            pattern = base_url.rstrip("/") + "/" + allowed_path_prefix.lstrip("/")
+            # Path-only prefix with wildcard — matches all URLs under the prefix
+            # regardless of domain. Full-URL patterns without /* are treated as
+            # exact matches by URLPatternFilter, filtering out all child pages.
+            pattern = "/" + allowed_path_prefix.strip("/") + "/*"
             deep_crawl_params["filter_chain"] = {
                 "type": "FilterChain",
                 "params": {
