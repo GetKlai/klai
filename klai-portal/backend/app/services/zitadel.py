@@ -564,9 +564,7 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()["userId"]
 
-    async def create_session_for_user_idp(
-        self, user_id: str, idp_intent_id: str, idp_intent_token: str
-    ) -> dict:
+    async def create_session_for_user_idp(self, user_id: str, idp_intent_id: str, idp_intent_token: str) -> dict:
         """Create a Zitadel session for a known user_id using a completed IDP intent."""
         resp = await self._http.post(
             "/v2/sessions",

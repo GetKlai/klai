@@ -984,9 +984,7 @@ async def idp_signup_callback(
     # 1b. New user — no Zitadel account yet. Create one from the IDP profile.
     if not idp_user_id:
         try:
-            idp_user_id = await zitadel.create_zitadel_user_from_idp(
-                intent_data, settings.zitadel_portal_org_id
-            )
+            idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
             logger.info("idp_signup_callback: created Zitadel user %s from IDP", idp_user_id)
         except httpx.HTTPStatusError as exc:
             logger.exception(
