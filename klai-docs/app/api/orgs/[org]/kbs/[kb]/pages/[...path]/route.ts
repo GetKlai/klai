@@ -74,11 +74,12 @@ export async function GET(
   }
 
   const filePath = `${resolvedPath}.md`;
-  const raw = await gitea.getFileContent(resolved.kb.gitea_repo, filePath);
-  if (!raw) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const file = await gitea.getFile(resolved.kb.gitea_repo, filePath);
+  if (!file?.content) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const raw = Buffer.from(file.content, "base64").toString("utf-8");
 
   const parsed = parsePage(raw);
-  return NextResponse.json(parsed);
+  return NextResponse.json({ ...parsed, sha: file.sha });
 }
 
 // PUT /api/orgs/{org}/kbs/{kb}/pages/{...path}
@@ -157,7 +158,10 @@ export async function PUT(
     }
   }
 
-  const currentSha = file?.sha ?? sha;
+  // Client-owned SHA: prefer the client-provided SHA so the server does not need a
+  // separate Gitea fetch for the SHA. Falls back to file.sha for the initial save
+  // (when the client has no SHA yet, e.g. page was just created).
+  const currentSha = sha ?? file?.sha;
 
   // Read existing frontmatter to preserve fields (e.g. id, redirects)
   const existingRaw = !isNewPage ? await gitea.getFileContent(kb.gitea_repo, filePath) : null;
@@ -177,7 +181,7 @@ export async function PUT(
   if (edit_access !== undefined) frontmatter.edit_access = edit_access;
   const fileContent = serializePage(frontmatter as Parameters<typeof serializePage>[0], content ?? "");
 
-  await gitea.putFile(
+  const writeResult = await gitea.putFile(
     kb.gitea_repo,
     filePath,
     fileContent,
@@ -219,8 +223,10 @@ export async function PUT(
     });
   }
 
-  // Existing page update: maintain backward-compatible response
-  return NextResponse.json({ ok: true });
+  // Return the new SHA so the client can send it on the next PUT, eliminating
+  // the server-side SHA fetch race window entirely.
+  const newSha = (writeResult as { content?: { sha?: string } } | null)?.content?.sha ?? null;
+  return NextResponse.json({ ok: true, sha: newSha });
 }
 
 // DELETE /api/orgs/{org}/kbs/{kb}/pages/{...path}
