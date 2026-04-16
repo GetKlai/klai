@@ -229,9 +229,9 @@ async def test_widget_config_success():
 
     db.execute = AsyncMock(
         side_effect=[
-            FakeResult(rows=[fake_key]),   # widget key lookup
-            FakeResult(rows=[]),            # kb access rows
-            FakeResult(rows=[fake_org]),    # org lookup
+            FakeResult(rows=[fake_key]),  # widget key lookup
+            FakeResult(rows=[]),  # kb access rows
+            FakeResult(rows=[fake_org]),  # org lookup
         ]
     )
 
@@ -246,6 +246,7 @@ async def test_widget_config_success():
         response = await widget_config(id=fake_key.widget_id, request=request, db=db)
 
     import json
+
     body = json.loads(response.body)
     assert response.status_code == 200
     assert "session_token" in body
