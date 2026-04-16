@@ -30,6 +30,7 @@ from app.core.database import get_db, set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
+from app.models.widgets import Widget, WidgetKbAccess
 from app.services.events import emit_event
 from app.services.partner_chat import (
     chat_completion_non_streaming,
@@ -417,22 +418,18 @@ async def widget_config(
             media_type="application/json",
         )
 
-    # Look up widget key by widget_id and integration_type='widget'
+    # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
     result = await db.execute(
-        select(PartnerAPIKey).where(
-            PartnerAPIKey.widget_id == id,
-            PartnerAPIKey.integration_type == "widget",
-            PartnerAPIKey.active.is_(True),
-        )
+        select(Widget).where(Widget.widget_id == id)
     )
-    key_row = result.scalar_one_or_none()
+    widget_row = result.scalar_one_or_none()
 
-    if key_row is None:
+    if widget_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
 
     # Validate Origin header
     origin = request.headers.get("origin", "")
-    widget_config_data = key_row.widget_config or {}
+    widget_config_data = widget_row.widget_config or {}
     allowed_origins = widget_config_data.get("allowed_origins", [])
 
     if not origin or not origin_allowed(origin, allowed_origins):
@@ -443,23 +440,23 @@ async def widget_config(
         )
 
     # Load org and set tenant BEFORE KB access query (ensures RLS context is active)
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == widget_row.org_id))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
     await set_tenant(db, org.id)
 
-    # Load KB access for this key (after RLS tenant is set)
+    # Load KB access for this widget (after RLS tenant is set)
     kb_result = await db.execute(
-        select(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key_row.id)
+        select(WidgetKbAccess).where(WidgetKbAccess.widget_id == widget_row.id)
     )
     kb_rows = kb_result.scalars().all()
     kb_ids = [row.kb_id for row in kb_rows]
 
     # Generate session token
     session_token = generate_session_token(
-        wgt_id=key_row.widget_id or id,
-        org_id=key_row.org_id,
+        wgt_id=widget_row.widget_id,
+        org_id=widget_row.org_id,
         kb_ids=kb_ids,
         secret=settings.widget_jwt_secret,
     )
@@ -501,19 +498,15 @@ async def widget_config_preflight(
     Returns CORS headers without verifying JWT secret (preflight only).
     """
     result = await db.execute(
-        select(PartnerAPIKey).where(
-            PartnerAPIKey.widget_id == id,
-            PartnerAPIKey.integration_type == "widget",
-            PartnerAPIKey.active.is_(True),
-        )
+        select(Widget).where(Widget.widget_id == id)
     )
-    key_row = result.scalar_one_or_none()
+    widget_row = result.scalar_one_or_none()
 
-    if key_row is None:
+    if widget_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
 
     origin = request.headers.get("origin", "")
-    widget_config_data = key_row.widget_config or {}
+    widget_config_data = widget_row.widget_config or {}
     allowed_origins = widget_config_data.get("allowed_origins", [])
 
     if not origin or not origin_allowed(origin, allowed_origins):

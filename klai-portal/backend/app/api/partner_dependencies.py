@@ -1,11 +1,12 @@
 """Partner API authentication and authorization dependencies.
 
-SPEC-API-001 REQ-2.1 through REQ-2.6:
+SPEC-API-001 REQ-2.1 through REQ-2.6 and SPEC-WIDGET-002:
 - Extract Bearer pk_... token from Authorization header
-- SHA-256 hash lookup in partner_api_keys (active=True only)
+- SHA-256 hash lookup in partner_api_keys (no `active` filter — DELETE is
+  the only way to end a key, per SPEC-WIDGET-002)
 - Rate limit enforcement via Redis sliding window
 - Non-blocking last_used_at update
-- Error messages never distinguish not-found from inactive (no enumeration)
+- Error messages never distinguish not-found from deleted (no enumeration)
 """
 
 from __future__ import annotations
@@ -160,13 +161,10 @@ async def get_partner_key(
     if not token.startswith("pk_live_"):
         return await _auth_via_session_token(token, db)
 
-    # Step 3: Compute hash and look up key (active only — inactive returns None)
+    # Step 3: Compute hash and look up key (SPEC-WIDGET-002: no active filter)
     key_hash = hashlib.sha256(token.encode()).hexdigest()
     result = await db.execute(
-        select(PartnerAPIKey).where(
-            PartnerAPIKey.key_hash == key_hash,
-            PartnerAPIKey.active.is_(True),
-        )
+        select(PartnerAPIKey).where(PartnerAPIKey.key_hash == key_hash)
     )
     key_row = result.scalar_one_or_none()
 

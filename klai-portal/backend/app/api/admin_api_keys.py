@@ -1,7 +1,12 @@
-"""Admin integration management endpoints (SPEC-API-001 REQ-6).
+"""Admin API Key management endpoints — SPEC-WIDGET-002.
 
-CRUD for partner API keys ("integrations") scoped to caller's org.
-Auth: Zitadel OIDC session with admin/owner role check.
+CRUD for developer-facing partner API keys (`pk_live_...`) scoped to the
+caller's org. Auth: Zitadel OIDC session with admin/owner role check.
+
+Split from the previous admin_integrations.py which combined API keys
+and widgets. Widgets now live in admin_widgets.py.
+
+No `active` / revoke action — DELETE is the only way to end a key.
 """
 
 from __future__ import annotations
@@ -19,14 +24,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin import _get_caller_org, _require_admin
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess, generate_widget_id
+from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.services.events import emit_event
 from app.services.partner_keys import generate_partner_key
 
 logger = structlog.get_logger()
 bearer = HTTPBearer()
 
-router = APIRouter(prefix="/api/integrations", tags=["Integrations Admin"])
+router = APIRouter(prefix="/api/api-keys", tags=["API Keys Admin"])
 
 
 # ---------------------------------------------------------------------------
@@ -39,48 +44,41 @@ class KbAccessEntry(BaseModel):
     access_level: Literal["read", "read_write"]
 
 
-class CreateIntegrationRequest(BaseModel):
+class CreateApiKeyRequest(BaseModel):
     name: str = Field(min_length=3, max_length=128)
     description: str | None = None
-    integration_type: Literal["api", "widget"] = "api"
     permissions: dict  # {"chat": bool, "feedback": bool, "knowledge_append": bool}
     kb_access: list[KbAccessEntry]
     rate_limit_rpm: int = Field(default=60, ge=10, le=600)
-    widget_config: dict | None = None
 
 
-class IntegrationResponse(BaseModel):
+class ApiKeyResponse(BaseModel):
     id: str
     name: str
     description: str | None
-    integration_type: str
     key_prefix: str
     permissions: dict
-    active: bool
     kb_access_count: int
     rate_limit_rpm: int
-    widget_id: str | None = None
-    widget_config: dict | None = None
     last_used_at: str | None
     created_at: str
     created_by: str
 
 
-class CreateIntegrationResponse(IntegrationResponse):
+class CreateApiKeyResponse(ApiKeyResponse):
     api_key: str  # Full plaintext key — only in create response
 
 
-class IntegrationDetailResponse(IntegrationResponse):
+class ApiKeyDetailResponse(ApiKeyResponse):
     kb_access: list[dict]  # [{kb_id, kb_name, kb_slug, access_level}]
 
 
-class UpdateIntegrationRequest(BaseModel):
+class UpdateApiKeyRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     permissions: dict | None = None
     kb_access: list[KbAccessEntry] | None = None
     rate_limit_rpm: int | None = None
-    widget_config: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -88,40 +86,35 @@ class UpdateIntegrationRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> IntegrationResponse:
-    return IntegrationResponse(
+def _key_to_response(key: PartnerAPIKey, kb_access_count: int) -> ApiKeyResponse:
+    return ApiKeyResponse(
         id=key.id,
         name=key.name,
         description=key.description,
-        integration_type=key.integration_type,
         key_prefix=key.key_prefix,
         permissions=key.permissions,
-        active=key.active,
         kb_access_count=kb_access_count,
         rate_limit_rpm=key.rate_limit_rpm,
-        widget_id=key.widget_id,
-        widget_config=key.widget_config,
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
         created_by=key.created_by,
     )
 
 
-async def _get_integration_or_404(integration_id: str, org_id: int, db: AsyncSession) -> PartnerAPIKey:
+async def _get_key_or_404(key_id: str, org_id: int, db: AsyncSession) -> PartnerAPIKey:
     result = await db.execute(
         select(PartnerAPIKey).where(
-            PartnerAPIKey.id == integration_id,
+            PartnerAPIKey.id == key_id,
             PartnerAPIKey.org_id == org_id,
         )
     )
     key = result.scalar_one_or_none()
     if key is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Integration not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="API key not found")
     return key
 
 
 async def _validate_kb_ids(kb_ids: list[int], org_id: int, db: AsyncSession) -> list[PortalKnowledgeBase]:
-    """Validate that all kb_ids belong to the caller's org."""
     if not kb_ids:
         return []
     result = await db.execute(
@@ -151,21 +144,20 @@ async def _count_kb_access(key_id: str, db: AsyncSession) -> int:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/integrations
+# POST /api/api-keys
 # ---------------------------------------------------------------------------
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_integration(
-    body: CreateIntegrationRequest,
+async def create_api_key(
+    body: CreateApiKeyRequest,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
-) -> CreateIntegrationResponse:
-    """Create a new partner API key integration. REQ-6.2."""
+) -> CreateApiKeyResponse:
+    """Create a new partner API key."""
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    # Validate KB IDs belong to org
     kb_ids = [entry.kb_id for entry in body.kb_access]
     await _validate_kb_ids(kb_ids, org.id, db)
 
@@ -177,24 +169,18 @@ async def create_integration(
                 detail="knowledge_append permission requires at least one KB with read_write access",
             )
 
-    # Generate key
     plaintext_key, key_hash = generate_partner_key()
     key_id = str(uuid.uuid4())
-    widget_id = generate_widget_id() if body.integration_type == "widget" else None
 
-    # Create key + KB access rows via ORM
     key_row = PartnerAPIKey(
         id=key_id,
         org_id=org.id,
         name=body.name,
         description=body.description,
-        integration_type=body.integration_type,
         key_prefix=plaintext_key[:12],
         key_hash=key_hash,
         permissions=body.permissions,
         rate_limit_rpm=body.rate_limit_rpm,
-        widget_id=widget_id,
-        widget_config=body.widget_config,
         created_by=caller_user_id,
     )
     db.add(key_row)
@@ -209,28 +195,24 @@ async def create_integration(
         )
 
     await db.commit()
-    await db.refresh(key_row)  # load server-generated created_at
+    await db.refresh(key_row)
 
     emit_event(
-        "integration.created",
+        "api_key.created",
         org_id=org.id,
         user_id=caller_user_id,
-        properties={"integration_id": key_id, "name": body.name},
+        properties={"api_key_id": key_id, "name": body.name},
     )
-    logger.info("Integration created", integration_id=key_id, org_id=org.id)
+    logger.info("API key created", api_key_id=key_id, org_id=org.id)
 
-    return CreateIntegrationResponse(
+    return CreateApiKeyResponse(
         id=key_row.id,
         name=key_row.name,
         description=key_row.description,
-        integration_type=key_row.integration_type,
         key_prefix=key_row.key_prefix,
         permissions=key_row.permissions,
-        active=True,
         kb_access_count=len(body.kb_access),
         rate_limit_rpm=key_row.rate_limit_rpm,
-        widget_id=key_row.widget_id,
-        widget_config=key_row.widget_config,
         last_used_at=None,
         created_at=str(key_row.created_at),
         created_by=key_row.created_by,
@@ -239,16 +221,16 @@ async def create_integration(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/integrations
+# GET /api/api-keys
 # ---------------------------------------------------------------------------
 
 
 @router.get("")
-async def list_integrations(
+async def list_api_keys(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
-) -> list[IntegrationResponse]:
-    """List all integrations for the caller's org. REQ-6.3."""
+) -> list[ApiKeyResponse]:
+    """List all API keys for the caller's org."""
     _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
@@ -257,7 +239,6 @@ async def list_integrations(
     if not keys:
         return []
 
-    # Count KB access per key in one query
     key_ids = [k.id for k in keys]
     count_result = await db.execute(
         select(
@@ -273,23 +254,22 @@ async def list_integrations(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/integrations/{id}
+# GET /api/api-keys/{id}
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{integration_id}")
-async def get_integration_detail(
-    integration_id: str,
+@router.get("/{key_id}")
+async def get_api_key_detail(
+    key_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
-) -> IntegrationDetailResponse:
-    """Get full detail for a single integration. REQ-6.4."""
+) -> ApiKeyDetailResponse:
+    """Get full detail for a single API key."""
     _caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    key = await _get_integration_or_404(integration_id, org.id, db)
+    key = await _get_key_or_404(key_id, org.id, db)
 
-    # Load KB access with KB names in one query
     kb_result = await db.execute(
         select(PartnerApiKeyKbAccess, PortalKnowledgeBase)
         .join(PortalKnowledgeBase, PartnerApiKeyKbAccess.kb_id == PortalKnowledgeBase.id)
@@ -305,18 +285,14 @@ async def get_integration_detail(
         for access, kb in kb_result
     ]
 
-    return IntegrationDetailResponse(
+    return ApiKeyDetailResponse(
         id=key.id,
         name=key.name,
         description=key.description,
-        integration_type=key.integration_type,
         key_prefix=key.key_prefix,
         permissions=key.permissions,
-        active=key.active,
         kb_access_count=len(kb_access_list),
         rate_limit_rpm=key.rate_limit_rpm,
-        widget_id=key.widget_id,
-        widget_config=key.widget_config,
         last_used_at=str(key.last_used_at) if key.last_used_at else None,
         created_at=str(key.created_at),
         created_by=key.created_by,
@@ -325,27 +301,23 @@ async def get_integration_detail(
 
 
 # ---------------------------------------------------------------------------
-# PATCH /api/integrations/{id}
+# PATCH /api/api-keys/{id}
 # ---------------------------------------------------------------------------
 
 
-@router.patch("/{integration_id}")
-async def update_integration(
-    integration_id: str,
-    body: UpdateIntegrationRequest,
+@router.patch("/{key_id}")
+async def update_api_key(
+    key_id: str,
+    body: UpdateApiKeyRequest,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
-) -> IntegrationResponse:
-    """Partial update of an integration. REQ-6.5."""
+) -> ApiKeyResponse:
+    """Partial update of an API key."""
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    key = await _get_integration_or_404(integration_id, org.id, db)
+    key = await _get_key_or_404(key_id, org.id, db)
 
-    if not key.active:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Cannot update a revoked integration")
-
-    # Apply partial field updates
     if body.name is not None:
         key.name = body.name
     if body.description is not None:
@@ -354,10 +326,7 @@ async def update_integration(
         key.permissions = body.permissions
     if body.rate_limit_rpm is not None:
         key.rate_limit_rpm = body.rate_limit_rpm
-    if body.widget_config is not None:
-        key.widget_config = body.widget_config
 
-    # Atomic KB access replacement
     if body.kb_access is not None:
         kb_ids = [entry.kb_id for entry in body.kb_access]
         await _validate_kb_ids(kb_ids, org.id, db)
@@ -377,67 +346,32 @@ async def update_integration(
     kb_access_count = len(body.kb_access) if body.kb_access is not None else await _count_kb_access(key.id, db)
 
     emit_event(
-        "integration.updated",
+        "api_key.updated",
         org_id=org.id,
         user_id=caller_user_id,
-        properties={"integration_id": key.id, "name": key.name},
+        properties={"api_key_id": key.id, "name": key.name},
     )
 
     return _key_to_response(key, kb_access_count)
 
 
 # ---------------------------------------------------------------------------
-# POST /api/integrations/{id}/revoke
+# DELETE /api/api-keys/{id}
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{integration_id}/revoke")
-async def revoke_integration(
-    integration_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
-) -> IntegrationResponse:
-    """Revoke an integration (irreversible). REQ-6.6."""
-    caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
-    _require_admin(caller_user)
-
-    key = await _get_integration_or_404(integration_id, org.id, db)
-
-    if not key.active:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Integration is already revoked")
-
-    key.active = False
-    await db.commit()
-
-    emit_event(
-        "integration.revoked",
-        org_id=org.id,
-        user_id=caller_user_id,
-        properties={"integration_id": key.id, "name": key.name},
-    )
-    logger.info("Integration revoked", integration_id=key.id, org_id=org.id)
-
-    return _key_to_response(key, await _count_kb_access(key.id, db))
-
-
-# ---------------------------------------------------------------------------
-# DELETE /api/integrations/{id}
-# ---------------------------------------------------------------------------
-
-
-@router.delete("/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_integration(
-    integration_id: str,
+@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    key_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Permanently delete an integration and its KB access entries."""
+    """Permanently delete an API key and its KB access entries."""
     caller_user_id, org, caller_user = await _get_caller_org(credentials, db)
     _require_admin(caller_user)
 
-    key = await _get_integration_or_404(integration_id, org.id, db)
+    key = await _get_key_or_404(key_id, org.id, db)
 
-    # CASCADE on FK handles kb_access, but explicit for clarity
     await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
     await db.execute(
         delete(PartnerAPIKey).where(
@@ -448,9 +382,9 @@ async def delete_integration(
     await db.commit()
 
     emit_event(
-        "integration.deleted",
+        "api_key.deleted",
         org_id=org.id,
         user_id=caller_user_id,
-        properties={"integration_id": key.id, "name": key.name},
+        properties={"api_key_id": key.id, "name": key.name},
     )
-    logger.info("Integration deleted", integration_id=key.id, org_id=org.id)
+    logger.info("API key deleted", api_key_id=key.id, org_id=org.id)

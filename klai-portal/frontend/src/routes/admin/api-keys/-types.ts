@@ -1,15 +1,6 @@
-// Shared types for admin integrations routes
+// Shared types for admin API keys routes (SPEC-WIDGET-002)
 
 export type AccessLevel = 'none' | 'read' | 'read_write'
-
-export type IntegrationType = 'api' | 'widget'
-
-export interface WidgetConfig {
-  allowed_origins: string[]
-  title: string
-  welcome_message: string
-  css_variables: Record<string, string>
-}
 
 export interface KbAccess {
   kb_id: number
@@ -18,15 +9,11 @@ export interface KbAccess {
   access_level: AccessLevel
 }
 
-export interface IntegrationResponse {
-  id: number
+export interface ApiKeyResponse {
+  id: number | string
   name: string
   description: string | null
   key_prefix: string
-  active: boolean
-  integration_type: IntegrationType
-  widget_id?: string
-  widget_config?: WidgetConfig
   permissions: {
     chat: boolean
     feedback: boolean
@@ -39,14 +26,13 @@ export interface IntegrationResponse {
   created_by: string
 }
 
-export interface IntegrationDetailResponse extends IntegrationResponse {
+export interface ApiKeyDetailResponse extends ApiKeyResponse {
   kb_access: KbAccess[]
 }
 
-export interface CreateIntegrationRequest {
+export interface CreateApiKeyRequest {
   name: string
   description: string | null
-  integration_type: IntegrationType
   permissions: {
     chat: boolean
     feedback: boolean
@@ -54,14 +40,13 @@ export interface CreateIntegrationRequest {
   }
   rate_limit_rpm: number
   kb_access: { kb_id: number; access_level: AccessLevel }[]
-  widget_config?: WidgetConfig
 }
 
-export interface CreateIntegrationResponse extends IntegrationDetailResponse {
+export interface CreateApiKeyResponse extends ApiKeyDetailResponse {
   api_key: string
 }
 
-export interface UpdateIntegrationRequest {
+export interface UpdateApiKeyRequest {
   name?: string
   description?: string | null
   permissions?: {
@@ -71,7 +56,6 @@ export interface UpdateIntegrationRequest {
   }
   rate_limit_rpm?: number
   kb_access?: { kb_id: number; access_level: AccessLevel }[]
-  widget_config?: WidgetConfig
 }
 
 export interface OrgKnowledgeBase {
