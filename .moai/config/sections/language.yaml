@@ -1,8 +1,8 @@
 language:
-  conversation_language: nl      # MoAI antwoordt in het Nederlands
-  conversation_language_name: nl
-  agent_prompt_language: en      # interne agent prompts in het Engels
-  git_commit_messages: en        # commit messages in het Engels (conventional commits)
-  code_comments: en              # code comments in het Engels
-  documentation: en              # technische documentatie in het Engels
-  error_messages: en
+    agent_prompt_language: en
+    code_comments: en
+    conversation_language: nl
+    conversation_language_name: nl
+    documentation: en
+    error_messages: en
+    git_commit_messages: en

@@ -99,7 +99,7 @@ Read `.moai/config/sections/llm.yaml` for `team_mode` value:
 
 | team_mode | Execution Mode | Leader | Teammates |
 |-----------|---------------|--------|-----------|
-| (empty) | Sub-agent | Current session | Task() subagents |
+| (empty) | Sub-agent | Current session | Agent() subagents |
 | cg | CG Mode | Claude (this pane) | GLM (new tmux panes) |
 | glm | GLM-only | GLM | GLM |
 
@@ -146,7 +146,7 @@ Detection steps:
 |----------|-------|---------|
 | ANTHROPIC_AUTH_TOKEN | GLM API key | Z.AI authentication |
 | ANTHROPIC_BASE_URL | https://api.z.ai/api/anthropic | Z.AI endpoint |
-| ANTHROPIC_DEFAULT_OPUS_MODEL | glm-5 | Opus model override |
+| ANTHROPIC_DEFAULT_OPUS_MODEL | glm-5.1 | Opus model override |
 | ANTHROPIC_DEFAULT_SONNET_MODEL | glm-4.7 | Sonnet model override |
 | ANTHROPIC_DEFAULT_HAIKU_MODEL | glm-4.5-air | Haiku model override |
 
@@ -166,11 +166,11 @@ Agent model mapping in CG mode:
 | Agent | Pane | API | Model |
 |-------|------|-----|-------|
 | Leader (MoAI) | Original | Claude | User's choice (Opus/Sonnet) |
-| team-backend-dev | New pane | Z.AI | glm-5 / glm-4.7 |
-| team-frontend-dev | New pane | Z.AI | glm-5 / glm-4.7 |
-| team-tester | New pane | Z.AI | glm-5 / glm-4.7 |
-| team-researcher | New pane | Z.AI | glm-4.5-air |
-| team-quality | New pane | Z.AI | glm-4.5-air |
+| team-coder | New pane | Z.AI | glm-5.1 / glm-4.7 |
+| team-tester | New pane | Z.AI | glm-5.1 / glm-4.7 |
+| team-designer | New pane | Z.AI | glm-5.1 / glm-4.7 |
+| team-reader | New pane | Z.AI | glm-4.7-flashx |
+| team-validator | New pane | Z.AI | glm-4.7-flashx |
 
 ## Error Recovery
 

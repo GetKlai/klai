@@ -38,7 +38,9 @@ Flow: Identify Changes -> Analyze Perspectives -> Consolidate -> Report
 - --branch BRANCH: Compare current branch against BRANCH (default: main)
 - --security: Focus primarily on security review (OWASP, injection, auth)
 - --file PATH: Review specific file(s) only
-- --team: Use parallel multi-perspective review team (see team/review.md)
+- --design: Extract design patterns from UI code and create/update `.moai/design/system.md`
+- --critique: Post-build craft review focusing on subtle layering, surface elevation, token architecture, and typography hierarchy
+- --team: Use parallel multi-perspective review team (see ${CLAUDE_SKILL_DIR}/team/review.md)
 
 ## Phase 1: Identify Changes
 
@@ -58,7 +60,7 @@ Collect:
 
 [HARD] Delegate review to the manager-quality subagent with all perspectives.
 
-If --team flag: Route to team/review.md for parallel multi-perspective review with 4 dedicated reviewers.
+If --team flag: Route to ${CLAUDE_SKILL_DIR}/team/review.md for parallel multi-perspective review with 4 dedicated reviewers.
 
 If no --team flag (default single-agent mode): Delegate to manager-quality subagent with instructions to review from all 4 perspectives sequentially.
 
@@ -143,6 +145,20 @@ Produce a consolidated review report organized by severity:
 - TRUST 5 Score: N/5
 ```
 
+### Simplify Pass [MANDATORY EVALUATION]
+
+After Phase 4 consolidation, MoAI MUST evaluate whether to call Skill("simplify").
+
+Condition: Any of the following Quality perspective findings exist:
+- At least 1 Warning-level or higher Quality finding
+- TRUST 5 compliance score < 5/5
+- At least 3 Suggestion-level Quality findings
+
+Decision:
+
+- If condition is met: Execute Skill("simplify") directly on the files identified in Phase 1. Do not delegate to a subagent — call it directly. Skill("simplify") will use parallel agents to resolve code quality issues found in the review. After completion, re-run the Quality perspective (Phase 2, Perspective 3 only) to verify the findings are resolved and update the report.
+- If condition is not met: Proceed directly to Phase 5.
+
 ## Phase 5: Next Steps
 
 Present options via AskUserQuestion:
@@ -165,7 +181,7 @@ When --team flag is provided, review delegates to the team-based multi-perspecti
 
 Team composition: 4 review agents (security, performance, quality, UX) analyzing in parallel.
 
-For detailed team orchestration steps, see team/review.md.
+For detailed team orchestration steps, see ${CLAUDE_SKILL_DIR}/team/review.md.
 
 Fallback: If team mode is unavailable, standard single-agent sequential review continues.
 
@@ -174,21 +190,57 @@ Team Prerequisites:
 - CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in environment
 - If prerequisites not met: Falls back to single-agent review
 
+## Phase 4.5: Design Review (Conditional)
+
+When to run: --design or --critique flag is present, OR changed files include UI components (tsx, jsx, vue, svelte, css, scss)
+
+### --design: Extract Design Patterns
+
+Agent: expert-frontend subagent (with moai-design-craft skill)
+
+Tasks:
+1. Scan UI files for repeated patterns: spacing values, radius values, color tokens, button/card patterns, depth strategy (borders vs shadows)
+2. Identify existing design conventions and inconsistencies
+3. If `.moai/design/system.md` exists: Compare extracted patterns against system.md, report deviations
+4. If `.moai/design/system.md` does not exist: Create system.md from extracted patterns
+5. Present extraction summary with option to update system.md
+
+Output: Design pattern report with deviation list (file:line references)
+
+### --critique: Post-Build Craft Review
+
+Agent: expert-frontend subagent (with moai-design-craft skill)
+
+Tasks:
+1. Read `.moai/design/system.md` for design direction context
+2. Review built UI against craft principles:
+   - **Composition**: Layout rhythm, proportions, focal point clarity
+   - **Craft**: Spacing grid adherence, typography hierarchy, surface elevation consistency
+   - **Content**: String coherence, data truthfulness
+   - **Structure**: CSS quality (no negative margin hacks, no absolute positioning escapes)
+3. Run quality checks: swap test, squint test, signature test, token test
+4. Identify specific locations where defaults won over intentional design decisions
+5. Provide actionable rebuild recommendations with file:line references
+
+Output: Craft critique report with severity-ranked findings and rebuild suggestions
+
 ## Agent Chain Summary
 
 - Phase 1: MoAI orchestrator (change identification via git)
 - Phase 2-3: manager-quality subagent (multi-perspective analysis) OR expert-security subagent (if --security)
 - Phase 4-5: MoAI orchestrator (consolidation and user interaction)
+- Phase 4.5 (conditional): expert-frontend subagent (if --design or --critique)
 
 ## Execution Summary
 
-1. Parse arguments (extract flags: --staged, --branch, --security, --file, --team)
-2. If --team: Route to team/review.md workflow
+1. Parse arguments (extract flags: --staged, --branch, --security, --file, --design, --critique, --team)
+2. If --team: Route to ${CLAUDE_SKILL_DIR}/team/review.md workflow
 3. Identify code changes (git diff based on flags)
 4. Delegate multi-perspective review to manager-quality subagent
 5. Check @MX tag compliance for changed files
-6. Consolidate findings by severity
-7. Present report with next step options
+6. If --design or --critique: Run design review phase 4.5 (expert-frontend with moai-design-craft)
+7. Consolidate findings by severity
+8. Present report with next step options
 
 ---
 

@@ -24,9 +24,9 @@ Agent Selection:
 - Medium (3-5 files): 2-3 agents sequential
 - Complex (10+ files): 5+ agents parallel/sequential
 
-All agents use Task() delegation:
+All agents use Agent() delegation:
 ```python
-result = Task(subagent_type="code-backend", prompt="...", context={...})
+result = Agent(subagent_type="code-backend", prompt="...", context={...})
 ```
 
 ---
@@ -122,11 +122,11 @@ External MCP server integrations with context continuity support.
 Resume Pattern (40-60% token savings):
 ```python
 # Initial call
-result = Task(subagent_type="mcp-context7", prompt="Research React 19 APIs")
+result = Agent(subagent_type="mcp-context7", prompt="Research React 19 APIs")
 agent_id = result.agent_id
 
 # Resume with context
-result2 = Task(subagent_type="mcp-context7", prompt="Compare with React 18", resume=agent_id)
+result2 = Agent(subagent_type="mcp-context7", prompt="Compare with React 18", resume=agent_id)
 ```
 
 Benefits:
@@ -212,7 +212,7 @@ Is this a new feature or architecture change?
 
 ### Delegation Principles
 
-1. Agent-First: MoAI NEVER executes tasks directly. ALWAYS delegates via Task()
+1. Agent-First: MoAI NEVER executes tasks directly. ALWAYS delegates via Agent()
 
 2. Naming Consistency: All agents follow `{domain}-{role}` pattern
  - Lowercase only
@@ -221,8 +221,8 @@ Is this a new feature or architecture change?
 
 3. Context Passing: Pass each agent's results as context to the next agent
  ```python
- result1 = Task("code-backend", "Design API")
- result2 = Task("code-frontend", "Implement UI", context={"api_design": result1})
+ result1 = Agent("code-backend", "Design API")
+ result2 = Agent("code-frontend", "Implement UI", context={"api_design": result1})
  ```
 
 4. Sequential vs Parallel:
@@ -267,7 +267,7 @@ The following skills are organized for token efficiency and domain specializatio
 |----------|--------|---------|
 | Language (Separated) | moai-lang-python, moai-lang-typescript, moai-lang-systems, moai-lang-jvm, moai-lang-mobile | Domain-specific language skills for 40-60% token savings |
 | Platform (Separated) | moai-platform-auth, moai-platform-database, moai-platform-deploy | Domain-specific platform skills for 30-50% token savings |
-| Foundation | moai-foundation-core, moai-foundation-claude, moai-foundation-context, moai-foundation-quality | Core principles and quality gates |
+| Foundation | moai-foundation-core, moai-foundation-cc, moai-foundation-context, moai-foundation-quality | Core principles and quality gates |
 | Workflow | moai-workflow-spec, moai-workflow-project, moai-workflow-testing, moai-workflow-jit-docs | Workflow automation and testing |
 | Domain | moai-domain-backend, moai-domain-frontend, moai-domain-database, moai-domain-uiux | Domain expertise patterns |
 
@@ -323,13 +323,13 @@ Common Errors:
 Error Recovery Pattern:
 ```python
 try:
- result = Task("code-backend", "Implement feature")
+ result = Agent("code-backend", "Implement feature")
 except AgentNotFoundError:
  # Check agent name format
- result = Task("code-backend", "Implement feature") # Corrected name
+ result = Agent("code-backend", "Implement feature") # Corrected name
 except PermissionError:
  # Update settings.json IAM rules
- result = Task("code-backend", "Implement feature", permissions=["write"])
+ result = Agent("code-backend", "Implement feature", permissions=["write"])
 ```
 
 ---
@@ -339,7 +339,7 @@ except PermissionError:
 Skills:
 - [moai-foundation-core](../SKILL.md) - Parent skill (this module is part of it)
 - [moai-foundation-context](../../moai-foundation-context/SKILL.md) - Token budget and session state
-- [moai-foundation-claude](../../moai-foundation-claude/SKILL.md) - Claude Code configuration
+- [moai-foundation-cc](../../moai-foundation-cc/SKILL.md) - Claude Code configuration
 
 Other Modules:
 - [delegation-patterns.md](delegation-patterns.md) - Delegation strategies

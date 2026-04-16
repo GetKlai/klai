@@ -69,7 +69,7 @@ Example `.mcp.json` configuration:
 - Architecture decisions
 - Technology trade-off analysis
 
-Activate with `--ultrathink` flag for enhanced analysis.
+Activate with `--deepthink` flag for enhanced analysis.
 
 ### MoAI Configuration
 
@@ -124,7 +124,7 @@ Tool permissions in settings.json:
 
 - Read, Write, Edit: File operations
 - Bash: Shell command execution
-- Task: Agent delegation
+- Agent: Sub-agent delegation
 - AskUserQuestion: User interaction
 
 ## Quality Configuration
@@ -172,7 +172,6 @@ Team behavior is controlled by the `workflow.team` section in `.moai/config/sect
 | team.default_model | string | inherit | Default model for teammates (inherit/haiku/sonnet/opus) |
 | team.require_plan_approval | boolean | true | Require plan approval before implementing |
 | team.delegate_mode | boolean | true | Team lead coordination-only mode (no direct implementation) |
-| team.teammate_display | string | auto | Display mode: auto, in-process, or tmux |
 
 ### Auto-Selection Thresholds
 
