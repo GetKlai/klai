@@ -38,7 +38,7 @@ async def test_emit_product_event_inserts_with_resolved_org_id() -> None:
     session_maker.return_value.__aenter__ = AsyncMock(return_value=session_mock)
     session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("app.services.events.session_maker", session_maker):
+    with patch("app.core.database.session_maker", session_maker):
         emit_product_event(
             "knowledge.sync_quality_degraded",
             zitadel_org_id="362757920133283846",
@@ -70,7 +70,7 @@ async def test_emit_product_event_null_org_when_not_found() -> None:
     session_maker.return_value.__aenter__ = AsyncMock(return_value=session_mock)
     session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("app.services.events.session_maker", session_maker):
+    with patch("app.core.database.session_maker", session_maker):
         emit_product_event(
             "knowledge.sync_quality_degraded",
             zitadel_org_id="unknown-zitadel-id",
@@ -92,7 +92,7 @@ async def test_emit_product_event_no_org_skips_lookup() -> None:
     session_maker.return_value.__aenter__ = AsyncMock(return_value=session_mock)
     session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("app.services.events.session_maker", session_maker):
+    with patch("app.core.database.session_maker", session_maker):
         emit_product_event(
             "knowledge.sync_quality_degraded",
             zitadel_org_id=None,
@@ -107,7 +107,7 @@ async def test_emit_product_event_no_org_skips_lookup() -> None:
 
 async def test_emit_product_event_session_maker_uninitialised() -> None:
     """When session_maker is None, emit is a no-op (no crash)."""
-    with patch("app.services.events.session_maker", None):
+    with patch("app.core.database.session_maker", None):
         emit_product_event(
             "knowledge.sync_quality_degraded",
             zitadel_org_id="org-001",
@@ -127,7 +127,7 @@ async def test_emit_product_event_swallows_db_errors() -> None:
     session_maker.return_value.__aenter__ = AsyncMock(return_value=session_mock)
     session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("app.services.events.session_maker", session_maker):
+    with patch("app.core.database.session_maker", session_maker):
         emit_product_event(
             "knowledge.sync_quality_degraded",
             zitadel_org_id=None,
