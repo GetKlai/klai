@@ -12,6 +12,7 @@ Create Date: 2026-04-16
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "005_add_sync_run_quality_status"
