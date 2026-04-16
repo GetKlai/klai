@@ -31,9 +31,14 @@ function KBPageEditor() {
   let selectedPath: string | null = null
   let pageNotFound = false
 
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (pageIndex.length === 0) {
-    // pageIndex not yet loaded — use pageId as temporary path to avoid false 404
-    selectedPath = pageId
+    // pageIndex not yet loaded — use slug-based pageId as temp path, but never send a UUID
+    // directly to the API (the API stores pages by slug, not UUID)
+    if (!UUID_RE.test(pageId)) {
+      selectedPath = pageId
+    }
+    // For UUID-based URLs: keep selectedPath = null, query stays disabled, wait for pageIndex
   } else {
     try {
       selectedPath = resolveSlug(pageId, pageIndex)
