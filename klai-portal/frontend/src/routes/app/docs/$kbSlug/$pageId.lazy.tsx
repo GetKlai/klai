@@ -71,6 +71,8 @@ function KBPageEditor() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isSavingRef = useRef(false)
   const pendingSaveRef = useRef(false)
+  const isMountedRef = useRef(true)
+  useEffect(() => () => { isMountedRef.current = false }, [])
 
   // Stable refs for async save
   const tokenRef = useRef(token)
@@ -174,8 +176,9 @@ function KBPageEditor() {
       throw err // propagate so callers know save failed
     } finally {
       isSavingRef.current = false
-      // If content changed while this save was in flight, run one more save now
-      if (pendingSaveRef.current) void doSave()
+      // If content changed while this save was in flight, run one more save now.
+      // Guard: skip if unmounted — editorRef would be null, causing empty content to be saved.
+      if (pendingSaveRef.current && isMountedRef.current) void doSave()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgSlug, kbSlug, refetchTree, refetchPageIndex, navigateToPage, pageIndex])
