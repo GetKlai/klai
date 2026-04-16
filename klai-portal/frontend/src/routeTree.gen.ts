@@ -11,9 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SelectWorkspaceRouteImport } from './routes/select-workspace'
 import { Route as ProvisioningRouteImport } from './routes/provisioning'
+import { Route as NoAccountRouteImport } from './routes/no-account'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LoggedOutRouteImport } from './routes/logged-out'
+import { Route as JoinRequestRouteImport } from './routes/join-request'
 import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as AppRouteRouteImport } from './routes/app/route'
 import { Route as AdminRouteRouteImport } from './routes/admin/route'
@@ -29,6 +32,8 @@ import { Route as AppScribeRouteImport } from './routes/app/scribe'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccountRouteImport } from './routes/app/account'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
+import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
+import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
@@ -89,9 +94,19 @@ const SignupRoute = SignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SelectWorkspaceRoute = SelectWorkspaceRouteImport.update({
+  id: '/select-workspace',
+  path: '/select-workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProvisioningRoute = ProvisioningRouteImport.update({
   id: '/provisioning',
   path: '/provisioning',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NoAccountRoute = NoAccountRouteImport.update({
+  id: '/no-account',
+  path: '/no-account',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -102,6 +117,11 @@ const LoginRoute = LoginRouteImport.update({
 const LoggedOutRoute = LoggedOutRouteImport.update({
   id: '/logged-out',
   path: '/logged-out',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinRequestRoute = JoinRequestRouteImport.update({
+  id: '/join-request',
+  path: '/join-request',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CallbackRoute = CallbackRouteImport.update({
@@ -177,6 +197,16 @@ const AppAccountRoute = AppAccountRouteImport.update({
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
+  id: '/join-requests',
+  path: '/join-requests',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminDomainsRoute = AdminDomainsRouteImport.update({
+  id: '/domains',
+  path: '/domains',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminBillingRoute = AdminBillingRouteImport.update({
@@ -446,13 +476,18 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteRouteWithChildren
   '/app': typeof AppRouteRouteWithChildren
   '/callback': typeof CallbackRoute
+  '/join-request': typeof JoinRequestRoute
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
+  '/no-account': typeof NoAccountRoute
   '/provisioning': typeof ProvisioningRoute
+  '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/domains': typeof AdminDomainsRoute
+  '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
@@ -515,12 +550,17 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$locale': typeof LocaleRouteRouteWithChildren
   '/callback': typeof CallbackRoute
+  '/join-request': typeof JoinRequestRoute
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
+  '/no-account': typeof NoAccountRoute
   '/provisioning': typeof ProvisioningRoute
+  '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/domains': typeof AdminDomainsRoute
+  '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
@@ -584,13 +624,18 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteRouteWithChildren
   '/app': typeof AppRouteRouteWithChildren
   '/callback': typeof CallbackRoute
+  '/join-request': typeof JoinRequestRoute
   '/logged-out': typeof LoggedOutRoute
   '/login': typeof LoginRoute
+  '/no-account': typeof NoAccountRoute
   '/provisioning': typeof ProvisioningRoute
+  '/select-workspace': typeof SelectWorkspaceRoute
   '/signup': typeof SignupRoute
   '/verify': typeof VerifyRoute
   '/$locale/signup': typeof LocaleSignupRouteWithChildren
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/domains': typeof AdminDomainsRoute
+  '/admin/join-requests': typeof AdminJoinRequestsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/app/account': typeof AppAccountRoute
   '/app/chat': typeof AppChatRoute
@@ -657,13 +702,18 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/callback'
+    | '/join-request'
     | '/logged-out'
     | '/login'
+    | '/no-account'
     | '/provisioning'
+    | '/select-workspace'
     | '/signup'
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
+    | '/admin/domains'
+    | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
@@ -726,12 +776,17 @@ export interface FileRouteTypes {
     | '/'
     | '/$locale'
     | '/callback'
+    | '/join-request'
     | '/logged-out'
     | '/login'
+    | '/no-account'
     | '/provisioning'
+    | '/select-workspace'
     | '/signup'
     | '/verify'
     | '/admin/billing'
+    | '/admin/domains'
+    | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
@@ -794,13 +849,18 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/callback'
+    | '/join-request'
     | '/logged-out'
     | '/login'
+    | '/no-account'
     | '/provisioning'
+    | '/select-workspace'
     | '/signup'
     | '/verify'
     | '/$locale/signup'
     | '/admin/billing'
+    | '/admin/domains'
+    | '/admin/join-requests'
     | '/admin/settings'
     | '/app/account'
     | '/app/chat'
@@ -866,9 +926,12 @@ export interface RootRouteChildren {
   AdminRouteRoute: typeof AdminRouteRouteWithChildren
   AppRouteRoute: typeof AppRouteRouteWithChildren
   CallbackRoute: typeof CallbackRoute
+  JoinRequestRoute: typeof JoinRequestRoute
   LoggedOutRoute: typeof LoggedOutRoute
   LoginRoute: typeof LoginRoute
+  NoAccountRoute: typeof NoAccountRoute
   ProvisioningRoute: typeof ProvisioningRoute
+  SelectWorkspaceRoute: typeof SelectWorkspaceRoute
   SignupRoute: typeof SignupRoute
   VerifyRoute: typeof VerifyRoute
   PasswordForgotRoute: typeof PasswordForgotRoute
@@ -893,11 +956,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/select-workspace': {
+      id: '/select-workspace'
+      path: '/select-workspace'
+      fullPath: '/select-workspace'
+      preLoaderRoute: typeof SelectWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/provisioning': {
       id: '/provisioning'
       path: '/provisioning'
       fullPath: '/provisioning'
       preLoaderRoute: typeof ProvisioningRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/no-account': {
+      id: '/no-account'
+      path: '/no-account'
+      fullPath: '/no-account'
+      preLoaderRoute: typeof NoAccountRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -912,6 +989,13 @@ declare module '@tanstack/react-router' {
       path: '/logged-out'
       fullPath: '/logged-out'
       preLoaderRoute: typeof LoggedOutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join-request': {
+      id: '/join-request'
+      path: '/join-request'
+      fullPath: '/join-request'
+      preLoaderRoute: typeof JoinRequestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/callback': {
@@ -1017,6 +1101,20 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/join-requests': {
+      id: '/admin/join-requests'
+      path: '/join-requests'
+      fullPath: '/admin/join-requests'
+      preLoaderRoute: typeof AdminJoinRequestsRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/domains': {
+      id: '/admin/domains'
+      path: '/domains'
+      fullPath: '/admin/domains'
+      preLoaderRoute: typeof AdminDomainsRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/billing': {
@@ -1395,6 +1493,8 @@ const LocaleRouteRouteWithChildren = LocaleRouteRoute._addFileChildren(
 
 interface AdminRouteRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
+  AdminDomainsRoute: typeof AdminDomainsRoute
+  AdminJoinRequestsRoute: typeof AdminJoinRequestsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminGroupsNewRoute: typeof AdminGroupsNewRoute
@@ -1415,6 +1515,8 @@ interface AdminRouteRouteChildren {
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
+  AdminDomainsRoute: AdminDomainsRoute,
+  AdminJoinRequestsRoute: AdminJoinRequestsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminGroupsNewRoute: AdminGroupsNewRoute,
@@ -1543,9 +1645,12 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRouteRoute: AdminRouteRouteWithChildren,
   AppRouteRoute: AppRouteRouteWithChildren,
   CallbackRoute: CallbackRoute,
+  JoinRequestRoute: JoinRequestRoute,
   LoggedOutRoute: LoggedOutRoute,
   LoginRoute: LoginRoute,
+  NoAccountRoute: NoAccountRoute,
   ProvisioningRoute: ProvisioningRoute,
+  SelectWorkspaceRoute: SelectWorkspaceRoute,
   SignupRoute: SignupRoute,
   VerifyRoute: VerifyRoute,
   PasswordForgotRoute: PasswordForgotRoute,
