@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2,
   Loader2, Sparkles, Globe, FileText, FileUp, Type, Settings, Upload,
-  Image, Rss, MessageSquare, Table,
+  Image, Rss, MessageSquare,
 } from 'lucide-react'
 import {
   SiGithub, SiNotion, SiGoogledrive, SiYoutube, SiGmail,
@@ -445,7 +445,6 @@ function AddSourcePage() {
   })
 
   // Step counts for step labels
-  const isSimpleConnector = sourceType === 'github'
   const wcTotalSteps = 4
   const notionTotalSteps = 2
   const githubTotalSteps = 2
