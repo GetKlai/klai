@@ -229,7 +229,7 @@ function KBPageEditor() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null
-      void doSave()
+      void doSave().catch(() => {})
     }, 1500)
   }, [doSave])
 
