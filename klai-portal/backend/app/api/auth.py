@@ -37,6 +37,7 @@ import time
 from urllib.parse import quote, urlparse
 
 import httpx
+import structlog
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -47,12 +48,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.portal import PortalOrg, PortalUser
+from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
 from app.services import audit
 from app.services.events import emit_event
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger()
 
 router = APIRouter(prefix="/api", tags=["auth"])
 bearer = HTTPBearer()
@@ -784,12 +786,14 @@ async def idp_callback(
     id: str,
     token: str,
     auth_request_id: str,
+    db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     """Handle the redirect back from a social IDP after authentication.
 
     Zitadel appends ?id=<intentId>&token=<intentToken> to the success_url.
-    We create a session from the intent, finalize the auth request, set the SSO
-    cookie, and redirect to the OIDC callback URL — identical to the password flow.
+    We create a session from the intent, look up portal_users, auto-provision
+    if an allowed domain matches, finalize the auth request, set the SSO cookie,
+    and redirect to the OIDC callback URL.
     """
     failure_url = f"/login?authRequest={auth_request_id}"
 
@@ -806,6 +810,78 @@ async def idp_callback(
         logger.error("create_session_with_idp_intent returned no session: %s", session)
         return RedirectResponse(url=failure_url, status_code=302)
 
+    # Fetch user identity from the session
+    try:
+        details = await zitadel.get_session_details(session_id, session_token)
+    except Exception:
+        logger.exception("get_session_details failed — continuing without auto-provision")
+        details = {"zitadel_user_id": "", "email": ""}
+
+    zitadel_user_id = details.get("zitadel_user_id", "")
+    email = details.get("email", "")
+
+    # Look up existing portal_users rows for this zitadel_user_id
+    if zitadel_user_id:
+        user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+        existing_users = user_result.scalars().all()
+    else:
+        existing_users = []
+
+    # C9.3: Multiple orgs → Redis pending-session, redirect to /select-workspace
+    if len(existing_users) > 1:
+        from app.services.pending_session import PendingSessionService
+
+        try:
+            svc = PendingSessionService()
+            ref = await svc.store(
+                session_id=session_id,
+                session_token=session_token,
+                zitadel_user_id=zitadel_user_id,
+                email=email,
+                auth_request_id=auth_request_id,
+                org_ids=[u.org_id for u in existing_users],
+            )
+            return RedirectResponse(url=f"/select-workspace?ref={ref}", status_code=302)
+        except Exception:
+            _slog.exception("Failed to store pending session — falling through to first org")
+
+    if not existing_users and zitadel_user_id and email:
+        # No portal_users row — check allowed domains for auto-provision
+        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+        if email_domain:
+            domain_result = await db.execute(
+                select(PortalOrgAllowedDomain).where(PortalOrgAllowedDomain.domain == email_domain)
+            )
+            matched_domain = domain_result.scalar_one_or_none()
+
+            if matched_domain:
+                # C4.4: DB error → log + fall through, never 500
+                try:
+                    new_user = PortalUser(
+                        zitadel_user_id=zitadel_user_id,
+                        org_id=matched_domain.org_id,
+                        role="member",
+                        status="active",
+                        display_name=email.split("@")[0],
+                        email=email,
+                    )
+                    db.add(new_user)
+                    await db.commit()
+                    _slog.info(
+                        "Auto-provisioned SSO user",
+                        zitadel_user_id=zitadel_user_id,
+                        org_id=matched_domain.org_id,
+                        domain=email_domain,
+                    )
+                except Exception:
+                    _slog.exception(
+                        "Auto-provision failed — user will see no-account page",
+                        zitadel_user_id=zitadel_user_id,
+                    )
+                    await db.rollback()
+
+    # Finalize the auth request (always, even if no portal_users row)
+    # The callback.tsx will check org_found and redirect to /no-account if needed
     try:
         callback_url = await zitadel.finalize_auth_request(
             auth_request_id=auth_request_id,
@@ -826,7 +902,7 @@ async def idp_callback(
         samesite="lax",
         max_age=settings.sso_cookie_max_age,
     )
-    emit_event("login", user_id=None, properties={"method": "idp"})
+    emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp"})
     return redirect
 
 

@@ -163,6 +163,11 @@ app.add_middleware(LoggingContextMiddleware)
 app.include_router(signup.router)
 app.include_router(me.router)
 app.include_router(auth_router)
+from app.api.auth_join import router as auth_join_router  # noqa: E402
+from app.api.auth_select import router as auth_select_router  # noqa: E402
+
+app.include_router(auth_join_router)
+app.include_router(auth_select_router)
 app.include_router(admin_router)
 app.include_router(groups_router)
 app.include_router(billing_router)

@@ -53,6 +53,7 @@ class MeResponse(BaseModel):
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
     products: list[str] = []
+    org_found: bool = False
 
 
 def _extract_roles(info: dict) -> list[str]:
@@ -89,6 +90,7 @@ async def me(
     mfa_policy: str = "optional"
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
+    org_found: bool = False
     if zitadel_user_id:
         result = await db.execute(
             select(PortalOrg, PortalUser)
@@ -98,6 +100,7 @@ async def me(
         row = result.one_or_none()
         if row:
             org, portal_user = row
+            org_found = True
             provisioning_status = org.provisioning_status
             mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
@@ -135,6 +138,7 @@ async def me(
         preferred_language=preferred_language,
         portal_role=portal_role,
         products=products,
+        org_found=org_found,
     )
 
 
