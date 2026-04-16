@@ -11,6 +11,7 @@ from sqlalchemy import update
 
 import app.core.database as _db
 from app.adapters.github import GitHubAdapter
+from app.adapters.google_drive import GoogleDriveAdapter
 from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
 from app.adapters.webcrawler import WebCrawlerAdapter
@@ -66,19 +67,26 @@ def create_app() -> FastAPI:
         secrets_store = PostgresSecretsStore(cipher)
         app.state.secrets_store = secrets_store
 
+        # Portal client (control plane) — constructed before adapters so OAuth
+        # adapters can receive it for token writeback.
+        portal_client = PortalClient(settings)
+
         # Adapter registry
         registry = AdapterRegistry()
         registry.register("github", GitHubAdapter(settings))
         registry.register("web_crawler", WebCrawlerAdapter(settings))
         registry.register("notion", NotionAdapter(settings))
+        # Google Drive adapter — only registered when OAuth client is configured.
+        if settings.google_drive_client_id:
+            registry.register(
+                "google_drive",
+                GoogleDriveAdapter(settings=settings, portal_client=portal_client),
+            )
         app.state.registry = registry
 
         # Knowledge-ingest client
         ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url, settings.knowledge_ingest_secret)
         app.state.ingest_client = ingest_client
-
-        # Portal client (control plane)
-        portal_client = PortalClient(settings)
 
         # Image storage (Garage S3) — optional, skip if not configured.
         image_store = None

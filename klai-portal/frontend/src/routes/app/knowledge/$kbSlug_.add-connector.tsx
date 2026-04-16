@@ -60,7 +60,7 @@ const CONNECTOR_TYPES: {
 }[] = [
   { type: 'github',       label: m.admin_connectors_type_github,       available: true,  Icon: SiGithub },
   { type: 'web_crawler',  label: m.admin_connectors_type_website,      available: true,  Icon: Globe },
-  { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: false, Icon: SiGoogledrive },
+  { type: 'google_drive', label: m.admin_connectors_type_google_drive, available: true,  Icon: SiGoogledrive },
   { type: 'notion',       label: m.admin_connectors_type_notion,       available: true,  Icon: SiNotion },
   { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,      available: false, Icon: FileText },
 ]
@@ -95,6 +95,7 @@ function AddConnectorPage() {
     access_token: '', database_ids: '', max_pages: '500',
   })
   const [notionStep, setNotionStep] = useState<'credentials' | 'settings'>('credentials')
+  const [folderId, setFolderId] = useState('')
 
   // Webcrawler wizard state
   const [wcStep, setWcStep] = useState<WcStep>('details')
@@ -169,6 +170,28 @@ function AddConnectorPage() {
     },
   })
 
+  const createGoogleDriveMutation = useMutation({
+    mutationFn: async () => {
+      const config: Record<string, unknown> = {}
+      if (folderId.trim()) config.folder_id = folderId.trim()
+      const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          connector_type: 'google_drive',
+          config,
+          schedule: null,
+          allowed_assertion_modes: allowedAssertionModes.length > 0 ? allowedAssertionModes : null,
+        }),
+      })
+      return result
+    },
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      window.location.href = `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`
+    },
+  })
+
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   const previewMutation = useMutation({
@@ -207,7 +230,7 @@ function AddConnectorPage() {
 
       {/* Step indicator — shared component */}
       {(() => {
-        const isSimple = selectedType === 'github' || selectedType === 'notion'
+        const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive'
 
         const steps: StepItem[] = isSimple
           ? [
@@ -246,6 +269,7 @@ function AddConnectorPage() {
                         setSelectedType(type)
                         setWcStep('details')
                         setNotionStep('credentials')
+                        setFolderId('')
                         setShowAdvancedSelector(false)
                         setPreviewResult(null)
                         setWcPreviewUrl('')
@@ -385,6 +409,38 @@ function AddConnectorPage() {
                   </form>
                 )}
               </div>
+            )}
+
+            {/* Google Drive OAuth flow */}
+            {selectedType === 'google_drive' && (
+              <form onSubmit={(e) => { e.preventDefault(); createGoogleDriveMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="gd-name">{m.admin_connectors_field_name()}</Label>
+                  <Input id="gd-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="gd-folder-id">{m.admin_connectors_google_drive_folder_id()}</Label>
+                  <Input id="gd-folder-id" placeholder={m.admin_connectors_google_drive_folder_id_placeholder()} value={folderId} onChange={(e) => setFolderId(e.target.value)} />
+                  <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_google_drive_folder_id_help()}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                  <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                </div>
+                {createGoogleDriveMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {createGoogleDriveMutation.error instanceof Error ? createGoogleDriveMutation.error.message : m.admin_connectors_error_create_generic()}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button type="submit" size="sm" disabled={createGoogleDriveMutation.isPending || !name}>
+                    {createGoogleDriveMutation.isPending ? m.admin_connectors_google_drive_connecting() : m.admin_connectors_google_drive_connect()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                    {m.admin_connectors_webcrawler_back()}
+                  </Button>
+                </div>
+              </form>
             )}
 
             {/* Web crawler wizard */}

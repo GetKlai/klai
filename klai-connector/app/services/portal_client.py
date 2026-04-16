@@ -11,7 +11,7 @@ This decoupling means:
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -132,4 +132,42 @@ class PortalClient:
                 "Failed to report sync status to portal for connector %s (sync run %s)",
                 connector_id,
                 sync_run_id,
+            )
+
+    async def update_credentials(
+        self,
+        connector_id: str,
+        access_token: str,
+        token_expiry: str | None = None,
+    ) -> None:
+        """Write back refreshed access token to portal.
+
+        Called by OAuth adapters after refreshing an access token. Portal
+        re-encrypts the payload via ConnectorCredentialStore (SPEC-KB-020).
+
+        Best-effort: logs and swallows errors so sync runs don't fail due
+        to callback issues. The next run will refresh again if needed.
+
+        Args:
+            connector_id: Portal connector UUID (string form).
+            access_token: Fresh OAuth access token (NEVER logged).
+            token_expiry: ISO-8601 UTC timestamp of token expiry (optional).
+        """
+        # @MX:NOTE: [AUTO] Never log access_token value — only metadata is logged.
+        try:
+            payload: dict[str, Any] = {"access_token": access_token}
+            if token_expiry is not None:
+                payload["token_expiry"] = token_expiry
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.patch(
+                    f"{self._base_url}/internal/connectors/{connector_id}/credentials",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+        except Exception:
+            logger.exception(
+                "Failed to write back refreshed credentials to portal for connector %s (has_expiry=%s)",
+                connector_id,
+                token_expiry is not None,
             )

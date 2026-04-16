@@ -1036,6 +1036,13 @@
 
   "admin_connectors_type_github": "GitHub",
   "admin_connectors_type_google_drive": "Google Drive",
+  "admin_connectors_google_drive_connect": "Verbinden met Google",
+  "admin_connectors_google_drive_connecting": "Verbinden…",
+  "admin_connectors_google_drive_folder_id": "Map ID (optioneel)",
+  "admin_connectors_google_drive_folder_id_placeholder": "Leeg laten voor de volledige drive",
+  "admin_connectors_google_drive_folder_id_help": "Beperk de sync tot een specifieke map. Vind het map ID in de URL van een geopende map in Google Drive.",
+  "admin_connectors_google_drive_reconnect": "Google opnieuw verbinden",
+  "admin_connectors_oauth_success": "Google Drive succesvol verbonden.",
   "admin_connectors_type_notion": "Notion",
   "admin_connectors_notion_access_token": "Notion integratie-token",
   "admin_connectors_notion_access_token_placeholder": "secret_...",

@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
-  RefreshCw, Trash2, Loader2, Plus, Pencil, Globe, FileText,
+  RefreshCw, Trash2, Loader2, Plus, Pencil, Globe, FileText, CheckCircle2, X,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,9 @@ import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
+  validateSearch: (search: Record<string, unknown>) => ({
+    oauth: typeof search.oauth === 'string' ? search.oauth : undefined,
+  }),
   component: ConnectorsTab,
 })
 
@@ -43,7 +46,16 @@ function ConnectorsTab() {
   const auth = useAuth()
   const token = auth.user?.access_token
   const queryClient = useQueryClient()
+  const { oauth } = Route.useSearch()
+  const [showOAuthBanner, setShowOAuthBanner] = useState(oauth === 'connected')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+
+  // Clean up the ?oauth= param from the URL after mounting so a reload doesn't re-show the banner.
+  useEffect(() => {
+    if (oauth === 'connected') {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [oauth])
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
 
   const { data: kb } = useQuery<KnowledgeBase>({
@@ -101,6 +113,15 @@ function ConnectorsTab() {
 
   return (
     <div className="space-y-3">
+      {showOAuthBanner && (
+        <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">{m.admin_connectors_oauth_success()}</span>
+          <button onClick={() => setShowOAuthBanner(false)} aria-label="Dismiss" className="hover:opacity-70 transition-opacity">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
       {connectors.length > 0 && (
         <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
           <thead>
