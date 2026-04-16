@@ -1,17 +1,24 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, ChevronRight, User, Building2, FolderOpen, FileText, Zap } from 'lucide-react'
+import { useState } from 'react'
+import {
+  Plus, ChevronRight, User, Building2, FolderOpen, FileText, Zap,
+  Search, Trash2, Globe,
+} from 'lucide-react'
+import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
+import { Badge } from '@/components/ui/badge'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
-import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { SyncStatusBadge } from './$kbSlug/-kb-helpers'
+import type { ConnectorSummary } from './$kbSlug/-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
     <ProductGuard product="knowledge">
-      <KnowledgePage />
+      <SourcesPage />
     </ProductGuard>
   ),
 })
@@ -29,62 +36,103 @@ interface KBsResponse { knowledge_bases: KnowledgeBase[] }
 interface KBStatsSummary { items: number; connectors: number }
 interface KBStatsSummaryResponse { stats: Record<string, KBStatsSummary> }
 
-function KnowledgePage() {
+const CONNECTOR_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  github: SiGithub,
+  notion: SiNotion,
+  google_drive: SiGoogledrive,
+  web_crawler: Globe,
+  ms_docs: FileText,
+}
+
+function SourcesPage() {
   const auth = useAuth()
   const token = auth.user?.access_token
-  const myUserId = auth.user?.profile?.sub
   const navigate = useNavigate()
+  const [expandedSlugs, setExpandedSlugs] = useState<Set<string>>(new Set())
+  const [searchQuery, setSearchQuery] = useState('')
 
   const { data: kbsData, isLoading, error, refetch } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases'],
-    queryFn: async () => {
-      try { return await apiFetch<KBsResponse>('/api/app/knowledge-bases', token) }
-      catch (err) { queryLogger.warn('Knowledge bases fetch failed', { err }); throw err }
-    },
+    queryFn: () => apiFetch<KBsResponse>('/api/app/knowledge-bases', token),
     enabled: !!token,
   })
 
   const { data: statsData } = useQuery<KBStatsSummaryResponse>({
     queryKey: ['app-knowledge-bases-stats-summary'],
-    queryFn: async () => {
-      try { return await apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary', token) }
-      catch (err) { queryLogger.warn('KB stats summary fetch failed', { err }); throw err }
-    },
+    queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary', token),
     enabled: !!token,
   })
 
   const statsBySlug = statsData?.stats ?? {}
   const allKbs = kbsData?.knowledge_bases ?? []
-  const personalKb = allKbs.find((kb) => kb.slug === `personal-${myUserId}` && kb.owner_type === 'user')
-  const orgKb = allKbs.find((kb) => kb.slug === 'org' && kb.owner_type === 'org')
-  const defaultSlugs = new Set([personalKb?.slug, orgKb?.slug].filter(Boolean))
-  const otherKbs = allKbs.filter((kb) => !defaultSlugs.has(kb.slug))
 
-  const totalItems = Object.values(statsBySlug).reduce((sum, s) => sum + s.items, 0)
+  const filteredKbs = searchQuery
+    ? allKbs.filter((kb) =>
+        kb.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        kb.slug.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : allKbs
+
+  function toggleExpand(slug: string) {
+    setExpandedSlugs((prev) => {
+      const next = new Set(prev)
+      if (next.has(slug)) next.delete(slug)
+      else next.add(slug)
+      return next
+    })
+  }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            {m.knowledge_page_title()}
-          </h1>
-          {!isLoading && totalItems > 0 && (
-            <p className="mt-1 text-sm text-gray-400">
-              {totalItems} bestanden in {allKbs.length} collecties
-            </p>
-          )}
+    <div className="mx-auto max-w-4xl px-6 py-10" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {m.sources_page_title()}
+        </h1>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void navigate({ to: '/app/knowledge/new' })}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            {m.sources_new_collection()}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const firstKb = allKbs[0]
+              if (firstKb) {
+                void navigate({
+                  to: '/app/knowledge/$kbSlug/add-source',
+                  params: { kbSlug: firstKb.slug },
+                })
+              }
+            }}
+            className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            {m.sources_add_source()}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => void navigate({ to: '/app/knowledge/new' })}
-          className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          {m.knowledge_new_button()}
-        </button>
+      </div>
+      <p className="text-sm text-gray-400 mb-6">
+        {m.sources_page_subtitle()}
+      </p>
+
+      {/* Search */}
+      <div className="relative mb-6">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <input
+          type="text"
+          placeholder={m.sources_search_placeholder()}
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-400"
+        />
       </div>
 
+      {/* Collection list */}
       {error ? (
         <QueryErrorState
           error={error instanceof Error ? error : new Error(String(error))}
@@ -93,33 +141,37 @@ function KnowledgePage() {
       ) : isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 rounded-lg bg-gray-50 animate-pulse" />
+            <div key={i} className="h-14 rounded-lg bg-gray-50 animate-pulse" />
           ))}
         </div>
-      ) : allKbs.length === 0 ? (
+      ) : filteredKbs.length === 0 && !searchQuery ? (
         <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center">
           <FolderOpen className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-base font-medium text-gray-900">Nog geen collecties</p>
-          <p className="text-sm text-gray-400 mt-1">Maak je eerste collectie aan om kennis toe te voegen.</p>
+          <p className="text-base font-medium text-gray-900">{m.sources_empty_title()}</p>
+          <p className="text-sm text-gray-400 mt-1">{m.sources_empty_description()}</p>
           <button
             type="button"
             onClick={() => void navigate({ to: '/app/knowledge/new' })}
             className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
           >
             <Plus className="h-4 w-4" />
-            Eerste collectie aanmaken
+            {m.sources_empty_cta()}
           </button>
         </div>
+      ) : filteredKbs.length === 0 && searchQuery ? (
+        <p className="text-center text-sm text-gray-400 py-12">
+          Geen resultaten voor &ldquo;{searchQuery}&rdquo;
+        </p>
       ) : (
-        <div className="space-y-2">
-          {personalKb && (
-            <CollectionRow kb={personalKb} stats={statsBySlug[personalKb.slug]} icon={<User className="h-5 w-5" />} label="Persoonlijk" />
-          )}
-          {orgKb && (
-            <CollectionRow kb={orgKb} stats={statsBySlug[orgKb.slug]} icon={<Building2 className="h-5 w-5" />} />
-          )}
-          {otherKbs.map((kb) => (
-            <CollectionRow key={kb.id} kb={kb} stats={statsBySlug[kb.slug]} icon={<FolderOpen className="h-5 w-5" />} />
+        <div className="divide-y divide-gray-200 border-t border-b border-gray-200">
+          {filteredKbs.map((kb) => (
+            <CollectionRow
+              key={kb.id}
+              kb={kb}
+              stats={statsBySlug[kb.slug]}
+              expanded={expandedSlugs.has(kb.slug)}
+              onToggle={() => toggleExpand(kb.slug)}
+            />
           ))}
         </div>
       )}
@@ -127,47 +179,145 @@ function KnowledgePage() {
   )
 }
 
+/* ── Collection row ────────────────────────────────────────────────── */
+
 function CollectionRow({
-  kb, stats, icon, label,
+  kb,
+  stats,
+  expanded,
+  onToggle,
 }: {
   kb: KnowledgeBase
   stats: KBStatsSummary | undefined
-  icon: React.ReactNode
-  label?: string
+  expanded: boolean
+  onToggle: () => void
 }) {
+  const auth = useAuth()
+  const token = auth.user?.access_token
+  const navigate = useNavigate()
+  const sourceCount = stats?.connectors ?? 0
   const itemCount = stats?.items ?? 0
-  const connectorCount = stats?.connectors ?? 0
+
+  // Lazy-load connectors when expanded
+  const { data: connectors, isLoading: connectorsLoading } = useQuery<ConnectorSummary[]>({
+    queryKey: ['kb-connectors-portal', kb.slug],
+    queryFn: () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kb.slug}/connectors/`, token),
+    enabled: !!token && expanded,
+  })
+
+  const kbIcon =
+    kb.owner_type === 'user' ? (
+      <User className="h-4 w-4" />
+    ) : kb.slug === 'org' ? (
+      <Building2 className="h-4 w-4" />
+    ) : (
+      <FolderOpen className="h-4 w-4" />
+    )
 
   return (
-    <Link
-      to="/app/knowledge/$kbSlug/overview"
-      params={{ kbSlug: kb.slug }}
-      className="group flex items-center gap-4 rounded-lg border border-gray-200 px-5 py-4 transition-all hover:border-gray-200 hover:shadow-sm"
-    >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400 group-hover:bg-gray-50 group-hover:text-gray-900 transition-colors">
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-900">{label ?? kb.name}</p>
-        {kb.description && (
-          <p className="text-xs text-gray-400 truncate mt-0.5">{kb.description}</p>
-        )}
-      </div>
-      <div className="flex items-center gap-4 shrink-0">
+    <div>
+      {/* Row */}
+      <div className="flex items-center gap-3 py-3.5 px-2">
+        {/* Expand toggle */}
+        <button
+          type="button"
+          onClick={onToggle}
+          className="p-0.5 text-gray-400 hover:text-gray-900 transition-colors"
+        >
+          <ChevronRight
+            className={`h-4 w-4 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+          />
+        </button>
+
+        {/* Icon */}
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-400">
+          {kbIcon}
+        </div>
+
+        {/* Name + count */}
+        <Link
+          to="/app/knowledge/$kbSlug/overview"
+          params={{ kbSlug: kb.slug }}
+          className="flex-1 min-w-0 group"
+        >
+          <span className="text-sm font-medium text-gray-900 group-hover:underline">
+            {kb.name}
+          </span>
+          <span className="ml-2 text-xs text-gray-400">
+            {sourceCount === 1
+              ? m.sources_count_one()
+              : m.sources_count({ count: String(sourceCount) })}
+          </span>
+        </Link>
+
+        {/* Indexed badge */}
         {itemCount > 0 && (
-          <span className="flex items-center gap-1.5 text-xs text-gray-400">
-            <FileText className="h-3.5 w-3.5" />
-            {itemCount}
-          </span>
+          <Badge
+            variant="outline"
+            className="text-[10px] font-medium border-green-200 bg-green-50 text-green-700"
+          >
+            {m.sources_indexed()}
+          </Badge>
         )}
-        {connectorCount > 0 && (
-          <span className="flex items-center gap-1.5 text-xs text-gray-400">
-            <Zap className="h-3.5 w-3.5" />
-            {connectorCount}
-          </span>
-        )}
-        <ChevronRight size={16} className="text-gray-400 group-hover:text-gray-900 transition-colors" />
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              void navigate({
+                to: '/app/knowledge/$kbSlug/add-source',
+                params: { kbSlug: kb.slug },
+              })
+            }}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </button>
+          <button
+            type="button"
+            className="p-1.5 text-gray-300 hover:text-[var(--color-destructive)] transition-colors"
+            aria-label="Delete collection"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
-    </Link>
+
+      {/* Expanded: sources list */}
+      {expanded && (
+        <div className="pl-[52px] pb-3 space-y-0.5">
+          {connectorsLoading ? (
+            <div className="space-y-1">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-9 rounded-lg bg-gray-50 animate-pulse" />
+              ))}
+            </div>
+          ) : connectors && connectors.length > 0 ? (
+            connectors.map((c) => {
+              const Icon = CONNECTOR_ICONS[c.connector_type] ?? Zap
+              return (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors"
+                >
+                  <Icon className="h-4 w-4 text-gray-400 shrink-0" />
+                  <span className="text-sm text-gray-700 flex-1 truncate">
+                    {c.name || c.connector_type}
+                  </span>
+                  <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
+                </div>
+              )
+            })
+          ) : (
+            <p className="text-xs text-gray-400 px-3 py-2">
+              {m.sources_no_sources()}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

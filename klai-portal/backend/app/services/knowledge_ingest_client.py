@@ -240,6 +240,42 @@ async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[in
         return []
 
 
+async def ingest_document(
+    org_id: str,
+    kb_slug: str,
+    content: str,
+    title: str,
+    user_id: str | None = None,
+    source_type: str = "manual_upload",
+    content_type: str = "text/plain",
+) -> str:
+    """Ingest raw text content into knowledge-ingest.
+
+    Returns artifact_id from knowledge-ingest. Raises on failure so the portal
+    endpoint returns a clear error to the user.
+    """
+    payload: dict = {
+        "org_id": org_id,
+        "kb_slug": kb_slug,
+        "path": f"upload/{title}",
+        "content": content,
+        "source_type": source_type,
+        "content_type": content_type,
+        "synthesis_depth": 0,
+    }
+    if user_id:
+        payload["user_id"] = user_id
+
+    async with httpx.AsyncClient(
+        base_url=settings.knowledge_ingest_url,
+        headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
+        timeout=30.0,
+    ) as client:
+        resp = await client.post("/ingest/v1/document", json=payload)
+        resp.raise_for_status()
+        return resp.json().get("artifact_id", "")
+
+
 async def update_kb_visibility(org_id: str, kb_slug: str, visibility: str) -> None:
     """Persist KB visibility to knowledge-ingest (kb_config table + Qdrant backfill).
 

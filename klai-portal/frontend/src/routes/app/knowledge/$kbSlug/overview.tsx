@@ -74,7 +74,7 @@ function OverviewTab() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Verbonden bronnen</h2>
           <Link
-            to="/app/knowledge/$kbSlug/connectors"
+            to="/app/knowledge/$kbSlug_/add-source"
             params={{ kbSlug }}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
           >
@@ -91,7 +91,7 @@ function OverviewTab() {
               Verbind bronnen zoals Notion, Google Drive of een website om je kennis te vullen.
             </p>
             <Link
-              to="/app/knowledge/$kbSlug/connectors"
+              to="/app/knowledge/$kbSlug_/add-source"
               params={{ kbSlug }}
               className="inline-flex items-center gap-1.5 mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
             >

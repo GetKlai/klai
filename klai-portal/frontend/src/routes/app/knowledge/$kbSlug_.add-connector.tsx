@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -82,6 +82,9 @@ function stepLabel(current: number, total: number, label: string): string {
 // -- Route -------------------------------------------------------------------
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/app/knowledge/$kbSlug_/add-source', params: { kbSlug: params.kbSlug } })
+  },
   component: AddConnectorPage,
 })
 
