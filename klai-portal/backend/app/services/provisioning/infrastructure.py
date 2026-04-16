@@ -176,20 +176,14 @@ chat-{slug}.{domain} {{
 
 
 def _reload_caddy() -> None:
-    """Reload Caddy config gracefully (no connection drops).
+    """Restart Caddy to pick up new tenant config.
 
-    Uses docker exec instead of container restart, which is safer and faster.
-    docker-socket-proxy allows exec on CONTAINERS.
+    admin off disables the Admin API so caddy reload cannot work.
+    Restart is the correct approach — ~1s TLS interruption, acceptable at current scale.
     """
     client = docker.from_env()
     caddy = client.containers.get(settings.caddy_container_name)
-    exit_code, output = caddy.exec_run(
-        ["caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-        stdout=True,
-        stderr=True,
-    )
-    if exit_code != 0:
-        raise RuntimeError(f"Caddy reload failed (exit {exit_code}): {output.decode()}")
+    caddy.restart(timeout=10)
 
 
 def _start_librechat_container(
