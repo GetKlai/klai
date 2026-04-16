@@ -76,18 +76,12 @@ class WebcrawlerConfig(BaseModel):
         url_set = self.canary_url is not None
         fp_set = self.canary_fingerprint is not None
         if url_set != fp_set:
-            raise ValueError(
-                "canary_url and canary_fingerprint must be set together "
-                "(both present or both absent)"
-            )
+            raise ValueError("canary_url and canary_fingerprint must be set together (both present or both absent)")
 
         # Fingerprint format: ^[0-9a-f]{16}$
         if fp_set and self.canary_fingerprint is not None:
             if not _CANARY_FINGERPRINT_RE.match(self.canary_fingerprint):
-                raise ValueError(
-                    f"canary_fingerprint must match ^[0-9a-f]{{16}}$, "
-                    f"got: {self.canary_fingerprint!r}"
-                )
+                raise ValueError(f"canary_fingerprint must match ^[0-9a-f]{{16}}$, got: {self.canary_fingerprint!r}")
 
         # canary_url must be within base_url + path_prefix
         if url_set and self.canary_url is not None:
@@ -95,10 +89,7 @@ class WebcrawlerConfig(BaseModel):
             if self.path_prefix:
                 prefix = prefix + "/" + self.path_prefix.strip("/")
             if not self.canary_url.startswith(prefix):
-                raise ValueError(
-                    f"canary_url must start with {prefix!r}, "
-                    f"got: {self.canary_url!r}"
-                )
+                raise ValueError(f"canary_url must start with {prefix!r}, got: {self.canary_url!r}")
 
         # login_indicator_selector: non-empty, no angle brackets, no javascript: URI.
         # SPEC intent is to block HTML/JS injection in a CSS selector field. Angle
@@ -111,15 +102,12 @@ class WebcrawlerConfig(BaseModel):
             if not sel:
                 raise ValueError("login_indicator_selector must not be empty")
             if "<" in sel or ">" in sel:
-                raise ValueError(
-                    "login_indicator_selector must not contain '<' or '>'"
-                )
+                raise ValueError("login_indicator_selector must not contain '<' or '>'")
             if "javascript:" in sel.lower():
-                raise ValueError(
-                    "login_indicator_selector must not contain 'javascript:' URIs"
-                )
+                raise ValueError("login_indicator_selector must not contain 'javascript:' URIs")
 
         return self
+
 
 ConnectorType = Literal["github", "notion", "web_crawler", "google_drive", "ms_docs"]
 
