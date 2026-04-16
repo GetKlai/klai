@@ -3,7 +3,10 @@ import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ArrowLeft, AlertTriangle, Globe, FileText } from 'lucide-react'
+import {
+  ArrowLeft, AlertTriangle, Globe, FileText,
+  Settings, ChevronDown, ChevronRight, CheckCircle2, Loader2, Sparkles,
+} from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -24,6 +27,14 @@ interface NotionEditConfig {
   database_ids: string
   max_pages: string
   new_access_token: string
+}
+
+type PreviewResult = {
+  fit_markdown: string
+  word_count: number
+  warnings: string[]
+  content_selector: string | null
+  selector_source: string | null
 }
 
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
@@ -70,6 +81,13 @@ function EditConnectorPage() {
   const [folderId, setFolderId] = useState('')
   const [isReconnecting, setIsReconnecting] = useState(false)
 
+  // Web crawler preview state
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [wcPreviewUrl, setWcPreviewUrl] = useState('')
+  const [wcCookies, setWcCookies] = useState('')
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
   async function handleGoogleDriveReconnect() {
     setIsReconnecting(true)
     try {
@@ -82,9 +100,6 @@ function EditConnectorPage() {
       setIsReconnecting(false)
     }
   }
-  const [wcPreviewUrl, setWcPreviewUrl] = useState('')
-  const [wcCookies, setWcCookies] = useState('')
-  const [previewResult, setPreviewResult] = useState<{ fit_markdown: string; word_count: number; warnings: string[] } | null>(null)
 
   function parseCookies(): unknown[] | undefined {
     const raw = wcCookies.trim()
@@ -94,8 +109,8 @@ function EditConnectorPage() {
     }
     const domain = (() => { try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' } })()
     return raw.split(';').map((pair) => {
-      const [name, ...rest] = pair.trim().split('=')
-      return { name: name.trim(), value: rest.join('='), domain, path: '/' }
+      const [cookieName, ...rest] = pair.trim().split('=')
+      return { name: cookieName.trim(), value: rest.join('='), domain, path: '/' }
     }).filter((c) => c.name && c.value)
   }
 
@@ -111,6 +126,8 @@ function EditConnectorPage() {
         max_pages: String(cfg.max_pages ?? '200'),
         content_selector: cfg.content_selector ?? '',
       })
+      // Auto-expand Advanced if a selector was previously saved
+      if (cfg.content_selector) setShowAdvanced(true)
     }
     if (connector.connector_type === 'github') {
       const cfg = connector.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
@@ -180,20 +197,37 @@ function EditConnectorPage() {
   })
 
   const previewMutation = useMutation({
-    mutationFn: async ({ url, content_selector, cookies }: { url: string; content_selector?: string; cookies?: unknown[] }) => {
-      try {
-        return await apiFetch<{ fit_markdown: string; word_count: number; warnings: string[]; url: string }>(
-          `/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`,
-          token,
-          { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null, cookies: cookies ?? null }) },
-        )
-      } catch {
-        return { fit_markdown: '', word_count: 0, warnings: [] as string[] }
+    mutationFn: async ({ url, content_selector, try_ai, cookies }: { url: string; content_selector?: string; try_ai?: boolean; cookies?: unknown[] }) => {
+      return apiFetch<PreviewResult>(
+        `/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`,
+        token,
+        { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies ?? null }) },
+      )
+    },
+    onSuccess: (data) => {
+      setPreviewResult(data)
+      setPreviewError(null)
+      if (data.selector_source === 'ai' && data.content_selector) {
+        setWebcrawlerConfig((p) => ({ ...p, content_selector: data.content_selector! }))
+        setShowAdvanced(true)
       }
     },
-    onSuccess: (data) => setPreviewResult(data),
-    onError: () => setPreviewResult({ fit_markdown: '', word_count: 0, warnings: [] }),
+    onError: (err) => {
+      setPreviewError(err instanceof Error ? err.message : m.admin_connectors_error_create_generic())
+    },
   })
+
+  function runPreview(opts: { try_ai?: boolean } = {}) {
+    const url = wcPreviewUrl || webcrawlerConfig.base_url
+    setPreviewResult(null)
+    setPreviewError(null)
+    previewMutation.mutate({
+      url,
+      content_selector: opts.try_ai ? undefined : webcrawlerConfig.content_selector,
+      try_ai: opts.try_ai,
+      cookies: parseCookies(),
+    })
+  }
 
   function renderError() {
     if (!updateMutation.error) return null
@@ -243,10 +277,8 @@ function EditConnectorPage() {
                 <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
                 <Input id="edit-conn-base-url" type="url" required value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-content-selector">{m.admin_connectors_webcrawler_content_selector()}</Label>
-                <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
-              </div>
+
+              {/* Preview URL + Advanced toggle (mirrors add-connector preview step) */}
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
                 <Input
@@ -257,53 +289,116 @@ function EditConnectorPage() {
                   onChange={(e) => setWcPreviewUrl(e.target.value)}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-cookies">{m.admin_connectors_webcrawler_cookies_label()}</Label>
-                <textarea
-                  id="edit-conn-cookies"
-                  rows={2}
-                  className="flex w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] resize-none"
-                  placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
-                  value={wcCookies}
-                  onChange={(e) => setWcCookies(e.target.value)}
-                />
-                <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_cookies_help()}</p>
-              </div>
-              <div>
-                <Button
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                onClick={() => setShowAdvanced((p) => !p)}
+              >
+                <Settings className="h-3 w-3" />
+                {m.admin_connectors_webcrawler_advanced_toggle()}
+                {showAdvanced ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+              {showAdvanced && (
+                <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-3">
+                  <Input
+                    id="edit-conn-content-selector"
+                    placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                    value={webcrawlerConfig.content_selector}
+                    onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                  />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-cookies">{m.admin_connectors_webcrawler_cookies_label()}</Label>
+                    <textarea
+                      id="edit-conn-cookies"
+                      className="flex min-h-[60px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                      placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
+                      value={wcCookies}
+                      onChange={(e) => setWcCookies(e.target.value)}
+                    />
+                    <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_cookies_help()}</p>
+                  </div>
+                </div>
+              )}
+              {!webcrawlerConfig.content_selector && (
+                <button
                   type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={!webcrawlerConfig.base_url || previewMutation.isPending}
-                  onClick={() => {
-                    const url = wcPreviewUrl || webcrawlerConfig.base_url
-                    previewMutation.mutate({ url, content_selector: webcrawlerConfig.content_selector, cookies: parseCookies() })
-                  }}
+                  className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                  disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
+                  onClick={() => runPreview({ try_ai: true })}
                 >
-                  {previewMutation.isPending ? m.admin_connectors_webcrawler_preview_loading() : m.admin_connectors_webcrawler_preview_button()}
-                </Button>
-              </div>
-              {previewResult !== null && (previewResult.warnings ?? []).length > 0 && (
+                  <Sparkles className="h-3 w-3" />
+                  {m.admin_connectors_webcrawler_try_ai()}
+                </button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
+                onClick={() => runPreview()}
+              >
+                {previewMutation.isPending
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_preview_loading()}</>
+                  : m.admin_connectors_webcrawler_run_preview()
+                }
+              </Button>
+              {previewError && !previewMutation.isPending && (
+                <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
+              )}
+              {previewMutation.isPending && (
+                <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {m.admin_connectors_webcrawler_preview_loading()}
+                </div>
+              )}
+              {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length === 0 && previewResult.word_count > 0 && (
+                <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(previewResult.word_count) })}</span>
+                </div>
+              )}
+              {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length > 0 && (
                 <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                   <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
                 </div>
               )}
-              {previewResult !== null && (
+              {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
+                <div className="space-y-2">
+                  <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                  </div>
+                  {!webcrawlerConfig.content_selector && (
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors"
+                      onClick={() => runPreview({ try_ai: true })}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {m.admin_connectors_webcrawler_try_ai()}
+                    </button>
+                  )}
+                </div>
+              )}
+              {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-3 space-y-1.5">
+                  <p className="text-xs font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_ai_selector_found()}</p>
+                  <code className="text-xs text-[var(--color-accent-dark)] font-mono">{previewResult.content_selector}</code>
+                </div>
+              )}
+              {previewResult !== null && !previewMutation.isPending && previewResult.fit_markdown && (
                 <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
                     <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
                   </div>
-                  {previewResult.fit_markdown ? (
-                    <div className={MARKDOWN_PROSE_CLASSES}>
-                      <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_empty()}</p>
-                  )}
+                  <div className={MARKDOWN_PROSE_CLASSES}>
+                    <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+                  </div>
                 </div>
               )}
+
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
                 <Input id="edit-conn-path-prefix" value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
