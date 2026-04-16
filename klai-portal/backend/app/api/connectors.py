@@ -1,13 +1,14 @@
 """App-facing API for Knowledge Base Connectors."""
 
 import logging
+import re
 from datetime import datetime
 from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +28,93 @@ router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
 )
+
+# -- Webcrawler config schema (SPEC-CRAWL-003) --------------------------------
+
+_CANARY_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+class CookieEntry(BaseModel):
+    """A single browser cookie for webcrawler auth injection."""
+
+    name: str
+    value: str
+    domain: str = ""
+    path: str = "/"
+
+
+class WebcrawlerConfig(BaseModel):
+    """Validated configuration schema for web_crawler connectors.
+
+    All new fields (SPEC-CRAWL-003) are optional with None defaults so existing
+    connectors continue to work without modification.
+
+    Validation rules enforced portal-side (SPEC-CRAWL-003 Data Model Diff):
+    - XOR: canary_url ↔ canary_fingerprint (both or neither)
+    - canary_fingerprint must match ^[0-9a-f]{16}$
+    - canary_url must start with base_url + (path_prefix if set)
+    - login_indicator_selector: non-empty, no angle brackets, no 'script'
+    """
+
+    # Existing fields (unchanged)
+    base_url: str
+    path_prefix: str | None = None
+    max_pages: int = 200
+    max_depth: int = 3
+    content_selector: str | None = None
+    cookies: list[CookieEntry] | None = None
+
+    # SPEC-CRAWL-003 new optional fields — safe None defaults
+    canary_url: str | None = None
+    canary_fingerprint: str | None = None
+    login_indicator_selector: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_canary_and_selector(self) -> "WebcrawlerConfig":
+        """Enforce XOR, fingerprint regex, URL prefix, and selector safety."""
+        # XOR: canary_url iff canary_fingerprint
+        url_set = self.canary_url is not None
+        fp_set = self.canary_fingerprint is not None
+        if url_set != fp_set:
+            raise ValueError(
+                "canary_url and canary_fingerprint must be set together "
+                "(both present or both absent)"
+            )
+
+        # Fingerprint format: ^[0-9a-f]{16}$
+        if fp_set and self.canary_fingerprint is not None:
+            if not _CANARY_FINGERPRINT_RE.match(self.canary_fingerprint):
+                raise ValueError(
+                    f"canary_fingerprint must match ^[0-9a-f]{{16}}$, "
+                    f"got: {self.canary_fingerprint!r}"
+                )
+
+        # canary_url must be within base_url + path_prefix
+        if url_set and self.canary_url is not None:
+            prefix = self.base_url.rstrip("/")
+            if self.path_prefix:
+                prefix = prefix + "/" + self.path_prefix.strip("/")
+            if not self.canary_url.startswith(prefix):
+                raise ValueError(
+                    f"canary_url must start with {prefix!r}, "
+                    f"got: {self.canary_url!r}"
+                )
+
+        # login_indicator_selector: non-empty, no angle brackets, no 'script'
+        if self.login_indicator_selector is not None:
+            sel = self.login_indicator_selector
+            if not sel:
+                raise ValueError("login_indicator_selector must not be empty")
+            if "<" in sel or ">" in sel:
+                raise ValueError(
+                    "login_indicator_selector must not contain '<' or '>'"
+                )
+            if "script" in sel.lower():
+                raise ValueError(
+                    "login_indicator_selector must not contain 'script'"
+                )
+
+        return self
 
 ConnectorType = Literal["github", "notion", "web_crawler", "google_drive", "ms_docs"]
 
