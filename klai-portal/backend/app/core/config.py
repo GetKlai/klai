@@ -175,7 +175,10 @@ class Settings(BaseSettings):
     # cross-origin requests. A permissive pattern (e.g. .*) would allow any site
     # to call the API with the user's cookies. Review carefully before modifying.
     cors_origins: str = "http://localhost:5174"
-    cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
+    # Allow any origin so public widget endpoints (SPEC-WIDGET-001) pass CORS preflight.
+    # Actual security is enforced server-side: portal routes require JWT auth;
+    # widget routes enforce origin via origin_allowed() in the handler.
+    cors_allow_origin_regex: str = r".*"
 
     @property
     def portal_url(self) -> str:
