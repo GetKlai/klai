@@ -34,7 +34,7 @@ def _sync_drop_mongodb_tenant_user(slug: str) -> None:
     db_name = f"librechat-{slug}"
     user = f"librechat-{slug}"
     script = f'db.getSiblingDB("{db_name}").dropUser("{user}")'
-    mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
+    mongodb_container = settings.mongodb_container_name
     container = c.containers.get(mongodb_container)
     container.exec_run(
         [
@@ -66,7 +66,7 @@ def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
         f'"roles": [{{"role": "readWrite", "db": "{db_name}"}}]'
         f"}})"
     )
-    mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
+    mongodb_container = settings.mongodb_container_name
     container = client.containers.get(mongodb_container)
     exit_code, output = container.exec_run(
         [
