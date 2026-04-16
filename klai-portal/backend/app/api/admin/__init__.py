@@ -60,6 +60,8 @@ def _require_admin(caller_user: "PortalUser") -> None:
 
 # --- Sub-router inclusion (no prefix on sub-routers!) ---
 from .audit import router as audit_router  # noqa: E402
+from .domains import router as domains_router  # noqa: E402
+from .join_requests import router as join_requests_router  # noqa: E402
 from .products import router as products_router  # noqa: E402
 from .settings import router as settings_router  # noqa: E402
 from .users import router as users_router  # noqa: E402
@@ -68,6 +70,8 @@ router.include_router(users_router)
 router.include_router(products_router)
 router.include_router(settings_router)
 router.include_router(audit_router)
+router.include_router(domains_router)
+router.include_router(join_requests_router)
 
 __all__ = [
     "_get_caller_org",

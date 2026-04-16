@@ -1,7 +1,18 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import ARRAY, JSON, CheckConstraint, DateTime, ForeignKey, LargeBinary, String, Text, func
+from sqlalchemy import (
+    ARRAY,
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -44,10 +55,11 @@ class PortalUser(Base):
     __tablename__ = "portal_users"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'suspended', 'offboarded')", name="ck_portal_users_status"),
+        UniqueConstraint("zitadel_user_id", "org_id", name="uq_portal_users_zitadel_user_org"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    zitadel_user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    zitadel_user_id: Mapped[str] = mapped_column(String(64), index=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id"))
     role: Mapped[Literal["admin", "group-admin", "member"]] = mapped_column(
         String(20), nullable=False, default="member", server_default="member"
@@ -74,3 +86,33 @@ class PortalUser(Base):
     kb_pref_version: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
 
     org: Mapped["PortalOrg"] = relationship(back_populates="users")
+
+
+class PortalOrgAllowedDomain(Base):
+    __tablename__ = "portal_org_allowed_domains"
+    __table_args__ = (
+        UniqueConstraint("org_id", "domain", name="uq_org_allowed_domains_org_domain"),
+        UniqueConstraint("domain", name="uq_org_allowed_domains_domain_global"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("portal_orgs.id", ondelete="CASCADE"))
+    domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class PortalJoinRequest(Base):
+    __tablename__ = "portal_join_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zitadel_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    org_id: Mapped[int | None] = mapped_column(ForeignKey("portal_orgs.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approval_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

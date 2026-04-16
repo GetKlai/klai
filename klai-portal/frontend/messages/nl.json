@@ -1462,5 +1462,38 @@
 
   "docs_page_not_found": "Pagina niet gevonden",
   "docs_page_not_found_desc": "Deze pagina bestaat niet of is verwijderd.",
-  "docs_back_to_kb": "Terug naar kennisbank"
+  "docs_back_to_kb": "Terug naar kennisbank",
+
+  "no_account_hero_heading": "Je werkruimte",
+  "no_account_hero_highlight": "wacht",
+  "no_account_hero_body": "Vraag je beheerder om je uit te nodigen of maak een nieuwe werkruimte aan.",
+  "no_account_heading": "Geen Klai-werkruimte gekoppeld",
+  "no_account_body": "Je bent succesvol ingelogd, maar er is geen werkruimte verbonden aan je account. Neem contact op met je organisatiebeheerder voor toegang, of maak een nieuwe werkruimte aan.",
+  "no_account_cta": "Terug naar inloggen",
+  "no_account_request_access": "Toegang aanvragen",
+
+  "admin_domains_title": "Toegestane domeinen",
+  "admin_domains_description": "Gebruikers met een e-mailadres van deze domeinen kunnen automatisch lid worden van je werkruimte via SSO.",
+  "admin_domains_add": "Domein toevoegen",
+  "admin_domains_add_placeholder": "bijv. bedrijf.nl",
+  "admin_domains_empty": "Nog geen toegestane domeinen geconfigureerd.",
+  "admin_domains_delete_confirm": "Dit domein verwijderen?",
+  "admin_domains_error_free": "Gratis e-mailproviders kunnen niet worden gebruikt als toegestane domeinen.",
+  "admin_domains_error_invalid": "Ongeldig domeinformaat.",
+  "admin_domains_error_duplicate": "Dit domein is al geconfigureerd.",
+
+  "join_request_heading": "Toegang aanvragen",
+  "join_request_body": "Je e-maildomein is niet gekoppeld aan een werkruimte. Je kunt een verzoek indienen om lid te worden. Een beheerder zal je verzoek beoordelen.",
+  "join_request_submit": "Verzoek indienen",
+  "join_request_success": "Je verzoek is ingediend. Je ontvangt een e-mail zodra een beheerder het heeft beoordeeld.",
+
+  "admin_join_requests_title": "Toegangsverzoeken",
+  "admin_join_requests_empty": "Geen openstaande toegangsverzoeken.",
+  "admin_join_requests_approve": "Goedkeuren",
+  "admin_join_requests_deny": "Afwijzen",
+
+  "select_workspace_heading": "Werkruimte selecteren",
+  "select_workspace_body": "Je account is gekoppeld aan meerdere werkruimtes. Selecteer welke je wilt openen.",
+  "select_workspace_continue": "Doorgaan",
+  "select_workspace_session_expired": "Je sessie is verlopen. Log opnieuw in."
 }

@@ -1464,5 +1464,38 @@
 
   "docs_page_not_found": "Page not found",
   "docs_page_not_found_desc": "This page does not exist or has been removed.",
-  "docs_back_to_kb": "Back to knowledge base"
+  "docs_back_to_kb": "Back to knowledge base",
+
+  "no_account_hero_heading": "Your workspace",
+  "no_account_hero_highlight": "awaits",
+  "no_account_hero_body": "Ask your admin to invite you or sign up for a new workspace.",
+  "no_account_heading": "No Klai workspace linked",
+  "no_account_body": "You signed in successfully, but no workspace is connected to your account. Contact your organisation admin to get access, or create a new workspace.",
+  "no_account_cta": "Back to login",
+  "no_account_request_access": "Request access",
+
+  "admin_domains_title": "Allowed domains",
+  "admin_domains_description": "Users with an email address from these domains can join your workspace automatically via SSO.",
+  "admin_domains_add": "Add domain",
+  "admin_domains_add_placeholder": "e.g. company.com",
+  "admin_domains_empty": "No allowed domains configured yet.",
+  "admin_domains_delete_confirm": "Remove this domain?",
+  "admin_domains_error_free": "Free email providers cannot be used as allowed domains.",
+  "admin_domains_error_invalid": "Invalid domain format.",
+  "admin_domains_error_duplicate": "This domain is already configured.",
+
+  "join_request_heading": "Request access",
+  "join_request_body": "Your email domain is not linked to any workspace. You can submit a request to join. An admin will review your request.",
+  "join_request_submit": "Submit request",
+  "join_request_success": "Your request has been submitted. You will receive an email when an admin has reviewed it.",
+
+  "admin_join_requests_title": "Join requests",
+  "admin_join_requests_empty": "No pending join requests.",
+  "admin_join_requests_approve": "Approve",
+  "admin_join_requests_deny": "Deny",
+
+  "select_workspace_heading": "Select workspace",
+  "select_workspace_body": "Your account is linked to multiple workspaces. Select which one to open.",
+  "select_workspace_continue": "Continue",
+  "select_workspace_session_expired": "Your session has expired. Please log in again."
 }

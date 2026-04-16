@@ -527,6 +527,24 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_session_details(self, session_id: str, session_token: str) -> dict:
+        """Fetch session details to extract user_id and email after IDP login.
+
+        Returns {"zitadel_user_id": ..., "email": ...}.
+        Used in idp_callback to identify the SSO user for auto-provisioning.
+        """
+        resp = await self._http.get(
+            f"/v2/sessions/{session_id}",
+            headers={"x-zitadel-session-token": session_token},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        user_info = data.get("session", {}).get("factors", {}).get("user", {})
+        return {
+            "zitadel_user_id": user_info.get("id", ""),
+            "email": user_info.get("loginName", ""),
+        }
+
 
 # Singleton — reused across requests
 zitadel = ZitadelClient()

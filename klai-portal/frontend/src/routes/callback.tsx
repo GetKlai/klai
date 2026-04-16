@@ -29,6 +29,12 @@ function CallbackPage() {
         if (res.ok) {
           const me = await res.json()
 
+          // SSO user with no org — show no-account page
+          if (me.org_found === false) {
+            window.location.replace('/no-account')
+            return
+          }
+
           // Provisioning still running — send to loading screen
           if (me.provisioning_status === 'pending' || me.provisioning_status === 'failed') {
             window.location.replace('/provisioning')
