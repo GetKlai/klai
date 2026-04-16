@@ -28,7 +28,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.events import emit_event
 from app.services.provisioning import provision_tenant
@@ -177,6 +177,9 @@ async def signup(
         )
         db.add(org_row)
         await db.flush()  # get org_row.id without committing yet
+
+        # Set tenant context so the portal_users RLS policy passes for the INSERT.
+        await set_tenant(db, org_row.id)
 
         user_row = PortalUser(
             zitadel_user_id=zitadel_user_id,
@@ -328,6 +331,9 @@ async def signup_social(
         )
         db.add(org_row)
         await db.flush()
+
+        # Set tenant context so the portal_users RLS policy passes for the INSERT.
+        await set_tenant(db, org_row.id)
 
         user_row = PortalUser(
             zitadel_user_id=zitadel_user_id,
