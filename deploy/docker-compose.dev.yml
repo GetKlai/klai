@@ -17,6 +17,9 @@ services:
   portal-api-dev:
     image: ghcr.io/getklai/portal-api:dev
     restart: unless-stopped
+    # Pull shared infra secrets (LiteLLM master key, Mongo root, etc.) from .env.
+    # Dev-specific overrides (DATABASE_URL, encryption keys) are set below in `environment`.
+    env_file: .env
     volumes:
       - caddy-tenants:/caddy/tenants
       - ./librechat:/librechat
