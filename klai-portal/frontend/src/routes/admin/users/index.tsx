@@ -32,6 +32,7 @@ import {
   Play,
   UserX,
   Plus,
+  User as UserIcon,
   Users as UsersIcon,
 } from 'lucide-react'
 import * as m from '@/paraglide/messages'
@@ -164,21 +165,19 @@ function UsersPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">{m.admin_users_heading()}</h1>
-          {subtitle && <p className="mt-1 text-sm text-gray-400">{subtitle}</p>}
-        </div>
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="text-[26px] font-display-bold text-gray-900">{m.admin_users_heading()}</h1>
         <button
           type="button"
           data-help-id="admin-users-invite"
           onClick={() => navigate({ to: '/admin/users/invite' })}
-          className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+          className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
         >
           <Plus className="h-4 w-4" />
           {m.admin_users_invite_button()}
         </button>
       </div>
+      {subtitle && <p className="text-sm text-gray-400 mb-6">{subtitle}</p>}
 
       {mutationError && (
         <p className="mb-4 text-sm text-[var(--color-destructive)]">{mutationError}</p>
@@ -192,18 +191,16 @@ function UsersPage() {
       ) : isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-24 rounded-lg bg-gray-50 animate-pulse" />
+            <div key={i} className="h-14 rounded-lg bg-gray-50 animate-pulse" />
           ))}
         </div>
       ) : users.length === 0 ? (
-        <div className="flex flex-col items-center gap-5 rounded-lg border border-gray-200 py-16 px-6">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
-            <UsersIcon size={24} strokeWidth={1.5} className="text-gray-300" />
-          </div>
+        <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center">
+          <UsersIcon className="h-10 w-10 text-gray-300 mx-auto mb-3" />
           <p className="text-sm text-gray-400">{m.admin_users_empty()}</p>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2" data-help-id="admin-users-table">
+        <div className="divide-y divide-gray-200 border-t border-b border-gray-200" data-help-id="admin-users-table">
           {users.map((user) => {
             const isSelf = user.zitadel_user_id === currentUserId
             const groups = membershipsByUser[user.zitadel_user_id] ?? []
@@ -219,126 +216,127 @@ function UsersPage() {
             return (
               <div
                 key={user.zitadel_user_id}
-                className="rounded-lg border border-gray-200 p-5 hover:shadow-sm transition-shadow"
+                className="flex items-center gap-3 px-2 py-3.5 hover:bg-gray-50 transition-colors"
               >
-                <div className="flex items-start justify-between mb-2 gap-3">
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-semibold text-gray-900 truncate">{fullName}</h3>
-                    <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-50">
+                  <UserIcon size={16} strokeWidth={1.75} className="text-gray-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-900 truncate">{fullName}</span>
+                    <RoleBadge role={user.role} pending={user.invite_pending} />
+                    {user.status !== 'active' && <StatusBadge status={user.status} />}
                   </div>
-                  <RoleBadge role={user.role} pending={user.invite_pending} />
+                  <div className="flex items-center gap-2 text-xs text-gray-400 truncate">
+                    <span className="truncate">{user.email}</span>
+                    {groups.length > 0 && (
+                      <>
+                        <span>·</span>
+                        <span className="truncate">{groups.map((g) => g.name).join(', ')}</span>
+                      </>
+                    )}
+                    <span>·</span>
+                    <span className="whitespace-nowrap">{formatDate(user.created_at)}</span>
+                  </div>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2 mb-3">
-                  <StatusBadge status={user.status} />
-                  {groups.length > 0 && (
-                    <span className="text-[11px] text-gray-400">
-                      {groups.map((g) => g.name).join(', ')}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-end justify-between gap-2">
-                  <span className="text-[11px] text-gray-400">{formatDate(user.created_at)}</span>
-                  <InlineDeleteConfirm
-                    isConfirming={isConfirmingDelete}
-                    isPending={isDeleting}
-                    label={m.admin_users_delete_confirm({ name: fullName })}
-                    cancelLabel={m.admin_users_cancel()}
-                    onConfirm={() => {
-                      setConfirmingDeleteId(null)
-                      deleteMutation.mutate(user)
-                    }}
-                    onCancel={() => setConfirmingDeleteId(null)}
-                  >
-                    <div className="flex items-center gap-1">
-                      {user.invite_pending && (
-                        <Tooltip label={m.admin_users_resend_invite()}>
-                          <button
-                            type="button"
-                            disabled={isResending}
-                            onClick={() => resendInviteMutation.mutate(user)}
-                            aria-label={m.admin_users_resend_invite()}
-                            className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-50 transition-colors disabled:opacity-40"
-                          >
-                            {isResending ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <Send size={14} />
-                            )}
-                          </button>
-                        </Tooltip>
-                      )}
-                      <Tooltip label={m.admin_users_edit()}>
+                <InlineDeleteConfirm
+                  isConfirming={isConfirmingDelete}
+                  isPending={isDeleting}
+                  label={m.admin_users_delete_confirm({ name: fullName })}
+                  cancelLabel={m.admin_users_cancel()}
+                  onConfirm={() => {
+                    setConfirmingDeleteId(null)
+                    deleteMutation.mutate(user)
+                  }}
+                  onCancel={() => setConfirmingDeleteId(null)}
+                >
+                  <div className="flex items-center gap-1 shrink-0">
+                    {user.invite_pending && (
+                      <Tooltip label={m.admin_users_resend_invite()}>
                         <button
                           type="button"
-                          onClick={() =>
-                            navigate({
-                              to: '/admin/users/$userId/edit',
-                              params: { userId: user.zitadel_user_id },
-                            })
-                          }
-                          aria-label={m.admin_users_edit()}
-                          className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+                          disabled={isResending}
+                          onClick={() => resendInviteMutation.mutate(user)}
+                          aria-label={m.admin_users_resend_invite()}
+                          className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-40"
                         >
-                          <Pencil size={14} />
+                          {isResending ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Send size={14} />
+                          )}
                         </button>
                       </Tooltip>
-                      {user.invite_pending ? (
-                        <Tooltip label={m.admin_users_delete()}>
+                    )}
+                    <Tooltip label={m.admin_users_edit()}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate({
+                            to: '/admin/users/$userId/edit',
+                            params: { userId: user.zitadel_user_id },
+                          })
+                        }
+                        aria-label={m.admin_users_edit()}
+                        className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </Tooltip>
+                    {user.invite_pending ? (
+                      <Tooltip label={m.admin_users_delete()}>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
+                          aria-label={m.admin_users_delete()}
+                          className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </Tooltip>
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => setConfirmingDeleteId(user.zitadel_user_id)}
-                            aria-label={m.admin_users_delete()}
-                            className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-50 transition-colors"
+                            aria-label={m.admin_users_col_actions()}
+                            className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
                           >
-                            <Trash2 size={14} />
+                            <MoreHorizontal size={14} />
                           </button>
-                        </Tooltip>
-                      ) : (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label={m.admin_users_col_actions()}
-                              className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-50 transition-colors"
-                            >
-                              <MoreHorizontal size={14} />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {user.status === 'active' && (
-                              <DropdownMenuItem
-                                onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
-                                disabled={isSelf}
-                              >
-                                <Pause className="mr-2 h-4 w-4" />
-                                {m.admin_users_action_suspend()}
-                              </DropdownMenuItem>
-                            )}
-                            {user.status === 'suspended' && (
-                              <DropdownMenuItem
-                                onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
-                              >
-                                <Play className="mr-2 h-4 w-4" />
-                                {m.admin_users_action_reactivate()}
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {user.status === 'active' && (
                             <DropdownMenuItem
-                              onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
+                              onClick={() => suspendMutation.mutate(user.zitadel_user_id)}
                               disabled={isSelf}
-                              className="text-[var(--color-destructive)]"
                             >
-                              <UserX className="mr-2 h-4 w-4" />
-                              {m.admin_users_action_offboard()}
+                              <Pause className="mr-2 h-4 w-4" />
+                              {m.admin_users_action_suspend()}
                             </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
-                  </InlineDeleteConfirm>
-                </div>
+                          )}
+                          {user.status === 'suspended' && (
+                            <DropdownMenuItem
+                              onClick={() => reactivateMutation.mutate(user.zitadel_user_id)}
+                            >
+                              <Play className="mr-2 h-4 w-4" />
+                              {m.admin_users_action_reactivate()}
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setConfirmingOffboardId(user.zitadel_user_id)}
+                            disabled={isSelf}
+                            className="text-[var(--color-destructive)]"
+                          >
+                            <UserX className="mr-2 h-4 w-4" />
+                            {m.admin_users_action_offboard()}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                </InlineDeleteConfirm>
               </div>
             )
           })}
