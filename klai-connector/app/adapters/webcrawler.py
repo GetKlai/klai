@@ -251,7 +251,7 @@ class WebCrawlerAdapter(BaseAdapter):
         response.raise_for_status()
         data = response.json()
         task_id: str = data["task_id"]
-        logger.info("Started crawl job", task_id=task_id, base_url=base_url)
+        logger.info("Started crawl job %s for %s", task_id, base_url)
         return task_id
 
     async def _poll_task(self, task_id: str) -> dict[str, Any]:
@@ -397,11 +397,8 @@ class WebCrawlerAdapter(BaseAdapter):
         page_params = self._build_page_crawl_params(config)
 
         logger.info(
-            "Starting crawl",
-            base_url=base_url,
-            max_pages=max_pages,
-            authenticated=bool(cookies),
-            has_selector=bool(content_selector),
+            "Starting crawl of %s (max_pages=%d, authenticated=%s, has_selector=%s)",
+            base_url, max_pages, bool(cookies), bool(content_selector),
         )
 
         # Phase 1: BFS discovery (no selector — finds all linked pages).
@@ -409,13 +406,13 @@ class WebCrawlerAdapter(BaseAdapter):
         task_id = await self._start_crawl(config, discovery_params, cookies)
         result = await self._poll_task(task_id)
         refs = self._process_results(result, cache, base_url=base_url)
-        logger.info("BFS discovery complete", urls_found=len(refs))
+        logger.info("BFS discovery complete: %d URLs found", len(refs))
 
         # Phase 2: extraction re-crawl (only when content_selector is configured).
         if content_selector and refs:
             urls = [ref.ref for ref in refs]
             refs = await self._crawl_pages_sync(urls, page_params, cache, base_url=base_url, cookies=cookies)
-            logger.info("Extraction complete", pages_with_content=len(refs))
+            logger.info("Extraction complete: %d pages with content", len(refs))
 
         # Phase 3: sitemap supplement — fill remaining slots from sitemap.
         if len(refs) < max_pages:
@@ -425,16 +422,15 @@ class WebCrawlerAdapter(BaseAdapter):
             supplement_urls = [u for u in sitemap_urls if u not in seen_urls][:remaining]
             if supplement_urls:
                 logger.info(
-                    "Supplementing with sitemap URLs",
-                    supplement_count=len(supplement_urls),
-                    crawled_so_far=len(refs),
+                    "Supplementing with %d sitemap URLs (%d crawled so far)",
+                    len(supplement_urls), len(refs),
                 )
                 supplement_refs = await self._crawl_pages_sync(
                     supplement_urls, page_params, cache, base_url=base_url, cookies=cookies,
                 )
                 refs.extend(supplement_refs)
 
-        logger.info("Crawl complete", total_pages=len(refs), base_url=base_url)
+        logger.info("Crawl complete: %d pages from %s", len(refs), base_url)
         return refs
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
