@@ -12,6 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
 
@@ -49,6 +50,7 @@ async def _get_caller_org(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
     org, caller_user = row
+    await set_tenant(db, org.id)
     return zitadel_user_id, org, caller_user
 
 
