@@ -46,7 +46,7 @@
     @not-auth {
         not host auth.{$DOMAIN}
     }
-    header @not-auth X-Frame-Options "SAMEORIGIN"
+    header @not-auth Content-Security-Policy "frame-ancestors 'self' https://*.{$DOMAIN}"
 
     # Block /metrics from external access — scraped internally by Alloy
     handle /metrics {
@@ -161,6 +161,18 @@
         reverse_proxy garage:3902 {
             header_up Host klai-images.web.garage
         }
+    }
+
+    # Partner API — external integration surface with per-IP rate limiting
+    handle /partner/* {
+        rate_limit {
+            zone partner_per_ip {
+                key {remote_host}
+                events 120
+                window 1m
+            }
+        }
+        reverse_proxy portal-api:8010
     }
 
     # Dev environment API — route dev.getklai.com/api/* to its own portal-api-dev
