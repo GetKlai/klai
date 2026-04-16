@@ -61,22 +61,19 @@ export async function GET(
 
   const pagePath = path.join("/");
 
-  // REQ-EVT-05: Legacy slug-based path → 308 redirect to UUID-based path.
-  // A path is treated as a slug (not a UUID) when it fails UUID validation.
+  // REQ-EVT-05: Support both UUID and slug-based paths.
+  // If the path is a UUID, resolve it to a slug via the page index.
+  // If the path is already a slug, use it directly.
   const isUuid = uuidSchema.safeParse(pagePath).success;
-  if (!isUuid) {
-    // Look up the UUID for this slug from the page index
+  let resolvedPath = pagePath;
+  if (isUuid) {
     const entries = await buildPageIndex(resolved.kb.gitea_repo);
-    const entry = entries.find((e) => e.slug === pagePath);
-    if (entry?.id) {
-      const url = req.nextUrl.clone();
-      url.pathname = url.pathname.replace(pagePath, entry.id);
-      return NextResponse.redirect(url, 308);
-    }
-    // Slug not in index (may have been deleted) — fall through to serve by slug
+    const entry = entries.find((e) => e.id === pagePath);
+    if (!entry) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    resolvedPath = entry.slug;
   }
 
-  const filePath = `${pagePath}.md`;
+  const filePath = `${resolvedPath}.md`;
   const raw = await gitea.getFileContent(resolved.kb.gitea_repo, filePath);
   if (!raw) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
