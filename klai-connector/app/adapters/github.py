@@ -153,6 +153,7 @@ class GitHubAdapter(BaseAdapter):
                     size=item.get("size", 0),
                     content_type=self._EXT_CONTENT_TYPE.get(ext, "kb_article"),
                     source_ref=f"{repo_owner}/{repo_name}:{branch}:{path}",
+                    source_url=f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{branch}/{path}",
                 )
             )
 

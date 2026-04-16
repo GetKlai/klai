@@ -253,9 +253,6 @@ class SyncEngine:
                                 ref=ref,
                                 org_id=portal_config.zitadel_org_id,
                                 kb_slug=portal_config.kb_slug,
-                                connector_type=portal_config.connector_type,
-                                connector_config=portal_config.config,
-                                adapter=adapter,
                             ) or None  # Convert empty list to None
 
                         await self._ingest_client.ingest_document(
@@ -394,50 +391,31 @@ class SyncEngine:
         ref: Any,
         org_id: str,
         kb_slug: str,
-        connector_type: str,
-        connector_config: dict[str, Any],
-        adapter: Any = None,
     ) -> list[str]:
         """Extract image URLs from document content and upload to S3.
 
-        Resolves relative URLs based on the connector type and config.
-        For Notion, also handles image block URLs cached by the adapter.
+        Each adapter is responsible for populating ref.images with resolved
+        absolute URLs (webcrawler via media["images"], Notion via image blocks).
+        Markdown inline images (e.g. GitHub) are resolved using ref.source_url.
         """
         assert self._image_store is not None
         assert self._image_http is not None
 
-        # Extract markdown image URLs from text content.
-        raw_urls = extract_markdown_image_urls(text)
+        all_image_urls: list[tuple[str, str]] = []
 
-        # For Notion: also include image block URLs from the adapter cache.
-        if connector_type == "notion" and adapter is not None:
-            from app.adapters.notion import NotionAdapter
-
-            if isinstance(adapter, NotionAdapter):
-                for img_ref in adapter.get_cached_images(ref.ref):
-                    raw_urls.append((img_ref.alt, img_ref.url))
-
-        # For adapters that populate DocumentRef.images directly (e.g. webcrawler via
-        # media["images"] from crawl4ai — bypasses PruningContentFilter stripping).
+        # Adapter-provided images (webcrawler, Notion) — always absolute URLs.
         if ref.images:
             for img_ref in ref.images:
-                raw_urls.append((img_ref.alt, img_ref.url))
+                all_image_urls.append((img_ref.alt, img_ref.url))
 
-        # Resolve relative URLs based on connector type.
-        resolved: list[tuple[str, str]] = []
-        for alt, url in raw_urls:
-            if connector_type == "github":
-                owner = connector_config.get("repo_owner", "")
-                repo = connector_config.get("repo_name", "")
-                branch = connector_config.get("branch", "main")
-                base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
-                url = resolve_relative_url(url, base)
-            elif connector_type == "web_crawler":
-                url = resolve_relative_url(url, ref.source_ref or ref.source_url or "")
-            resolved.append((alt, url))
+        # Markdown inline images (e.g. GitHub .md files). Resolve relative URLs
+        # using the document's source URL as base (set by each adapter in source_url).
+        base_url = ref.source_url or ""
+        for alt, url in extract_markdown_image_urls(text):
+            all_image_urls.append((alt, resolve_relative_url(url, base_url)))
 
         return await download_and_upload_images(
-            image_urls=resolved,
+            image_urls=all_image_urls,
             org_id=org_id,
             kb_slug=kb_slug,
             image_store=self._image_store,

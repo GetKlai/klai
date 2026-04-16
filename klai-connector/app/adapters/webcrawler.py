@@ -15,6 +15,7 @@ import structlog
 
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
+from app.services.image_utils import resolve_relative_url
 
 logger = structlog.get_logger(__name__)
 
@@ -358,7 +359,11 @@ class WebCrawlerAdapter(BaseAdapter):
             images: list[ImageRef] | None = None
             if raw_images:
                 images = [
-                    ImageRef(url=img["src"], alt=img.get("alt", ""), source_path="")
+                    ImageRef(
+                        url=resolve_relative_url(img["src"], url),
+                        alt=img.get("alt", ""),
+                        source_path="",
+                    )
                     for img in raw_images
                     if img.get("src")
                 ] or None
