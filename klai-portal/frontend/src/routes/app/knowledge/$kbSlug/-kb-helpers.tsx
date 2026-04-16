@@ -65,10 +65,10 @@ export function DashboardSection({
 }
 
 export const ASSERTION_MODE_OPTIONS: MultiSelectOption[] = [
-  { value: 'fact',        label: 'Fact',        description: 'Established fact, documentation, specs' },
-  { value: 'procedural',  label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
-  { value: 'claim',       label: 'Claim',       description: 'Not conclusively proven claim' },
-  { value: 'quoted',      label: 'Quote',       description: 'Literal source material' },
-  { value: 'speculation', label: 'Speculation', description: 'Hypotheses, brainstorm' },
-  { value: 'unknown',     label: 'Unknown',     description: 'Type not specified' },
+  { value: 'factual',    label: 'Fact',        description: 'Established fact, documentation, specs' },
+  { value: 'procedural', label: 'Procedure',   description: "Step-by-step instructions, how-to's" },
+  { value: 'belief',     label: 'Claim',       description: 'Not conclusively proven claim' },
+  { value: 'quoted',     label: 'Quote',       description: 'Literal source material' },
+  { value: 'hypothesis', label: 'Speculation', description: 'Hypotheses, brainstorm' },
+  { value: 'unknown',    label: 'Unknown',     description: 'Type not specified' },
 ]
