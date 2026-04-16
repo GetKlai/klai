@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { MessageSquare, BookOpen, Sliders, Scale, Users, Puzzle, CreditCard, Settings } from 'lucide-react'
+import { MessageSquare, BookOpen, Sliders, Scale, Users, Puzzle } from 'lucide-react'
 import { Sidebar, type NavItem } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
@@ -28,10 +28,6 @@ function AdminLayout() {
     { to: '/admin/mcps', label: m.sidebar_mcps(), icon: Puzzle },
   ]
 
-  const accountItems: NavItem[] = [
-    { to: '/admin/billing', label: m.admin_nav_billing(), icon: CreditCard },
-    { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
-  ]
 
   useEffect(() => {
     if (auth.isLoading || userLoading) return
@@ -58,8 +54,8 @@ function AdminLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar navItems={adminNav} accountItems={accountItems} />
-      <main className="flex-1 overflow-y-auto">
+      <Sidebar navItems={adminNav} />
+      <main className="flex-1 overflow-y-auto bg-white">
         <Outlet />
       </main>
       <HelpButton />
