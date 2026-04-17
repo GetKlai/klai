@@ -33,7 +33,7 @@ export function PermissionsTab({ apiKey }: Props) {
         },
       },
       {
-        onSuccess: () => toast.success(m.admin_integrations_success_updated()),
+        onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
     )
   }
@@ -50,9 +50,9 @@ export function PermissionsTab({ apiKey }: Props) {
               className="accent-[var(--color-accent)] mt-0.5"
             />
             <div>
-              <span className="font-medium">{m.admin_integrations_perm_chat()}</span>
+              <span className="font-medium">{m.admin_api_keys_perm_chat()}</span>
               <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                {m.admin_integrations_perm_chat_description()}
+                {m.admin_api_keys_perm_chat_description()}
               </p>
             </div>
           </label>
@@ -64,9 +64,9 @@ export function PermissionsTab({ apiKey }: Props) {
               className="accent-[var(--color-accent)] mt-0.5"
             />
             <div>
-              <span className="font-medium">{m.admin_integrations_perm_feedback()}</span>
+              <span className="font-medium">{m.admin_api_keys_perm_feedback()}</span>
               <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                {m.admin_integrations_perm_feedback_description()}
+                {m.admin_api_keys_perm_feedback_description()}
               </p>
             </div>
           </label>
@@ -78,9 +78,9 @@ export function PermissionsTab({ apiKey }: Props) {
               className="accent-[var(--color-accent)] mt-0.5"
             />
             <div>
-              <span className="font-medium">{m.admin_integrations_perm_knowledge_append()}</span>
+              <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
               <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                {m.admin_integrations_perm_knowledge_append_description()}
+                {m.admin_api_keys_perm_knowledge_append_description()}
               </p>
             </div>
           </label>
@@ -91,7 +91,7 @@ export function PermissionsTab({ apiKey }: Props) {
         <p className="text-sm text-[var(--color-destructive)]">
           {updateMutation.error instanceof Error
             ? updateMutation.error.message
-            : m.admin_integrations_error_generic()}
+            : m.admin_shared_error_generic()}
         </p>
       )}
 
@@ -100,7 +100,7 @@ export function PermissionsTab({ apiKey }: Props) {
           {updateMutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
-          {m.admin_integrations_save()}
+          {m.admin_shared_save()}
         </Button>
       </div>
     </form>

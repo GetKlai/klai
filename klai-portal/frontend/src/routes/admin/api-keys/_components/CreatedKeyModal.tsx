@@ -30,14 +30,14 @@ export function CreatedKeyModal({ apiKey, open, onConfirm }: CreatedKeyModalProp
     <AlertDialog open={open}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{m.admin_integrations_key_modal_title()}</AlertDialogTitle>
+          <AlertDialogTitle>{m.admin_api_keys_key_modal_title()}</AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
             <span className="flex items-center gap-2 text-[var(--color-destructive)] font-medium">
               <AlertTriangle className="h-4 w-4 shrink-0" />
-              {m.admin_integrations_key_modal_warning()}
+              {m.admin_api_keys_key_modal_warning()}
             </span>
             <span className="block">
-              {m.admin_integrations_key_modal_description()}
+              {m.admin_api_keys_key_modal_description()}
             </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -63,7 +63,7 @@ export function CreatedKeyModal({ apiKey, open, onConfirm }: CreatedKeyModalProp
 
         <AlertDialogFooter>
           <Button onClick={onConfirm}>
-            {m.admin_integrations_key_modal_confirm()}
+            {m.admin_api_keys_key_modal_confirm()}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

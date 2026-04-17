@@ -50,7 +50,7 @@ export function EmbedTab({ widget }: Props) {
     updateMutation.mutate(
       { widget_config: next },
       {
-        onSuccess: () => toast.success(m.admin_integrations_success_updated()),
+        onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
     )
   }
@@ -60,28 +60,28 @@ export function EmbedTab({ widget }: Props) {
       <section className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="widget-origins">
-            {m.admin_integrations_widget_origins_label()}
+            {m.admin_widgets_widget_origins_label()}
           </Label>
           <p className="text-xs text-[var(--color-muted-foreground)]">
-            {m.admin_integrations_widget_origins_help()}
+            {m.admin_widgets_widget_origins_help()}
           </p>
           <textarea
             id="widget-origins"
             value={originsRaw}
             onChange={(e) => setOriginsRaw(e.target.value)}
             rows={4}
-            placeholder={m.admin_integrations_widget_origins_placeholder()}
+            placeholder={m.admin_widgets_widget_origins_placeholder()}
             className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm font-mono text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
           />
           {invalidOrigins.length > 0 && (
             <p className="text-xs text-[var(--color-destructive)]">
-              {m.admin_integrations_widget_invalid_origins({ origins: invalidOrigins.join(', ') })}
+              {m.admin_widgets_widget_invalid_origins({ origins: invalidOrigins.join(', ') })}
             </p>
           )}
           {origins.length === 0 && (
             <div className="flex items-start gap-1.5 text-xs text-[var(--color-muted-foreground)]">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
-              {m.admin_integrations_widget_origins_empty_warning()}
+              {m.admin_widgets_widget_origins_empty_warning()}
             </div>
           )}
         </div>
@@ -99,7 +99,7 @@ export function EmbedTab({ widget }: Props) {
         <p className="text-sm text-[var(--color-destructive)]">
           {updateMutation.error instanceof Error
             ? updateMutation.error.message
-            : m.admin_integrations_error_generic()}
+            : m.admin_shared_error_generic()}
         </p>
       )}
 
@@ -108,7 +108,7 @@ export function EmbedTab({ widget }: Props) {
           {updateMutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
-          {m.admin_integrations_save()}
+          {m.admin_shared_save()}
         </Button>
       </div>
     </form>

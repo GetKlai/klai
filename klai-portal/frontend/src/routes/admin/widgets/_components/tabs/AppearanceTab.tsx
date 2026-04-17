@@ -70,7 +70,7 @@ export function AppearanceTab({ widget }: Props) {
     updateMutation.mutate(
       { widget_config: next },
       {
-        onSuccess: () => toast.success(m.admin_integrations_success_updated()),
+        onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
     )
   }
@@ -79,31 +79,31 @@ export function AppearanceTab({ widget }: Props) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="widget-title">{m.admin_integrations_widget_title_label()}</Label>
+          <Label htmlFor="widget-title">{m.admin_widgets_widget_title_label()}</Label>
           <p className="text-xs text-[var(--color-muted-foreground)]">
-            {m.admin_integrations_widget_title_help()}
+            {m.admin_widgets_widget_title_help()}
           </p>
           <Input
             id="widget-title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder={m.admin_integrations_widget_title_placeholder()}
+            placeholder={m.admin_widgets_widget_title_placeholder()}
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="widget-welcome">{m.admin_integrations_widget_welcome_label()}</Label>
+          <Label htmlFor="widget-welcome">{m.admin_widgets_widget_welcome_label()}</Label>
           <p className="text-xs text-[var(--color-muted-foreground)]">
-            {m.admin_integrations_widget_welcome_help()}
+            {m.admin_widgets_widget_welcome_help()}
           </p>
           <Input
             id="widget-welcome"
             value={welcome}
             onChange={(e) => setWelcome(e.target.value)}
-            placeholder={m.admin_integrations_widget_welcome_placeholder()}
+            placeholder={m.admin_widgets_widget_welcome_placeholder()}
           />
         </div>
         <div className="space-y-2">
-          <Label>{m.admin_integrations_widget_css_vars_label()}</Label>
+          <Label>{m.admin_widgets_widget_css_vars_label()}</Label>
           <div className="space-y-2">
             {cssVarRows.map((row, index) => (
               <div key={index} className="flex items-center gap-2">
@@ -118,7 +118,7 @@ export function AppearanceTab({ widget }: Props) {
                   }
                   className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-[var(--color-foreground)] outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                 >
-                  <option value="">{m.admin_integrations_widget_css_var_placeholder()}</option>
+                  <option value="">{m.admin_widgets_widget_css_var_placeholder()}</option>
                   {CSS_VAR_KEYS.map((k) => (
                     <option key={k} value={k}>
                       {k}
@@ -139,7 +139,7 @@ export function AppearanceTab({ widget }: Props) {
                   type="button"
                   onClick={() => setCssVarRows((prev) => prev.filter((_, i) => i !== index))}
                   className="text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                  aria-label={m.admin_integrations_widget_css_var_remove()}
+                  aria-label={m.admin_widgets_widget_css_var_remove()}
                 >
                   ×
                 </button>
@@ -154,7 +154,7 @@ export function AppearanceTab({ widget }: Props) {
               onClick={() => setCssVarRows((prev) => [...prev, { key: '', value: '' }])}
               className="text-xs"
             >
-              {m.admin_integrations_widget_css_var_add()}
+              {m.admin_widgets_widget_css_var_add()}
             </Button>
           )}
         </div>
@@ -164,7 +164,7 @@ export function AppearanceTab({ widget }: Props) {
         <p className="text-sm text-[var(--color-destructive)]">
           {updateMutation.error instanceof Error
             ? updateMutation.error.message
-            : m.admin_integrations_error_generic()}
+            : m.admin_shared_error_generic()}
         </p>
       )}
 
@@ -173,7 +173,7 @@ export function AppearanceTab({ widget }: Props) {
           {updateMutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
-          {m.admin_integrations_save()}
+          {m.admin_shared_save()}
         </Button>
       </div>
     </form>

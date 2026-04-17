@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 import DOMPurify from "dompurify";
 import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
+import { t } from "../i18n/labels";
 
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(snarkdown(text));
@@ -29,7 +30,7 @@ export function MessageList(props: MessageListProps) {
       class="klai-messages"
       ref={listRef}
       role="log"
-      aria-label="Chat messages"
+      aria-label={t().messagesLabel}
       aria-live="polite"
     >
       <For each={props.messages}>

@@ -34,7 +34,7 @@ export function KnowledgeBasesTab({ apiKey }: Props) {
     updateMutation.mutate(
       { kb_access: kbAccess },
       {
-        onSuccess: () => toast.success(m.admin_integrations_success_updated()),
+        onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
     )
   }
@@ -43,7 +43,7 @@ export function KnowledgeBasesTab({ apiKey }: Props) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          {m.admin_integrations_wizard_kb_access_intro_api()}
+          {m.admin_api_keys_wizard_kb_access_intro_api()}
         </p>
         <KbAccessEditor
           value={kbAccess}
@@ -56,7 +56,7 @@ export function KnowledgeBasesTab({ apiKey }: Props) {
         <p className="text-sm text-[var(--color-destructive)]">
           {updateMutation.error instanceof Error
             ? updateMutation.error.message
-            : m.admin_integrations_error_generic()}
+            : m.admin_shared_error_generic()}
         </p>
       )}
 
@@ -65,7 +65,7 @@ export function KnowledgeBasesTab({ apiKey }: Props) {
           {updateMutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
-          {m.admin_integrations_save()}
+          {m.admin_shared_save()}
         </Button>
       </div>
     </form>

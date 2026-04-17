@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { ChatWindow } from "./ChatWindow";
 import { chatState } from "../store/chat";
+import { t } from "../i18n/labels";
 
 export function ChatBubble() {
   const [isOpen, setIsOpen] = createSignal(false);
@@ -18,7 +19,7 @@ export function ChatBubble() {
 
       <button
         class="klai-bubble"
-        aria-label={isOpen() ? "Sluit chat" : "Open chat"}
+        aria-label={isOpen() ? t().closeChat : t().openChat}
         aria-expanded={isOpen()}
         onClick={toggle}
       >

@@ -61,11 +61,11 @@ function ApiKeyDetailPage() {
   if (!apiKey) return null
 
   const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
-    { id: 'details', label: m.admin_integrations_tab_general(), icon: Info },
-    { id: 'permissions', label: m.admin_integrations_wizard_step_permissions(), icon: Shield },
-    { id: 'kbs', label: m.admin_integrations_wizard_step_kb_access(), icon: Shield },
-    { id: 'rate_limit', label: m.admin_integrations_wizard_step_rate_limit(), icon: Settings },
-    { id: 'danger', label: m.admin_integrations_tab_danger(), icon: AlertTriangle },
+    { id: 'details', label: m.admin_shared_tab_general(), icon: Info },
+    { id: 'permissions', label: m.admin_api_keys_wizard_step_permissions(), icon: Shield },
+    { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
+    { id: 'rate_limit', label: m.admin_api_keys_wizard_step_rate_limit(), icon: Settings },
+    { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
 
   function setTab(tab: TabId) {

@@ -31,7 +31,7 @@ export function DetailsTab({ apiKey }: Props) {
     updateMutation.mutate(
       { name: name.trim(), description: description.trim() || null },
       {
-        onSuccess: () => toast.success(m.admin_integrations_success_updated()),
+        onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
     )
   }
@@ -40,7 +40,7 @@ export function DetailsTab({ apiKey }: Props) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="api-key-name">{m.admin_integrations_field_name()}</Label>
+          <Label htmlFor="api-key-name">{m.admin_shared_field_name()}</Label>
           <Input
             id="api-key-name"
             value={name}
@@ -49,7 +49,7 @@ export function DetailsTab({ apiKey }: Props) {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="api-key-description">{m.admin_integrations_field_description()}</Label>
+          <Label htmlFor="api-key-description">{m.admin_shared_field_description()}</Label>
           <textarea
             id="api-key-description"
             value={description}
@@ -59,7 +59,7 @@ export function DetailsTab({ apiKey }: Props) {
           />
         </div>
         <div className="space-y-1.5">
-          <Label>{m.admin_integrations_col_key_prefix()}</Label>
+          <Label>{m.admin_api_keys_col_key_prefix()}</Label>
           <code className="block text-xs font-mono text-[var(--color-muted-foreground)] py-2">
             {apiKey.key_prefix}...
           </code>
@@ -70,7 +70,7 @@ export function DetailsTab({ apiKey }: Props) {
         <p className="text-sm text-[var(--color-destructive)]">
           {updateMutation.error instanceof Error
             ? updateMutation.error.message
-            : m.admin_integrations_error_generic()}
+            : m.admin_shared_error_generic()}
         </p>
       )}
 
@@ -82,7 +82,7 @@ export function DetailsTab({ apiKey }: Props) {
           {updateMutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
-          {m.admin_integrations_save()}
+          {m.admin_shared_save()}
         </Button>
       </div>
     </form>
