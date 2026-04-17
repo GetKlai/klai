@@ -280,17 +280,18 @@ function CollectionRow({
             </Badge>
           )}
           <span className="ml-2 text-xs text-gray-400">
-            {sourceCount === 1
-              ? m.sources_count_one()
-              : m.sources_count({ count: String(sourceCount) })}
+            {itemCount} {itemCount === 1 ? 'bestand' : 'bestanden'} · {sourceCount}{' '}
+            {sourceCount === 1 ? 'bron' : 'bronnen'}
           </span>
         </Link>
 
         {/* Sync badge */}
-        {itemCount > 0 && (
-          <Badge variant="success">
-            {m.sources_indexed()}
-          </Badge>
+        {itemCount > 0 ? (
+          <Badge variant="success">{m.sources_indexed()}</Badge>
+        ) : sourceCount > 0 ? (
+          <Badge variant="warning">Nog niet gesynchroniseerd</Badge>
+        ) : (
+          <Badge variant="secondary">Leeg</Badge>
         )}
 
         {/* Actions */}
