@@ -1541,5 +1541,7 @@
   "admin_widgets_delete_section_title": "Delete widget",
   "admin_widgets_delete_section_description": "Permanently delete this widget. It will stop working immediately on every site where the embed snippet is installed. This cannot be undone.",
   "admin_widgets_delete_button": "Delete widget",
-  "admin_widgets_back_to_list": "Back to widgets"
+  "admin_widgets_back_to_list": "Back to widgets",
+  "admin_integrations_wizard_step_appearance": "Appearance",
+  "admin_integrations_wizard_appearance_intro": "Customise how the widget looks and feels to visitors. Title and welcome message appear in the chat; colour variables override the defaults."
 }

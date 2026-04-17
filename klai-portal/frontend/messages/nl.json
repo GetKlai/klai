@@ -1541,5 +1541,7 @@
   "admin_widgets_delete_section_title": "Widget verwijderen",
   "admin_widgets_delete_section_description": "Verwijder deze widget permanent. Hij stopt direct met werken op elke site waar de embed snippet is geïnstalleerd. Dit kan niet worden teruggedraaid.",
   "admin_widgets_delete_button": "Widget verwijderen",
-  "admin_widgets_back_to_list": "Terug naar widgets"
+  "admin_widgets_back_to_list": "Terug naar widgets",
+  "admin_integrations_wizard_step_appearance": "Vormgeving",
+  "admin_integrations_wizard_appearance_intro": "Pas aan hoe de widget eruitziet voor bezoekers. Titel en welkomstbericht verschijnen in de chat; kleurvariabelen overschrijven de standaardwaarden."
 }
