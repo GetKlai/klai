@@ -1,16 +1,19 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   Plus, ChevronRight, User, Building2, FolderOpen, FileText, Zap,
-  Search, Trash2, Globe,
+  Search, Trash2, Globe, RefreshCw, Loader2,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import { Tooltip } from '@/components/ui/tooltip'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { SyncStatusBadge } from './$kbSlug/-kb-helpers'
 import type { ConnectorSummary } from './$kbSlug/-kb-types'
@@ -179,12 +182,44 @@ function CollectionRow({
   const navigate = useNavigate()
   const sourceCount = stats?.connectors ?? 0
   const itemCount = stats?.items ?? 0
+  const queryClient = useQueryClient()
+  const [confirmingDeleteKb, setConfirmingDeleteKb] = useState(false)
+  const [confirmingDeleteConnectorId, setConfirmingDeleteConnectorId] = useState<string | null>(null)
 
   // Lazy-load connectors when expanded
   const { data: connectors, isLoading: connectorsLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kb.slug],
     queryFn: () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kb.slug}/connectors/`, token),
     enabled: !!token && expanded,
+  })
+
+  const deleteKbMutation = useMutation({
+    mutationFn: async () => apiFetch(`/api/app/knowledge-bases/${kb.slug}`, token, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+    },
+    onError: (err) => queryLogger.error('KB delete failed', { slug: kb.slug, err }),
+  })
+
+  const syncConnectorMutation = useMutation({
+    mutationFn: async (connectorId: string) =>
+      apiFetch(`/api/app/knowledge-bases/${kb.slug}/connectors/${connectorId}/sync`, token, { method: 'POST' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kb.slug] })
+    },
+    onError: (err, id) => queryLogger.error('Connector sync failed', { kb: kb.slug, connectorId: id, err }),
+  })
+
+  const deleteConnectorMutation = useMutation({
+    mutationFn: async (connectorId: string) =>
+      apiFetch(`/api/app/knowledge-bases/${kb.slug}/connectors/${connectorId}`, token, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kb.slug] })
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases-stats-summary'] })
+      setConfirmingDeleteConnectorId(null)
+    },
+    onError: (err, id) => queryLogger.error('Connector delete failed', { kb: kb.slug, connectorId: id, err }),
   })
 
   const kbIcon =
@@ -240,29 +275,47 @@ function CollectionRow({
         )}
 
         {/* Actions */}
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              void navigate({
-                to: '/app/knowledge/$kbSlug/add-source',
-                params: { kbSlug: kb.slug },
-              })
-            }}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add
-          </button>
-          <button
-            type="button"
-            className="p-1.5 text-gray-300 hover:text-[var(--color-destructive)] transition-colors"
-            aria-label="Delete collection"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <InlineDeleteConfirm
+          isConfirming={confirmingDeleteKb}
+          isPending={deleteKbMutation.isPending}
+          label={`Collectie "${kb.name}" verwijderen?`}
+          cancelLabel="Annuleren"
+          onConfirm={() => {
+            deleteKbMutation.mutate()
+            setConfirmingDeleteKb(false)
+          }}
+          onCancel={() => setConfirmingDeleteKb(false)}
+        >
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                void navigate({
+                  to: '/app/knowledge/$kbSlug/add-source',
+                  params: { kbSlug: kb.slug },
+                })
+              }}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add
+            </button>
+            <Tooltip label="Verwijder collectie">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setConfirmingDeleteKb(true)
+                }}
+                aria-label="Delete collection"
+                className="p-1.5 text-gray-300 hover:text-[var(--color-destructive)] transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+          </div>
+        </InlineDeleteConfirm>
       </div>
 
       {/* Expanded: sources list */}
@@ -277,17 +330,61 @@ function CollectionRow({
           ) : connectors && connectors.length > 0 ? (
             connectors.map((c) => {
               const Icon = CONNECTOR_ICONS[c.connector_type] ?? Zap
+              const isSyncing =
+                syncConnectorMutation.isPending && syncConnectorMutation.variables === c.id
+              const isDeletingConnector =
+                deleteConnectorMutation.isPending && deleteConnectorMutation.variables === c.id
               return (
-                <div
+                <InlineDeleteConfirm
                   key={c.id}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors"
+                  isConfirming={confirmingDeleteConnectorId === c.id}
+                  isPending={isDeletingConnector}
+                  label={`Bron "${c.name || c.connector_type}" verwijderen?`}
+                  cancelLabel="Annuleren"
+                  onConfirm={() => deleteConnectorMutation.mutate(c.id)}
+                  onCancel={() => setConfirmingDeleteConnectorId(null)}
                 >
-                  <Icon className="h-4 w-4 text-gray-400 shrink-0" />
-                  <span className="text-sm text-gray-700 flex-1 truncate">
-                    {c.name || c.connector_type}
-                  </span>
-                  <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
-                </div>
+                  <div className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
+                    <Icon className="h-4 w-4 text-gray-400 shrink-0" />
+                    <span className="text-sm text-gray-700 flex-1 truncate">
+                      {c.name || c.connector_type}
+                    </span>
+                    <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Tooltip label="Synchroniseren">
+                        <button
+                          type="button"
+                          disabled={isSyncing}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            syncConnectorMutation.mutate(c.id)
+                          }}
+                          aria-label="Sync connector"
+                          className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                        >
+                          {isSyncing ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={14} />
+                          )}
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Bron verwijderen">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setConfirmingDeleteConnectorId(c.id)
+                          }}
+                          aria-label="Delete connector"
+                          className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </InlineDeleteConfirm>
               )
             })
           ) : (
