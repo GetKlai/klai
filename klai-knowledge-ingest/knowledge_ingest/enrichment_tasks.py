@@ -224,6 +224,10 @@ async def _enrich_document(
                 )
 
         # Step 1: LLM enrichment (context prefix + HyPE questions per chunk)
+        # Extract source-aware enrichment fields from extra_payload (SPEC-KB-021)
+        kb_name_val = (extra_payload or {}).get("kb_name", "")
+        connector_type_val = (extra_payload or {}).get("connector_type", "")
+        source_domain_val = (extra_payload or {}).get("source_domain", "")
         t0 = time.monotonic()
         enriched_chunks = await enrichment.enrich_chunks(
             document_text=document_text,
@@ -234,6 +238,9 @@ async def _enrich_document(
             participant_context=participant_context_str,
             context_strategy=profile.context_strategy,
             context_tokens=profile.context_tokens_max,
+            kb_name=kb_name_val,
+            connector_type=connector_type_val,
+            source_domain=source_domain_val,
         )
         llm_ms = int((time.monotonic() - t0) * 1000)
 
