@@ -71,11 +71,8 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     query_resolved = await coreference.resolve(req.query, req.conversation_history)
     coref_ms = (time.perf_counter() - t_coref) * 1000
     step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
-    try:
-        decision_record["coreference_rewrite"] = {"original": req.query, "resolved": query_resolved}
-        decision_record["coreference_ms"] = round(coref_ms, 1)
-    except Exception:  # noqa: S110
-        pass
+    decision_record["coreference_rewrite"] = {"original": req.query, "resolved": query_resolved}
+    decision_record["coreference_ms"] = round(coref_ms, 1)
 
     # 2. Embed resolved query (dense + sparse in parallel)
     t_embed = time.perf_counter()
@@ -85,20 +82,14 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     )
     embed_ms = (time.perf_counter() - t_embed) * 1000
     step_latency_seconds.labels(step="embed").observe(time.perf_counter() - t_embed)
-    try:
-        decision_record["embedding_ms"] = round(embed_ms, 1)
-    except Exception:  # noqa: S110
-        pass
+    decision_record["embedding_ms"] = round(embed_ms, 1)
 
     # 3. Gate check
     bypassed, gate_margin = await gate.should_bypass(query_vector)
 
-    try:
-        decision_record["gate_margin"] = round(gate_margin, 4) if gate_margin is not None else None
-        decision_record["gate_bypassed"] = bypassed
-        decision_record["gate_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-    except Exception:  # noqa: S110
-        pass
+    decision_record["gate_margin"] = round(gate_margin, 4) if gate_margin is not None else None
+    decision_record["gate_bypassed"] = bypassed
+    decision_record["gate_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
     chunks_out: list[ChunkResult] = []
     candidates_retrieved = 0
@@ -144,10 +135,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 "router_centroid_cache_hit": routing.cache_hit,
             }
 
-    try:
-        decision_record["router"] = router_meta
-    except Exception:  # noqa: S110
-        pass
+    decision_record["router"] = router_meta
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
@@ -167,10 +155,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         raw_results = await qdrant_coro
         qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
         step_latency_seconds.labels(step="qdrant").observe(time.perf_counter() - t_qdrant)
-        try:
-            decision_record["search_ms"] = round(qdrant_ms, 1)
-        except Exception:  # noqa: S110
-            pass
+        decision_record["search_ms"] = round(qdrant_ms, 1)
 
         if graph_task is not None and t_graph is not None:
             try:
@@ -184,10 +169,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 logger.warning("Graph search task failed", error=str(exc))
 
         candidates_retrieved = len(raw_results)
-        try:
-            decision_record["search_candidates_count"] = candidates_retrieved
-        except Exception:  # noqa: S110
-            pass
+        decision_record["search_candidates_count"] = candidates_retrieved
 
         # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
         if settings.link_expand_enabled and req.scope != "notebook" and raw_results:
@@ -238,13 +220,10 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             rerank_ms = (time.perf_counter() - t_rerank) * 1000
             step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
             reranked_to = len(reranked)
-            try:
-                decision_record["rerank_ms"] = round(rerank_ms, 1)
-                decision_record["reranker_scores_top5"] = [
-                    r.get("reranker_score") or r.get("score", 0) for r in reranked[:5]
-                ]
-            except Exception:  # noqa: S110
-                pass
+            decision_record["rerank_ms"] = round(rerank_ms, 1)
+            decision_record["reranker_scores_top5"] = [
+                r.get("reranker_score") or r.get("score", 0) for r in reranked[:5]
+            ]
         else:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
@@ -265,19 +244,13 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 "quota_bypass_reason": "disabled",
                 "quota_bypass_source_label": None,
             }
-        try:
-            decision_record["quota"] = quota_meta
-        except Exception:  # noqa: S110
-            pass
+        decision_record["quota"] = quota_meta
 
         # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
         reranked = quality_boost(reranked)
-        try:
-            decision_record["quality_boost_applied"] = any(
-                r.get("feedback_count", 0) >= 3 for r in reranked
-            )
-        except Exception:  # noqa: S110
-            pass
+        decision_record["quality_boost_applied"] = any(
+            r.get("feedback_count", 0) >= 3 for r in reranked
+        )
 
         # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every
         # request but serves flat results. Diffs logged as shadow_eval to
@@ -292,10 +265,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             "1",
             "yes",
         )
-        try:
-            decision_record["evidence_shadow_mode"] = shadow_mode
-        except Exception:  # noqa: S110
-            pass
+        decision_record["evidence_shadow_mode"] = shadow_mode
         scored = evidence_tier.apply(copy.deepcopy(reranked))
 
         if shadow_mode:
@@ -350,16 +320,16 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     retrieval_requests_total.labels(scope=req.scope, bypassed=str(bypassed).lower()).inc()
     retrieval_chunks_total.labels(scope=req.scope).observe(len(chunks_out))
 
+    decision_record["total_ms"] = round(retrieval_ms, 1)
     try:
-        decision_record["total_ms"] = round(retrieval_ms, 1)
         logger.info(
             "retrieval_decision_record",
             org_id=req.org_id,
             scope=req.scope,
             **decision_record,
         )
-    except Exception:  # noqa: S110
-        pass
+    except Exception:
+        logger.exception("decision_record_emit_failed")
 
     logger.info(
         "retrieve",

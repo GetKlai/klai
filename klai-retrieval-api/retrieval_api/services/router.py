@@ -17,50 +17,41 @@ _catalog_cache: dict[str, tuple[list[KBEntry], float]] = {}
 
 
 async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
-    """Fetch distinct source_labels for an org from Qdrant.
+    """Fetch distinct source_labels for an org from Qdrant via the Facet API.
 
-    Uses a scroll with limit + dedup to collect unique source_label values.
+    Single call — returns unique source_label values with counts.
+    Requires a keyword index on source_label (created by ensure_collection).
     Cached per org for router_centroid_ttl_seconds.
     """
     cached = _catalog_cache.get(org_id)
     if cached and (time.monotonic() - cached[1]) < settings.router_centroid_ttl_seconds:
         return cached[0]
 
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     from retrieval_api.services.search import _get_client
 
     client = _get_client()
-    seen: set[str] = set()
-    entries: list[KBEntry] = []
-    offset = None
-
-    # Scroll in batches of 100, collect unique source_labels.
-    # We only fetch the payload fields we need (no vectors, no text).
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
-
-    scroll_filter = Filter(must=[
+    facet_filter = Filter(must=[
         FieldCondition(key="org_id", match=MatchValue(value=org_id)),
     ])
 
-    for _ in range(50):  # safety cap: max 5000 points scanned
-        points, next_offset = await client.scroll(
+    try:
+        result = await client.facet(
             collection_name=settings.qdrant_collection,
-            scroll_filter=scroll_filter,
-            limit=100,
-            offset=offset,
-            with_payload=["source_label", "kb_slug"],
-            with_vectors=False,
+            key="source_label",
+            facet_filter=facet_filter,
+            limit=50,
+            exact=True,
         )
-        for point in points:
-            label = (point.payload or {}).get("source_label")
-            if label and label not in seen:
-                seen.add(label)
-                entries.append(KBEntry(
-                    source_label=label,
-                    name=label,  # use label as name (good enough for keyword matching)
-                ))
-        if next_offset is None or not points:
-            break
-        offset = next_offset
+        entries = [
+            KBEntry(source_label=hit.value, name=hit.value)
+            for hit in result.hits
+            if hit.value  # skip empty/null labels
+        ]
+    except Exception as exc:
+        logger.warning("router_facet_failed", org_id=org_id, error=str(exc))
+        entries = []
 
     _catalog_cache[org_id] = (entries, time.monotonic())
     logger.info("router_catalog_built", org_id=org_id, source_labels=len(entries))
@@ -199,6 +190,23 @@ def layer2_semantic(
         return None, margin
 
 
+async def _default_compute_centroids(catalog: list[KBEntry]) -> dict[str, list[float]]:
+    """Compute centroids by embedding each source_label's name via TEI.
+
+    Used in production when no compute_centroid_fn is injected.
+    """
+    from retrieval_api.services.tei import embed_single
+
+    centroids: dict[str, list[float]] = {}
+    for entry in catalog:
+        try:
+            vec = await embed_single(entry.name)
+            centroids[entry.source_label] = vec
+        except Exception:
+            logger.warning("centroid_embed_failed", source_label=entry.source_label)
+    return centroids
+
+
 async def route_to_sources(
     query_resolved: str,
     query_vector: list[float],
@@ -238,8 +246,9 @@ async def route_to_sources(
         centroids = cached[0]
         cache_hit = True
 
-    if centroids is None and compute_centroid_fn:
-        centroids = await compute_centroid_fn(source_label_catalog)
+    if centroids is None:
+        fn = compute_centroid_fn or _default_compute_centroids
+        centroids = await fn(source_label_catalog)
         _centroid_cache[org_id] = (centroids, time.monotonic())
 
     if centroids:

@@ -81,7 +81,7 @@ async def ensure_collection() -> None:
     for field in (
         "org_id", "kb_slug", "artifact_id", "content_type",
         "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags", "content_label",
+        "taxonomy_node_ids", "tags", "content_label", "source_label",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
