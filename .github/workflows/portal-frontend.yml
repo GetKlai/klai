@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/frontend/**'
+      - 'klai-widget/src/**'
+      - 'klai-widget/package.json'
+      - 'klai-widget/vite.config.ts'
       - '.github/workflows/portal-frontend.yml'
 
 jobs:
@@ -27,6 +30,14 @@ jobs:
       - name: Dependency vulnerability scan (npm audit)
         run: npm audit --audit-level=high
         working-directory: klai-portal/frontend
+
+      - name: Build widget bundle
+        run: |
+          cd klai-widget
+          npm ci
+          npm run build
+          mkdir -p ../klai-portal/frontend/public/widget
+          cp dist/klai-chat.js ../klai-portal/frontend/public/widget/klai-chat.js
 
       - name: Lint (ESLint)
         run: npm run lint
