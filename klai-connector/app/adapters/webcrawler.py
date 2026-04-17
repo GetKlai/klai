@@ -194,6 +194,53 @@ class WebCrawlerAdapter(BaseAdapter):
             return {"Authorization": f"Bearer {self._api_key}"}
         return {}
 
+    async def _post_crawl_sync(
+        self,
+        urls: list[str],
+        crawl_params: dict[str, Any],
+        cookies: list[dict[str, Any]] | None = None,
+        *,
+        text_mode: bool = True,
+        timeout: float = 300.0,
+    ) -> dict[str, Any]:
+        """POST to Crawl4AI ``/crawl`` endpoint with cookie injection.
+
+        Single place for payload construction + cookie hooks + auth headers.
+        Used by ``_crawl_canary`` (single URL), ``_batch_crawl_urls`` (batches),
+        and potentially ``compute-fingerprint`` endpoint (SPEC-CRAWL-004).
+
+        Args:
+            urls: URLs to crawl in this request.
+            crawl_params: CrawlerRunConfig params dict.
+            cookies: Optional cookie list for ``_build_cookie_hooks``.
+            text_mode: Include ``BrowserConfig(text_mode=True)`` (default for
+                extraction; disabled for canary to match real browser rendering).
+            timeout: HTTP request timeout in seconds.
+
+        Returns:
+            Raw Crawl4AI response JSON.
+        """
+        payload: dict[str, Any] = {
+            "urls": urls,
+            "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
+        }
+        if text_mode:
+            payload["browser_config"] = {
+                "type": "BrowserConfig",
+                "params": {"text_mode": True},
+            }
+        if cookies:
+            payload["hooks"] = _build_cookie_hooks(cookies)
+
+        response = await self._http_client.post(
+            f"{self._api_url}/crawl",
+            json=payload,
+            headers=self._auth_headers(),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def _crawl_canary(self, cfg: _CrawlConfig) -> None:
         """Layer A: fetch the canary URL and compare its fingerprint to the stored value.
 
@@ -205,46 +252,31 @@ class WebCrawlerAdapter(BaseAdapter):
                 or if the canary page returned no content (similarity defaults to 0.0).
             ValueError: If called without canary_url/canary_fingerprint set (programmer error).
         """
-        # Explicit guards — the caller in list_documents() already checks both are set,
-        # but assertions get stripped under `python -O`; raise an explicit ValueError
-        # so a contract violation is never silently converted to a False canary mismatch.
         if cfg.canary_url is None or cfg.canary_fingerprint is None:
-            raise ValueError(
-                "_crawl_canary requires both canary_url and canary_fingerprint to be set"
-            )
+            raise ValueError("_crawl_canary requires both canary_url and canary_fingerprint to be set")
 
-        params: dict[str, Any] = {
+        # Reuse shared crawl plumbing — only crawl params differ from page extraction
+        # (no word-count floor, no content filtering, bypass cache).
+        canary_params: dict[str, Any] = {
             "cache_mode": "bypass",
             "word_count_threshold": 0,
             "page_timeout": 30000,
         }
-        payload: dict[str, Any] = {
-            "urls": [cfg.canary_url],
-            "crawler_config": {"type": "CrawlerRunConfig", "params": params},
-        }
-        if cfg.cookies:
-            payload["hooks"] = _build_cookie_hooks(cfg.cookies)
-
-        response = await self._http_client.post(
-            f"{self._api_url}/crawl",
-            json=payload,
-            headers=self._auth_headers(),
+        result = await self._post_crawl_sync(
+            urls=[cfg.canary_url],
+            crawl_params=canary_params,
+            cookies=cfg.cookies,
+            text_mode=False,
+            timeout=30.0,
         )
-        response.raise_for_status()
-        result = response.json()
 
-        # Extract markdown from the first result
         pages: list[dict[str, Any]] = result.get("results", [])
-        live_markdown = ""
-        if pages:
-            live_markdown = _extract_markdown(pages[0])
+        live_markdown = _extract_markdown(pages[0]) if pages else ""
 
         live_fp = compute_content_fingerprint(live_markdown)
         sim = similarity(live_fp, cfg.canary_fingerprint) if live_fp else 0.0
 
-        # SPEC-CRAWL-003 AC-3: canary pass is silent — no log on success. The
-        # sync engine logs the `error`-level event on a mismatch (REQ-5 path).
-        # Keep one `debug`-level trace for operator-side troubleshooting.
+        # SPEC-CRAWL-003 AC-3: canary pass is silent — no log on success.
         logger.debug(
             "canary_check",
             canary_url=cfg.canary_url,
@@ -343,17 +375,18 @@ class WebCrawlerAdapter(BaseAdapter):
         if cfg.login_indicator_selector:
             base_wait = params.get("wait_for", "")
             # Escape quotes/backslashes to prevent JS injection from the stored selector.
-            selector_escaped = (
-                cfg.login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
-            )
+            selector_escaped = cfg.login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
             css_check_js = f"!!document.querySelector('{selector_escaped}')"
-            js_prefix = "js:() =>"
-            if base_wait.startswith(js_prefix):
-                body = base_wait[len(js_prefix):].strip()
-                params["wait_for"] = f"{js_prefix} ({body}) && {css_check_js}"
+            # Extract the JS arrow function body using a regex that tolerates
+            # whitespace variations ("js:() =>", "js: ()=> ", etc.) so this
+            # doesn't break silently if someone reformats the base wait_for.
+            js_arrow_match = re.match(r"^js:\s*\(\)\s*=>\s*(.+)$", base_wait, re.DOTALL)
+            if js_arrow_match:
+                body = js_arrow_match.group(1).strip()
+                params["wait_for"] = f"js:() => ({body}) && {css_check_js}"
             else:
-                # No pre-existing JS wait — require login indicator presence alone.
-                params["wait_for"] = f"{js_prefix} {css_check_js}"
+                # No pre-existing JS arrow function — require login indicator only.
+                params["wait_for"] = f"js:() => {css_check_js}"
 
         return params
 
@@ -562,26 +595,20 @@ class WebCrawlerAdapter(BaseAdapter):
         refs: list[DocumentRef] = []
         for i in range(0, len(urls), 100):
             batch = urls[i : i + 100]
-            payload: dict[str, Any] = {
-                "urls": batch,
-                "browser_config": {"type": "BrowserConfig", "params": {"text_mode": True}},
-                "crawler_config": {"type": "CrawlerRunConfig", "params": crawl_params},
-            }
-            if cookies:
-                payload["hooks"] = _build_cookie_hooks(cookies)
             try:
-                response = await self._http_client.post(
-                    f"{self._api_url}/crawl",
-                    json=payload,
-                    headers=self._auth_headers(),
-                    timeout=300.0,
+                result = await self._post_crawl_sync(
+                    urls=batch,
+                    crawl_params=crawl_params,
+                    cookies=cookies,
                 )
-                response.raise_for_status()
-                refs.extend(self._process_results(
-                    response.json(), cache,
-                    base_url=base_url,
-                    login_indicator_selector=login_indicator_selector,
-                ))
+                refs.extend(
+                    self._process_results(
+                        result,
+                        cache,
+                        base_url=base_url,
+                        login_indicator_selector=login_indicator_selector,
+                    )
+                )
             except Exception as exc:
                 logger.warning("batch_crawl_failed", batch_index=i // 100, error=str(exc))
         return refs
@@ -589,13 +616,16 @@ class WebCrawlerAdapter(BaseAdapter):
     # -- Three-phase pipeline --------------------------------------------------
 
     async def _run_discovery(
-        self, cfg: _CrawlConfig, cache: dict[str, str],
+        self,
+        cfg: _CrawlConfig,
+        cache: dict[str, str],
     ) -> list[DocumentRef]:
         """Phase 1: BFS discovery — finds all linked pages without content filtering."""
         task_id = await self._start_crawl(cfg, self._build_discovery_params(), cfg.cookies)
         result = await self._poll_task(task_id)
         refs = self._process_results(
-            result, cache,
+            result,
+            cache,
             base_url=cfg.base_url,
             login_indicator_selector=cfg.login_indicator_selector,
         )
@@ -618,7 +648,11 @@ class WebCrawlerAdapter(BaseAdapter):
             return refs
         urls = [ref.ref for ref in refs]
         extracted = await self._batch_crawl_urls(
-            urls, page_params, cache, cfg.base_url, cfg.cookies,
+            urls,
+            page_params,
+            cache,
+            cfg.base_url,
+            cfg.cookies,
             login_indicator_selector=cfg.login_indicator_selector,
         )
         logger.info("extraction_complete", page_count=len(extracted), base_url=cfg.base_url)
@@ -649,7 +683,11 @@ class WebCrawlerAdapter(BaseAdapter):
             crawled_so_far=len(refs),
         )
         extra = await self._batch_crawl_urls(
-            supplement_urls, page_params, cache, cfg.base_url, cfg.cookies,
+            supplement_urls,
+            page_params,
+            cache,
+            cfg.base_url,
+            cfg.cookies,
             login_indicator_selector=cfg.login_indicator_selector,
         )
         return [*refs, *extra]
@@ -657,7 +695,9 @@ class WebCrawlerAdapter(BaseAdapter):
     # -- BaseAdapter interface ------------------------------------------------
 
     async def list_documents(
-        self, connector: Any, cursor_context: dict[str, Any] | None = None,  # noqa: ARG002
+        self,
+        connector: Any,
+        cursor_context: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> list[DocumentRef]:
         """List crawled pages from the target website using a three-phase pipeline.
 

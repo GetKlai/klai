@@ -10,12 +10,25 @@ reusable by other connectors (notion, google_drive) in future SPECs.
 from __future__ import annotations
 
 import re
+from typing import NewType
 
 # @MX:NOTE: trafilatura.deduplication.Simhash wraps a 64-bit SimHash over word shingles.
 # @MX:SPEC: SPEC-CRAWL-003 REQ-11, REQ-12, REQ-13
 # Threshold mapping: canary Layer A uses 0.80 (Hamming ≤ 12), cluster Layer C uses 0.95
 # (Hamming ≤ 3, Google/Manku 2007 near-duplicate standard). See SPEC Threshold Rationale.
 from trafilatura.deduplication import Simhash
+
+# ---------------------------------------------------------------------------
+# Public type alias — distinguishes fingerprint hex strings from plain strings
+# in function signatures across the adapter and sync engine.
+# ---------------------------------------------------------------------------
+ContentFingerprint = NewType("ContentFingerprint", str)
+"""16-char hex string (64-bit SimHash) or empty string for too-short pages."""
+
+# ---------------------------------------------------------------------------
+# Module-level constants — all SPEC-CRAWL-003 thresholds in one place.
+# See §Threshold Rationale in the SPEC for the research backing each value.
+# ---------------------------------------------------------------------------
 
 # Minimum word count after stripping to produce a fingerprint.
 # Pages with fewer words are too short for meaningful SimHash clustering.
@@ -31,6 +44,11 @@ _DEFAULT_SIMILARITY_THRESHOLD = 0.95
 # 15% is the midpoint between legitimate layout overlap (<10%) and the
 # motivating incident (37% contamination). SPEC-CRAWL-003 REQ-13.
 _DEFAULT_RATIO_THRESHOLD = 0.15
+
+# Minimum pages before Layer C runs. Below this sample size, a 15% cluster
+# is too few pages to be statistically meaningful (e.g. 2 pages out of 12).
+# SPEC-CRAWL-003 REQ-14, Threshold Rationale §Minimum sample size 30 pages.
+LAYER_C_MIN_PAGES = 30
 
 # Threshold above which LSH replaces pairwise comparison.
 # SPEC-CRAWL-003 REQ-13: for ≤200 pages use pairwise Hamming; for >200 use LSH.
@@ -63,7 +81,7 @@ def _strip_markdown(text: str) -> str:
 # @MX:REASON: Public API boundary — changing signature or return type breaks adapter
 #             and sync engine integration points.
 # @MX:SPEC: SPEC-CRAWL-003 REQ-11
-def compute_content_fingerprint(markdown: str) -> str:
+def compute_content_fingerprint(markdown: str) -> ContentFingerprint:
     """Return 16-char hex SimHash of markdown content, or '' if too short.
 
     Args:
@@ -79,27 +97,27 @@ def compute_content_fingerprint(markdown: str) -> str:
         - Trafilatura's Simhash uses 4-word shingles over the input tokens.
     """
     if not markdown:
-        return ""
+        return ContentFingerprint("")
 
     stripped = _strip_markdown(markdown)
     words = stripped.split()
 
     if len(words) < _MIN_WORDS:
-        return ""
+        return ContentFingerprint("")
 
     # Trafilatura's Simhash accepts a string and internally tokenises it.
     # Use f-string format to ensure zero-padded 16-char hex (to_hex() may omit
     # leading zeros when the hash integer has fewer than 64 significant bits).
     sh = Simhash(stripped)
-    return f"{sh.hash:016x}"
+    return ContentFingerprint(f"{sh.hash:016x}")
 
 
-def similarity(a_hex: str, b_hex: str) -> float:
+def similarity(a_hex: ContentFingerprint | str, b_hex: ContentFingerprint | str) -> float:
     """Return SimHash similarity as 1.0 - (hamming_distance / 64).
 
     Args:
-        a_hex: 16-char hex SimHash string (or empty string).
-        b_hex: 16-char hex SimHash string (or empty string).
+        a_hex: ContentFingerprint (16-char hex) or empty string.
+        b_hex: ContentFingerprint (16-char hex) or empty string.
 
     Returns:
         Float in [0.0, 1.0]. Returns 0.0 if either argument is empty.
@@ -139,12 +157,12 @@ def find_boilerplate_clusters(
         so callers can slice the top-3 for detail logging per REQ-17.
 
     Notes:
-        For <= 200 pages: pairwise Hamming comparison (O(n²), acceptable for small N).
-        For > 200 pages: LSH not yet implemented; falls back to pairwise with a
-        warning comment. TODO: implement band-based LSH for large syncs.
+        For <= 200 pages: pairwise centroid comparison (O(n*k), fast for small N).
+        For > 200 pages: SimHash-LSH with 8 bands × 8 bits per band narrows
+        candidates before verification, reducing inner loop to O(1) amortized.
 
-        Cluster membership: union-find / greedy approach — each page joins the
-        first cluster whose centroid is within the similarity threshold.
+        Cluster membership: greedy centroid approach — each page joins the first
+        cluster whose centroid is within the similarity threshold.
     """
     # Filter out empty fingerprints (too-short pages)
     valid = [(url, fp) for url, fp in fingerprints if fp]
