@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, AlertTriangle, Globe, FileText,
+  ArrowLeft, AlertTriangle, Globe, FileText, Shield,
   Settings, ChevronDown, ChevronRight, CheckCircle2, Loader2, Sparkles,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
@@ -86,6 +86,9 @@ function EditConnectorPage() {
   const [wcCookies, setWcCookies] = useState('')
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  // Auth guard state (SPEC-CRAWL-004)
+  const [canaryUrl, setCanaryUrl] = useState('')
+  const [loginIndicatorSelector, setLoginIndicatorSelector] = useState('')
 
   async function handleGoogleDriveReconnect() {
     setIsReconnecting(true)
@@ -118,15 +121,20 @@ function EditConnectorPage() {
     setName(connector.name)
     setAllowedAssertionModes(connector.allowed_assertion_modes ?? [])
     if (connector.connector_type === 'web_crawler') {
-      const cfg = connector.config as { base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string }
+      const cfg = connector.config as {
+        base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string
+        canary_url?: string; login_indicator_selector?: string
+      }
       setWebcrawlerConfig({
         base_url: String(cfg.base_url ?? ''),
         path_prefix: String(cfg.path_prefix ?? ''),
         max_pages: String(cfg.max_pages ?? '200'),
         content_selector: cfg.content_selector ?? '',
       })
-      // Auto-expand Advanced if a selector was previously saved
-      if (cfg.content_selector) setShowAdvanced(true)
+      setCanaryUrl(cfg.canary_url ?? '')
+      setLoginIndicatorSelector(cfg.login_indicator_selector ?? '')
+      // Auto-expand Advanced if selector, cookies, or auth guard were previously saved
+      if (cfg.content_selector || cfg.canary_url || cfg.login_indicator_selector) setShowAdvanced(true)
     }
     if (connector.connector_type === 'github') {
       const cfg = connector.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
@@ -168,6 +176,12 @@ function EditConnectorPage() {
         if (webcrawlerConfig.path_prefix) config.path_prefix = webcrawlerConfig.path_prefix
         if (webcrawlerConfig.max_pages) config.max_pages = Number(webcrawlerConfig.max_pages)
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
+        // Auth guard (SPEC-CRAWL-004): canary_fingerprint auto-computed by backend
+        if (canaryUrl) config.canary_url = canaryUrl
+        if (loginIndicatorSelector) config.login_indicator_selector = loginIndicatorSelector
+        // Include cookies if entered (for both sync and canary fingerprint computation)
+        const cookies = parseCookies()
+        if (cookies) config.cookies = cookies
       }
       if (connector.connector_type === 'notion') {
         if (notionConfig.new_access_token.trim()) {
@@ -291,19 +305,29 @@ function EditConnectorPage() {
                 onClick={() => setShowAdvanced((p) => !p)}
               >
                 <Settings className="h-3 w-3" />
-                {m.admin_connectors_webcrawler_advanced_toggle()}
+                Advanced settings
                 {showAdvanced ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               </button>
               {showAdvanced && (
-                <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-3">
-                  <Input
-                    id="edit-conn-content-selector"
-                    placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
-                    value={webcrawlerConfig.content_selector}
-                    onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
-                  />
+                <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-4">
+                  {/* CSS Selector */}
                   <div className="space-y-1.5">
-                    <Label htmlFor="edit-conn-cookies">{m.admin_connectors_webcrawler_cookies_label()}</Label>
+                    <Label htmlFor="edit-conn-content-selector">Content selector</Label>
+                    <Input
+                      id="edit-conn-content-selector"
+                      placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                      value={webcrawlerConfig.content_selector}
+                      onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                    />
+                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                      Only needed if the preview picks up menus or sidebars instead of the article.
+                      Leave empty to let AI detect this automatically.
+                    </p>
+                  </div>
+
+                  {/* Authentication cookies */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-cookies">Authentication cookies</Label>
                     <textarea
                       id="edit-conn-cookies"
                       className="flex min-h-[60px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
@@ -311,7 +335,49 @@ function EditConnectorPage() {
                       value={wcCookies}
                       onChange={(e) => setWcCookies(e.target.value)}
                     />
-                    <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_cookies_help()}</p>
+                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                      Only needed for sites behind a login. Open the site in your browser, log in,
+                      then copy the Cookie value from your browser&apos;s developer tools (Network tab &gt; any request &gt; Cookie header).
+                    </p>
+                  </div>
+
+                  {/* Auth guard (SPEC-CRAWL-004) */}
+                  <div className="space-y-3 pt-2 border-t border-[var(--color-border)]">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-foreground)]">
+                      <Shield className="h-3.5 w-3.5" />
+                      Auth protection
+                    </div>
+                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                      Detects when your login expires between syncs. Usually set up automatically during preview &mdash;
+                      only change these if you know what you&apos;re doing.
+                    </p>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-canary-url" className="text-xs">Reference page URL</Label>
+                      <Input
+                        id="edit-conn-canary-url"
+                        className="text-xs"
+                        placeholder="https://wiki.example.com/a-known-article"
+                        value={canaryUrl}
+                        onChange={(e) => setCanaryUrl(e.target.value)}
+                      />
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        A page with real content. Checked before every sync &mdash; if it looks different, the sync stops.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-conn-login-selector" className="text-xs">Login indicator</Label>
+                      <Input
+                        id="edit-conn-login-selector"
+                        className="text-xs"
+                        placeholder=".user-menu, a[href*=logout]"
+                        value={loginIndicatorSelector}
+                        onChange={(e) => setLoginIndicatorSelector(e.target.value)}
+                      />
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        A CSS selector for an element only visible when logged in (e.g. a logout button).
+                        Pages without it are skipped as login walls.
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}

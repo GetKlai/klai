@@ -525,19 +525,26 @@ function AddConnectorPage() {
                       onClick={() => setShowAdvancedSelector((p) => !p)}
                     >
                       <Settings className="h-3 w-3" />
-                      {m.admin_connectors_webcrawler_advanced_toggle()}
+                      Advanced settings
                       {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                     </button>
                     {showAdvancedSelector && (
                       <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-3">
+                        <div className="space-y-1.5">
+                        <Label htmlFor="wc-preview-selector">Content selector</Label>
                         <Input
                           id="wc-preview-selector"
                           placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
                           value={webcrawlerConfig.content_selector}
                           onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
                         />
+                        <p className="text-xs text-[var(--color-muted-foreground)]">
+                          Only needed if the preview picks up menus or sidebars instead of the article.
+                          Leave empty to let AI detect this automatically.
+                        </p>
+                        </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor="wc-cookies">{m.admin_connectors_webcrawler_cookies_label()}</Label>
+                          <Label htmlFor="wc-cookies">Authentication cookies</Label>
                           <textarea
                             id="wc-cookies"
                             className="flex min-h-[60px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
@@ -545,7 +552,10 @@ function AddConnectorPage() {
                             value={webcrawlerConfig.cookies}
                             onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))}
                           />
-                          <p className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_cookies_help()}</p>
+                          <p className="text-xs text-[var(--color-muted-foreground)]">
+                            Only needed for sites behind a login. Open the site in your browser, log in,
+                            then copy the Cookie value from your browser&apos;s developer tools (Network tab &gt; any request &gt; Cookie header).
+                          </p>
                         </div>
                       </div>
                     )}
