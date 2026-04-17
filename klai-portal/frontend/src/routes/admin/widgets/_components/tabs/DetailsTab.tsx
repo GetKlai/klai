@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Copy, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
-import { EmbedSnippet } from '../EmbedSnippet'
 
 interface Props {
   widget: WidgetDetailResponse
@@ -37,11 +36,6 @@ export function DetailsTab({ widget }: Props) {
     )
   }
 
-  function handleCopyWidgetId() {
-    void navigator.clipboard.writeText(widget.widget_id)
-    toast.success(m.admin_integrations_widget_embed_copied())
-  }
-
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
@@ -64,35 +58,6 @@ export function DetailsTab({ widget }: Props) {
             className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-sm font-medium text-[var(--color-foreground)]">
-          {m.admin_integrations_section_widget_embed()}
-        </h2>
-        <div className="space-y-2">
-          <Label>{m.admin_integrations_widget_id_label()}</Label>
-          <div className="flex items-center gap-2">
-            <code className="block flex-1 text-xs font-mono text-[var(--color-muted-foreground)] bg-[var(--color-muted)] border border-[var(--color-border)] rounded-md px-3 py-2">
-              {widget.widget_id}
-            </code>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleCopyWidgetId}
-              className="shrink-0"
-            >
-              <Copy className="h-4 w-4 mr-1.5" />
-              {m.admin_integrations_widget_id_copy()}
-            </Button>
-          </div>
-        </div>
-        <EmbedSnippet
-          widgetId={widget.widget_id}
-          title={widget.widget_config.title || undefined}
-          welcomeMessage={widget.widget_config.welcome_message || undefined}
-        />
       </section>
 
       {updateMutation.error && (
