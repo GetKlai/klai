@@ -55,6 +55,7 @@ async def _auto_fill_canary_fingerprint(config: dict) -> dict:
 
     return config
 
+
 router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],

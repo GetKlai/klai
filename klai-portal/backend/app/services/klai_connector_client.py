@@ -71,7 +71,6 @@ class KlaiConnectorClient:
             response.raise_for_status()
             return [SyncRunData(**r) for r in response.json()]
 
-
     async def compute_fingerprint(
         self,
         url: str,
