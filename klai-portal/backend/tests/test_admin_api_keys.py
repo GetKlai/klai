@@ -5,16 +5,12 @@ and the helper functions exist. Full integration tests require a
 running database and are covered by CI's pytest-integration suite.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 
 def test_module_imports():
     """All admin_api_keys symbols import without error."""
     from app.api.admin_api_keys import (
-        ApiKeyResponse,
-        CreateApiKeyRequest,
-        CreateApiKeyResponse,
-        UpdateApiKeyRequest,
         create_api_key,
         delete_api_key,
         get_api_key_detail,
@@ -52,7 +48,7 @@ def test_create_request_rejects_short_name():
 
     from app.api.admin_api_keys import CreateApiKeyRequest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         CreateApiKeyRequest(
             name="ab",
             permissions={"chat": True},

@@ -11,11 +11,6 @@ from unittest.mock import MagicMock
 def test_module_imports():
     """All admin_widgets symbols import without error."""
     from app.api.admin_widgets import (
-        CreateWidgetRequest,
-        UpdateWidgetRequest,
-        WidgetConfig,
-        WidgetDetailResponse,
-        WidgetResponse,
         create_widget,
         delete_widget,
         get_widget_detail,
@@ -59,7 +54,7 @@ def test_create_request_rejects_short_name():
 
     from app.api.admin_widgets import CreateWidgetRequest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         CreateWidgetRequest(name="ab", kb_ids=[])
 
 
