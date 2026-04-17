@@ -18,7 +18,7 @@ from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
-from app.services.content_fingerprint import find_boilerplate_clusters
+from app.services.content_fingerprint import LAYER_C_MIN_PAGES, find_boilerplate_clusters
 from app.services.events import emit_product_event
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
@@ -293,12 +293,10 @@ class SyncEngine:
 
                 await adapter.post_sync(portal_config)
 
-                # Layer C: post-sync boilerplate-ratio check (SPEC-CRAWL-003 REQ-13).
-                # Runs on every sync with ≥30 pages. No connector config needed (REQ-14).
-                # Only pages with a non-empty content_fingerprint are analysed.
-                layer_c_min_pages = 30
+                # Layer C: post-sync boilerplate-ratio check (SPEC-CRAWL-003 REQ-13/14).
+                # Automatic on every sync with ≥ LAYER_C_MIN_PAGES pages.
                 fp_entries = [(r.source_url or r.ref, r.content_fingerprint) for r in refs if r.content_fingerprint]
-                if len(fp_entries) >= layer_c_min_pages:
+                if len(fp_entries) >= LAYER_C_MIN_PAGES:
                     clusters = find_boilerplate_clusters(fp_entries)
                     if clusters:
                         # URL -> fingerprint map for sample_fingerprint lookup in detail logs.
@@ -311,13 +309,7 @@ class SyncEngine:
                         largest_ratio = len(clusters[0]) / total_pages
 
                         logger.warning(
-                            "Sync quality degraded: boilerplate clusters detected "
-                            "(cluster_count=%d, pages_in_clusters=%d, "
-                            "largest_ratio=%.3f, total=%d)",
-                            len(clusters),
-                            pages_in_clusters,
-                            largest_ratio,
-                            total_pages,
+                            "Sync quality degraded: boilerplate clusters detected",
                             extra={
                                 "connector_id": str(connector_id),
                                 "cluster_count": len(clusters),
@@ -330,10 +322,7 @@ class SyncEngine:
                             sample_urls = cluster[:3]
                             sample_fp = url_to_fp.get(sample_urls[0], "") if sample_urls else ""
                             logger.warning(
-                                "Boilerplate cluster detail (rank=%d, size=%d, ratio=%.3f)",
-                                rank,
-                                len(cluster),
-                                len(cluster) / total_pages,
+                                "Boilerplate cluster detail",
                                 extra={
                                     "connector_id": str(connector_id),
                                     "cluster_rank": rank,
@@ -364,9 +353,7 @@ class SyncEngine:
                 # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-5 — Layer A fail-fast abort.
                 # @MX:REASON: AUTH_ERROR status + structured error_details per REQ-3 + REQ-5.
                 logger.error(
-                    "Sync aborted: canary fingerprint mismatch (canary_url=%s, similarity=%.3f)",
-                    exc.canary_url,
-                    exc.similarity,
+                    "Sync aborted: canary fingerprint mismatch",
                     extra={
                         "connector_id": str(connector_id),
                         "canary_url": exc.canary_url,
