@@ -125,42 +125,63 @@ body {
    line with the portal's design system (page title = 24px).
    ─────────────────────────────────────────────────────────────────────── */
 
-/* Base editor font size — sets the proportional foundation for all content */
+/* Base editor: calm, spacious reading experience inspired by Notion/Outline.
+   720px max-width keeps lines at ~65 characters for optimal readability.
+   Warm near-black (#37352F) softens the visual tone vs pure black. */
 .bn-editor {
-  font-size: 0.9375rem; /* 15px — compact but readable for an editing context */
-  line-height: 1.65;
-  color: var(--color-foreground);
+  font-size: 1rem; /* 16px — comfortable reading size */
+  line-height: 1.7;
+  color: #37352F; /* warm near-black, not harsh #000/#191918 */
   font-family: var(--font-sans);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px 24px 48px;
 }
 
-/* Headings: match portal typography hierarchy */
+/* Headings: modest scale, semibold weight, generous top margin for section
+   separation, tight bottom margin so headings "stick" to their content.
+   This eliminates the need for manual blank lines between sections. */
 .bn-editor h1,
 .bn-editor [data-content-type="heading"][data-level="1"] > * {
-  font-size: 1.625rem !important; /* 26px — same weight as a notable section title */
-  font-weight: 700;
+  font-size: 1.75rem !important; /* 28px */
+  font-weight: 600;
   line-height: 1.25;
+  margin-top: 1.5em;
+  margin-bottom: 0.25em;
 }
 
 .bn-editor h2,
 .bn-editor [data-content-type="heading"][data-level="2"] > * {
-  font-size: 1.25rem !important; /* 20px */
+  font-size: 1.375rem !important; /* 22px */
   font-weight: 600;
   line-height: 1.3;
+  margin-top: 1.25em;
+  margin-bottom: 0.25em;
 }
 
 .bn-editor h3,
 .bn-editor [data-content-type="heading"][data-level="3"] > * {
-  font-size: 1.0625rem !important; /* 17px */
+  font-size: 1.125rem !important; /* 18px */
   font-weight: 600;
   line-height: 1.4;
+  margin-top: 1em;
+  margin-bottom: 0.25em;
 }
 
 /* Prevent Mantine's theme from overriding back to 3em */
 .bn-editor .mantine-Text-root h1 { font-size: inherit; }
 
-/* Body paragraph spacing */
+/* Block rhythm: consistent spacing between content blocks */
 .bn-editor p {
-  line-height: 1.65;
+  line-height: 1.7;
+  margin-bottom: 0.35em;
+}
+
+/* List items: slightly looser than default for readability */
+.bn-editor [data-content-type="bulletListItem"],
+.bn-editor [data-content-type="numberedListItem"],
+.bn-editor [data-content-type="checkListItem"] {
+  margin-bottom: 0.2em;
 }
 
 /* Links: distinct from underline formatting via color */
