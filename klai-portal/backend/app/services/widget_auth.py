@@ -73,13 +73,18 @@ def decode_session_token(token: str, secret: str) -> dict:
 
 
 def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
-    """Validate origin against allowed list using exact match.
+    """Validate origin against allowed list.
 
     # @MX:ANCHOR: [AUTO] CORS origin gate — called for every widget request
     # @MX:REASON: Security boundary; must remain fail-closed (empty list → False)
-    # @MX:SPEC: SPEC-WIDGET-001 REQ-1.3
+    # @MX:SPEC: SPEC-WIDGET-002
 
-    Compares scheme + host + port exactly.
+    Supports two formats:
+    - Exact match: "https://example.com" matches only that origin.
+    - Wildcard subdomain: "https://*.example.com" matches any subdomain
+      (e.g. https://app.example.com, https://test.example.com) but NOT
+      the bare domain (https://example.com). List both if you need both.
+
     Trailing slashes are stripped before comparison.
     An empty allowed list always returns False (fail-closed).
 
@@ -93,7 +98,24 @@ def origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
     if not allowed_origins:
         return False
 
-    # Normalise by stripping trailing slashes
     normalised_origin = origin.rstrip("/")
 
-    return any(normalised_origin == allowed.rstrip("/") for allowed in allowed_origins)
+    for allowed in allowed_origins:
+        allowed = allowed.rstrip("/")
+
+        # Wildcard subdomain: https://*.example.com
+        if "://*." in allowed:
+            # Extract the suffix after the wildcard (e.g. ".example.com")
+            scheme_end = allowed.index("://")
+            scheme = allowed[: scheme_end + 3]  # "https://"
+            suffix = allowed[scheme_end + 4 :]  # "example.com" (after "*.")
+
+            if normalised_origin.startswith(scheme) and normalised_origin.endswith(suffix):
+                # Verify there's actually a subdomain (not just the bare domain)
+                host_part = normalised_origin[len(scheme) :]
+                if host_part != suffix and host_part.endswith(suffix):
+                    return True
+        elif normalised_origin == allowed:
+            return True
+
+    return False
