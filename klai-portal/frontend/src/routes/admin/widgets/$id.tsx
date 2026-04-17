@@ -61,11 +61,11 @@ function WidgetDetailPage() {
   if (!widget) return null
 
   const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
-    { id: 'details', label: m.admin_integrations_tab_general(), icon: Info },
-    { id: 'kbs', label: m.admin_integrations_wizard_step_kb_access(), icon: Shield },
-    { id: 'appearance', label: m.admin_integrations_wizard_step_appearance(), icon: Palette },
-    { id: 'embed', label: m.admin_integrations_wizard_step_embed(), icon: Code2 },
-    { id: 'danger', label: m.admin_integrations_tab_danger(), icon: AlertTriangle },
+    { id: 'details', label: m.admin_shared_tab_general(), icon: Info },
+    { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
+    { id: 'appearance', label: m.admin_widgets_wizard_step_appearance(), icon: Palette },
+    { id: 'embed', label: m.admin_widgets_wizard_step_embed(), icon: Code2 },
+    { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
 
   function setTab(tab: TabId) {

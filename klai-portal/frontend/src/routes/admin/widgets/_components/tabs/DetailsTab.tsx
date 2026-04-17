@@ -31,7 +31,7 @@ export function DetailsTab({ widget }: Props) {
     updateMutation.mutate(
       { name: name.trim(), description: description.trim() || null },
       {
-        onSuccess: () => toast.success(m.admin_integrations_success_updated()),
+        onSuccess: () => toast.success(m.admin_shared_success_updated()),
       },
     )
   }
@@ -40,7 +40,7 @@ export function DetailsTab({ widget }: Props) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="widget-name">{m.admin_integrations_field_name()}</Label>
+          <Label htmlFor="widget-name">{m.admin_shared_field_name()}</Label>
           <Input
             id="widget-name"
             value={name}
@@ -49,7 +49,7 @@ export function DetailsTab({ widget }: Props) {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="widget-description">{m.admin_integrations_field_description()}</Label>
+          <Label htmlFor="widget-description">{m.admin_shared_field_description()}</Label>
           <textarea
             id="widget-description"
             value={description}
@@ -64,7 +64,7 @@ export function DetailsTab({ widget }: Props) {
         <p className="text-sm text-[var(--color-destructive)]">
           {updateMutation.error instanceof Error
             ? updateMutation.error.message
-            : m.admin_integrations_error_generic()}
+            : m.admin_shared_error_generic()}
         </p>
       )}
 
@@ -76,7 +76,7 @@ export function DetailsTab({ widget }: Props) {
           {updateMutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}
-          {m.admin_integrations_save()}
+          {m.admin_shared_save()}
         </Button>
       </div>
     </form>

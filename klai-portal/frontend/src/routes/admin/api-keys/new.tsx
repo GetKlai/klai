@@ -50,12 +50,12 @@ function NewApiKeyPage() {
   const stepLabels: StepItem[] = STEPS.map((s) => ({
     label:
       s === 'details'
-        ? m.admin_integrations_wizard_step_details()
+        ? m.admin_shared_wizard_step_details()
         : s === 'permissions'
-          ? m.admin_integrations_wizard_step_permissions()
+          ? m.admin_api_keys_wizard_step_permissions()
           : s === 'kbs'
-            ? m.admin_integrations_wizard_step_kb_access()
-            : m.admin_integrations_wizard_step_rate_limit(),
+            ? m.admin_shared_wizard_step_kb_access()
+            : m.admin_api_keys_wizard_step_rate_limit(),
     onClick: () => setStep(s),
   }))
 
@@ -76,17 +76,17 @@ function NewApiKeyPage() {
   function validateStep(s: Step): string | null {
     if (s === 'details') {
       return form.name.trim().length < 3
-        ? m.admin_integrations_wizard_error_name_too_short()
+        ? m.admin_shared_wizard_error_name_too_short()
         : null
     }
     if (s === 'permissions') {
       return form.chat || form.feedback || form.knowledge_append
         ? null
-        : m.admin_integrations_wizard_error_no_permissions()
+        : m.admin_api_keys_wizard_error_no_permissions()
     }
     if (s === 'kbs') {
       return form.kb_access.length === 0
-        ? m.admin_integrations_wizard_error_no_kb_selected()
+        ? m.admin_shared_wizard_error_no_kb_selected()
         : null
     }
     return null
@@ -149,7 +149,7 @@ function NewApiKeyPage() {
           onClick={() => navigate({ to: '/admin/api-keys' })}
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.admin_integrations_wizard_cancel()}
+          {m.admin_shared_wizard_cancel()}
         </Button>
       </div>
 
@@ -161,11 +161,11 @@ function NewApiKeyPage() {
         {step === 'details' && (
           <section className="space-y-4">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_details_intro()}
+              {m.admin_shared_wizard_details_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="api-key-name">
-                {m.admin_integrations_field_name()}
+                {m.admin_shared_field_name()}
               </Label>
               <Input
                 id="api-key-name"
@@ -177,7 +177,7 @@ function NewApiKeyPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="api-key-description">
-                {m.admin_integrations_field_description()}
+                {m.admin_shared_field_description()}
               </Label>
               <textarea
                 id="api-key-description"
@@ -201,9 +201,9 @@ function NewApiKeyPage() {
                   className="accent-[var(--color-accent)] mt-0.5"
                 />
                 <div>
-                  <span className="font-medium">{m.admin_integrations_perm_chat()}</span>
+                  <span className="font-medium">{m.admin_api_keys_perm_chat()}</span>
                   <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                    {m.admin_integrations_perm_chat_description()}
+                    {m.admin_api_keys_perm_chat_description()}
                   </p>
                 </div>
               </label>
@@ -215,9 +215,9 @@ function NewApiKeyPage() {
                   className="accent-[var(--color-accent)] mt-0.5"
                 />
                 <div>
-                  <span className="font-medium">{m.admin_integrations_perm_feedback()}</span>
+                  <span className="font-medium">{m.admin_api_keys_perm_feedback()}</span>
                   <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                    {m.admin_integrations_perm_feedback_description()}
+                    {m.admin_api_keys_perm_feedback_description()}
                   </p>
                 </div>
               </label>
@@ -229,9 +229,9 @@ function NewApiKeyPage() {
                   className="accent-[var(--color-accent)] mt-0.5"
                 />
                 <div>
-                  <span className="font-medium">{m.admin_integrations_perm_knowledge_append()}</span>
+                  <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
                   <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-                    {m.admin_integrations_perm_knowledge_append_description()}
+                    {m.admin_api_keys_perm_knowledge_append_description()}
                   </p>
                 </div>
               </label>
@@ -242,7 +242,7 @@ function NewApiKeyPage() {
         {step === 'kbs' && (
           <section className="space-y-4">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_kb_access_intro_api()}
+              {m.admin_api_keys_wizard_kb_access_intro_api()}
             </p>
             <KbAccessEditor
               value={form.kb_access}
@@ -255,11 +255,11 @@ function NewApiKeyPage() {
         {step === 'rate_limit' && (
           <section className="space-y-4">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_rate_limit_intro()}
+              {m.admin_api_keys_wizard_rate_limit_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="rate-limit">
-                {m.admin_integrations_field_rate_limit()}
+                {m.admin_api_keys_field_rate_limit()}
               </Label>
               <div className="flex items-center gap-2">
                 <Input
@@ -274,7 +274,7 @@ function NewApiKeyPage() {
                   className="max-w-[8rem]"
                 />
                 <span className="text-sm text-[var(--color-muted-foreground)]">
-                  {m.admin_integrations_rate_limit_unit()}
+                  {m.admin_api_keys_rate_limit_unit()}
                 </span>
               </div>
             </div>
@@ -289,25 +289,25 @@ function NewApiKeyPage() {
           <p className="text-sm text-[var(--color-destructive)]">
             {createMutation.error instanceof Error
               ? createMutation.error.message
-              : m.admin_integrations_error_generic()}
+              : m.admin_shared_error_generic()}
           </p>
         )}
 
         <div className="flex items-center justify-between pt-2">
           <Button type="button" variant="ghost" size="sm" onClick={handlePrevious} disabled={currentIndex === 0}>
             <ArrowLeft className="h-4 w-4 mr-2" />
-            {m.admin_integrations_wizard_previous()}
+            {m.admin_shared_wizard_previous()}
           </Button>
           {isLastStep ? (
             <Button type="submit" disabled={createMutation.isPending || !!currentStepError}>
               {createMutation.isPending && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-              {m.admin_integrations_wizard_create()}
+              {m.admin_shared_wizard_create()}
             </Button>
           ) : (
             <Button type="button" onClick={handleNext} disabled={!!currentStepError}>
-              {m.admin_integrations_wizard_next()}
+              {m.admin_shared_wizard_next()}
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           )}

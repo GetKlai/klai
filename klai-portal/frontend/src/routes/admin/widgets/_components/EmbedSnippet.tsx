@@ -33,7 +33,7 @@ export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetPr
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-[var(--color-foreground)]">
-          {m.admin_integrations_widget_embed_title()}
+          {m.admin_widgets_widget_embed_title()}
         </span>
         <Button
           type="button"
@@ -45,12 +45,12 @@ export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetPr
           {copied ? (
             <>
               <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />
-              {m.admin_integrations_widget_embed_copied()}
+              {m.admin_widgets_widget_embed_copied()}
             </>
           ) : (
             <>
               <Copy className="h-3.5 w-3.5" />
-              {m.admin_integrations_widget_embed_copy()}
+              {m.admin_widgets_widget_embed_copy()}
             </>
           )}
         </Button>

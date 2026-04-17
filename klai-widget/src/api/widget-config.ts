@@ -85,5 +85,11 @@ export async function fetchWidgetConfig(widgetId: string): Promise<WidgetConfig>
   }
 
   const data = (await response.json()) as WidgetConfig;
+
+  // Resolve relative chat_endpoint against the API base URL
+  if (data.chat_endpoint && data.chat_endpoint.startsWith("/")) {
+    data.chat_endpoint = `${WIDGET_CONFIG_BASE_URL}${data.chat_endpoint}`;
+  }
+
   return data;
 }

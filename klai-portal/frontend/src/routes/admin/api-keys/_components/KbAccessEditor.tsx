@@ -59,7 +59,7 @@ export function KbAccessEditor({
     return (
       <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
         <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-        {m.admin_integrations_loading()}
+        {m.admin_shared_loading()}
       </p>
     )
   }
@@ -67,7 +67,7 @@ export function KbAccessEditor({
   if (kbs.length === 0) {
     return (
       <p className="py-4 text-sm text-[var(--color-muted-foreground)]">
-        {m.admin_integrations_kb_empty()}
+        {m.admin_shared_kb_empty()}
       </p>
     )
   }
@@ -81,17 +81,17 @@ export function KbAccessEditor({
       <thead>
         <tr className="border-b border-[var(--color-border)]">
           <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
-            {m.admin_integrations_kb_name()}
+            {m.admin_shared_kb_name()}
           </th>
           <th className="py-3 pr-4 text-center text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
-            {m.admin_integrations_kb_none()}
+            {m.admin_api_keys_kb_none()}
           </th>
           <th className="py-3 pr-4 text-center text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
-            {m.admin_integrations_kb_read()}
+            {m.admin_shared_kb_read()}
           </th>
           {!hideReadWrite && (
             <th className="py-3 text-center text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
-              {m.admin_integrations_kb_read_write()}
+              {m.admin_api_keys_kb_read_write()}
             </th>
           )}
         </tr>
@@ -138,7 +138,7 @@ export function KbAccessEditor({
                     className="accent-[var(--color-accent)]"
                     title={
                       !knowledgeAppendEnabled
-                        ? m.admin_integrations_kb_read_write_disabled_hint()
+                        ? m.admin_api_keys_kb_read_write_disabled_hint()
                         : undefined
                     }
                   />

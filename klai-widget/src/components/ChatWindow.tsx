@@ -10,10 +10,12 @@ import {
   clearError,
 } from "../store/chat";
 import { streamChat } from "../api/chat-stream";
+import { t } from "../i18n/labels";
 
 interface ChatWindowProps {
   title: string;
   onClose: () => void;
+  inline?: boolean;
 }
 
 export function ChatWindow(props: ChatWindowProps) {
@@ -56,8 +58,8 @@ export function ChatWindow(props: ChatWindowProps) {
           abortController = null;
           setError(
             error.message.includes("Origin")
-              ? "Sessie verlopen. Herlaad de pagina."
-              : "Er ging iets mis. Probeer het opnieuw."
+              ? t().errorSessionExpired
+              : t().errorGeneric
           );
         },
       },
@@ -88,20 +90,22 @@ export function ChatWindow(props: ChatWindowProps) {
   };
 
   return (
-    <div class="klai-window" role="dialog" aria-label={props.title} aria-modal="false">
-      <div class="klai-header">
-        <span class="klai-header-title">{props.title}</span>
-        <button
-          class="klai-close-btn"
-          aria-label="Sluit chat"
-          onClick={props.onClose}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
+    <div class={props.inline ? "klai-window klai-window--inline" : "klai-window"} role={props.inline ? "region" : "dialog"} aria-label={props.title} aria-modal={props.inline ? undefined : "false"}>
+      {!props.inline && (
+        <div class="klai-header">
+          <span class="klai-header-title">{props.title}</span>
+          <button
+            class="klai-close-btn"
+            aria-label={t().closeChat}
+            onClick={props.onClose}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <MessageList
         messages={chatState.messages}
@@ -113,20 +117,20 @@ export function ChatWindow(props: ChatWindowProps) {
         <textarea
           ref={textareaRef}
           class="klai-textarea"
-          placeholder="Stel een vraag..."
+          placeholder={t().placeholder}
           value={inputValue()}
           onInput={handleTextareaInput}
           onKeyDown={handleKeyDown}
           disabled={chatState.isStreaming}
           rows={1}
-          aria-label="Berichtinvoer"
+          aria-label={t().inputLabel}
         />
         <Show
           when={chatState.isStreaming}
           fallback={
             <button
               class="klai-send-btn"
-              aria-label="Stuur bericht"
+              aria-label={t().sendMessage}
               disabled={inputValue().trim() === ""}
               onClick={() => void handleSend()}
             >
@@ -138,7 +142,7 @@ export function ChatWindow(props: ChatWindowProps) {
         >
           <button
             class="klai-stop-btn"
-            aria-label="Stop genereren"
+            aria-label={t().stopGenerating}
             onClick={handleStop}
           >
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

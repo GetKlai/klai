@@ -90,31 +90,31 @@ function NewWidgetPage() {
   const stepLabels: StepItem[] = STEPS.map((s) => ({
     label:
       s === 'details'
-        ? m.admin_integrations_wizard_step_details()
+        ? m.admin_shared_wizard_step_details()
         : s === 'kbs'
-          ? m.admin_integrations_wizard_step_kb_access()
+          ? m.admin_shared_wizard_step_kb_access()
           : s === 'appearance'
-            ? m.admin_integrations_wizard_step_appearance()
-            : m.admin_integrations_wizard_step_embed(),
+            ? m.admin_widgets_wizard_step_appearance()
+            : m.admin_widgets_wizard_step_embed(),
     onClick: () => setStep(s),
   }))
 
   function validateStep(s: Step): string | null {
     if (s === 'details') {
       return form.name.trim().length < 3
-        ? m.admin_integrations_wizard_error_name_too_short()
+        ? m.admin_shared_wizard_error_name_too_short()
         : null
     }
     if (s === 'kbs') {
       return form.kb_ids.length === 0
-        ? m.admin_integrations_wizard_error_no_kb_selected()
+        ? m.admin_shared_wizard_error_no_kb_selected()
         : null
     }
     if (s === 'embed') {
       const origins = parseOrigins(form.allowed_origins_raw)
-      if (origins.length === 0) return m.admin_integrations_wizard_error_no_origins()
+      if (origins.length === 0) return m.admin_widgets_wizard_error_no_origins()
       if (origins.some((o) => !isValidOrigin(o)))
-        return m.admin_integrations_wizard_error_invalid_origins()
+        return m.admin_widgets_wizard_error_invalid_origins()
     }
     return null
   }
@@ -177,7 +177,7 @@ function NewWidgetPage() {
           onClick={() => navigate({ to: '/admin/widgets' })}
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.admin_integrations_wizard_cancel()}
+          {m.admin_shared_wizard_cancel()}
         </Button>
       </div>
 
@@ -189,11 +189,11 @@ function NewWidgetPage() {
         {step === 'details' && (
           <section className="space-y-4">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_details_intro()}
+              {m.admin_shared_wizard_details_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="widget-name">
-                {m.admin_integrations_field_name()}
+                {m.admin_shared_field_name()}
               </Label>
               <Input
                 id="widget-name"
@@ -205,7 +205,7 @@ function NewWidgetPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="widget-description">
-                {m.admin_integrations_field_description()}
+                {m.admin_shared_field_description()}
               </Label>
               <textarea
                 id="widget-description"
@@ -221,7 +221,7 @@ function NewWidgetPage() {
         {step === 'kbs' && (
           <section className="space-y-4">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_kb_access_intro_widget()}
+              {m.admin_widgets_wizard_kb_access_intro_widget()}
             </p>
             <KbAccessEditor
               value={form.kb_ids}
@@ -233,34 +233,34 @@ function NewWidgetPage() {
         {step === 'appearance' && (
           <section className="space-y-6">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_appearance_intro()}
+              {m.admin_widgets_wizard_appearance_intro()}
             </p>
             <div className="space-y-1.5">
-              <Label htmlFor="widget-title">{m.admin_integrations_widget_title_label()}</Label>
+              <Label htmlFor="widget-title">{m.admin_widgets_widget_title_label()}</Label>
               <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_widget_title_help()}
+                {m.admin_widgets_widget_title_help()}
               </p>
               <Input
                 id="widget-title"
                 value={form.widget_title}
                 onChange={(e) => setForm((p) => ({ ...p, widget_title: e.target.value }))}
-                placeholder={m.admin_integrations_widget_title_placeholder()}
+                placeholder={m.admin_widgets_widget_title_placeholder()}
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="widget-welcome">{m.admin_integrations_widget_welcome_label()}</Label>
+              <Label htmlFor="widget-welcome">{m.admin_widgets_widget_welcome_label()}</Label>
               <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_widget_welcome_help()}
+                {m.admin_widgets_widget_welcome_help()}
               </p>
               <Input
                 id="widget-welcome"
                 value={form.widget_welcome}
                 onChange={(e) => setForm((p) => ({ ...p, widget_welcome: e.target.value }))}
-                placeholder={m.admin_integrations_widget_welcome_placeholder()}
+                placeholder={m.admin_widgets_widget_welcome_placeholder()}
               />
             </div>
             <div className="space-y-2">
-              <Label>{m.admin_integrations_widget_css_vars_label()}</Label>
+              <Label>{m.admin_widgets_widget_css_vars_label()}</Label>
               <div className="space-y-2">
                 {form.css_var_rows.map((row, index) => (
                   <div key={index} className="flex items-center gap-2">
@@ -278,7 +278,7 @@ function NewWidgetPage() {
                       }
                       className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono text-[var(--color-foreground)] outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                     >
-                      <option value="">{m.admin_integrations_widget_css_var_placeholder()}</option>
+                      <option value="">{m.admin_widgets_widget_css_var_placeholder()}</option>
                       {CSS_VAR_KEYS.map((k) => (
                         <option key={k} value={k}>
                           {k}
@@ -307,7 +307,7 @@ function NewWidgetPage() {
                         }))
                       }
                       className="text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)] transition-colors"
-                      aria-label={m.admin_integrations_widget_css_var_remove()}
+                      aria-label={m.admin_widgets_widget_css_var_remove()}
                     >
                       ×
                     </button>
@@ -327,7 +327,7 @@ function NewWidgetPage() {
                   }
                   className="text-xs"
                 >
-                  {m.admin_integrations_widget_css_var_add()}
+                  {m.admin_widgets_widget_css_var_add()}
                 </Button>
               )}
             </div>
@@ -337,34 +337,34 @@ function NewWidgetPage() {
         {step === 'embed' && (
           <section className="space-y-6">
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              {m.admin_integrations_wizard_embed_intro()}
+              {m.admin_widgets_wizard_embed_intro()}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="widget-origins">
-                {m.admin_integrations_widget_origins_label()}
+                {m.admin_widgets_widget_origins_label()}
               </Label>
               <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_widget_origins_help()}
+                {m.admin_widgets_widget_origins_help()}
               </p>
               <textarea
                 id="widget-origins"
                 value={form.allowed_origins_raw}
                 onChange={(e) => setForm((p) => ({ ...p, allowed_origins_raw: e.target.value }))}
                 rows={4}
-                placeholder={m.admin_integrations_widget_origins_placeholder()}
+                placeholder={m.admin_widgets_widget_origins_placeholder()}
                 className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm font-mono text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)]"
               />
               {parseOrigins(form.allowed_origins_raw).length === 0 && (
                 <div className="flex items-start gap-1.5 text-xs text-[var(--color-muted-foreground)]">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-[var(--color-destructive)]" />
-                  {m.admin_integrations_widget_origins_empty_warning()}
+                  {m.admin_widgets_widget_origins_empty_warning()}
                 </div>
               )}
             </div>
             <div className="space-y-2 pt-4 border-t border-[var(--color-border)]">
-              <Label>{m.admin_integrations_wizard_embed_preview_label()}</Label>
+              <Label>{m.admin_widgets_wizard_embed_preview_label()}</Label>
               <p className="text-xs text-[var(--color-muted-foreground)]">
-                {m.admin_integrations_wizard_embed_preview_help()}
+                {m.admin_widgets_wizard_embed_preview_help()}
               </p>
               <pre className="text-xs font-mono text-[var(--color-foreground)] bg-[var(--color-muted)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
 {`<script
@@ -384,25 +384,25 @@ function NewWidgetPage() {
           <p className="text-sm text-[var(--color-destructive)]">
             {createMutation.error instanceof Error
               ? createMutation.error.message
-              : m.admin_integrations_error_generic()}
+              : m.admin_shared_error_generic()}
           </p>
         )}
 
         <div className="flex items-center justify-between pt-2">
           <Button type="button" variant="ghost" size="sm" onClick={handlePrevious} disabled={currentIndex === 0}>
             <ArrowLeft className="h-4 w-4 mr-2" />
-            {m.admin_integrations_wizard_previous()}
+            {m.admin_shared_wizard_previous()}
           </Button>
           {isLastStep ? (
             <Button type="submit" disabled={createMutation.isPending || !!currentStepError}>
               {createMutation.isPending && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-              {m.admin_integrations_wizard_create()}
+              {m.admin_shared_wizard_create()}
             </Button>
           ) : (
             <Button type="button" onClick={handleNext} disabled={!!currentStepError}>
-              {m.admin_integrations_wizard_next()}
+              {m.admin_shared_wizard_next()}
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           )}
