@@ -293,8 +293,6 @@ function EditConnectorPage() {
             ]
             function setTab(tab: WcTabId) {
               void navigate({
-                to: '/app/knowledge/$kbSlug_/edit-connector/$connectorId',
-                params: { kbSlug, connectorId },
                 search: { tab },
               })
             }
