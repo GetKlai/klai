@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased] — 2026-04-17 — SPEC-CRAWL-003: Three-Layer Content Quality Guardrails
+
+### Added — SPEC-CRAWL-003: Auth-expiry detection for webcrawler connectors
+
+- **Layer A — Canary fingerprint (pre-sync fail-fast):** Re-crawls a reference page before each sync and compares its SimHash fingerprint to the stored baseline. Similarity < 0.80 aborts the sync immediately with `status=auth_error`, `quality_status=failed`. Prevents contaminated content from reaching Qdrant.
+- **Layer B — Per-page login indicator:** CSS selector (`login_indicator_selector`) embedded in Crawl4AI `wait_for` to detect auth-walled pages. Pages that fail the selector are excluded from ingest with a single summary log (no per-page log spam).
+- **Layer C — Post-sync boilerplate-ratio metric:** 64-bit SimHash fingerprint per page; greedy centroid clustering (pairwise for ≤200 pages, LSH 8×8 bands for >200). Clusters exceeding 15% of total pages flag `quality_status=degraded`. Minimum 30 pages for statistical validity.
+- **`klai-connector/app/services/content_fingerprint.py`** (NEW): Pure-function module with `compute_content_fingerprint()`, `similarity()`, `find_boilerplate_clusters()`, and `ContentFingerprint` NewType.
+- **`klai-connector/app/services/events.py`** (NEW): Fire-and-forget product event emission via direct DB write to shared `product_events` table. Resolves Zitadel org_id to `portal_orgs.id` FK.
+- **Alembic migration 005**: `quality_status VARCHAR(20)` nullable column on `connector.sync_runs`.
+- **Grafana alert**: "Knowledge sync quality degraded" (uid=bfjbxm0h95q0wf) — queries `product_events` for `knowledge.sync_quality_degraded` events.
+- **Portal validation**: `WebcrawlerConfig` Pydantic model extended with `canary_url`, `canary_fingerprint`, `login_indicator_selector` + XOR validator.
+- **165 tests** across 6 test files; `content_fingerprint.py` at 98% coverage.
+
+### Fixed — Post-deploy bugs found during E2E
+
+- Product event emission used a non-existent HTTP endpoint (`POST /internal/product-events`). Replaced with direct DB write matching portal's own pattern.
+- `from app.core.database import session_maker` captured `None` at import time. Fixed to read `database.session_maker` at call time.
+- Layer C detail logs had `sample_urls=[]` (lookup key mismatch). Fixed to use cluster URLs directly.
+- `wait_for` combined login indicator with `||` syntax (invalid Crawl4AI). Fixed to embed CSS check inside JS arrow function.
+
+### Changed — Code quality improvements
+
+- Extracted `_post_crawl_sync()` helper — single place for POST /crawl plumbing (cookie hooks, auth, payload construction).
+- `LAYER_C_MIN_PAGES = 30` as named module-level constant (was inline magic number).
+- `ContentFingerprint = NewType("ContentFingerprint", str)` for type safety across adapter and sync engine.
+- Log deduplication: event name in message string, queryable data exclusively in `extra={}`.
+- Robust `wait_for` matching via `re.match()` instead of brittle `startswith("js:() =>")`.
+
+### Ops
+
+- Cleaned 1115 login-wall boilerplate chunks from Redcactus KB in Qdrant (1124 clean chunks remaining).
+
 ## [Unreleased] — 2026-04-16 — SPEC-KB-IMAGE-001: Adapter-owned image URL resolution (refactor)
 
 ### Changed
