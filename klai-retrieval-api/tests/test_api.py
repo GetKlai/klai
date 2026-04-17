@@ -111,6 +111,7 @@ class TestRetrieveEndpoint:
             mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -232,6 +233,7 @@ class TestGraphMetadata:
             mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -284,6 +286,7 @@ class TestGraphMetadata:
             mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
+            mock_settings.router_enabled = False
             client.post(
                 "/retrieve",
                 json={"query": "test", "org_id": "org-1", "scope": "notebook",
