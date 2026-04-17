@@ -173,6 +173,14 @@ function OverviewTab() {
               bronnen
             </span>
           </div>
+          {items > 0 && (
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <FileText className="h-4 w-4" />
+              <span>
+                <strong className="text-gray-900">{items}</strong> chunks
+              </span>
+            </div>
+          )}
           {isMyPersonalKb && (
             <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">
               Mijn
