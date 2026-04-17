@@ -140,22 +140,18 @@ body {
   padding: 16px 48px 64px !important;
 }
 
-/* Block containers: BlockNote wraps every block (paragraph, heading, list)
-   in a [data-node-type="blockContainer"] div. This is the only lever for
-   vertical rhythm — paragraph <p> margins get collapsed by BlockNote. */
+/* Block containers: default vertical rhythm.
+   No :has() selectors — those cause expensive style recalculations in
+   BlockNote's reactive editing model (9 :has() selectors × 50+ blocks =
+   450+ evaluations per recalc, causing 4s+ LCP regression). */
 .bn-editor [data-node-type="blockContainer"] {
   margin-top: 0 !important;
   margin-bottom: 2px !important;
 }
 
-/* Paragraph blocks: more breathing room between text */
-.bn-editor [data-node-type="blockContainer"]:has(> .bn-block-content[data-content-type="paragraph"]) {
-  margin-bottom: 6px !important;
-}
-
-/* Headings: target h1/h2/h3 tags directly. BlockNote does NOT emit
-   data-level attributes — only data-content-type="heading" + an h1/h2/h3
-   child. Previous selectors with [data-level="1"] matched nothing. */
+/* Headings: target h1/h2/h3 directly + use margin/padding on the
+   .bn-block-content[data-content-type="heading"] wrapper for spacing.
+   BlockNote does NOT emit data-level attributes. */
 
 /* H1: 21px semibold — subordinate to page title (24px text-2xl) */
 .bn-editor h1 {
@@ -163,15 +159,8 @@ body {
   font-weight: 600 !important;
   line-height: 1.3 !important;
   letter-spacing: -0.02em !important;
-}
-.bn-editor [data-node-type="blockContainer"]:has(h1) {
   margin-top: 32px !important;
-  margin-bottom: 8px !important;
-}
-/* First heading in doc: minimal top margin */
-.bn-editor > [data-node-type="blockGroup"] > [data-node-type="blockContainer"]:first-child:has(h1),
-.bn-editor > [data-node-type="blockGroup"] > [data-node-type="blockContainer"]:first-child:has(h2) {
-  margin-top: 4px !important;
+  margin-bottom: 4px !important;
 }
 
 /* H2: 17.5px */
@@ -180,10 +169,8 @@ body {
   font-weight: 600 !important;
   line-height: 1.35 !important;
   letter-spacing: -0.01em !important;
-}
-.bn-editor [data-node-type="blockContainer"]:has(h2) {
   margin-top: 28px !important;
-  margin-bottom: 6px !important;
+  margin-bottom: 2px !important;
 }
 
 /* H3: 15.5px — just bolder body text */
@@ -191,24 +178,26 @@ body {
   font-size: 15.5px !important;
   font-weight: 600 !important;
   line-height: 1.4 !important;
-}
-.bn-editor [data-node-type="blockContainer"]:has(h3) {
   margin-top: 24px !important;
-  margin-bottom: 4px !important;
 }
 
 /* Prevent Mantine's theme from overriding back to 3em */
 .bn-editor .mantine-Text-root h1 { font-size: inherit !important; }
+
+/* Paragraph spacing */
+.bn-editor .bn-block-content[data-content-type="paragraph"] {
+  padding-bottom: 4px !important;
+}
 
 /* Body text */
 .bn-editor p {
   line-height: 1.7 !important;
 }
 
-/* List items: breathing room between items */
-.bn-editor [data-node-type="blockContainer"]:has(> .bn-block-content[data-content-type="bulletListItem"]),
-.bn-editor [data-node-type="blockContainer"]:has(> .bn-block-content[data-content-type="numberedListItem"]) {
-  margin-bottom: 4px !important;
+/* List items: breathing room */
+.bn-editor .bn-block-content[data-content-type="bulletListItem"],
+.bn-editor .bn-block-content[data-content-type="numberedListItem"] {
+  padding-bottom: 2px !important;
 }
 
 /* Nested list groups: visual separation from parent */
@@ -218,8 +207,8 @@ body {
 }
 
 /* Check list items: more space for scannable to-do lists */
-.bn-editor [data-node-type="blockContainer"]:has(> .bn-block-content[data-content-type="checkListItem"]) {
-  margin-bottom: 5px !important;
+.bn-editor .bn-block-content[data-content-type="checkListItem"] {
+  padding-bottom: 3px !important;
 }
 
 /* Check list items: more padding for comfortable scanning */
