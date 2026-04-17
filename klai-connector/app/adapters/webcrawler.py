@@ -294,30 +294,50 @@ class WebCrawlerAdapter(BaseAdapter):
             )
 
     async def _fetch_sitemap_urls(self, base_url: str) -> list[str]:
-        """Fetch same-domain URLs from sitemap.xml. Returns [] on any error."""
-        sitemap_url = f"{base_url.rstrip('/')}/sitemap.xml"
+        """Fetch same-domain URLs from sitemap.xml or sitemap index. Returns [] on any error."""
+        base = base_url.rstrip("/")
         base_domain = urlparse(base_url).netloc.lower()
-        try:
-            resp = await self._http_client.get(sitemap_url, timeout=10.0)
-            resp.raise_for_status()
+
+        for path in ["/sitemap.xml", "/sitemap-index.xml"]:
+            try:
+                resp = await self._http_client.get(f"{base}{path}", timeout=10.0)
+                resp.raise_for_status()
+            except Exception:
+                continue
+
             locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", resp.text)
+            if not locs:
+                continue
+
+            # Sitemap index: root element is <sitemapindex>, <loc> entries point to
+            # sub-sitemaps. Fetch each and collect the actual page URLs.
+            if "<sitemapindex" in resp.text:
+                page_urls: list[str] = []
+                for sub_url in locs:
+                    try:
+                        sub = await self._http_client.get(sub_url, timeout=10.0)
+                        sub.raise_for_status()
+                        page_urls.extend(re.findall(r"<loc>\s*(.*?)\s*</loc>", sub.text))
+                    except Exception:
+                        continue
+                return [u for u in page_urls if urlparse(u).netloc.lower() == base_domain]
+
             return [u for u in locs if urlparse(u).netloc.lower() == base_domain]
-        except Exception:
-            return []
+
+        return []
 
     def _build_discovery_params(self) -> dict[str, Any]:
         """Build CrawlerRunConfig params for BFS discovery phase.
 
-        No css_selector, no PruningContentFilter — BFS only needs to follow links.
-        word_count_threshold=0 ensures nav-heavy homepages (which may have minimal
-        prose) are not skipped during link extraction.
+        No css_selector, no PruningContentFilter, no nav-stripping JS — BFS needs
+        the full DOM to discover navigation links. Content cleanup happens in
+        _build_page_crawl_params() during Phase 2 extraction.
+        word_count_threshold=0 ensures nav-heavy homepages are not skipped.
         """
         return {
             "cache_mode": "bypass",
             "word_count_threshold": 0,
             "wait_for": "js:() => document.body.innerText.trim().split(/\\s+/).length > 10",
-            "js_code_before_wait": _JS_REMOVE_CHROME,
-            "excluded_tags": ["nav", "footer", "header", "aside", "script", "style"],
             "remove_consent_popups": True,
             "remove_overlay_elements": True,
             "page_timeout": 30000,
