@@ -2,7 +2,15 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ChevronRight, Download, ExternalLink } from 'lucide-react'
+import {
+  ChevronRight,
+  Download,
+  User as UserIcon,
+  Globe,
+  Building2,
+  CreditCard,
+  Shield,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -12,6 +20,28 @@ import { getLocale } from '@/paraglide/runtime'
 import { number } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+
+function SectionHeader({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof UserIcon
+  title: string
+  description?: string
+}) {
+  return (
+    <div className="flex items-start gap-3 mb-5">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-50">
+        <Icon size={16} strokeWidth={1.75} className="text-gray-500" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+        {description && <p className="text-xs text-gray-400 mt-0.5">{description}</p>}
+      </div>
+    </div>
+  )
+}
 
 export const Route = createFileRoute('/app/account')({
   component: AccountPage,
@@ -58,9 +88,6 @@ function AccountPage() {
   const { user } = useCurrentUser()
   const isAdmin = user?.isAdmin === true
 
-  const name = auth.user?.profile?.name ?? auth.user?.profile?.preferred_username ?? ''
-  const email = auth.user?.profile?.email ?? ''
-
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       {/* Header */}
@@ -69,8 +96,8 @@ function AccountPage() {
       </h1>
       <p className="text-sm text-gray-400 mb-8">{m.account_subtitle()}</p>
 
-      <div className="space-y-6">
-        <ProfileSection name={name} email={email} />
+      <div className="space-y-4">
+        <ProfileSection token={token} />
         <LanguageSection token={token} locale={locale} switchLocale={switchLocale} />
         {isAdmin && <OrgSettingsSection token={token} />}
         {isAdmin && <BillingSection token={token} />}
@@ -82,23 +109,40 @@ function AccountPage() {
 
 /* ── Profile (read-only) ──────────────────────────────────────────────── */
 
-function ProfileSection({ name, email }: { name: string; email: string }) {
+function ProfileSection({ token }: { token: string | undefined }) {
+  const auth = useAuth()
+
+  const { data: me } = useQuery<{ name?: string; email?: string }>({
+    queryKey: ['me-profile'],
+    queryFn: async () => {
+      try {
+        return await apiFetch<{ name?: string; email?: string }>(`/api/me`, token)
+      } catch {
+        return {}
+      }
+    },
+    enabled: !!token,
+  })
+
+  const name =
+    me?.name ??
+    auth.user?.profile?.name ??
+    (auth.user?.profile?.preferred_username as string | undefined) ??
+    ''
+  const email = me?.email ?? auth.user?.profile?.email ?? ''
+
   return (
     <section className="rounded-lg border border-gray-200 p-6" data-help-id="account-profile">
-      <h2 className="text-sm font-semibold text-gray-900 mb-4">{m.account_profile_title()}</h2>
+      <SectionHeader icon={UserIcon} title={m.account_profile_title()} />
       <dl className="space-y-3">
-        {name && (
-          <div className="flex gap-4">
-            <dt className="w-32 shrink-0 text-sm text-gray-400">{m.account_profile_name()}</dt>
-            <dd className="text-sm font-medium text-gray-900">{name}</dd>
-          </div>
-        )}
-        {email && (
-          <div className="flex gap-4">
-            <dt className="w-32 shrink-0 text-sm text-gray-400">{m.account_profile_email()}</dt>
-            <dd className="text-sm font-medium text-gray-900">{email}</dd>
-          </div>
-        )}
+        <div className="flex gap-4">
+          <dt className="w-32 shrink-0 text-sm text-gray-400">{m.account_profile_name()}</dt>
+          <dd className="text-sm font-medium text-gray-900">{name || '—'}</dd>
+        </div>
+        <div className="flex gap-4">
+          <dt className="w-32 shrink-0 text-sm text-gray-400">{m.account_profile_email()}</dt>
+          <dd className="text-sm font-medium text-gray-900">{email || '—'}</dd>
+        </div>
       </dl>
     </section>
   )
@@ -151,8 +195,11 @@ function LanguageSection({
 
   return (
     <section className="rounded-lg border border-gray-200 p-6">
-      <h2 className="text-sm font-semibold text-gray-900">{m.account_language_title()}</h2>
-      <p className="text-xs text-gray-400 mt-0.5 mb-4">{m.account_language_description()}</p>
+      <SectionHeader
+        icon={Globe}
+        title={m.account_language_title()}
+        description={m.account_language_description()}
+      />
       <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="account-language" className="text-gray-900">
@@ -230,8 +277,11 @@ function OrgSettingsSection({ token }: { token: string | undefined }) {
 
   return (
     <section className="rounded-lg border border-gray-200 p-6">
-      <h2 className="text-sm font-semibold text-gray-900">{m.admin_settings_heading()}</h2>
-      <p className="text-xs text-gray-400 mt-0.5 mb-4">{m.admin_settings_subtitle()}</p>
+      <SectionHeader
+        icon={Building2}
+        title={m.admin_settings_heading()}
+        description={m.admin_settings_subtitle()}
+      />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
@@ -316,8 +366,11 @@ function BillingSection({ token }: { token: string | undefined }) {
 
   return (
     <section className="rounded-lg border border-gray-200 p-6">
-      <h2 className="text-sm font-semibold text-gray-900">{m.admin_billing_heading()}</h2>
-      <p className="text-xs text-gray-400 mt-0.5 mb-4">{m.admin_billing_subtitle()}</p>
+      <SectionHeader
+        icon={CreditCard}
+        title={m.admin_billing_heading()}
+        description={m.admin_billing_subtitle()}
+      />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
@@ -406,8 +459,11 @@ function SarSection({ token }: { token: string | undefined }) {
 
   return (
     <section className="rounded-lg border border-gray-200 p-6">
-      <h2 className="text-sm font-semibold text-gray-900">{m.account_sar_title()}</h2>
-      <p className="text-xs text-gray-400 mt-0.5 mb-4">{m.account_sar_description()}</p>
+      <SectionHeader
+        icon={Shield}
+        title={m.account_sar_title()}
+        description={m.account_sar_description()}
+      />
       {sarMutation.error && (
         <p className="text-sm text-[var(--color-destructive)] mb-3">{m.account_sar_error()}</p>
       )}
@@ -424,5 +480,3 @@ function SarSection({ token }: { token: string | undefined }) {
   )
 }
 
-/* Suppress unused import warning — `ExternalLink` may be reused later. */
-void ExternalLink
