@@ -179,12 +179,20 @@ function CollectionRow({
 }) {
   const auth = useAuth()
   const token = auth.user?.access_token
+  const myUserId = auth.user?.profile?.sub
   const navigate = useNavigate()
   const sourceCount = stats?.connectors ?? 0
   const itemCount = stats?.items ?? 0
   const queryClient = useQueryClient()
   const [confirmingDeleteKb, setConfirmingDeleteKb] = useState(false)
   const [confirmingDeleteConnectorId, setConfirmingDeleteConnectorId] = useState<string | null>(null)
+
+  // Deletion is only allowed for the owner. Personal KBs belong to a single user
+  // (slug = `personal-{zitadel_user_id}`); org KBs are owned by admins.
+  // Hide the delete button for other people's personal KBs to avoid 403 spam.
+  const isOthersPersonalKb =
+    kb.owner_type === 'user' && !!myUserId && kb.slug !== `personal-${myUserId}`
+  const canDelete = !isOthersPersonalKb
 
   // Lazy-load connectors when expanded
   const { data: connectors, isLoading: connectorsLoading } = useQuery<ConnectorSummary[]>({
@@ -301,19 +309,21 @@ function CollectionRow({
               <Plus className="h-3.5 w-3.5" />
               Add
             </button>
-            <Tooltip label="Verwijder collectie">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setConfirmingDeleteKb(true)
-                }}
-                aria-label="Delete collection"
-                className="p-1.5 text-gray-300 hover:text-[var(--color-destructive)] transition-colors"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
+            {canDelete && (
+              <Tooltip label="Verwijder collectie">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setConfirmingDeleteKb(true)
+                  }}
+                  aria-label="Delete collection"
+                  className="p-1.5 text-gray-300 hover:text-[var(--color-destructive)] transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            )}
           </div>
         </InlineDeleteConfirm>
       </div>
