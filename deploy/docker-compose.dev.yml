@@ -110,7 +110,9 @@ services:
     restart: unless-stopped
     env_file: ./librechat/dev/.env
     environment:
-      REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379/3
+      # Use URL-encoded REDIS_URI from .env (password contains /, +, = which break ioredis).
+      # Prod librechat-getklai uses the same pattern (db 0); dev uses db 3 for isolation.
+      REDIS_URI: ${REDIS_URI}/3
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
     volumes:
       - ./librechat/dev/librechat.yaml:/app/librechat.yaml:ro
