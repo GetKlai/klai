@@ -109,7 +109,7 @@ async def health():
     # FalkorDB — only checked when Graphiti is enabled (AC-12)
     if settings.graphiti_enabled:
         try:
-            from falkordb import FalkorDB  # noqa: PLC0415
+            from falkordb import FalkorDB
 
             db = FalkorDB(host=settings.falkordb_host, port=settings.falkordb_port)
             db.connection.ping()
