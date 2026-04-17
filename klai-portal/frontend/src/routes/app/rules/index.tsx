@@ -48,7 +48,7 @@ const EMPTY_FORM: RuleFormState = {
   description: '',
   rule_text: '',
   scope: 'global',
-  rule_type: 'instruction',
+  rule_type: 'pii_redact',
 }
 
 function getRuleTypeLabel(type: RuleType): string {
@@ -217,11 +217,10 @@ function RulesPage() {
               onChange={(e) => setForm({ ...form, rule_type: e.target.value as RuleType })}
               className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-gray-400"
             >
-              <option value="instruction">{m.rules_type_instruction()}</option>
               <option value="pii_redact">{m.rules_type_pii_redact()}</option>
               <option value="pii_block">{m.rules_type_pii_block()}</option>
-              <option value="keyword_block">{m.rules_type_keyword_block()}</option>
               <option value="keyword_redact">{m.rules_type_keyword_redact()}</option>
+              <option value="keyword_block">{m.rules_type_keyword_block()}</option>
             </select>
           </div>
 
