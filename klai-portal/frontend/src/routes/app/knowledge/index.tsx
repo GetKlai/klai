@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import {
   Plus, ChevronRight, User, Building2, FolderOpen, FileText, Zap,
   Search, Trash2, Globe, RefreshCw, Loader2,
@@ -180,6 +181,8 @@ function CollectionRow({
   const auth = useAuth()
   const token = auth.user?.access_token
   const myUserId = auth.user?.profile?.sub
+  const { user: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.isAdmin === true
   const navigate = useNavigate()
   const sourceCount = stats?.connectors ?? 0
   const itemCount = stats?.items ?? 0
@@ -187,12 +190,15 @@ function CollectionRow({
   const [confirmingDeleteKb, setConfirmingDeleteKb] = useState(false)
   const [confirmingDeleteConnectorId, setConfirmingDeleteConnectorId] = useState<string | null>(null)
 
-  // Deletion is only allowed for the owner. Personal KBs belong to a single user
-  // (slug = `personal-{zitadel_user_id}`); org KBs are owned by admins.
-  // Hide the delete button for other people's personal KBs to avoid 403 spam.
+  // "Mine": personal KB whose slug encodes my Zitadel user ID, OR org-wide KB
+  // where the current user is an admin (admins own the tenant).
+  const isMyPersonalKb =
+    kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`
   const isOthersPersonalKb =
     kb.owner_type === 'user' && !!myUserId && kb.slug !== `personal-${myUserId}`
-  const canDelete = !isOthersPersonalKb
+
+  // Admins can delete any KB in their org. Users can delete their own personal KB.
+  const canDelete = isAdmin || !isOthersPersonalKb
 
   // Lazy-load connectors when expanded
   const { data: connectors, isLoading: connectorsLoading } = useQuery<ConnectorSummary[]>({
@@ -268,6 +274,11 @@ function CollectionRow({
           <span className="text-[15px] font-display text-gray-900 group-hover:underline">
             {kb.name}
           </span>
+          {isMyPersonalKb && (
+            <Badge variant="secondary" className="ml-2 text-[10px]">
+              Mijn
+            </Badge>
+          )}
           <span className="ml-2 text-xs text-gray-400">
             {sourceCount === 1
               ? m.sources_count_one()
