@@ -1,9 +1,9 @@
 ---
 id: SPEC-KB-021
-version: 0.1.0
-status: draft
+version: 0.3.0
+status: deployed
 created: 2026-04-16
-updated: 2026-04-16
+updated: 2026-04-17
 author: Mark Vletter
 priority: high
 issue_number: 0
@@ -11,6 +11,7 @@ issue_number: 0
 
 ## HISTORY
 
+- 2026-04-17 — v0.3.0 — Deployed. Router geïntegreerd als signaal (niet filter) voor source_aware_select. Content-based centroids. Fail-loudly enrichment. Callers geüpdatet (crawl, connector). Facet API catalog. Decision record logging.
 - 2026-04-16 — v0.1.0 — Mark Vletter — Initial draft. Scope: multi-source retrieval quality voor orgs met 4+ knowledge bases. Drie gecoördineerde veranderingen (source-aware enrichment, source quota, query router) elk achter een eigen feature flag met shadow-mode en activation gate op een 50-query Voys evaluation set.
 
 ---

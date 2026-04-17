@@ -1,7 +1,7 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
-> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — March 2026 (updated 2026-04-05).
+> Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-04-16).
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
@@ -354,8 +354,7 @@ statistically ideal 5–10 because Klai's per-org user pool is small; see SPEC-K
 At maximum signal (quality_score = 1.0 or 0.0), the adjustment is ±10% of the RRF score
 — intentionally conservative to avoid letting feedback dominate over semantic relevance.
 
-Results are re-sorted by the boosted score. The final `top_k` chunks (default: 5) are
-returned to the LiteLLM hook.
+Results are re-sorted by the boosted score.
 
 **Feedback loop:** After the retrieval-api responds, the LiteLLM hook fires a retrieval
 log to `portal-api /internal/v1/retrieval-log` (fire-and-forget). This log is stored in
@@ -364,6 +363,71 @@ forwards the feedback to `portal-api /internal/v1/kb-feedback`, which correlates
 the retrieval log and updates the Qdrant payload. See
 [knowledge-ingest-flow.md — Self-learning feedback loop](knowledge-ingest-flow.md#self-learning-feedback-loop-spec-kb-015)
 for the full picture.
+
+---
+
+### Step 5c: Source-aware selection (SPEC-KB-021)
+
+**Simple:** When an org has multiple knowledge bases, Klai ensures that the top-K results
+are not monopolized by a single source. This step enforces source diversity while respecting
+the user's query intent — if they explicitly mention a source by name, that source gets
+priority.
+
+**Technical:** After quality boost, `source_aware_select()` applies two filters in sequence:
+
+**1. Mention and gate detection:**
+- If the `query_resolved` contains a substring match (lowercase) of any `kb_slug` longer
+  than 3 characters, that source is "mentioned" and gets priority.
+- Alternatively, if the router (see below) has selected specific sources, those are
+  "selected" and get priority.
+
+**2. Diversity enforcement:**
+- If a source is mentioned or selected: allocate all remaining slots to chunks from that
+  source(s), sorted by reranker score descending.
+- Otherwise ("diversify" mode): greedily select chunks sorted by reranker score, with a
+  hard limit of `max_per_source` (default: 2) chunks per `source_label`. When a source hits
+  its quota, skip to the next highest-scoring chunk from a different source. If fewer than
+  `top_k` results remain after quota enforcement, fill remaining slots with the
+  highest-scoring chunks regardless of source (fallback fill).
+
+The `source_label` field (computed during ingestion, see
+[knowledge-ingest-flow.md — Source-label and source-aware enrichment](knowledge-ingest-flow.md#step-d5--source-label-and-source-aware-enrichment-spec-kb-021))
+is read from each chunk's Qdrant payload.
+
+**Router as a pre-search signal (SPEC-KB-021):**
+Before executing `hybrid_search`, if the user has not specified `kb_slugs` (i.e., they
+are not filtering manually) and the org has ≥ 4 knowledge bases, a three-layer router
+is invoked:
+
+| Layer | Method | Input |
+|-------|--------|-------|
+| Layer 1 | Keyword gate | Pre-computed `{brand_term → kb_slug}` map from KB name + description |
+| Layer 2 | Semantic margin | Cosine similarity between `query_vector` and pre-computed centroids per source |
+| Layer 3 | LLM fallback | (Optional) Route via `klai-fast` with 500ms timeout if Layer 1+2 are inconclusive |
+
+The router's decision is **not** applied as a hard filter to the Qdrant query. Instead,
+it signals which sources *might* be relevant, and is passed to `source_aware_select` as
+the `router_selected` parameter. The search still retrieves candidates from all sources;
+the router influence is applied in the diversity step, not the search step. This allows
+semantic relevance to trump router signal when appropriate.
+
+Router centroids are pre-computed as the mean vector of the top-10 chunk embeddings per
+source. They are cached in memory with a TTL (default: 10 minutes) and refreshed on-demand
+when the org's KB catalog changes (new KB added, description updated).
+
+**Decision record logging (SPEC-KB-021):**
+Every retrieval request logs the following to `RetrieveMetadata` for observability:
+- `source_aware_mode`: "mentioned" | "diversify" (which diversity strategy was used)
+- `router_layer_used`: "keyword" | "semantic" | "llm" | "skipped" (which layer fired, if any)
+- `router_decision`: list of selected `kb_slug` values, or None if no router selection
+- `router_margin`: cosine margin value from Layer 2, or None if Layer 2 didn't run
+- `quota_applied`: bool (whether source quota affected the final result)
+- `quota_per_source_counts`: dict mapping `kb_slug` to count of chunks in final result
+
+These fields enable post-retrieval analysis: which sources does the router recommend vs.
+which the diversity algorithm selects vs. which actually end up in the top-K.
+
+The final `top_k` chunks (default: 5) are returned to the LiteLLM hook.
 
 ---
 
