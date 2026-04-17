@@ -174,7 +174,34 @@ function KBPageEditor() {
         setTimeout(() => setSaveStatus('idle'), 2000)
         void refetchTree()
         void refetchPageIndex()
-      } catch (err) {
+      } catch (err: unknown) {
+        // SHA mismatch (Gitea 422 → docs-app 500): refresh SHA from server and retry once.
+        // This handles the race where a concurrent save (e.g. beforeunload) updated the file
+        // between our SHA read and our PUT, invalidating our SHA.
+        const status = (err as { status?: number })?.status
+        if (status === 500 && shaRef.current) {
+          editorLogger.warn('Save SHA conflict, refreshing SHA and retrying', { slug: currentSlug })
+          try {
+            const fresh = await apiFetch<{ sha?: string }>(
+              `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok
+            )
+            if (fresh.sha) shaRef.current = fresh.sha
+            const retry = await apiFetch<{ ok: boolean; sha: string | null }>(
+              `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
+                method: 'PUT',
+                body: JSON.stringify({ title, content, icon, sha: shaRef.current }),
+              }
+            )
+            if (retry.sha) shaRef.current = retry.sha
+            setSaveStatus('saved')
+            setTimeout(() => setSaveStatus('idle'), 2000)
+            void refetchTree()
+            void refetchPageIndex()
+            return
+          } catch (retryErr) {
+            editorLogger.error('Save retry after SHA refresh also failed', { slug: currentSlug, retryErr })
+          }
+        }
         editorLogger.error('Page save failed', { slug: currentSlug, err })
         setSaveStatus('error')
         setTimeout(() => setSaveStatus('idle'), 3000)
