@@ -107,6 +107,7 @@ function AddConnectorPage() {
   // Webcrawler wizard state
   const [wcStep, setWcStep] = useState<WcStep>('details')
   const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
+  const [requiresLogin, setRequiresLogin] = useState<boolean | null>(null)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
   const [previewResult, setPreviewResult] = useState<{
     fit_markdown: string; word_count: number; warnings: string[]
@@ -506,58 +507,112 @@ function AddConnectorPage() {
                   </div>
                 )}
 
-                {/* Step 2: Preview — all inputs above the single run button */}
+                {/* Step 2: Preview — auth question first, then preview */}
                 {wcStep === 'preview' && (
-                  <div className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="wc-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
-                      <Input
-                        id="wc-preview-url"
-                        type="url"
-                        placeholder={webcrawlerConfig.base_url}
-                        value={wcPreviewUrl}
-                        onChange={(e) => setWcPreviewUrl(e.target.value)}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
-                      onClick={() => setShowAdvancedSelector((p) => !p)}
-                    >
-                      <Settings className="h-3 w-3" />
-                      Advanced settings
-                      {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    </button>
-                    {showAdvancedSelector && (
-                      <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-3">
-                        <div className="space-y-1.5">
-                        <Label htmlFor="wc-preview-selector">Content selector</Label>
-                        <Input
-                          id="wc-preview-selector"
-                          placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
-                          value={webcrawlerConfig.content_selector}
-                          onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
-                        />
-                        <p className="text-xs text-[var(--color-muted-foreground)]">
-                          Only needed if the preview picks up menus or sidebars instead of the article.
-                          Leave empty to let AI detect this automatically.
+                  <div className="space-y-4">
+                    {/* Authentication question — asked once, determines cookies visibility */}
+                    {requiresLogin === null && (
+                      <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+                        <p className="text-sm font-medium text-[var(--color-foreground)]">
+                          Is this site behind a login?
                         </p>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="wc-cookies">Authentication cookies</Label>
-                          <textarea
-                            id="wc-cookies"
-                            className="flex min-h-[60px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-                            placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
-                            value={webcrawlerConfig.cookies}
-                            onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))}
-                          />
-                          <p className="text-xs text-[var(--color-muted-foreground)]">
-                            Only needed for sites behind a login. Open the site in your browser, log in,
-                            then copy the Cookie value from your browser&apos;s developer tools (Network tab &gt; any request &gt; Cookie header).
-                          </p>
+                        <p className="text-xs text-[var(--color-muted-foreground)]">
+                          Some knowledge bases require you to be logged in to see the content.
+                        </p>
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" variant="outline" onClick={() => setRequiresLogin(false)}>
+                            No, it&apos;s public
+                          </Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => setRequiresLogin(true)}>
+                            Yes, login required
+                          </Button>
                         </div>
                       </div>
+                    )}
+
+                    {/* Cookies field — only shown after "Yes, login required" */}
+                    {requiresLogin === true && (
+                      <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium text-[var(--color-foreground)]">Authentication cookies</p>
+                          <button
+                            type="button"
+                            className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                            onClick={() => { setRequiresLogin(false); setWebcrawlerConfig((p) => ({ ...p, cookies: '' })) }}
+                          >
+                            Switch to public
+                          </button>
+                        </div>
+                        <textarea
+                          id="wc-cookies"
+                          className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                          placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
+                          value={webcrawlerConfig.cookies}
+                          onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, cookies: e.target.value }))}
+                        />
+                        <p className="text-xs text-[var(--color-muted-foreground)]">
+                          Open the site in your browser, log in, then copy the Cookie value from your
+                          browser&apos;s developer tools (Network tab &rarr; any request &rarr; Cookie header).
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Public site confirmation — minimal, allows changing mind */}
+                    {requiresLogin === false && (
+                      <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3">
+                        <div className="flex items-center gap-2 text-xs text-[var(--color-muted-foreground)]">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
+                          Public site — no login needed
+                        </div>
+                        <button
+                          type="button"
+                          className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                          onClick={() => setRequiresLogin(true)}
+                        >
+                          Actually, it needs login
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Preview URL — shown after auth question is answered */}
+                    {requiresLogin !== null && (
+                      <>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="wc-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
+                          <Input
+                            id="wc-preview-url"
+                            type="url"
+                            placeholder={webcrawlerConfig.base_url}
+                            value={wcPreviewUrl}
+                            onChange={(e) => setWcPreviewUrl(e.target.value)}
+                          />
+                        </div>
+
+                        {/* Advanced: content selector */}
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                          onClick={() => setShowAdvancedSelector((p) => !p)}
+                        >
+                          <Settings className="h-3 w-3" />
+                          Content selector
+                          {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        </button>
+                        {showAdvancedSelector && (
+                          <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-1.5">
+                            <Input
+                              id="wc-preview-selector"
+                              placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                              value={webcrawlerConfig.content_selector}
+                              onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                            />
+                            <p className="text-xs text-[var(--color-muted-foreground)]">
+                              Only needed if the preview picks up menus instead of the article.
+                              Leave empty to let AI detect this automatically.
+                            </p>
+                          </div>
+                        )}
+                      </>
                     )}
                     {!webcrawlerConfig.content_selector && (
                       <button
