@@ -1,8 +1,13 @@
-"""Source diversity / quota selection for retrieval pipeline.
+"""Source-aware selection for retrieval pipeline.
 
-SPEC-KB-021 Change 2: Apply per-source_label quota to reranked chunks so that
-no single knowledge base dominates the top-N results — unless the query
-explicitly mentions that source.
+SPEC-KB-021: Single post-rerank step that handles both source routing and
+diversity.  Replaces the separate router (pre-search) + quota (post-rerank)
+with one function that uses the actual reranker scores to decide.
+
+Logic:
+- If the query mentions a specific source → give that source all slots
+- If scores are spread across sources → diversify (max N per source)
+- Scores decide, not pre-computed centroids or label embeddings
 """
 
 from __future__ import annotations
@@ -15,71 +20,130 @@ logger = structlog.get_logger()
 
 _UNKNOWN = "_unknown"
 
+# Common words that appear in source labels but are too generic for matching.
+_STOP_WORDS: set[str] = {
+    "help",
+    "docs",
+    "wiki",
+    "info",
+    "data",
+    "page",
+    "site",
+    "team",
+    "voor",
+    "over",
+    "alle",
+    "deze",
+    "onze",
+    "meer",
+    "door",
+    "naar",
+    "with",
+    "from",
+    "that",
+    "this",
+    "your",
+    "about",
+    "what",
+    "will",
+    "documentatie",
+    "interne",
+    "externe",
+    "handleiding",
+    "informatie",
+    "helpcenter",
+    "helpdesk",
+    "support",
+    "klant",
+    "intern",
+    "kennis",
+}
 
-def source_quota_select(
+
+def _detect_mentioned_sources(
+    reranked: list[dict],
+    query_resolved: str,
+) -> set[str]:
+    """Detect which source_labels are explicitly mentioned in the query.
+
+    Splits each label on separators, filters stop words and short tokens,
+    checks substring match in query.  Returns all matching labels.
+    """
+    query_lower = query_resolved.lower()
+    mentioned: set[str] = set()
+
+    seen: set[str] = set()
+    for chunk in reranked:
+        label = chunk.get("source_label") or _UNKNOWN
+        if label in seen or label == _UNKNOWN or len(label) <= 3:
+            continue
+        seen.add(label)
+
+        tokens = [
+            t for t in re.split(r"[-./:]", label.lower()) if len(t) > 3 and t not in _STOP_WORDS
+        ]
+        if any(token in query_lower for token in tokens):
+            mentioned.add(label)
+
+    return mentioned
+
+
+def source_aware_select(
     reranked: list[dict],
     query_resolved: str,
     top_n: int = 5,
     max_per_source: int = 2,
-    bypass_on_mention: bool = True,
 ) -> tuple[list[dict], dict]:
-    """Apply per-source_label quota to reranked chunks.
+    """Select top-N chunks with source-aware diversity.
 
-    Algorithm:
-    1. Determine which source_labels are bypassed (query substring match,
-       label length > 3, bypass_on_mention=True).  ALL matching labels are
-       bypassed — not just the first.
-    2. Greedy pass over reranked (already sorted by score desc):
-       - Include if bypassed OR per_source_count < max_per_source.
-       - Otherwise push to leftover list.
-       - Stop when len(selected) == top_n.
-    3. Fallback: fill remaining slots from leftover in original score order.
+    One function that replaces both the pre-search router and post-rerank quota.
+    Uses actual reranker scores — no centroids, no label embeddings.
+
+    Behaviour:
+    1. If query mentions specific source(s): those sources get all slots.
+       The reranker already scored them highest if they're relevant.
+    2. Otherwise: greedy select with per-source cap, fallback fill if needed.
 
     Returns:
-        (selected_chunks, metadata)
-
-    metadata keys:
-        quota_applied              bool
-        quota_per_source_counts    dict[str, int]
-        quota_bypass_reason        str | None
-        quota_bypass_source_labels list[str] (empty if no bypass)
+        (selected_chunks, metadata_dict)
     """
-    # -- Step 1: Determine bypassed source_labels --------------------------------
-    bypass_source_labels: set[str] = set()
-    bypass_reason: str | None = None
+    if not reranked:
+        return [], {
+            "source_select_mode": "empty",
+            "source_counts": {},
+            "mentioned_sources": [],
+        }
 
-    if bypass_on_mention:
-        query_lower = query_resolved.lower()
-        # Collect unique source labels from results (preserving score order)
-        unique_labels: list[str] = []
-        seen: set[str] = set()
-        for chunk in reranked:
-            label = chunk.get("source_label") or _UNKNOWN
-            if label not in seen:
-                seen.add(label)
-                unique_labels.append(label)
+    # Step 1: detect if query mentions specific sources
+    mentioned = _detect_mentioned_sources(reranked, query_resolved)
 
-        for label in unique_labels:
-            if label == _UNKNOWN:
-                continue
-            if len(label) <= 3:
-                continue
-            # Split label into tokens (split on -./:) and check if any token
-            # with len > 3 appears as a substring in the query.
-            # Reuse stop words from router to avoid false positives on "help" etc.
-            from retrieval_api.services.router import _STOP_WORDS
+    if mentioned:
+        # Query is source-specific → give mentioned sources all slots.
+        # Still sorted by reranker score (reranked is already score-desc).
+        from_mentioned = [c for c in reranked if c.get("source_label") in mentioned]
+        selected = from_mentioned[:top_n]
 
-            tokens = [
-                t
-                for t in re.split(r"[-./:]", label.lower())
-                if len(t) > 3 and t not in _STOP_WORDS
-            ]
-            if any(token in query_lower for token in tokens):
-                bypass_source_labels.add(label)
-                bypass_reason = "query_mention"
+        # If mentioned sources don't fill top_n, add others
+        if len(selected) < top_n:
+            others = [c for c in reranked if c.get("source_label") not in mentioned]
+            selected.extend(others[: top_n - len(selected)])
 
-    # -- Step 2: Greedy select ---------------------------------------------------
-    per_source_count: dict[str, int] = {}
+        counts = _count_sources(selected)
+        logger.debug(
+            "source_aware_select",
+            mode="mentioned",
+            mentioned=sorted(mentioned),
+            selected=len(selected),
+            source_counts=counts,
+        )
+        return selected, {
+            "source_select_mode": "mentioned",
+            "source_counts": counts,
+            "mentioned_sources": sorted(mentioned),
+        }
+
+    # Step 2: no specific source mentioned → diversify with per-source cap
+    per_source: dict[str, int] = {}
     selected: list[dict] = []
     leftover: list[dict] = []
 
@@ -87,45 +151,40 @@ def source_quota_select(
         if len(selected) == top_n:
             break
         label = chunk.get("source_label") or _UNKNOWN
-        count = per_source_count.get(label, 0)
-
-        if label in bypass_source_labels:
+        count = per_source.get(label, 0)
+        if count < max_per_source:
             selected.append(chunk)
-            per_source_count[label] = count + 1
-        elif count < max_per_source:
-            selected.append(chunk)
-            per_source_count[label] = count + 1
+            per_source[label] = count + 1
         else:
             leftover.append(chunk)
 
-    # -- Step 3: Fallback fill ---------------------------------------------------
-    # When quota was too strict and we still have unfilled slots, fill from
-    # leftover in original score order (already sorted desc by position in
-    # reranked). This happens when there are fewer unique sources than top_n.
-    if len(selected) < top_n and leftover:
+    # Fallback: fill remaining slots from leftover in score order
+    if len(selected) < top_n:
         for chunk in leftover:
             if len(selected) == top_n:
                 break
             selected.append(chunk)
             label = chunk.get("source_label") or _UNKNOWN
-            per_source_count[label] = per_source_count.get(label, 0) + 1
+            per_source[label] = per_source.get(label, 0) + 1
 
-    # Keep in descending score order (greedy pass preserves order for selected,
-    # but fallback may insert lower-scored chunks out of position).
     selected.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
     logger.debug(
-        "source_quota_select",
-        top_n=top_n,
+        "source_aware_select",
+        mode="diversify",
         selected=len(selected),
-        bypass_source_labels=sorted(bypass_source_labels),
-        per_source_counts=per_source_count,
+        source_counts=per_source,
     )
-
-    metadata: dict = {
-        "quota_applied": True,
-        "quota_per_source_counts": dict(per_source_count),
-        "quota_bypass_reason": bypass_reason,
-        "quota_bypass_source_labels": sorted(bypass_source_labels),
+    return selected, {
+        "source_select_mode": "diversify",
+        "source_counts": dict(per_source),
+        "mentioned_sources": [],
     }
-    return selected, metadata
+
+
+def _count_sources(chunks: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for c in chunks:
+        label = c.get("source_label") or _UNKNOWN
+        counts[label] = counts.get(label, 0) + 1
+    return counts

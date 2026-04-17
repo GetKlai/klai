@@ -45,19 +45,10 @@ class Settings(BaseSettings):
     link_expand_candidates: int = 20
     link_authority_boost: float = 0.05
 
-    # Source quota (SPEC-KB-021)
+    # Source-aware selection (SPEC-KB-021)
+    # Post-rerank: diversify top-K across sources, unless query is source-specific.
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
-    source_quota_bypass_on_mention: bool = True
-
-    # Query router (SPEC-KB-021)
-    # Catalog populated from Qdrant distinct source_label values per org.
-    router_enabled: bool = True
-    router_min_source_label_count: int = 4
-    router_margin_single: float = 0.15
-    router_margin_dual: float = 0.08
-    router_llm_fallback: bool = False
-    router_centroid_ttl_seconds: int = 600
 
     # Portal events — set to emit product_events to the portal database.
     # Separate fields avoid URL-encoding issues with special chars in passwords.

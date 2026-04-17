@@ -20,9 +20,8 @@ from retrieval_api.metrics import (
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
-from retrieval_api.services.diversity import source_quota_select
+from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
-from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = structlog.get_logger(__name__)
@@ -101,41 +100,8 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     link_expand_ms: float | None = None
     link_expand_count = 0
 
-    # 3b. Query router (SPEC-KB-021 Change 3) — only when user has not set explicit scope
-    router_meta: dict = {
-        "router_decision": None,
-        "router_layer_used": "skipped",
-        "router_margin": None,
-        "router_centroid_cache_hit": False,
-    }
-    if (
-        req.kb_slugs is None
-        and settings.router_enabled
-        and req.scope in ("org", "both")
-        and not bypassed
-    ):
-        source_label_catalog = await fetch_source_catalog(req.org_id)
-
-        if len(source_label_catalog) >= settings.router_min_source_label_count:
-            routing = await route_to_sources(
-                query_resolved=query_resolved,
-                query_vector=query_vector,
-                org_id=req.org_id,
-                source_label_catalog=source_label_catalog,
-                margin_single=settings.router_margin_single,
-                margin_dual=settings.router_margin_dual,
-                llm_fallback=settings.router_llm_fallback,
-                centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
-            )
-            req.source_labels = routing.selected_source_labels
-            router_meta = {
-                "router_decision": routing.selected_source_labels,
-                "router_layer_used": routing.layer_used,
-                "router_margin": routing.margin,
-                "router_centroid_cache_hit": routing.cache_hit,
-            }
-
-    decision_record["router"] = router_meta
+    # Source routing is handled post-rerank by source_aware_select (step 5b).
+    # No pre-search filtering — search always covers all sources.
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
@@ -228,23 +194,22 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
 
-        # 5b. Source quota (SPEC-KB-021 Change 2)
+        # 5b. Source-aware selection (SPEC-KB-021)
+        # Replaces separate router + quota: uses reranker scores to decide.
         if settings.source_quota_enabled:
-            reranked, quota_meta = source_quota_select(
+            reranked, source_meta = source_aware_select(
                 reranked,
                 query_resolved,
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
-                bypass_on_mention=settings.source_quota_bypass_on_mention,
             )
         else:
-            quota_meta: dict = {
-                "quota_applied": False,
-                "quota_per_source_counts": {},
-                "quota_bypass_reason": "disabled",
-                "quota_bypass_source_label": None,
+            source_meta = {
+                "source_select_mode": "disabled",
+                "source_counts": {},
+                "mentioned_sources": [],
             }
-        decision_record["quota"] = quota_meta
+        decision_record["source_select"] = source_meta
 
         # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
         reranked = quality_boost(reranked)
@@ -348,7 +313,6 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         link_expand_count=link_expand_count,
         gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
         retrieval_bypassed=bypassed,
-        **router_meta,
     )
 
     # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own)

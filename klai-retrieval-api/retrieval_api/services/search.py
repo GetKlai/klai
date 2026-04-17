@@ -107,11 +107,6 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
             conditions.append(
                 FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
             )
-    # SPEC-KB-021 Change 3: router-selected source label filter (additional condition)
-    if request.source_labels:
-        conditions.append(
-            FieldCondition(key="source_label", match=MatchAny(any=request.source_labels))
-        )
     return conditions
 
 

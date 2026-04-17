@@ -16,7 +16,6 @@ class RetrieveRequest(BaseModel):
     kb_slugs: list[str] | None = None
     taxonomy_node_ids: list[int] | None = None  # SPEC-KB-022 R3: optional taxonomy filter
     tags: list[str] | None = None  # SPEC-KB-022 R3: optional tag filter
-    source_labels: list[str] | None = None  # SPEC-KB-021 Change 3: router-selected source labels
 
 
 class ChunkResult(BaseModel):
