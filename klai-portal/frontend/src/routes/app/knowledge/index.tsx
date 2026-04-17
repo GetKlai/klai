@@ -228,6 +228,20 @@ function CollectionRow({
     enabled: !!token && expanded,
   })
 
+  // For the user's canonical Persoonlijk KB, also list uploaded files.
+  // Other KBs don't have a per-KB file endpoint today; they only surface
+  // connectors in the expanded view.
+  const { data: personalFilesData } = useQuery<{ items: { id: string; path: string }[] }>({
+    queryKey: ['personal-knowledge', kb.slug],
+    queryFn: () =>
+      apiFetch<{ items: { id: string; path: string }[] }>(
+        '/api/knowledge/personal/items',
+        token,
+      ),
+    enabled: !!token && expanded && isDefaultPersonalRow,
+  })
+  const personalFiles = personalFilesData?.items ?? []
+
   const deleteKbMutation = useMutation({
     mutationFn: async () => apiFetch(`/api/app/knowledge-bases/${kb.slug}`, token, { method: 'DELETE' }),
     onSuccess: () => {
@@ -371,66 +385,81 @@ function CollectionRow({
                 <div key={i} className="h-9 rounded-lg bg-gray-50 animate-pulse" />
               ))}
             </div>
-          ) : connectors && connectors.length > 0 ? (
-            connectors.map((c) => {
-              const Icon = CONNECTOR_ICONS[c.connector_type] ?? Zap
-              const isSyncing =
-                syncConnectorMutation.isPending && syncConnectorMutation.variables === c.id
-              const isDeletingConnector =
-                deleteConnectorMutation.isPending && deleteConnectorMutation.variables === c.id
-              return (
-                <InlineDeleteConfirm
-                  key={c.id}
-                  isConfirming={confirmingDeleteConnectorId === c.id}
-                  isPending={isDeletingConnector}
-                  label={`Bron "${c.name || c.connector_type}" verwijderen?`}
-                  cancelLabel="Annuleren"
-                  onConfirm={() => deleteConnectorMutation.mutate(c.id)}
-                  onCancel={() => setConfirmingDeleteConnectorId(null)}
-                >
-                  <div className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
-                    <Icon className="h-4 w-4 text-gray-400 shrink-0" />
-                    <span className="text-sm text-gray-700 flex-1 truncate">
-                      {c.name || c.connector_type}
-                    </span>
-                    <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Tooltip label="Synchroniseren">
-                        <button
-                          type="button"
-                          disabled={isSyncing}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            syncConnectorMutation.mutate(c.id)
-                          }}
-                          aria-label="Sync connector"
-                          className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                        >
-                          {isSyncing ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            <RefreshCw size={14} />
-                          )}
-                        </button>
-                      </Tooltip>
-                      <Tooltip label="Bron verwijderen">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setConfirmingDeleteConnectorId(c.id)
-                          }}
-                          aria-label="Delete connector"
-                          className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </Tooltip>
+          ) : (connectors && connectors.length > 0) || personalFiles.length > 0 ? (
+            <>
+              {(connectors ?? []).map((c) => {
+                const Icon = CONNECTOR_ICONS[c.connector_type] ?? Zap
+                const isSyncing =
+                  syncConnectorMutation.isPending && syncConnectorMutation.variables === c.id
+                const isDeletingConnector =
+                  deleteConnectorMutation.isPending && deleteConnectorMutation.variables === c.id
+                return (
+                  <InlineDeleteConfirm
+                    key={c.id}
+                    isConfirming={confirmingDeleteConnectorId === c.id}
+                    isPending={isDeletingConnector}
+                    label={`Bron "${c.name || c.connector_type}" verwijderen?`}
+                    cancelLabel="Annuleren"
+                    onConfirm={() => deleteConnectorMutation.mutate(c.id)}
+                    onCancel={() => setConfirmingDeleteConnectorId(null)}
+                  >
+                    <div className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
+                      <Icon className="h-4 w-4 text-gray-400 shrink-0" />
+                      <span className="text-sm text-gray-700 flex-1 truncate">
+                        {c.name || c.connector_type}
+                      </span>
+                      <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Tooltip label="Synchroniseren">
+                          <button
+                            type="button"
+                            disabled={isSyncing}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              syncConnectorMutation.mutate(c.id)
+                            }}
+                            aria-label="Sync connector"
+                            className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                          >
+                            {isSyncing ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={14} />
+                            )}
+                          </button>
+                        </Tooltip>
+                        <Tooltip label="Bron verwijderen">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setConfirmingDeleteConnectorId(c.id)
+                            }}
+                            aria-label="Delete connector"
+                            className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </Tooltip>
+                      </div>
                     </div>
-                  </div>
-                </InlineDeleteConfirm>
-              )
-            })
+                  </InlineDeleteConfirm>
+                )
+              })}
+              {/* Personal-file rows (only for canonical Persoonlijk) */}
+              {personalFiles.map((f) => (
+                <div
+                  key={`file-${f.id}`}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors"
+                >
+                  <FileText className="h-4 w-4 text-gray-400 shrink-0" />
+                  <span className="text-sm text-gray-700 flex-1 truncate">{f.path}</span>
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider shrink-0">
+                    Upload
+                  </span>
+                </div>
+              ))}
+            </>
           ) : bronnenCount > 0 || itemCount > 0 ? (
             <Link
               to="/app/knowledge/$kbSlug/overview"
