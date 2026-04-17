@@ -42,7 +42,11 @@ services:
       IMAP_POLL_INTERVAL_SECONDS: "60"
       IMAP_PASSWORD: ""
       LIBRECHAT_MONGO_ROOT_URI: ${LIBRECHAT_MONGO_ROOT_URI}
-      KLAI_CONNECTOR_SECRET: ${PORTAL_API_DEV_KLAI_CONNECTOR_SECRET}
+      # Inter-service auth secrets MUST match prod (connector, docs-app,
+      # knowledge-ingest are shared services that only know the prod secret).
+      KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       GITHUB_ADMIN_PAT: ${GITHUB_ADMIN_PAT}
       GITHUB_ORG: GetKlai
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
