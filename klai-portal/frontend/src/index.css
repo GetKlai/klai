@@ -125,33 +125,22 @@ body {
    line with the portal's design system (page title = 24px).
    ─────────────────────────────────────────────────────────────────────── */
 
-/* Base editor: calm, spacious reading experience inspired by Notion/Outline.
-   760px max-width with 48px horizontal padding = 664px content width (~70ch).
-   Warm near-black (#37352F) softens the visual tone vs pure black.
-   !important everywhere: Mantine/BlockNote injects its own styles (Inter font,
-   3em headings, zero margins) that silently override normal CSS cascade. */
+/* BlockNote editor typography — Klai style overrides.
+   Layout (max-width, padding) is handled by the component wrapper,
+   NOT here — CSS layout properties on .bn-editor cause reflow thrashing
+   as BlockNote incrementally renders blocks.
+   Only typography + color overrides below. */
 .bn-editor {
   font-size: 15px !important;
   line-height: 1.7 !important;
   color: #37352F !important;
   font-family: var(--font-sans) !important;
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 16px 48px 64px !important;
 }
 
-/* Block containers: default vertical rhythm.
-   No :has() selectors — those cause expensive style recalculations in
-   BlockNote's reactive editing model (9 :has() selectors × 50+ blocks =
-   450+ evaluations per recalc, causing 4s+ LCP regression). */
+/* Block containers: default vertical rhythm */
 .bn-editor [data-node-type="blockContainer"] {
-  margin-top: 0 !important;
   margin-bottom: 2px !important;
 }
-
-/* Headings: target h1/h2/h3 directly + use margin/padding on the
-   .bn-block-content[data-content-type="heading"] wrapper for spacing.
-   BlockNote does NOT emit data-level attributes. */
 
 /* H1: 21px semibold — subordinate to page title (24px text-2xl) */
 .bn-editor h1 {
@@ -206,7 +195,7 @@ body {
   padding-bottom: 2px !important;
 }
 
-/* Check list items: more space for scannable to-do lists */
+/* Check list items */
 .bn-editor .bn-block-content[data-content-type="checkListItem"] {
   padding-bottom: 3px !important;
 }
