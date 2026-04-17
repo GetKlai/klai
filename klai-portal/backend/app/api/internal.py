@@ -31,6 +31,9 @@ from app.core.database import get_db, set_tenant
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
+from app.models.rules import PortalRule
+from app.models.templates import PortalTemplate
+from app.services import pii_detector
 from app.services.connector_credentials import credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
@@ -685,3 +688,123 @@ async def regenerate_librechat_configs(
     errors.extend(restart_errors)
 
     return RegenerateResponse(tenants_updated=updated, errors=errors)
+
+
+# -- Guardrails / Template injection ------------------------------------------
+
+
+class GuardrailInstruction(BaseModel):
+    source: str  # "rule" or "template"
+    name: str
+    text: str
+
+
+class GuardrailDetector(BaseModel):
+    action: str  # "block" or "redact"
+    detectors: list[str]  # which detector keys to run (e.g. ["email", "bsn"])
+    keywords: list[str]  # for keyword_* types
+    rule_name: str
+
+
+class GuardrailsEffective(BaseModel):
+    instructions: list[GuardrailInstruction]
+    detectors: list[GuardrailDetector]
+
+
+@router.get("/guardrails/effective", response_model=GuardrailsEffective)
+async def get_effective_guardrails(
+    zitadel_org_id: str,
+    librechat_user_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> GuardrailsEffective:
+    """Resolve the effective guardrails (templates + rules) for a user.
+
+    Called by the LiteLLM hook on every chat request to compose the
+    system-prompt injection (templates + instruction rules) and to know
+    which detectors / keyword filters to run on user input.
+
+    Takes the LibreChat user ObjectId (same pattern as
+    /v1/users/{librechat_user_id}/feature/knowledge); we map it to
+    portal_users.zitadel_user_id for the actual queries.
+    """
+    _require_internal_token(request)
+
+    # 1. Look up org by zitadel_org_id
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
+    await set_tenant(db, org.id)
+
+    # 2. Look up user by librechat_user_id (already mapped in portal_users).
+    # Hook's feature endpoint handles first-time Mongo mapping; we only need
+    # the fast-path here.
+    user_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.librechat_user_id == librechat_user_id,
+            PortalUser.org_id == org.id,
+        )
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    zitadel_user_id = user.zitadel_user_id
+
+    instructions: list[GuardrailInstruction] = []
+    detectors: list[GuardrailDetector] = []
+
+    # 3. Active templates (org-scoped)
+    active_template_ids = user.active_template_ids or []
+    if active_template_ids:
+        tmpl_result = await db.execute(
+            select(PortalTemplate).where(
+                PortalTemplate.org_id == org.id,
+                PortalTemplate.id.in_(active_template_ids),
+                PortalTemplate.is_active.is_(True),
+            )
+        )
+        for tmpl in tmpl_result.scalars().all():
+            instructions.append(GuardrailInstruction(source="template", name=tmpl.name, text=tmpl.prompt_text))
+
+    # 4. Active rules for this org (global OR created_by the caller)
+    rules_result = await db.execute(
+        select(PortalRule).where(
+            PortalRule.org_id == org.id,
+            PortalRule.is_active.is_(True),
+            (PortalRule.scope == "global") | (PortalRule.created_by == zitadel_user_id),
+        )
+    )
+    rules = rules_result.scalars().all()
+
+    # 5. Split into instructions vs detectors based on rule_type
+    for rule in rules:
+        rtype = rule.rule_type
+        if rtype == "instruction":
+            instructions.append(GuardrailInstruction(source="rule", name=rule.name, text=rule.rule_text))
+        elif rtype in ("pii_block", "pii_redact"):
+            action = "block" if rtype == "pii_block" else "redact"
+            detectors.append(
+                GuardrailDetector(
+                    action=action,
+                    detectors=pii_detector.detectors_for_rule(rule.slug, rule.rule_text),
+                    keywords=[],
+                    rule_name=rule.name,
+                )
+            )
+        elif rtype in ("keyword_block", "keyword_redact"):
+            action = "block" if rtype == "keyword_block" else "redact"
+            keywords = [line.strip() for line in (rule.rule_text or "").splitlines() if line.strip()]
+            detectors.append(
+                GuardrailDetector(
+                    action=action,
+                    detectors=[],
+                    keywords=keywords,
+                    rule_name=rule.name,
+                )
+            )
+        # Unknown rule_type: ignore silently (forward-compatibility).
+
+    return GuardrailsEffective(instructions=instructions, detectors=detectors)

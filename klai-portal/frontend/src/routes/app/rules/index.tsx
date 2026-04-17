@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Shield } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/app/rules/')({
@@ -15,6 +16,13 @@ export const Route = createFileRoute('/app/rules/')({
   ),
 })
 
+type RuleType =
+  | 'instruction'
+  | 'pii_block'
+  | 'pii_redact'
+  | 'keyword_block'
+  | 'keyword_redact'
+
 interface Rule {
   id: number
   name: string
@@ -22,8 +30,63 @@ interface Rule {
   description: string | null
   rule_text: string
   scope: string
+  rule_type: RuleType
   is_active: boolean
   created_by: string
+}
+
+interface RuleFormState {
+  name: string
+  description: string
+  rule_text: string
+  scope: string
+  rule_type: RuleType
+}
+
+const EMPTY_FORM: RuleFormState = {
+  name: '',
+  description: '',
+  rule_text: '',
+  scope: 'global',
+  rule_type: 'instruction',
+}
+
+function getRuleTypeLabel(type: RuleType): string {
+  switch (type) {
+    case 'instruction':
+      return m.rules_type_instruction()
+    case 'pii_block':
+      return m.rules_type_pii_block()
+    case 'pii_redact':
+      return m.rules_type_pii_redact()
+    case 'keyword_block':
+      return m.rules_type_keyword_block()
+    case 'keyword_redact':
+      return m.rules_type_keyword_redact()
+  }
+}
+
+function getRuleTypeBadgeVariant(
+  type: RuleType,
+): 'secondary' | 'destructive' | 'warning' {
+  switch (type) {
+    case 'instruction':
+      return 'secondary'
+    case 'pii_block':
+    case 'keyword_block':
+      return 'destructive'
+    case 'pii_redact':
+    case 'keyword_redact':
+      return 'warning'
+  }
+}
+
+function isPiiType(type: RuleType): boolean {
+  return type === 'pii_block' || type === 'pii_redact'
+}
+
+function isKeywordType(type: RuleType): boolean {
+  return type === 'keyword_block' || type === 'keyword_redact'
 }
 
 function RulesPage() {
@@ -32,7 +95,7 @@ function RulesPage() {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
-  const [form, setForm] = useState({ name: '', description: '', rule_text: '', scope: 'global' })
+  const [form, setForm] = useState<RuleFormState>(EMPTY_FORM)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
 
   const { data, isLoading } = useQuery<Rule[]>({
@@ -42,22 +105,22 @@ function RulesPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: async (body: typeof form) =>
+    mutationFn: async (body: RuleFormState) =>
       apiFetch('/api/app/rules', token, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-rules'] })
       setShowCreate(false)
-      setForm({ name: '', description: '', rule_text: '', scope: 'global' })
+      setForm(EMPTY_FORM)
     },
   })
 
   const updateMutation = useMutation({
-    mutationFn: async ({ slug, body }: { slug: string; body: Partial<typeof form> }) =>
+    mutationFn: async ({ slug, body }: { slug: string; body: Partial<RuleFormState> }) =>
       apiFetch(`/api/app/rules/${slug}`, token, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-rules'] })
       setEditId(null)
-      setForm({ name: '', description: '', rule_text: '', scope: 'global' })
+      setForm(EMPTY_FORM)
     },
   })
 
@@ -74,26 +137,46 @@ function RulesPage() {
 
   function startEdit(r: Rule) {
     setEditId(r.id)
-    setForm({ name: r.name, description: r.description ?? '', rule_text: r.rule_text, scope: r.scope })
+    setForm({
+      name: r.name,
+      description: r.description ?? '',
+      rule_text: r.rule_text,
+      scope: r.scope,
+      rule_type: r.rule_type,
+    })
     setShowCreate(true)
   }
 
   function handleSave() {
+    const body: RuleFormState = {
+      ...form,
+      rule_text: isPiiType(form.rule_type) ? '' : form.rule_text,
+    }
     if (editId) {
       const r = rules.find((r) => r.id === editId)
-      if (r) updateMutation.mutate({ slug: r.slug, body: form })
+      if (r) updateMutation.mutate({ slug: r.slug, body })
     } else {
-      createMutation.mutate(form)
+      createMutation.mutate(body)
     }
   }
 
   function handleCancel() {
     setShowCreate(false)
     setEditId(null)
-    setForm({ name: '', description: '', rule_text: '', scope: 'global' })
+    setForm(EMPTY_FORM)
   }
 
   const isSaving = createMutation.isPending || updateMutation.isPending
+  const needsText = !isPiiType(form.rule_type)
+  const isSaveDisabled =
+    !form.name.trim() || (needsText && !form.rule_text.trim()) || isSaving
+
+  const textFieldLabel = isKeywordType(form.rule_type)
+    ? m.rules_field_keywords_label()
+    : m.rules_field_text_label()
+  const textFieldPlaceholder = isKeywordType(form.rule_type)
+    ? m.rules_field_keywords_placeholder()
+    : m.rules_field_text_placeholder()
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
@@ -108,7 +191,7 @@ function RulesPage() {
         {!showCreate && (
           <button
             type="button"
-            onClick={() => { setEditId(null); setForm({ name: '', description: '', rule_text: '', scope: 'global' }); setShowCreate(true) }}
+            onClick={() => { setEditId(null); setForm(EMPTY_FORM); setShowCreate(true) }}
             className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
           >
             <Plus className="h-4 w-4" />
@@ -125,8 +208,27 @@ function RulesPage() {
           </h2>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{m.rules_field_name_label()}</label>
+            <label htmlFor="rule-type" className="block text-sm font-medium text-gray-700 mb-1">
+              {m.rules_type_label()}
+            </label>
+            <select
+              id="rule-type"
+              value={form.rule_type}
+              onChange={(e) => setForm({ ...form, rule_type: e.target.value as RuleType })}
+              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-gray-400"
+            >
+              <option value="instruction">{m.rules_type_instruction()}</option>
+              <option value="pii_redact">{m.rules_type_pii_redact()}</option>
+              <option value="pii_block">{m.rules_type_pii_block()}</option>
+              <option value="keyword_block">{m.rules_type_keyword_block()}</option>
+              <option value="keyword_redact">{m.rules_type_keyword_redact()}</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="rule-name" className="block text-sm font-medium text-gray-700 mb-1">{m.rules_field_name_label()}</label>
             <input
+              id="rule-name"
               type="text"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -136,8 +238,9 @@ function RulesPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{m.rules_field_description_label()}</label>
+            <label htmlFor="rule-description" className="block text-sm font-medium text-gray-700 mb-1">{m.rules_field_description_label()}</label>
             <input
+              id="rule-description"
               type="text"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
@@ -146,17 +249,24 @@ function RulesPage() {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{m.rules_field_text_label()}</label>
-            <textarea
-              value={form.rule_text}
-              onChange={(e) => setForm({ ...form, rule_text: e.target.value })}
-              placeholder={m.rules_field_text_placeholder()}
-              rows={5}
-              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 resize-none"
-            />
-            <p className="mt-1 text-xs text-gray-400">{form.rule_text.length}/5000</p>
-          </div>
+          {isPiiType(form.rule_type) ? (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
+              <p className="text-xs text-gray-600 leading-relaxed">{m.rules_field_pii_hint()}</p>
+            </div>
+          ) : (
+            <div>
+              <label htmlFor="rule-text" className="block text-sm font-medium text-gray-700 mb-1">{textFieldLabel}</label>
+              <textarea
+                id="rule-text"
+                value={form.rule_text}
+                onChange={(e) => setForm({ ...form, rule_text: e.target.value })}
+                placeholder={textFieldPlaceholder}
+                rows={5}
+                className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 resize-none"
+              />
+              <p className="mt-1 text-xs text-gray-400">{form.rule_text.length}/5000</p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{m.rules_field_scope_label()}</label>
@@ -190,7 +300,7 @@ function RulesPage() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={!form.name.trim() || !form.rule_text.trim() || isSaving}
+              disabled={isSaveDisabled}
               className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors disabled:opacity-50"
             >
               {isSaving ? m.rules_saving() : editId ? m.rules_update_button() : m.rules_save_button()}
@@ -235,8 +345,18 @@ function RulesPage() {
           {rules.map((r) => (
             <div key={r.id} className="rounded-lg border border-gray-200 p-5 hover:shadow-sm transition-shadow">
               <div className="flex items-start justify-between mb-2">
-                <h3 className="text-sm font-semibold text-gray-900">{r.name}</h3>
-                <div className="flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold text-gray-900">{r.name}</h3>
+                  <div className="mt-1.5">
+                    <Badge
+                      variant={getRuleTypeBadgeVariant(r.rule_type)}
+                      className="text-[10px] uppercase tracking-wide"
+                    >
+                      {getRuleTypeLabel(r.rule_type)}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={() => startEdit(r)}
@@ -275,7 +395,9 @@ function RulesPage() {
               {r.description && (
                 <p className="text-xs text-gray-400 mb-2 line-clamp-2">{r.description}</p>
               )}
-              <p className="text-xs text-gray-400 line-clamp-2 mb-3">{r.rule_text}</p>
+              {r.rule_text && (
+                <p className="text-xs text-gray-400 line-clamp-2 mb-3">{r.rule_text}</p>
+              )}
               <div className="flex items-center gap-2">
                 <span className="rounded-full bg-gray-50 px-2.5 py-0.5 text-[10px] font-medium text-gray-700">
                   {r.scope === 'global' ? m.rules_badge_organization() : m.rules_badge_personal()}
