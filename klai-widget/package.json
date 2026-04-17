@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@microsoft/fetch-event-source": "^2.0.1",
+    "snarkdown": "^2.0.0",
     "solid-js": "^1.8.0"
   },
   "devDependencies": {

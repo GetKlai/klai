@@ -171,6 +171,17 @@
   border-bottom-left-radius: 4px;
 }
 
+/* Markdown in assistant messages */
+.klai-markdown p { margin: 0 0 8px; }
+.klai-markdown p:last-child { margin-bottom: 0; }
+.klai-markdown strong { font-weight: 600; }
+.klai-markdown em { font-style: italic; }
+.klai-markdown a { color: var(--klai-primary-color); text-decoration: underline; }
+.klai-markdown ul, .klai-markdown ol { margin: 4px 0 8px 16px; padding: 0; }
+.klai-markdown li { margin-bottom: 2px; }
+.klai-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+.klai-markdown h1, .klai-markdown h2, .klai-markdown h3 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
+
 /* Error message */
 .klai-error {
   align-self: center;
