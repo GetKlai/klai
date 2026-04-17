@@ -67,6 +67,18 @@ function SourcesPage() {
     enabled: !!token,
   })
 
+  // Personal items total (used to compute "N bronnen" on the user's Persoonlijk row)
+  const { data: personalItems } = useQuery<{ total: number }>({
+    queryKey: ['personal-items-total'],
+    queryFn: () =>
+      apiFetch<{ total: number }>(
+        '/api/knowledge/personal/items?limit=1&offset=0',
+        token,
+      ),
+    enabled: !!token,
+  })
+  const personalTotal = personalItems?.total ?? 0
+
   const statsBySlug = statsData?.stats ?? {}
   const allKbs = kbsData?.knowledge_bases ?? []
 
@@ -155,6 +167,7 @@ function SourcesPage() {
               key={kb.id}
               kb={kb}
               stats={statsBySlug[kb.slug]}
+              personalTotal={personalTotal}
               expanded={expandedSlugs.has(kb.slug)}
               onToggle={() => toggleExpand(kb.slug)}
             />
@@ -170,11 +183,13 @@ function SourcesPage() {
 function CollectionRow({
   kb,
   stats,
+  personalTotal,
   expanded,
   onToggle,
 }: {
   kb: KnowledgeBase
   stats: KBStatsSummary | undefined
+  personalTotal: number
   expanded: boolean
   onToggle: () => void
 }) {
@@ -186,6 +201,12 @@ function CollectionRow({
   const navigate = useNavigate()
   const sourceCount = stats?.connectors ?? 0
   const itemCount = stats?.items ?? 0
+  // Source-level count (what the user actually added):
+  // connectors + (for the user's own Persoonlijk) direct file uploads.
+  const isDefaultPersonalRow =
+    kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`
+  const bronnenCount =
+    sourceCount + (isDefaultPersonalRow ? personalTotal : 0)
   const queryClient = useQueryClient()
   const [confirmingDeleteKb, setConfirmingDeleteKb] = useState(false)
   const [confirmingDeleteConnectorId, setConfirmingDeleteConnectorId] = useState<string | null>(null)
@@ -280,16 +301,16 @@ function CollectionRow({
             </Badge>
           )}
           <span className="ml-2 text-xs text-gray-400">
-            {/* items = indexed pieces (includes connector output + uploads).
-                Connectors alone, without content, count via the status badge. */}
-            {itemCount} {itemCount === 1 ? 'bron' : 'bronnen'}
+            {/* Source-level count: connectors + direct uploads. Matches the
+                rows the user added (not the internal chunk count). */}
+            {bronnenCount} {bronnenCount === 1 ? 'bron' : 'bronnen'}
           </span>
         </Link>
 
-        {/* Sync status — unified bronnen count drives this */}
+        {/* Sync status */}
         {itemCount > 0 ? (
           <Badge variant="success">{m.sources_indexed()}</Badge>
-        ) : sourceCount > 0 ? (
+        ) : bronnenCount > 0 ? (
           <Badge variant="warning">Nog niet gesynchroniseerd</Badge>
         ) : (
           <Badge variant="secondary">Leeg</Badge>
@@ -410,13 +431,14 @@ function CollectionRow({
                 </InlineDeleteConfirm>
               )
             })
-          ) : itemCount > 0 ? (
+          ) : bronnenCount > 0 || itemCount > 0 ? (
             <Link
               to="/app/knowledge/$kbSlug/overview"
               params={{ kbSlug: kb.slug }}
               className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-900 px-3 py-2 transition-colors"
             >
-              {itemCount} {itemCount === 1 ? 'bron' : 'bronnen'} — open collectie om te beheren
+              {bronnenCount || itemCount}{' '}
+              {(bronnenCount || itemCount) === 1 ? 'bron' : 'bronnen'} — open collectie om te beheren
               <ChevronRight className="h-3 w-3" />
             </Link>
           ) : (
