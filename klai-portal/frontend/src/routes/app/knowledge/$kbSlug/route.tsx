@@ -9,6 +9,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import type { KBTab, KnowledgeBase, KBStats, MembersResponse } from './-kb-types'
 
 const VALID_TABS = new Set<KBTab>(['overview', 'connectors', 'members', 'items', 'taxonomy', 'settings', 'advanced'])
@@ -84,7 +85,11 @@ function KbLayout() {
 
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
-  const isOwner = isCreator || !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  const isOwnerRole = !!(myUserId && members?.users.some((u) => u.user_id === myUserId && u.role === 'owner'))
+  // Admins have implicit owner rights on every KB in their org (matches backend).
+  const { user: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.isAdmin === true
+  const isOwner = isCreator || isOwnerRole || isAdmin
 
   if (isLoading) {
     return (
