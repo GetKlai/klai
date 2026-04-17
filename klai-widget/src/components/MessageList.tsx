@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
 import type { Message } from "../api/chat-stream";
 
@@ -36,7 +37,11 @@ export function MessageList(props: MessageListProps) {
                 class={`klai-message klai-message--${message.role}`}
                 aria-label={`${message.role === "user" ? "You" : "Assistant"}: ${message.content}`}
               >
-                {message.content}
+                {message.role === "user" ? (
+                  message.content
+                ) : (
+                  <div class="klai-markdown" innerHTML={snarkdown(message.content)} />
+                )}
               </div>
             </Show>
           );

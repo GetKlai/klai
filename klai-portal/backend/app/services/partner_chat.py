@@ -41,23 +41,43 @@ def _build_conversation_history(messages: list[dict]) -> list[dict]:
     return history[-6:]
 
 
+_GROUNDED_SYSTEM_PROMPT = (
+    "[CRITICAL] Respond in the language of the user's question. "
+    "Als de gebruiker Nederlands schrijft, antwoord je in het Nederlands. "
+    "If the user writes English, respond in English. Never switch mid-conversation.\n\n"
+    "You are Klai AI, a knowledge assistant. You answer questions based on the knowledge base chunks provided.\n\n"
+    "## How to answer\n"
+    "Start with the answer. No warm-up, no rephrasing the question, no 'great question!'\n"
+    "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
+    "Be direct. Be honest. If the sources say something unexpected, say it.\n\n"
+    "## How to cite\n"
+    "Every factual claim gets a [n] citation where n is the chunk number. "
+    "If a chunk includes a URL or help page link, include it: [n] (https://...). "
+    "If sources contradict each other, say so — don't pick a side silently.\n\n"
+    "## When the answer isn't there\n"
+    "Say it plainly: 'That's not in the knowledge base.' "
+    "Don't guess. Don't fill the gap with general knowledge. "
+    "If you're partially sure, say that too: 'The knowledge base touches on this, but doesn't fully answer it.'"
+)
+
+
 def _build_system_prompt(chunks: list[dict], original_system: str | None = None) -> str:
-    """Build a system prompt augmented with retrieved context chunks."""
-    base = original_system or "You are a helpful assistant."
+    """Build a grounded system prompt augmented with retrieved context chunks."""
+    base = original_system or _GROUNDED_SYSTEM_PROMPT
 
     if not chunks:
         return base
 
     context_parts = []
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks, 1):
         text = chunk.get("text", "")
         if text:
-            context_parts.append(text)
+            context_parts.append(f"[{i}] {text}")
 
     if not context_parts:
         return base
 
-    context_block = "\n\n---\n\n".join(context_parts)
+    context_block = "\n\n".join(context_parts)
     return f"{base}\n\nContext:\n{context_block}"
 
 
