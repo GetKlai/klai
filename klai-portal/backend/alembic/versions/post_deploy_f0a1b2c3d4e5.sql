@@ -21,10 +21,13 @@ ALTER TABLE widget_kb_access ENABLE ROW LEVEL SECURITY;
 
 -- 4. RLS policies on `widgets`. All commands tenant-scoped on
 --    app.current_org_id (set per request by set_tenant()).
+-- SELECT is permissive (USING true) because the widget-config endpoint
+-- is public (no auth header) and must look up widgets by widget_id
+-- without tenant context. Same pattern as partner_select on partner_api_keys.
 DROP POLICY IF EXISTS widgets_select ON widgets;
 CREATE POLICY widgets_select ON widgets
     FOR SELECT TO portal_api
-    USING (org_id = current_setting('app.current_org_id', true)::integer);
+    USING (true);
 
 DROP POLICY IF EXISTS widgets_insert ON widgets;
 CREATE POLICY widgets_insert ON widgets
