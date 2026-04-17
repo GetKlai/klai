@@ -280,12 +280,12 @@ function CollectionRow({
             </Badge>
           )}
           <span className="ml-2 text-xs text-gray-400">
-            {itemCount} {itemCount === 1 ? 'bestand' : 'bestanden'} · {sourceCount}{' '}
-            {sourceCount === 1 ? 'bron' : 'bronnen'}
+            {itemCount + sourceCount}{' '}
+            {itemCount + sourceCount === 1 ? 'bron' : 'bronnen'}
           </span>
         </Link>
 
-        {/* Sync badge */}
+        {/* Sync status — unified bronnen count drives this */}
         {itemCount > 0 ? (
           <Badge variant="success">{m.sources_indexed()}</Badge>
         ) : sourceCount > 0 ? (
