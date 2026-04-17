@@ -207,6 +207,17 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
     mutation.mutate({ kb_slugs_filter: next.length === 0 || next.length === allSlugs.length ? null : next })
   }
 
+  const allActive = (pref?.kb_personal_enabled ?? false) && currentSlugs.length === allSlugs.length
+  function toggleAll() {
+    if (allActive) {
+      // Turn everything off: empty filter list + disable personal
+      mutation.mutate({ kb_slugs_filter: [], kb_personal_enabled: false })
+    } else {
+      // Turn everything on: null filter (= all org KBs) + enable personal
+      mutation.mutate({ kb_slugs_filter: null, kb_personal_enabled: true })
+    }
+  }
+
   if (!pref || allKbs.length === 0) return null
 
   // Build list of active collection names
@@ -231,8 +242,15 @@ function ChatConfigBar({ token }: { token: string | undefined }) {
 
         {collOpen && (
           <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
-            <div className="px-3 py-1.5">
+            <div className="flex items-center justify-between px-3 py-1.5">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Collecties</span>
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 hover:text-gray-900 transition-colors"
+              >
+                {allActive ? 'Alles uit' : 'Alles aan'}
+              </button>
             </div>
             {/* Personal */}
             <button type="button" onClick={() => mutation.mutate({ kb_personal_enabled: !pref.kb_personal_enabled })}
