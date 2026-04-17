@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import structlog
 
 from retrieval_api.config import settings
+from retrieval_api.services.diversity import STOP_WORDS
 
 logger = structlog.get_logger()
 
@@ -91,48 +92,6 @@ class RoutingDecision:
 _centroid_cache: dict[str, tuple[dict[str, list[float]], float]] = {}
 
 
-# Common Dutch/English words that appear in KB names/descriptions but are too
-# generic to be routing signals.  Kept short — only words that caused false
-# positives in testing (Voys/Mitel/Ascend multi-source scenario).
-_STOP_WORDS: set[str] = {
-    "help",
-    "docs",
-    "wiki",
-    "info",
-    "data",
-    "page",
-    "site",
-    "team",
-    "voor",
-    "over",
-    "alle",
-    "deze",
-    "onze",
-    "meer",
-    "door",
-    "naar",
-    "with",
-    "from",
-    "that",
-    "this",
-    "your",
-    "about",
-    "what",
-    "will",
-    "documentatie",
-    "interne",
-    "externe",
-    "handleiding",
-    "informatie",
-    "helpcenter",
-    "helpdesk",
-    "support",
-    "klant",
-    "intern",
-    "kennis",
-}
-
-
 def _build_keyword_map(catalog: list[KBEntry]) -> dict[str, set[str]]:
     """Build {term -> set of source_labels} map from catalog entries.
 
@@ -155,7 +114,7 @@ def _build_keyword_map(catalog: list[KBEntry]) -> dict[str, set[str]]:
                     tokens.add(word)
 
         for token in tokens:
-            if token in _STOP_WORDS:
+            if token in STOP_WORDS:
                 continue
             if token not in keyword_map:
                 keyword_map[token] = set()

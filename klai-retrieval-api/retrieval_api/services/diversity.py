@@ -21,7 +21,8 @@ logger = structlog.get_logger()
 _UNKNOWN = "_unknown"
 
 # Common words that appear in source labels but are too generic for matching.
-_STOP_WORDS: set[str] = {
+# Shared with router.py (imported there).
+STOP_WORDS: set[str] = {
     "help",
     "docs",
     "wiki",
@@ -80,7 +81,7 @@ def _detect_mentioned_sources(
         seen.add(label)
 
         tokens = [
-            t for t in re.split(r"[-./:]", label.lower()) if len(t) > 3 and t not in _STOP_WORDS
+            t for t in re.split(r"[-./:]", label.lower()) if len(t) > 3 and t not in STOP_WORDS
         ]
         if any(token in query_lower for token in tokens):
             mentioned.add(label)
