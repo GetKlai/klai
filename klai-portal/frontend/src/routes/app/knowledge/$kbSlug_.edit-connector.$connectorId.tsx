@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, AlertTriangle, Globe, FileText, Shield, Info, Eye,
-  CheckCircle2, Loader2, Sparkles,
+  CheckCircle2, Loader2, Sparkles, Settings, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -92,6 +92,7 @@ function EditConnectorPage() {
   const [isReconnecting, setIsReconnecting] = useState(false)
 
   // Web crawler preview state
+  const [showAdvancedSelector, setShowAdvancedSelector] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
   const [wcCookies, setWcCookies] = useState('')
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
@@ -143,6 +144,7 @@ function EditConnectorPage() {
       })
       setCanaryUrl(cfg.canary_url ?? '')
       setLoginIndicatorSelector(cfg.login_indicator_selector ?? '')
+      if (cfg.content_selector) setShowAdvancedSelector(true)
     }
     if (connector.connector_type === 'github') {
       const cfg = connector.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
@@ -265,17 +267,9 @@ function EditConnectorPage() {
           <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
             {m.admin_connectors_edit_title()}
           </h1>
-          {connector && (() => {
-            const info = CONNECTOR_TYPE_MAP[connector.connector_type]
-            const Icon = info?.Icon ?? FileText
-            const label = info?.label ?? connector.connector_type
-            return (
-              <div className="flex items-center gap-1.5">
-                <Icon className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
-                <Badge variant="secondary" className="text-xs font-normal">{label}</Badge>
-              </div>
-            )
-          })()}
+          {connector && (
+            <p className="text-sm text-[var(--color-muted-foreground)]">{connector.name}</p>
+          )}
         </div>
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -352,26 +346,58 @@ function EditConnectorPage() {
                   </div>
                 )}
 
-                {/* ── Preview ── */}
+                {/* ── Preview (mirrors add-connector wizard step 3) ── */}
                 {activeTab === 'preview' && (
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
                       <Input id="edit-conn-preview-url" type="url" placeholder={webcrawlerConfig.base_url} value={wcPreviewUrl} onChange={(e) => setWcPreviewUrl(e.target.value)} />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-content-selector">Content selector</Label>
-                      <Input id="edit-conn-content-selector" placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()} value={webcrawlerConfig.content_selector} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))} />
-                      <p className="text-xs text-[var(--color-muted-foreground)]">Only needed if the preview picks up menus instead of the article.</p>
-                    </div>
+
+                    {/* Content selector — advanced toggle (same as wizard) */}
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                      onClick={() => setShowAdvancedSelector((p) => !p)}
+                    >
+                      <Settings className="h-3 w-3" />
+                      Content selector
+                      {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    </button>
+                    {showAdvancedSelector && (
+                      <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-1.5">
+                        <Input
+                          id="edit-conn-content-selector"
+                          placeholder={m.admin_connectors_webcrawler_content_selector_placeholder()}
+                          value={webcrawlerConfig.content_selector}
+                          onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
+                        />
+                        <p className="text-xs text-[var(--color-muted-foreground)]">
+                          Only needed if the preview picks up menus instead of the article.
+                          Leave empty to let AI detect this automatically.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* AI selector detection */}
                     {!webcrawlerConfig.content_selector && (
-                      <button type="button" className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50" disabled={previewMutation.isPending || !webcrawlerConfig.base_url} onClick={() => runPreview({ try_ai: true })}>
-                        <Sparkles className="h-3 w-3" />{m.admin_connectors_webcrawler_try_ai()}
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                        disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
+                        onClick={() => runPreview({ try_ai: true })}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {m.admin_connectors_webcrawler_try_ai()}
                       </button>
                     )}
+
+                    {/* Run preview */}
                     <Button type="button" size="sm" variant="outline" disabled={previewMutation.isPending || !webcrawlerConfig.base_url} onClick={() => runPreview()}>
                       {previewMutation.isPending ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_preview_loading()}</> : m.admin_connectors_webcrawler_run_preview()}
                     </Button>
+
+                    {/* Results */}
                     {previewError && !previewMutation.isPending && <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>}
                     {previewMutation.isPending && (
                       <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]"><Loader2 className="h-4 w-4 animate-spin" />{m.admin_connectors_webcrawler_preview_loading()}</div>
@@ -383,12 +409,26 @@ function EditConnectorPage() {
                       <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span></div>
                     )}
                     {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
-                      <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span>{m.admin_connectors_webcrawler_preview_no_content()}</span></div>
+                      <div className="space-y-2">
+                        <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span>{m.admin_connectors_webcrawler_preview_no_content()}</span></div>
+                        {!webcrawlerConfig.content_selector && (
+                          <button type="button" className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors" onClick={() => runPreview({ try_ai: true })}>
+                            <Sparkles className="h-3 w-3" />{m.admin_connectors_webcrawler_try_ai()}
+                          </button>
+                        )}
+                      </div>
                     )}
                     {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-3 space-y-1.5"><p className="text-xs font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_ai_selector_use()}</p><code className="text-xs text-[var(--color-accent-dark)] font-mono">{previewResult.content_selector}</code></div>
+                      <div className="rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3 space-y-2">
+                        <div className="flex gap-2 items-center text-xs text-[var(--color-accent)]"><Sparkles className="h-3.5 w-3.5 shrink-0" /><span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span></div>
+                        {webcrawlerConfig.content_selector !== previewResult.content_selector && (
+                          <Button type="button" size="sm" variant="outline" className="text-xs h-7" onClick={() => { setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! })); setShowAdvancedSelector(true) }}>
+                            {m.admin_connectors_webcrawler_ai_selector_use()}
+                          </Button>
+                        )}
+                      </div>
                     )}
-                    {previewResult !== null && !previewMutation.isPending && previewResult.fit_markdown && (
+                    {previewResult !== null && !previewMutation.isPending && previewResult.word_count > 0 && (
                       <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
                         <div className="flex items-center justify-between"><span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span><span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span></div>
                         <div className={MARKDOWN_PROSE_CLASSES}><ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown></div>
