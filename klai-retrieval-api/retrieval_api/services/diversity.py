@@ -93,11 +93,11 @@ def source_aware_select(
     query_resolved: str,
     top_n: int = 5,
     max_per_source: int = 2,
+    router_selected: set[str] | None = None,
 ) -> tuple[list[dict], dict]:
     """Select top-N chunks with source-aware diversity.
 
-    One function that replaces both the pre-search router and post-rerank quota.
-    Uses actual reranker scores — no centroids, no label embeddings.
+    Uses reranker scores + optional router signal for source selection.
 
     Behaviour:
     1. If query mentions specific source(s): those sources get all slots.
@@ -114,8 +114,10 @@ def source_aware_select(
             "mentioned_sources": [],
         }
 
-    # Step 1: detect if query mentions specific sources
+    # Step 1: detect relevant sources — from query keywords AND router decision
     mentioned = _detect_mentioned_sources(reranked, query_resolved)
+    if router_selected:
+        mentioned = mentioned | router_selected
 
     if mentioned:
         # Query is source-specific → give mentioned sources all slots.
@@ -136,8 +138,16 @@ def source_aware_select(
             selected=len(selected),
             source_counts=counts,
         )
+        # Distinguish keyword-only, router-only, or both
+        keyword_mentioned = _detect_mentioned_sources(reranked, query_resolved)
+        mode = "mentioned"
+        if router_selected and keyword_mentioned:
+            mode = "keyword+router"
+        elif router_selected:
+            mode = "router"
+
         return selected, {
-            "source_select_mode": "mentioned",
+            "source_select_mode": mode,
             "source_counts": counts,
             "mentioned_sources": sorted(mentioned),
         }

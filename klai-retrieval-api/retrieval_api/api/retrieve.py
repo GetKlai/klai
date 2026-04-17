@@ -22,6 +22,7 @@ from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
+from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = structlog.get_logger(__name__)
@@ -100,8 +101,36 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     link_expand_ms: float | None = None
     link_expand_count = 0
 
-    # Source routing is handled post-rerank by source_aware_select (step 5b).
-    # No pre-search filtering — search always covers all sources.
+    # 3b. Query router — identifies relevant sources for post-rerank selection
+    router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
+    router_selected: set[str] | None = None
+    if (
+        req.kb_slugs is None
+        and settings.router_enabled
+        and req.scope in ("org", "both")
+        and not bypassed
+    ):
+        source_label_catalog = await fetch_source_catalog(req.org_id)
+        if len(source_label_catalog) >= settings.router_min_source_label_count:
+            routing = await route_to_sources(
+                query_resolved=query_resolved,
+                query_vector=query_vector,
+                org_id=req.org_id,
+                source_label_catalog=source_label_catalog,
+                margin_single=settings.router_margin_single,
+                margin_dual=settings.router_margin_dual,
+                llm_fallback=settings.router_llm_fallback,
+                centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
+            )
+            if routing.selected_source_labels:
+                router_selected = set(routing.selected_source_labels)
+            router_meta = {
+                "router_decision": routing.selected_source_labels,
+                "router_layer_used": routing.layer_used,
+                "router_margin": routing.margin,
+                "router_centroid_cache_hit": routing.cache_hit,
+            }
+    decision_record["router"] = router_meta
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
@@ -202,6 +231,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 query_resolved,
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
+                router_selected=router_selected,
             )
         else:
             source_meta = {

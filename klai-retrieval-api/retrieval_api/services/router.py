@@ -32,9 +32,11 @@ async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
     from retrieval_api.services.search import _get_client
 
     client = _get_client()
-    facet_filter = Filter(must=[
-        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-    ])
+    facet_filter = Filter(
+        must=[
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+        ]
+    )
 
     try:
         result = await client.facet(
@@ -93,11 +95,41 @@ _centroid_cache: dict[str, tuple[dict[str, list[float]], float]] = {}
 # generic to be routing signals.  Kept short — only words that caused false
 # positives in testing (Voys/Mitel/Ascend multi-source scenario).
 _STOP_WORDS: set[str] = {
-    "help", "docs", "wiki", "info", "data", "page", "site", "team",
-    "voor", "over", "alle", "deze", "onze", "meer", "door", "naar",
-    "with", "from", "that", "this", "your", "about", "what", "will",
-    "documentatie", "interne", "externe", "handleiding", "informatie",
-    "helpcenter", "helpdesk", "support", "klant", "intern", "kennis",
+    "help",
+    "docs",
+    "wiki",
+    "info",
+    "data",
+    "page",
+    "site",
+    "team",
+    "voor",
+    "over",
+    "alle",
+    "deze",
+    "onze",
+    "meer",
+    "door",
+    "naar",
+    "with",
+    "from",
+    "that",
+    "this",
+    "your",
+    "about",
+    "what",
+    "will",
+    "documentatie",
+    "interne",
+    "externe",
+    "handleiding",
+    "informatie",
+    "helpcenter",
+    "helpdesk",
+    "support",
+    "klant",
+    "intern",
+    "kennis",
 }
 
 
@@ -131,9 +163,7 @@ def _build_keyword_map(catalog: list[KBEntry]) -> dict[str, set[str]]:
     return keyword_map
 
 
-def layer1_keyword(
-    query_resolved: str, keyword_map: dict[str, set[str]]
-) -> list[str] | None:
+def layer1_keyword(query_resolved: str, keyword_map: dict[str, set[str]]) -> list[str] | None:
     """Layer 1: exact keyword matching. Returns matched source_labels or None."""
     query_lower = query_resolved.lower()
     matched: set[str] = set()
@@ -191,19 +221,51 @@ def layer2_semantic(
 
 
 async def _default_compute_centroids(catalog: list[KBEntry]) -> dict[str, list[float]]:
-    """Compute centroids by embedding each source_label's name via TEI.
+    """Compute centroids from actual chunk vectors per source_label in Qdrant.
 
-    Used in production when no compute_centroid_fn is injected.
+    For each source_label, fetches a small sample of chunks and averages
+    their dense vectors.  This produces a content-based centroid that
+    represents what a source actually contains — not just what it's called.
     """
-    from retrieval_api.services.tei import embed_single
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
 
+    from retrieval_api.services.search import _get_client
+
+    client = _get_client()
     centroids: dict[str, list[float]] = {}
+
     for entry in catalog:
         try:
-            vec = await embed_single(entry.name)
-            centroids[entry.source_label] = vec
+            # Scroll a small sample of chunks for this source_label
+            points, _ = await client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="source_label", match=MatchValue(value=entry.source_label)
+                        ),
+                    ]
+                ),
+                limit=10,
+                with_payload=False,
+                with_vectors=["vector_chunk"],
+            )
+            if not points:
+                continue
+
+            # Average the dense vectors to create a content-based centroid
+            vecs = [
+                p.vector["vector_chunk"] for p in points if p.vector and "vector_chunk" in p.vector
+            ]
+            if not vecs:
+                continue
+
+            dim = len(vecs[0])
+            avg = [sum(v[i] for v in vecs) / len(vecs) for i in range(dim)]
+            centroids[entry.source_label] = avg
         except Exception:
-            logger.warning("centroid_embed_failed", source_label=entry.source_label)
+            logger.warning("centroid_compute_failed", source_label=entry.source_label)
+
     return centroids
 
 
