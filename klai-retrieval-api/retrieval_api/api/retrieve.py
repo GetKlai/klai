@@ -20,7 +20,9 @@ from retrieval_api.metrics import (
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
+from retrieval_api.services.diversity import source_quota_select
 from retrieval_api.services.events import emit_event
+from retrieval_api.services.router import KBEntry, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = structlog.get_logger(__name__)
@@ -59,12 +61,21 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
 
     t0 = time.perf_counter()
+    # @MX:NOTE: [AUTO] Shadow log for parameter tuning (SPEC-KB-021 Change 4).
+    # decision_record accumulates timing + decision data throughout the pipeline
+    # and is emitted as retrieval_decision_record at the end of the request.
+    decision_record: dict = {}
 
     # 1. Coreference resolution
     t_coref = time.perf_counter()
     query_resolved = await coreference.resolve(req.query, req.conversation_history)
     coref_ms = (time.perf_counter() - t_coref) * 1000
     step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
+    try:
+        decision_record["coreference_rewrite"] = {"original": req.query, "resolved": query_resolved}
+        decision_record["coreference_ms"] = round(coref_ms, 1)
+    except Exception:  # noqa: S110
+        pass
 
     # 2. Embed resolved query (dense + sparse in parallel)
     t_embed = time.perf_counter()
@@ -74,9 +85,20 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     )
     embed_ms = (time.perf_counter() - t_embed) * 1000
     step_latency_seconds.labels(step="embed").observe(time.perf_counter() - t_embed)
+    try:
+        decision_record["embedding_ms"] = round(embed_ms, 1)
+    except Exception:  # noqa: S110
+        pass
 
     # 3. Gate check
     bypassed, gate_margin = await gate.should_bypass(query_vector)
+
+    try:
+        decision_record["gate_margin"] = round(gate_margin, 4) if gate_margin is not None else None
+        decision_record["gate_bypassed"] = bypassed
+        decision_record["gate_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    except Exception:  # noqa: S110
+        pass
 
     chunks_out: list[ChunkResult] = []
     candidates_retrieved = 0
@@ -87,6 +109,49 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     graph_search_ms: float | None = None
     link_expand_ms: float | None = None
     link_expand_count = 0
+
+    # 3b. Query router (SPEC-KB-021 Change 3) — only when user has not set explicit scope
+    router_meta: dict = {
+        "router_decision": None,
+        "router_layer_used": "skipped",
+        "router_margin": None,
+        "router_centroid_cache_hit": False,
+    }
+    if (
+        req.kb_slugs is None
+        and settings.router_enabled
+        and req.scope in ("org", "both")
+        and not bypassed
+    ):
+        # Build KBEntry catalog from source_labels present in the request context.
+        # For now we pass an empty catalog — router activates when catalog is populated
+        # (e.g. from Qdrant distinct source_labels or portal metadata, future work).
+        # The router needs at least router_min_source_label_count entries to activate.
+        source_label_catalog: list[KBEntry] = []
+
+        if len(source_label_catalog) >= settings.router_min_source_label_count:
+            routing = await route_to_sources(
+                query_resolved=query_resolved,
+                query_vector=query_vector,
+                org_id=req.org_id,
+                source_label_catalog=source_label_catalog,
+                margin_single=settings.router_margin_single,
+                margin_dual=settings.router_margin_dual,
+                llm_fallback=settings.router_llm_fallback,
+                centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
+            )
+            req.source_labels = routing.selected_source_labels
+            router_meta = {
+                "router_decision": routing.selected_source_labels,
+                "router_layer_used": routing.layer_used,
+                "router_margin": routing.margin,
+                "router_centroid_cache_hit": routing.cache_hit,
+            }
+
+    try:
+        decision_record["router"] = router_meta
+    except Exception:  # noqa: S110
+        pass
 
     if not bypassed:
         # 4. Search — Qdrant + Graphiti in parallel (AC-5)
@@ -106,6 +171,10 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         raw_results = await qdrant_coro
         qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
         step_latency_seconds.labels(step="qdrant").observe(time.perf_counter() - t_qdrant)
+        try:
+            decision_record["search_ms"] = round(qdrant_ms, 1)
+        except Exception:  # noqa: S110
+            pass
 
         if graph_task is not None and t_graph is not None:
             try:
@@ -119,6 +188,10 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 logger.warning("Graph search task failed", error=str(exc))
 
         candidates_retrieved = len(raw_results)
+        try:
+            decision_record["search_candidates_count"] = candidates_retrieved
+        except Exception:  # noqa: S110
+            pass
 
         # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
         if settings.link_expand_enabled and req.scope != "notebook" and raw_results:
@@ -127,7 +200,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             candidate_urls: list[str] = []
             seen_urls: set[str] = set()
             for chunk in seed_chunks:
-                for url in (chunk.get("links_to") or []):
+                for url in chunk.get("links_to") or []:
                     if url not in seen_urls:
                         seen_urls.add(url)
                         candidate_urls.append(url)
@@ -169,12 +242,46 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
             rerank_ms = (time.perf_counter() - t_rerank) * 1000
             step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
             reranked_to = len(reranked)
+            try:
+                decision_record["rerank_ms"] = round(rerank_ms, 1)
+                decision_record["reranker_scores_top5"] = [
+                    r.get("reranker_score") or r.get("score", 0) for r in reranked[:5]
+                ]
+            except Exception:  # noqa: S110
+                pass
         else:
             reranked = raw_results[: req.top_k]
             reranked_to = len(reranked)
 
-        # 5b. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
+        # 5b. Source quota (SPEC-KB-021 Change 2)
+        if settings.source_quota_enabled:
+            reranked, quota_meta = source_quota_select(
+                reranked,
+                query_resolved,
+                top_n=req.top_k,
+                max_per_source=settings.source_quota_max_per_source,
+                bypass_on_mention=settings.source_quota_bypass_on_mention,
+            )
+        else:
+            quota_meta: dict = {
+                "quota_applied": False,
+                "quota_per_source_counts": {},
+                "quota_bypass_reason": "disabled",
+                "quota_bypass_source_label": None,
+            }
+        try:
+            decision_record["quota"] = quota_meta
+        except Exception:  # noqa: S110
+            pass
+
+        # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
         reranked = quality_boost(reranked)
+        try:
+            decision_record["quality_boost_applied"] = any(
+                r.get("feedback_count", 0) >= 3 for r in reranked
+            )
+        except Exception:  # noqa: S110
+            pass
 
         # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every
         # request but serves flat results. Diffs logged as shadow_eval to
@@ -185,8 +292,14 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         # validation confirms improvement.
         # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
         shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "true").lower() in (
-            "true", "1", "yes",
+            "true",
+            "1",
+            "yes",
         )
+        try:
+            decision_record["evidence_shadow_mode"] = shadow_mode
+        except Exception:  # noqa: S110
+            pass
         scored = evidence_tier.apply(copy.deepcopy(reranked))
 
         if shadow_mode:
@@ -228,6 +341,8 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
                 source_ref=r.get("source_ref"),
                 source_connector_id=r.get("source_connector_id"),
                 source_url=r.get("source_url"),
+                kb_slug=r.get("kb_slug"),
+                source_label=r.get("source_label"),
                 title=r.get("title"),
                 image_urls=r.get("image_urls"),
             )
@@ -238,6 +353,17 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     step_latency_seconds.labels(step="total").observe(retrieval_ms / 1000)
     retrieval_requests_total.labels(scope=req.scope, bypassed=str(bypassed).lower()).inc()
     retrieval_chunks_total.labels(scope=req.scope).observe(len(chunks_out))
+
+    try:
+        decision_record["total_ms"] = round(retrieval_ms, 1)
+        logger.info(
+            "retrieval_decision_record",
+            org_id=req.org_id,
+            scope=req.scope,
+            **decision_record,
+        )
+    except Exception:  # noqa: S110
+        pass
 
     logger.info(
         "retrieve",
@@ -256,6 +382,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         link_expand_count=link_expand_count,
         gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
         retrieval_bypassed=bypassed,
+        **router_meta,
     )
 
     # SPEC-GRAFANA-METRICS: knowledge.queried event (skip notebook scope — Focus has its own)

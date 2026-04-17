@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Qdrant client warns about API key over HTTP; safe inside Docker network
 warnings.filterwarnings("ignore", message="Api key is used with an insecure connection")
 
+import structlog
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     FieldCondition,
@@ -25,8 +26,6 @@ from qdrant_client.models import (
     Prefetch,
     SparseVector,
 )
-
-import structlog
 
 from retrieval_api.config import settings
 from retrieval_api.models import RetrieveRequest
@@ -55,7 +54,7 @@ def _invalid_at_filter() -> Filter:
     range filters on absent fields return no match (so must_not = pass).
     The old is_null=True approach did not match absent fields in Qdrant 1.17+.
     """
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     return Filter(
         must_not=[
             FieldCondition(
@@ -108,6 +107,11 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
             conditions.append(
                 FieldCondition(key="kb_slug", match=MatchAny(any=request.kb_slugs))
             )
+    # SPEC-KB-021 Change 3: router-selected source label filter (additional condition)
+    if request.source_labels:
+        conditions.append(
+            FieldCondition(key="source_label", match=MatchAny(any=request.source_labels))
+        )
     return conditions
 
 
@@ -139,7 +143,7 @@ async def _search_notebook(
             ),
             timeout=5.0,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.error("qdrant_search_failed", collection=settings.qdrant_focus_collection, error=str(exc))
         raise
 
@@ -239,7 +243,7 @@ async def _search_knowledge(
             ),
             timeout=5.0,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.error("qdrant_search_failed", collection=settings.qdrant_collection, error=str(exc))
         raise
 
@@ -260,6 +264,8 @@ async def _search_knowledge(
             "source_url": r.payload.get("source_url"),
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
+            "kb_slug": r.payload.get("kb_slug"),
+            "source_label": r.payload.get("source_label"),
             "title": r.payload.get("title"),
             "image_urls": r.payload.get("image_urls"),
             "links_to": r.payload.get("links_to", []),
@@ -305,7 +311,7 @@ async def fetch_chunks_by_urls(
             ),
             timeout=3.0,
         )
-    except (asyncio.TimeoutError, Exception) as exc:
+    except (TimeoutError, Exception) as exc:
         logger.warning("link_expand_failed", error=str(exc))
         return []
 
@@ -326,6 +332,8 @@ async def fetch_chunks_by_urls(
             "source_url": r.payload.get("source_url"),
             "source_ref": r.payload.get("source_ref"),
             "source_connector_id": r.payload.get("source_connector_id"),
+            "kb_slug": r.payload.get("kb_slug"),
+            "source_label": r.payload.get("source_label"),
             "title": r.payload.get("title"),
             "image_urls": r.payload.get("image_urls"),
             "links_to": r.payload.get("links_to", []),

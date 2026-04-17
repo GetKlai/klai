@@ -177,6 +177,10 @@ def _parse_knowledge_fields(
     return result
 
 
+# SPEC-KB-021: imported here so callers in this module use the short name
+from knowledge_ingest.source_label import compute_source_label as _compute_source_label  # noqa: E402
+
+
 async def _graphiti_background(
     artifact_id: str,
     document_text: str,
@@ -372,6 +376,14 @@ async def ingest_document(req: IngestRequest) -> dict:
         extra_payload["tags"] = merged_tags
     # content_label into extra_payload so enrichment pipeline preserves it (SPEC-KB-023)
     extra_payload["content_label"] = content_label
+    # source_label + source enrichment fields for enrichment pipeline (SPEC-KB-021)
+    extra_payload["source_label"] = _compute_source_label(req)
+    if req.kb_name:
+        extra_payload["kb_name"] = req.kb_name
+    if req.connector_type:
+        extra_payload["connector_type"] = req.connector_type
+    if req.source_domain:
+        extra_payload["source_domain"] = req.source_domain
     # Visibility is authoritative from kb_config — set last so req.extra cannot override it
     extra_payload["visibility"] = visibility
 
