@@ -175,31 +175,36 @@ function KBPageEditor() {
         void refetchTree()
         void refetchPageIndex()
       } catch (err: unknown) {
-        // SHA mismatch (Gitea 422 → docs-app 500): refresh SHA from server and retry once.
-        // This handles the race where a concurrent save (e.g. beforeunload) updated the file
-        // between our SHA read and our PUT, invalidating our SHA.
+        // 409 Conflict = SHA mismatch: the server returns the current SHA in the
+        // response body so we can update shaRef and retry without an extra GET.
         const status = (err as { status?: number })?.status
-        if (status === 500 && shaRef.current) {
-          editorLogger.warn('Save SHA conflict, refreshing SHA and retrying', { slug: currentSlug })
+        if (status === 409) {
+          // Extract fresh SHA from the 409 response body (ApiError.detail is JSON)
+          let freshSha: string | null = null
           try {
-            const fresh = await apiFetch<{ sha?: string }>(
-              `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok
-            )
-            if (fresh.sha) shaRef.current = fresh.sha
-            const retry = await apiFetch<{ ok: boolean; sha: string | null }>(
-              `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
-                method: 'PUT',
-                body: JSON.stringify({ title, content, icon, sha: shaRef.current }),
-              }
-            )
-            if (retry.sha) shaRef.current = retry.sha
-            setSaveStatus('saved')
-            setTimeout(() => setSaveStatus('idle'), 2000)
-            void refetchTree()
-            void refetchPageIndex()
-            return
-          } catch (retryErr) {
-            editorLogger.error('Save retry after SHA refresh also failed', { slug: currentSlug, retryErr })
+            const parsed = JSON.parse((err as { detail?: string })?.detail ?? '{}')
+            freshSha = parsed.sha ?? null
+          } catch { /* detail wasn't JSON, fall through */ }
+
+          if (freshSha) {
+            editorLogger.warn('Save SHA conflict (409), retrying with server SHA', { slug: currentSlug })
+            shaRef.current = freshSha
+            try {
+              const retry = await apiFetch<{ ok: boolean; sha: string | null }>(
+                `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
+                  method: 'PUT',
+                  body: JSON.stringify({ title, content, icon, sha: shaRef.current }),
+                }
+              )
+              if (retry.sha) shaRef.current = retry.sha
+              setSaveStatus('saved')
+              setTimeout(() => setSaveStatus('idle'), 2000)
+              void refetchTree()
+              void refetchPageIndex()
+              return
+            } catch (retryErr) {
+              editorLogger.error('Save retry after SHA refresh also failed', { slug: currentSlug, retryErr })
+            }
           }
         }
         editorLogger.error('Page save failed', { slug: currentSlug, err })
@@ -231,6 +236,10 @@ function KBPageEditor() {
   // Flush pending save on full-page navigation (address bar, browser back/forward).
   // fetch with keepalive:true continues after the page unloads and supports auth headers.
   // Sidebar navigation is handled by doSaveRef (called in route.tsx onSelect).
+  //
+  // Guard: only fires when there is a pending timer (unsaved changes not yet queued).
+  // If saveTimerRef is null, either there are no unsaved changes or a save is already
+  // in the queue — in both cases, the queued save's keepalive fetch will finish on its own.
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (!saveTimerRef.current) return
