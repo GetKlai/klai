@@ -125,10 +125,7 @@ function ProfileSection({ token }: { token: string | undefined }) {
   })
 
   const name =
-    me?.name ??
-    auth.user?.profile?.name ??
-    (auth.user?.profile?.preferred_username as string | undefined) ??
-    ''
+    me?.name ?? auth.user?.profile?.name ?? auth.user?.profile?.preferred_username ?? ''
   const email = me?.email ?? auth.user?.profile?.email ?? ''
 
   return (
