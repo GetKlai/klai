@@ -123,10 +123,9 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         and req.scope in ("org", "both")
         and not bypassed
     ):
-        # Build KBEntry catalog from source_labels present in the request context.
-        # For now we pass an empty catalog — router activates when catalog is populated
-        # (e.g. from Qdrant distinct source_labels or portal metadata, future work).
-        # The router needs at least router_min_source_label_count entries to activate.
+        # TODO(SPEC-KB-021): Populate catalog from Qdrant distinct source_label values
+        # or portal KB metadata API.  Until this is implemented, the router is inert
+        # (router_enabled defaults to False in config.py).
         source_label_catalog: list[KBEntry] = []
 
         if len(source_label_catalog) >= settings.router_min_source_label_count:

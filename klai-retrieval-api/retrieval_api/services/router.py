@@ -31,44 +31,58 @@ class RoutingDecision:
 _centroid_cache: dict[str, tuple[dict[str, list[float]], float]] = {}
 
 
-def _build_keyword_map(catalog: list[KBEntry]) -> dict[str, str]:
-    """Build {term -> source_label} map from catalog entries.
+# Common Dutch/English words that appear in KB names/descriptions but are too
+# generic to be routing signals.  Kept short — only words that caused false
+# positives in testing (Voys/Mitel/Ascend multi-source scenario).
+_STOP_WORDS: set[str] = {
+    "help", "docs", "wiki", "info", "data", "page", "site", "team",
+    "voor", "over", "alle", "deze", "onze", "meer", "door", "naar",
+    "with", "from", "that", "this", "your", "about", "what", "will",
+    "documentatie", "interne", "externe", "handleiding", "informatie",
+    "helpcenter", "helpdesk", "support", "klant", "intern", "kennis",
+}
 
-    Splits each source_label and name on common separators (-./: and space),
-    keeps tokens with len > 3, maps each token to its source_label.
+
+def _build_keyword_map(catalog: list[KBEntry]) -> dict[str, set[str]]:
+    """Build {term -> set of source_labels} map from catalog entries.
+
+    Only uses source_label and name tokens — NOT description words, because
+    descriptions contain too many generic terms that cause false-positive routing.
+    Filters out stop words.
     """
-    keyword_map: dict[str, str] = {}
+    keyword_map: dict[str, set[str]] = {}
     for entry in catalog:
-        # Split source_label on separators
         tokens: set[str] = set()
+        # Split source_label on separators
         for sep_char in "-./: ":
             for part in entry.source_label.split(sep_char):
                 if len(part) > 3:
                     tokens.add(part.lower())
-        # Also split name
+        # Also split name (but NOT description — too many generic words)
         if entry.name:
             for word in entry.name.lower().split():
                 if len(word) > 3:
                     tokens.add(word)
-        # Also split description words
-        if entry.description:
-            for word in entry.description.lower().split():
-                if len(word) > 3:
-                    tokens.add(word)
 
         for token in tokens:
-            keyword_map[token] = entry.source_label
+            if token in _STOP_WORDS:
+                continue
+            if token not in keyword_map:
+                keyword_map[token] = set()
+            keyword_map[token].add(entry.source_label)
     return keyword_map
 
 
-def layer1_keyword(query_resolved: str, keyword_map: dict[str, str]) -> list[str] | None:
+def layer1_keyword(
+    query_resolved: str, keyword_map: dict[str, set[str]]
+) -> list[str] | None:
     """Layer 1: exact keyword matching. Returns matched source_labels or None."""
     query_lower = query_resolved.lower()
     matched: set[str] = set()
-    for term, source_label in keyword_map.items():
+    for term, source_labels in keyword_map.items():
         if term in query_lower:
-            matched.add(source_label)
-    return list(matched) if matched else None
+            matched.update(source_labels)
+    return sorted(matched) if matched else None
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
