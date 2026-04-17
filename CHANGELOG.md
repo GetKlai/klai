@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased] — 2026-04-17 — SPEC-CRAWL-004: Automatic Auth Guard Setup
+
+### Added — SPEC-CRAWL-004: AI-first auth guard in connector wizard
+
+- **Auto-detection during preview:** when a webcrawler preview succeeds with cookies, the system automatically computes a canary fingerprint and uses AI to detect the login indicator element. Admin sees "✓ Auth protection enabled" — no technical config needed.
+- **knowledge-ingest/fingerprint.py** (NEW): stdlib-only SimHash reimplementation, compatible with klai-connector's trafilatura version. Zero external deps.
+- **knowledge-ingest/selector_ai.py:** added `detect_login_indicator_via_llm()` — identifies logout buttons, user menus, and account dropdowns via LLM DOM analysis.
+- **knowledge-ingest/routes/crawl.py:** `CrawlPreviewResponse` extended with `auth_guard` field containing canary URL, fingerprint, and login indicator.
+- **klai-connector/routes/fingerprint.py** (NEW): `POST /api/v1/compute-fingerprint` endpoint for manual canary URL changes. Uses `_post_crawl_sync()` shared helper.
+- **Portal backend:** `_auto_fill_canary_fingerprint()` on connector create/update — recomputes fingerprint when canary_url set but fingerprint missing. XOR validator relaxed for backend auto-fill flow.
+- **Portal frontend:** auth guard confirmation card in preview step with Shield icon + expandable advanced settings for manual override.
+
+### Fixed
+
+- **Semgrep CI:** excluded minified widget JS (`klai-chat.js`) from SAST scan — false positive on Shadow DOM API in pre-built SolidJS bundle.
+
 ## [Unreleased] — 2026-04-17 — SPEC-CRAWL-003: Three-Layer Content Quality Guardrails
 
 ### Added — SPEC-CRAWL-003: Auth-expiry detection for webcrawler connectors

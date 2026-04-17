@@ -1,6 +1,6 @@
 # SPEC-CRAWL-004: Webcrawler Connector — Automatic Auth Guard Setup
 
-**Status:** Planned
+**Status:** Deployed
 **Priority:** Medium
 **Created:** 2026-04-17
 **Revised:** 2026-04-17 (AI-first approach, no manual config)
