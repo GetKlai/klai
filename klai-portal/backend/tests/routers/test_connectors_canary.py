@@ -14,15 +14,18 @@ from app.api.connectors import WebcrawlerConfig
 class TestWebcrawlerConfigCanaryXOR:
     """AC-12: XOR validation — canary_url iff canary_fingerprint (REQ-1)."""
 
-    def test_canary_check_xor_validation_url_only(self) -> None:
-        """test_canary_check_xor_validation — canary_url set without canary_fingerprint → 422."""
-        with pytest.raises(ValidationError) as exc_info:
-            WebcrawlerConfig(
-                base_url="https://wiki.example.com",
-                canary_url="https://wiki.example.com/known-page",
-            )
-        errors = exc_info.value.errors()
-        assert any("canary" in str(e).lower() for e in errors), f"Expected canary error, got: {errors}"
+    def test_canary_url_without_fingerprint_accepted(self) -> None:
+        """canary_url without fingerprint is accepted on input (SPEC-CRAWL-004).
+
+        The backend auto-computes the fingerprint on save via klai-connector.
+        The Pydantic model allows this so the preview auth_guard flow works.
+        """
+        cfg = WebcrawlerConfig(
+            base_url="https://wiki.example.com",
+            canary_url="https://wiki.example.com/known-page",
+        )
+        assert cfg.canary_url == "https://wiki.example.com/known-page"
+        assert cfg.canary_fingerprint is None
 
     def test_canary_xor_fingerprint_only(self) -> None:
         """canary_fingerprint set without canary_url → 422."""
