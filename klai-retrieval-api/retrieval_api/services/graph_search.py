@@ -76,7 +76,7 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
             timeout=settings.graph_search_timeout,
         )
         return _convert_results(results, top_k)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "graph_search_timeout",
             org_id=org_id,
