@@ -272,6 +272,7 @@ class SyncEngine:
                             content_type=ref.content_type,
                             allowed_assertion_modes=portal_config.allowed_assertion_modes,
                             image_urls=image_urls,
+                            connector_type=portal_config.connector_type,
                         )
                         documents_ok += 1
                         resume_ingested_refs.add(ref_key)

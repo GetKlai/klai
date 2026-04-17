@@ -5,7 +5,74 @@ from dataclasses import dataclass
 
 import structlog
 
+from retrieval_api.config import settings
+
 logger = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Source catalog cache: {org_id: (catalog, timestamp)}
+# ---------------------------------------------------------------------------
+_catalog_cache: dict[str, tuple[list[KBEntry], float]] = {}
+
+
+async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
+    """Fetch distinct source_labels for an org from Qdrant.
+
+    Uses a scroll with limit + dedup to collect unique source_label values.
+    Cached per org for router_centroid_ttl_seconds.
+    """
+    cached = _catalog_cache.get(org_id)
+    if cached and (time.monotonic() - cached[1]) < settings.router_centroid_ttl_seconds:
+        return cached[0]
+
+    from retrieval_api.services.search import _get_client
+
+    client = _get_client()
+    seen: set[str] = set()
+    entries: list[KBEntry] = []
+    offset = None
+
+    # Scroll in batches of 100, collect unique source_labels.
+    # We only fetch the payload fields we need (no vectors, no text).
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    scroll_filter = Filter(must=[
+        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+    ])
+
+    for _ in range(50):  # safety cap: max 5000 points scanned
+        points, next_offset = await client.scroll(
+            collection_name=settings.qdrant_collection,
+            scroll_filter=scroll_filter,
+            limit=100,
+            offset=offset,
+            with_payload=["source_label", "kb_slug"],
+            with_vectors=False,
+        )
+        for point in points:
+            label = (point.payload or {}).get("source_label")
+            if label and label not in seen:
+                seen.add(label)
+                entries.append(KBEntry(
+                    source_label=label,
+                    name=label,  # use label as name (good enough for keyword matching)
+                ))
+        if next_offset is None or not points:
+            break
+        offset = next_offset
+
+    _catalog_cache[org_id] = (entries, time.monotonic())
+    logger.info("router_catalog_built", org_id=org_id, source_labels=len(entries))
+    return entries
+
+
+def clear_catalog_cache(org_id: str | None = None) -> None:
+    """Clear catalog cache. For testing and cache invalidation."""
+    if org_id:
+        _catalog_cache.pop(org_id, None)
+    else:
+        _catalog_cache.clear()
 
 
 @dataclass
@@ -167,13 +234,13 @@ async def route_to_sources(
     cache_hit = False
     centroids: dict[str, list[float]] | None = None
     cached = _centroid_cache.get(org_id)
-    if cached and (time.time() - cached[1]) < centroid_ttl_seconds:
+    if cached and (time.monotonic() - cached[1]) < centroid_ttl_seconds:
         centroids = cached[0]
         cache_hit = True
 
     if centroids is None and compute_centroid_fn:
         centroids = await compute_centroid_fn(source_label_catalog)
-        _centroid_cache[org_id] = (centroids, time.time())
+        _centroid_cache[org_id] = (centroids, time.monotonic())
 
     if centroids:
         selected, margin = layer2_semantic(query_vector, centroids, margin_single, margin_dual)

@@ -22,7 +22,7 @@ from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_quota_select
 from retrieval_api.services.events import emit_event
-from retrieval_api.services.router import KBEntry, route_to_sources
+from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
 
 logger = structlog.get_logger(__name__)
@@ -123,10 +123,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         and req.scope in ("org", "both")
         and not bypassed
     ):
-        # TODO(SPEC-KB-021): Populate catalog from Qdrant distinct source_label values
-        # or portal KB metadata API.  Until this is implemented, the router is inert
-        # (router_enabled defaults to False in config.py).
-        source_label_catalog: list[KBEntry] = []
+        source_label_catalog = await fetch_source_catalog(req.org_id)
 
         if len(source_label_catalog) >= settings.router_min_source_label_count:
             routing = await route_to_sources(
