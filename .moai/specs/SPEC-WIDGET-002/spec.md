@@ -1,7 +1,7 @@
 ---
 id: SPEC-WIDGET-002
 version: 0.3.0
-status: draft
+status: deployed
 created: 2026-04-16
 updated: 2026-04-16
 author: Mark Vletter
