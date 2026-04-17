@@ -63,20 +63,35 @@ export const BlockPageEditor = forwardRef<
                  : trimmed.startsWith('<') ? 'html'
                  : 'markdown'
     editorLogger.debug('Loading content', { format, length: initialContent.length })
-    let blocks: Parameters<typeof editor.replaceBlocks>[1]
+
+    // JSON is fast — parse synchronously for instant LCP.
+    // HTML/Markdown parsing is expensive — defer to let the editor shell paint first.
     if (format === 'json') {
       try {
-        blocks = JSON.parse(initialContent) as Parameters<typeof editor.replaceBlocks>[1]
+        const blocks = JSON.parse(initialContent) as Parameters<typeof editor.replaceBlocks>[1]
+        editor.replaceBlocks(editor.document, blocks)
       } catch (err) {
         editorLogger.error('Failed to parse stored JSON content, falling back to empty', { err })
-        return
       }
-    } else if (format === 'html') {
-      blocks = editor.tryParseHTMLToBlocks(initialContent)
-    } else {
-      blocks = editor.tryParseMarkdownToBlocks(initialContent)
+      return
     }
-    editor.replaceBlocks(editor.document, blocks)
+
+    const applyLegacyContent = () => {
+      const blocks = format === 'html'
+        ? editor.tryParseHTMLToBlocks(initialContent)
+        : editor.tryParseMarkdownToBlocks(initialContent)
+      editor.replaceBlocks(editor.document, blocks)
+    }
+
+    // Defer expensive parsing so the editor shell paints immediately.
+    // requestIdleCallback lets the browser finish layout first;
+    // setTimeout(0) is the fallback for Safari / older browsers.
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(applyLegacyContent, { timeout: 150 })
+      return () => cancelIdleCallback(id)
+    }
+    const id = setTimeout(applyLegacyContent, 0)
+    return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

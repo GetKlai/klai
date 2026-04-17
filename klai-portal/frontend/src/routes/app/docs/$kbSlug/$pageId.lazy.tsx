@@ -311,6 +311,33 @@ function KBPageEditor() {
     )
   }
 
+  // Skeleton while page content is loading — show immediately to reduce perceived LCP
+  if (!page && selectedPath) {
+    return (
+      <div className="flex-1 flex flex-col animate-pulse">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+          <div className="w-6 h-6 rounded bg-[var(--color-border)]" />
+          <div className="h-6 w-64 rounded bg-[var(--color-border)]" />
+          <div className="ml-auto flex gap-2">
+            <div className="w-8 h-8 rounded bg-[var(--color-input)]" />
+            <div className="w-8 h-8 rounded bg-[var(--color-input)]" />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-[760px] px-12 pt-8 space-y-4">
+            <div className="h-4 w-full rounded bg-[var(--color-input)]" />
+            <div className="h-4 w-5/6 rounded bg-[var(--color-input)]" />
+            <div className="h-4 w-4/6 rounded bg-[var(--color-input)]" />
+            <div className="h-4 w-full rounded bg-[var(--color-input)] mt-6" />
+            <div className="h-4 w-3/4 rounded bg-[var(--color-input)]" />
+            <div className="h-4 w-5/6 rounded bg-[var(--color-input)]" />
+            <div className="h-4 w-2/3 rounded bg-[var(--color-input)]" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <EditorHeader

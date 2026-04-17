@@ -3,6 +3,7 @@ Zitadel management API client.
 All calls use the portal-api service account PAT — never exposed to the browser.
 """
 
+import asyncio
 import logging
 import time
 
@@ -40,6 +41,8 @@ class ZitadelClient:
             event_hooks={"response": [self._log_response_errors]},
         )
         self._userinfo_cache: dict[str, tuple[float, dict]] = {}
+        # Singleflight: coalesce concurrent userinfo requests for the same token
+        self._userinfo_inflight: dict[str, asyncio.Future[dict]] = {}
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -174,11 +177,15 @@ class ZitadelClient:
 
     # ── Token introspection ───────────────────────────────────────────────────
 
+    # @MX:ANCHOR fan_in=8 — called by /api/me, _get_caller_org, get_current_user_id, and others
     async def get_userinfo(self, access_token: str) -> dict:
         """Get user info from an OIDC access token (for /api/me).
 
         Results are cached for _USERINFO_TTL seconds per token to reduce
         Zitadel API load on multi-endpoint requests within a session.
+
+        Concurrent requests for the same token are coalesced (singleflight)
+        so that N parallel /api/me calls produce at most 1 Zitadel request.
 
         In auth dev mode, returns mock userinfo without calling Zitadel.
         """
@@ -193,19 +200,37 @@ class ZitadelClient:
         if cached and (now - cached[0]) < self._USERINFO_TTL:
             return cached[1]
 
-        resp = await self._http.get(
-            "/oidc/v1/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        # Singleflight: if another coroutine is already fetching for this
+        # token, await its result instead of making a duplicate request.
+        inflight = self._userinfo_inflight.get(access_token)
+        if inflight is not None:
+            return await inflight
 
-        # Evict expired entries to prevent unbounded growth
-        if len(self._userinfo_cache) > 500:
-            cutoff = now - self._USERINFO_TTL
-            self._userinfo_cache = {k: v for k, v in self._userinfo_cache.items() if v[0] > cutoff}
-        self._userinfo_cache[access_token] = (now, data)
-        return data
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict] = loop.create_future()
+        self._userinfo_inflight[access_token] = future
+
+        try:
+            resp = await self._http.get(
+                "/oidc/v1/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Evict expired entries to prevent unbounded growth
+            if len(self._userinfo_cache) > 500:
+                cutoff = now - self._USERINFO_TTL
+                self._userinfo_cache = {k: v for k, v in self._userinfo_cache.items() if v[0] > cutoff}
+            self._userinfo_cache[access_token] = (time.monotonic(), data)
+
+            future.set_result(data)
+            return data
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            self._userinfo_inflight.pop(access_token, None)
 
     # ── Custom Login UI (Session API) ─────────────────────────────────────────
 
