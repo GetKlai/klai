@@ -3,6 +3,7 @@ import { ErrorResponse, User, WebStorageStateStore } from 'oidc-client-ts'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import * as Sentry from '@sentry/react'
 import { authLogger } from '@/lib/logger'
+import { registerTokenRefresher } from '@/lib/apiFetch'
 
 const AUTH_DEV_MODE = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
@@ -169,11 +170,24 @@ function useSessionGuard(): void {
 // Provider
 // ---------------------------------------------------------------------------
 
+/** Register the OIDC signinSilent as the apiFetch token refresher. */
+function useTokenRefresherRegistration(): void {
+  const auth = useAuth()
+
+  useEffect(() => {
+    registerTokenRefresher(async () => {
+      const user = await auth.signinSilent()
+      return user?.access_token ?? null
+    })
+  }, [auth])
+}
+
 /** Activates all session lifecycle hooks inside the AuthProvider context. */
 function AuthSession(): null {
   useSentryUserSync()
   useStaleStateCleanup()
   useSessionGuard()
+  useTokenRefresherRegistration()
   return null
 }
 
