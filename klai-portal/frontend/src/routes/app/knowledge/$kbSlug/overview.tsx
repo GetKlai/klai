@@ -234,7 +234,7 @@ function OverviewTab() {
           </Link>
         </div>
 
-        {sourceList.length === 0 && files.length === 0 ? (
+        {sourceList.length === 0 && files.length === 0 && items === 0 ? (
           <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center">
             <Zap className="h-8 w-8 text-gray-300 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-900">Nog geen bronnen</p>
@@ -249,6 +249,28 @@ function OverviewTab() {
               <Plus className="h-4 w-4" />
               Eerste bron toevoegen
             </Link>
+          </div>
+        ) : sourceList.length === 0 && files.length === 0 ? (
+          /* Items exist (e.g. Block editor docs or legacy content) but no
+             connectors / uploads. Show a summary row so the count isn't
+             contradicted by an empty list. */
+          <div className="rounded-lg border border-gray-200 px-4 py-3 flex items-center gap-3">
+            <FileText className="h-5 w-5 text-gray-400" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-900">
+                {items} {items === 1 ? 'bron' : 'bronnen'} geïndexeerd
+              </p>
+              <p className="text-xs text-gray-400">Via documenten of eerdere imports</p>
+            </div>
+            {kb.docs_enabled && kb.gitea_repo_slug && (
+              <Link
+                to="/app/docs/$kbSlug"
+                params={{ kbSlug: kb.slug }}
+                className="text-xs font-medium text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                Openen →
+              </Link>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
