@@ -208,7 +208,12 @@ function AddSourcePage() {
   const allKbs = allKbsData?.knowledge_bases ?? []
 
   function goBack() {
-    void navigate({ to: '/app/knowledge' })
+    // After adding a source/file land on the KB detail page so the user
+    // immediately sees the new bron in context (not the collection list).
+    void navigate({
+      to: '/app/knowledge/$kbSlug/overview',
+      params: { kbSlug },
+    })
   }
 
   function resetAndPickType(type: SourceType) {
