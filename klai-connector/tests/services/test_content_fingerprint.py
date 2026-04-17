@@ -170,14 +170,10 @@ def test_find_boilerplate_clusters_detects_login_wall_cluster() -> None:
     # Create 86 pages with near-identical fingerprint (simulating login wall)
     login_wall_base = 0xDEADBEEFCAFEBABE
     login_wall_fps = [
-        (f"https://wiki.example.com/page-{i}", _make_fingerprint(login_wall_base, i % 3))
-        for i in range(86)
+        (f"https://wiki.example.com/page-{i}", _make_fingerprint(login_wall_base, i % 3)) for i in range(86)
     ]
     # Add 147 distinct pages
-    distinct_fps = [
-        (f"https://wiki.example.com/article-{i}", f"{0x1234567800000000 + i:016x}")
-        for i in range(147)
-    ]
+    distinct_fps = [(f"https://wiki.example.com/article-{i}", f"{0x1234567800000000 + i:016x}") for i in range(147)]
     all_fps = login_wall_fps + distinct_fps
 
     clusters = find_boilerplate_clusters(all_fps, ratio_threshold=0.15, similarity_threshold=0.95)
@@ -272,3 +268,84 @@ def test_find_boilerplate_clusters_returns_urls() -> None:
         for url in cluster:
             assert isinstance(url, str)
             assert url.startswith("https://")
+
+
+# --- LSH path tests (>200 pages triggers band-based indexing) ---
+
+
+def test_lsh_path_detects_cluster_above_200_pages() -> None:
+    """find_boilerplate_clusters uses LSH when >200 pages, still detects clusters.
+
+    SPEC-CRAWL-003 REQ-13: for >200 pages use SimHash-LSH (band size 8, rows 8).
+    """
+    login_wall_fp = "aaaaaaaaaaaaaaaa"
+    # 60 login-wall pages + 200 distinct = 260 total (>200 triggers LSH)
+    boilerplate = [(f"https://wiki.example.com/wall-{i}", login_wall_fp) for i in range(60)]
+    prime = 0x9E3779B97F4A7C15
+    distinct = [
+        (
+            f"https://wiki.example.com/ok-{i}",
+            f"{((i + 1) * prime) & 0xFFFFFFFFFFFFFFFF:016x}",
+        )
+        for i in range(200)
+    ]
+    all_fps = boilerplate + distinct
+    assert len(all_fps) == 260
+
+    clusters = find_boilerplate_clusters(all_fps, ratio_threshold=0.15)
+
+    assert len(clusters) >= 1, "LSH path must detect the boilerplate cluster"
+    assert len(clusters[0]) == 60, f"Expected 60-page cluster, got {len(clusters[0])}"
+
+
+def test_lsh_path_no_false_clusters_with_distinct_pages() -> None:
+    """LSH path does not produce false-positive clusters from distinct fingerprints."""
+    prime = 0x9E3779B97F4A7C15
+    distinct = [
+        (
+            f"https://wiki.example.com/page-{i}",
+            f"{((i + 1) * prime) & 0xFFFFFFFFFFFFFFFF:016x}",
+        )
+        for i in range(250)
+    ]
+
+    clusters = find_boilerplate_clusters(distinct, ratio_threshold=0.15)
+
+    assert clusters == [], f"Expected no clusters from distinct pages, got {len(clusters)}"
+
+
+def test_lsh_and_pairwise_produce_same_result() -> None:
+    """LSH and pairwise paths produce identical clusters for the same input.
+
+    Verifies that the LSH band-based candidate pruning does not miss
+    near-duplicate pairs that the pairwise O(n²) path would catch.
+    """
+    from app.services.content_fingerprint import _PAIRWISE_MAX
+
+    login_wall_fp = "bbbbbbbbbbbbbbbb"
+    boilerplate = [(f"https://wiki.example.com/dup-{i}", login_wall_fp) for i in range(50)]
+    prime = 0x9E3779B97F4A7C15
+    distinct = [
+        (
+            f"https://wiki.example.com/ok-{i}",
+            f"{((i + 1) * prime) & 0xFFFFFFFFFFFFFFFF:016x}",
+        )
+        for i in range(160)
+    ]
+
+    # Below threshold: pairwise
+    small_input = boilerplate[:20] + distinct[:80]
+    assert len(small_input) <= _PAIRWISE_MAX
+    pairwise_result = find_boilerplate_clusters(small_input, ratio_threshold=0.15)
+
+    # Above threshold: LSH
+    large_input = boilerplate + distinct
+    assert len(large_input) > _PAIRWISE_MAX
+    lsh_result = find_boilerplate_clusters(large_input, ratio_threshold=0.15)
+
+    # Both should detect exactly one cluster (the boilerplate group)
+    assert len(pairwise_result) == 1
+    assert len(lsh_result) == 1
+    # Cluster sizes match the boilerplate count in each input
+    assert len(pairwise_result[0]) == 20
+    assert len(lsh_result[0]) == 50

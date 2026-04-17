@@ -32,11 +32,16 @@ _DEFAULT_SIMILARITY_THRESHOLD = 0.95
 # motivating incident (37% contamination). SPEC-CRAWL-003 REQ-13.
 _DEFAULT_RATIO_THRESHOLD = 0.15
 
-# Maximum pages before switching to LSH (not yet implemented — see comment).
+# Threshold above which LSH replaces pairwise comparison.
 # SPEC-CRAWL-003 REQ-13: for ≤200 pages use pairwise Hamming; for >200 use LSH.
-# @MX:TODO: Implement SimHash-LSH (band size 8, rows 8) for >200 pages.
-# @MX:SPEC: SPEC-CRAWL-003 REQ-13
 _PAIRWISE_MAX = 200
+
+# LSH parameters: 8 bands × 8 bits per band = 64 bits total.
+# With these parameters, two 64-bit SimHashes differing in ≤3 bits (similarity ≥0.95)
+# share at least one identical band with probability >99.9%. This matches the
+# Google/Manku 2007 standard for near-duplicate detection at scale.
+_LSH_BANDS = 8
+_LSH_ROWS = 8  # bits per band
 
 
 def _strip_markdown(text: str) -> str:
@@ -148,28 +153,38 @@ def find_boilerplate_clusters(
     if not valid or total == 0:
         return []
 
-    # @MX:NOTE: For >200 pages, LSH (band size 8, rows 8) is the correct approach.
-    # Pairwise is O(n²) and acceptable for <=200. This is KISS for now.
-    # @MX:TODO: Implement LSH for >200 pages per SPEC-CRAWL-003 REQ-13.
-    # @MX:SPEC: SPEC-CRAWL-003 REQ-13
+    # Greedy centroid clustering: each page joins the first cluster whose
+    # centroid is within the similarity threshold. For ≤200 pages, centroids
+    # are checked exhaustively (O(n*k)). For >200, LSH band indexing reduces
+    # candidate centroids to those sharing at least one 8-bit band — cutting
+    # the inner loop from O(k) to O(candidates), typically O(1) amortized.
+    # SPEC-CRAWL-003 REQ-13.
+    use_lsh = len(valid) > _PAIRWISE_MAX
 
-    # Greedy clustering: each page joins the cluster of the first seen page
-    # within the similarity threshold (centroid = first page in cluster).
-    # This is equivalent to single-linkage clustering with the first-seen centroid,
-    # which is sufficient for detecting near-identical boilerplate templates.
     clusters: list[list[str]] = []
-    centroids: list[str] = []  # fingerprint of the first page in each cluster
+    centroids: list[str] = []  # fingerprint hex of first page per cluster
+
+    # LSH index: per-band dict mapping band_value → list of centroid indices.
+    # Only populated when use_lsh is True.
+    band_index: list[dict[int, list[int]]] = [{} for _ in range(_LSH_BANDS)] if use_lsh else []
 
     for url, fp in valid:
-        placed = False
-        for i, centroid in enumerate(centroids):
-            if similarity(fp, centroid) >= similarity_threshold:
-                clusters[i].append(url)
-                placed = True
-                break
-        if not placed:
+        matched_cluster = _find_matching_cluster(
+            fp,
+            centroids,
+            similarity_threshold,
+            use_lsh,
+            band_index,
+        )
+        if matched_cluster >= 0:
+            clusters[matched_cluster].append(url)
+        else:
+            # New cluster — register centroid and (if LSH) index its bands.
+            cluster_idx = len(clusters)
             clusters.append([url])
             centroids.append(fp)
+            if use_lsh:
+                _index_centroid(fp, cluster_idx, band_index)
 
     # Filter clusters that exceed the ratio threshold
     min_cluster_size = ratio_threshold * total
@@ -179,3 +194,47 @@ def find_boilerplate_clusters(
     large_clusters.sort(key=len, reverse=True)
 
     return large_clusters
+
+
+def _find_matching_cluster(
+    fp_hex: str,
+    centroids: list[str],
+    threshold: float,
+    use_lsh: bool,
+    band_index: list[dict[int, list[int]]],
+) -> int:
+    """Return the index of the first matching cluster centroid, or -1.
+
+    When ``use_lsh`` is False, checks all centroids (pairwise).
+    When True, uses band_index to narrow candidates before verifying.
+    """
+    if not use_lsh:
+        # Pairwise: check every centroid (O(k), acceptable for ≤200 pages)
+        for i, centroid in enumerate(centroids):
+            if similarity(fp_hex, centroid) >= threshold:
+                return i
+        return -1
+
+    # LSH path: only check centroids that share at least one 8-bit band.
+    fp_int = int(fp_hex, 16)
+    seen: set[int] = set()
+    for b in range(_LSH_BANDS):
+        band_value = (fp_int >> (b * _LSH_ROWS)) & ((1 << _LSH_ROWS) - 1)
+        for ci in band_index[b].get(band_value, []):
+            if ci not in seen:
+                seen.add(ci)
+                if similarity(fp_hex, centroids[ci]) >= threshold:
+                    return ci
+    return -1
+
+
+def _index_centroid(
+    fp_hex: str,
+    cluster_idx: int,
+    band_index: list[dict[int, list[int]]],
+) -> None:
+    """Add a centroid's band values to the LSH index."""
+    fp_int = int(fp_hex, 16)
+    for b in range(_LSH_BANDS):
+        band_value = (fp_int >> (b * _LSH_ROWS)) & ((1 << _LSH_ROWS) - 1)
+        band_index[b].setdefault(band_value, []).append(cluster_idx)
