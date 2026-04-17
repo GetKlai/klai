@@ -157,3 +157,52 @@ async def test_widget_config_empty_allowed_origins_fail_closed():
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# origin_allowed unit tests (wildcard support)
+# ---------------------------------------------------------------------------
+
+
+def test_origin_allowed_exact_match():
+    """Exact origin match works."""
+    from app.services.widget_auth import origin_allowed
+
+    assert origin_allowed("https://example.com", ["https://example.com"])
+    assert not origin_allowed("https://evil.com", ["https://example.com"])
+
+
+def test_origin_allowed_wildcard_subdomain():
+    """Wildcard *.domain matches subdomains but not bare domain."""
+    from app.services.widget_auth import origin_allowed
+
+    assert origin_allowed("https://app.example.com", ["https://*.example.com"])
+    assert origin_allowed("https://test.example.com", ["https://*.example.com"])
+    assert not origin_allowed("https://example.com", ["https://*.example.com"])
+    assert not origin_allowed("https://evil.com", ["https://*.example.com"])
+
+
+def test_origin_allowed_combined():
+    """Exact + wildcard together cover bare domain and all subdomains."""
+    from app.services.widget_auth import origin_allowed
+
+    origins = ["https://getklai.com", "https://*.getklai.com"]
+    assert origin_allowed("https://getklai.com", origins)
+    assert origin_allowed("https://voys.getklai.com", origins)
+    assert origin_allowed("https://test.getklai.com", origins)
+    assert not origin_allowed("https://evil.com", origins)
+
+
+def test_origin_allowed_empty_list():
+    """Empty list always returns False (fail-closed)."""
+    from app.services.widget_auth import origin_allowed
+
+    assert not origin_allowed("https://example.com", [])
+
+
+def test_origin_allowed_trailing_slash():
+    """Trailing slashes are stripped before comparison."""
+    from app.services.widget_auth import origin_allowed
+
+    assert origin_allowed("https://example.com/", ["https://example.com"])
+    assert origin_allowed("https://example.com", ["https://example.com/"])
