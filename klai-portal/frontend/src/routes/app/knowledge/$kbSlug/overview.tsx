@@ -75,11 +75,16 @@ function OverviewTab() {
     enabled: !!token && !!kb,
   })
 
+  // Personal items API returns ALL of the user's personal artifacts without
+  // a kb_slug filter. Only query on the canonical "Persoonlijk" KB
+  // (slug === `personal-${myUserId}`) so newly created user-owned collections
+  // don't show cross-KB file bleed.
+  const isDefaultPersonal = !!myUserId && kb?.slug === `personal-${myUserId}`
   const { data: filesData } = useQuery<PersonalItemsResponse>({
     queryKey: ['personal-knowledge', kbSlug],
     queryFn: async () =>
       apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items', token),
-    enabled: !!token && kb?.owner_type === 'user',
+    enabled: !!token && isDefaultPersonal,
   })
 
   // ── Mutations ────────────────────────────────────────────────────────
