@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-04-05).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-04-16).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -352,6 +352,45 @@ This is the **Dual-Index Fusion** pattern: one chunk, two dense vectors plus one
 The result is that queries can match via meaning (dense chunk), via question-answer
 alignment (dense questions), or via keywords (sparse). All three are fused at query time.
 
+**Step D.5 — Source-label and source-aware enrichment (SPEC-KB-021).**
+
+Before proceeding to full upsert, two source-related fields are computed:
+
+**source_label:** Each chunk receives a `source_label` field in the Qdrant payload that
+identifies the content origin for retrieval diversity and routing. The value is computed
+from the ingest request as follows:
+
+- For web crawls: the domain extracted from the `source_url` (e.g., `"help.mitel.nl"`, `"voys-docs.io"`)
+- For connectors (GitHub, Notion, etc.): the `connector_type` from the portal config (e.g., `"github"`, `"notion"`)
+- For meeting transcripts: the literal string `"meetings"`
+- For KB articles: the `kb_slug` value as fallback
+
+**Bron-aware enrichment prompt:** The enrichment prompt in Step A is updated to accept
+three additional context fields: `kb_name` (friendly name of the knowledge base), `connector_type`
+(e.g., "github", "notion", or null), and `source_domain` (the domain for crawls, or null).
+These are threaded through `ingest_tasks.extra_payload` and passed to `enrich_chunk()`.
+
+The LLM is prompted to generate a context prefix that situates the chunk within its source
+context — mentioning the knowledge base name and source type. This bridges the vocabulary
+gap between different sources (e.g., Mitel's "hunt group" vs Voys's "belgroep") by
+ensuring the embedding captures that these are domain-specific terms, not universal.
+
+Additionally, the LLM generates a `content_type` classification: one of `procedural` | `conceptual` |
+`reference` | `warning` | `example`. This is recorded in the Qdrant payload for downstream
+consumption (e.g., by retrieval routers or future assertion-mode filtering).
+
+**Fail-loudly enrichment:** If the LLM call in Step A fails or returns invalid JSON, the
+system raises `EnrichmentError` and does not retry silently. The Procrastinate task queue
+handles retries according to its standard backoff policy. Unlike the previous v0.x behavior,
+a failed chunk is **not** upserted with a fallback prefix. This ensures that broken or
+incomplete enrichment is visible in logs and can be investigated, rather than silently
+degrading retrieval quality.
+
+**source_label keyword index:** The `source_label` field is registered as a Qdrant keyword
+index during `ensure_collection()`, enabling the Facet API to list unique sources per org.
+This supports retrieval-layer source selection and UI features that display available
+content sources.
+
 **Step E — Full Qdrant upsert.**
 The enriched point is upserted with up to three named vectors:
 
@@ -362,7 +401,7 @@ The enriched point is upserted with up to three named vectors:
 | `vector_sparse` | Sparse (SPLADE) embedding | Enrichment succeeded |
 
 Payload per point includes: `org_id`, `kb_slug`, `path`, `artifact_id`, `content_type`,
-`visibility`, `valid_from`, `valid_until`, `text` (original), `text_enriched`,
+`source_label`, `visibility`, `valid_from`, `valid_until`, `text` (original), `text_enriched`,
 `context_prefix`, `questions`, `chunk_index`, `user_id`.
 
 **Feedback quality fields (SPEC-KB-015):** Every newly ingested chunk also receives
