@@ -32,8 +32,9 @@ function useChatBaseUrl(): string {
     const { hostname } = window.location
     if (hostname === 'localhost') return 'http://localhost:3080'
     const [tenant, ...rest] = hostname.split('.')
-    const chatTenant = tenant === 'dev' ? 'getklai' : tenant
-    return `https://chat-${chatTenant}.${rest.join('.')}`
+    // Dev now has its own LibreChat (`librechat-dev`) on chat-dev.getklai.com
+    // routed by the _dev Caddy tenant file. No more rewrite to getklai.
+    return `https://chat-${tenant}.${rest.join('.')}`
   }, [])
 }
 

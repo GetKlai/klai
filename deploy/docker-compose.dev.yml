@@ -65,3 +65,61 @@ services:
       - net-mongodb
       - net-redis
       - socket-proxy
+
+  # ─── LiteLLM for dev ──────────────────────────────────────────────────
+  # Same image + config as prod litellm, but the custom hook (klai_knowledge.py)
+  # calls portal-api-dev instead of portal-api. This is the isolation point
+  # so dev users' guardrails/retrieval come from klai_dev, not klai.
+  litellm-dev:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      # Share the same model list + custom router + hook as prod.
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
+      - ./litellm/custom_router.py:/app/custom_router.py:ro
+    environment:
+      PYTHONPATH: /app
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Separate LiteLLM bookkeeping DB so dev team keys don't collide with prod.
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@postgres:5432/litellm_dev
+      STORE_MODEL_IN_DB: "True"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/2
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DISABLE_ADMIN_UI: "True"
+      KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
+      KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+      # ↓↓↓ THE ISOLATION POINT ↓↓↓
+      PORTAL_API_URL: http://portal-api-dev:8010
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_DEV_INTERNAL_SECRET}
+      KB_IMAGES_BASE_URL: https://dev.getklai.com
+    networks:
+      - klai-net
+      - net-postgres
+      - net-redis
+
+  # ─── LibreChat for dev ────────────────────────────────────────────────
+  # Separate container so dev chats live in their own MongoDB database
+  # and route through litellm-dev. Same image + yaml/patches as prod tenant.
+  librechat-dev:
+    image: ghcr.io/danny-avila/librechat:latest
+    container_name: librechat-dev
+    restart: unless-stopped
+    env_file: ./librechat/dev/.env
+    environment:
+      REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379/3
+      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
+    volumes:
+      - ./librechat/dev/librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat/dev/images:/app/client/public/images
+      - ./librechat/patches/format.cjs:/app/node_modules/@librechat/agents/dist/cjs/messages/format.cjs:ro
+      - ./librechat/patches/stream.cjs:/app/node_modules/@librechat/agents/dist/cjs/stream.cjs:ro
+      - ./librechat/patches/search.cjs:/app/node_modules/@librechat/agents/dist/cjs/tools/search/search.cjs:ro
+    networks:
+      - klai-net
+      - net-mongodb
+      - net-meilisearch
+      - net-redis
