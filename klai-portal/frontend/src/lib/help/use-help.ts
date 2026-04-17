@@ -89,13 +89,18 @@ export function useHelp() {
     }
   }, [enabled, destroyActive])
 
-  // On route change (not on enable): show new page intro and re-register listeners
+  // On route change: re-register hover listeners for the new page.
+  // Do NOT auto-open the intro popup — that's annoying. Intro only shows once,
+  // when help is explicitly toggled on (see `toggle`).
   useEffect(() => {
     if (!enabledRef.current) return
     destroyActive()
-    setShowIntro(true)
-    helpLogger.debug('Route changed, showing intro for new page', { pathname })
-  }, [pathname, destroyActive])
+    const steps = routeSteps[pathname] ?? []
+    if (steps.length > 0) {
+      registerHoverListeners(steps)
+      helpLogger.debug('Help hover listeners registered on route change', { pathname })
+    }
+  }, [pathname, destroyActive, registerHoverListeners])
 
   const toggle = useCallback(() => {
     setEnabled((prev) => {
