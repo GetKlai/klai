@@ -146,11 +146,9 @@ function MembersTab() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-members', kbSlug] }),
   })
 
-  if (isPersonal) {
-    return (
-      <p className="text-sm text-gray-400">{m.knowledge_members_personal_kb_hint()}</p>
-    )
-  }
+  // Option A: every collection supports sharing. Previously `user`-owned KBs
+  // were hard-blocked here with a hint. Now Access works uniformly.
+  void isPersonal
 
   if (isLoading) {
     return <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>

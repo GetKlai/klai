@@ -8,7 +8,6 @@ import {
   Plus,
   Globe,
   ExternalLink,
-  Upload,
   File,
   RefreshCw,
   Loader2,
@@ -166,15 +165,9 @@ function OverviewTab() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 text-sm text-gray-400">
-            <FileText className="h-4 w-4" />
-            <span>
-              <strong className="text-gray-900">{items}</strong> bestanden
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-gray-400">
             <Zap className="h-4 w-4" />
             <span>
-              <strong className="text-gray-900">{sourceList.length}</strong> bronnen
+              <strong className="text-gray-900">{items + sourceList.length}</strong> bronnen
             </span>
           </div>
           {isMyPersonalKb && (
@@ -227,12 +220,10 @@ function OverviewTab() {
         )}
       </div>
 
-      {/* Connected sources */}
+      {/* Bronnen — unified: files + connectors. "Alles is een bron." */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
-            Verbonden bronnen
-          </h2>
+          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Bronnen</h2>
           <Link
             to="/app/knowledge/$kbSlug/add-source"
             params={{ kbSlug }}
@@ -243,12 +234,12 @@ function OverviewTab() {
           </Link>
         </div>
 
-        {sourceList.length === 0 ? (
+        {sourceList.length === 0 && files.length === 0 ? (
           <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center">
             <Zap className="h-8 w-8 text-gray-300 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-900">Nog geen bronnen</p>
             <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
-              Verbind bronnen zoals Notion, Google Drive of een website om je kennis te vullen.
+              Upload bestanden of verbind externe bronnen zoals Notion of Google Drive.
             </p>
             <Link
               to="/app/knowledge/$kbSlug/add-source"
@@ -261,6 +252,7 @@ function OverviewTab() {
           </div>
         ) : (
           <div className="space-y-2">
+            {/* Connectors */}
             {sourceList.map((c) => {
               const Icon = CONNECTOR_ICONS[c.connector_type] ?? Zap
               const isSyncing =
@@ -321,29 +313,14 @@ function OverviewTab() {
                 </InlineDeleteConfirm>
               )
             })}
-          </div>
-        )}
-      </div>
 
-      {/* Bestanden */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
-            Bestanden{' '}
-            {items > 0 && (
-              <span className="text-gray-400 normal-case font-normal">({items})</span>
-            )}
-          </h2>
-        </div>
-
-        {files.length > 0 ? (
-          <div className="space-y-1">
+            {/* Files (same list, under connectors) */}
             {files.slice(0, 20).map((f) => {
               const isDeletingFile =
                 deleteFileMutation.isPending && deleteFileMutation.variables === f.id
               return (
                 <InlineDeleteConfirm
-                  key={f.id}
+                  key={`file-${f.id}`}
                   isConfirming={confirmingDeleteFileId === f.id}
                   isPending={isDeletingFile}
                   label={`Bestand "${f.path}" verwijderen?`}
@@ -351,9 +328,12 @@ function OverviewTab() {
                   onConfirm={() => deleteFileMutation.mutate(f.id)}
                   onCancel={() => setConfirmingDeleteFileId(null)}
                 >
-                  <div className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5 hover:bg-gray-50 transition-colors">
-                    <File className="h-4 w-4 text-gray-400 shrink-0" />
-                    <span className="text-sm text-gray-900 truncate flex-1">{f.path}</span>
+                  <div className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-3 hover:bg-gray-50 transition-colors">
+                    <File className="h-5 w-5 text-gray-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{f.path}</p>
+                      <p className="text-xs text-gray-400">Upload</p>
+                    </div>
                     {isMyPersonalKb && (
                       <Tooltip label="Bestand verwijderen">
                         <button
@@ -376,25 +356,9 @@ function OverviewTab() {
                 params={{ kbSlug }}
                 className="block text-center text-xs text-gray-400 hover:text-gray-900 py-2 transition-colors"
               >
-                + {files.length - 20} meer bestanden
+                + {files.length - 20} meer bronnen
               </Link>
             )}
-          </div>
-        ) : items > 0 ? (
-          <div className="rounded-lg border border-gray-200 px-4 py-3">
-            <div className="flex items-center gap-3">
-              <FileText className="h-5 w-5 text-gray-400" />
-              <div>
-                <p className="text-sm font-medium text-gray-900">{items} bestanden geindexeerd</p>
-                <p className="text-xs text-gray-400">Via verbonden bronnen</p>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed border-gray-200 py-8 text-center">
-            <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm text-gray-400">Nog geen bestanden</p>
-            <p className="text-xs text-gray-400 mt-0.5">Voeg een bron toe of upload bestanden</p>
           </div>
         )}
       </div>
