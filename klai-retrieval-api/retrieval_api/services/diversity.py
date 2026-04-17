@@ -27,8 +27,8 @@ def source_quota_select(
 
     Algorithm:
     1. Determine which source_labels are bypassed (query substring match,
-       label length > 3, bypass_on_mention=True).  Only the FIRST matching
-       label is bypassed — subsequent labels still obey the quota.
+       label length > 3, bypass_on_mention=True).  ALL matching labels are
+       bypassed — not just the first.
     2. Greedy pass over reranked (already sorted by score desc):
        - Include if bypassed OR per_source_count < max_per_source.
        - Otherwise push to leftover list.
@@ -39,13 +39,13 @@ def source_quota_select(
         (selected_chunks, metadata)
 
     metadata keys:
-        quota_applied          bool
-        quota_per_source_counts dict[str, int]
-        quota_bypass_reason    str | None
-        quota_bypass_source_label str | None
+        quota_applied              bool
+        quota_per_source_counts    dict[str, int]
+        quota_bypass_reason        str | None
+        quota_bypass_source_labels list[str] (empty if no bypass)
     """
-    # -- Step 1: Determine bypassed source_label ---------------------------------
-    bypass_source_label: str | None = None
+    # -- Step 1: Determine bypassed source_labels --------------------------------
+    bypass_source_labels: set[str] = set()
     bypass_reason: str | None = None
 
     if bypass_on_mention:
@@ -63,17 +63,20 @@ def source_quota_select(
             if label == _UNKNOWN:
                 continue
             if len(label) <= 3:
-                # Too short — substring match would cause false positives
                 continue
             # Split label into tokens (split on -./:) and check if any token
             # with len > 3 appears as a substring in the query.
-            # Example: "mitel-help" → tokens ["mitel", "help"]
-            #          "mitel" appears in "mitel error X025 oplossen" → bypass
-            tokens = [t for t in re.split(r"[-./:]", label.lower()) if len(t) > 3]
+            # Reuse stop words from router to avoid false positives on "help" etc.
+            from retrieval_api.services.router import _STOP_WORDS
+
+            tokens = [
+                t
+                for t in re.split(r"[-./:]", label.lower())
+                if len(t) > 3 and t not in _STOP_WORDS
+            ]
             if any(token in query_lower for token in tokens):
-                bypass_source_label = label
+                bypass_source_labels.add(label)
                 bypass_reason = "query_mention"
-                break
 
     # -- Step 2: Greedy select ---------------------------------------------------
     per_source_count: dict[str, int] = {}
@@ -86,7 +89,7 @@ def source_quota_select(
         label = chunk.get("source_label") or _UNKNOWN
         count = per_source_count.get(label, 0)
 
-        if label == bypass_source_label:
+        if label in bypass_source_labels:
             selected.append(chunk)
             per_source_count[label] = count + 1
         elif count < max_per_source:
@@ -115,7 +118,7 @@ def source_quota_select(
         "source_quota_select",
         top_n=top_n,
         selected=len(selected),
-        bypass_source_label=bypass_source_label,
+        bypass_source_labels=sorted(bypass_source_labels),
         per_source_counts=per_source_count,
     )
 
@@ -123,6 +126,6 @@ def source_quota_select(
         "quota_applied": True,
         "quota_per_source_counts": dict(per_source_count),
         "quota_bypass_reason": bypass_reason,
-        "quota_bypass_source_label": bypass_source_label,
+        "quota_bypass_source_labels": sorted(bypass_source_labels),
     }
     return selected, metadata

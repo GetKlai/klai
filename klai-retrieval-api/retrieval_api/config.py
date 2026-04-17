@@ -51,7 +51,9 @@ class Settings(BaseSettings):
     source_quota_bypass_on_mention: bool = True
 
     # Query router (SPEC-KB-021)
-    router_enabled: bool = True
+    # Default OFF: router requires a populated source_label_catalog to function.
+    # Enable after implementing catalog population (Qdrant distinct values or portal API).
+    router_enabled: bool = False
     router_min_source_label_count: int = 4
     router_margin_single: float = 0.15
     router_margin_dual: float = 0.08

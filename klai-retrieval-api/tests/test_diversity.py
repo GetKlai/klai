@@ -64,7 +64,31 @@ class TestSourceQuotaSelect:
         assert mitel_count == 3  # bypassed, all 3 included
         voys_count = sum(1 for c in selected if c["source_label"] == "help.voys.nl")
         assert voys_count <= 2  # quota still enforced
-        assert meta["quota_bypass_source_label"] == "mitel-help"
+        assert "mitel-help" in meta["quota_bypass_source_labels"]
+
+    def test_multi_source_bypass_on_mention(self):
+        """Query mentions both 'mitel' and 'ascend' → both bypass quota."""
+        reranked = [
+            _make_chunk("m1", "mitel-help", 0.95),
+            _make_chunk("m2", "mitel-help", 0.90),
+            _make_chunk("m3", "mitel-help", 0.88),
+            _make_chunk("a1", "ascend-help", 0.85),
+            _make_chunk("a2", "ascend-help", 0.82),
+            _make_chunk("a3", "ascend-help", 0.80),
+            _make_chunk("v1", "help.voys.nl", 0.75),
+        ]
+        selected, meta = source_quota_select(
+            reranked,
+            "verschil tussen mitel en ascend",
+            top_n=5,
+            max_per_source=1,
+        )
+        mitel_count = sum(1 for c in selected if c["source_label"] == "mitel-help")
+        ascend_count = sum(1 for c in selected if c["source_label"] == "ascend-help")
+        assert mitel_count >= 2  # bypassed
+        assert ascend_count >= 2  # also bypassed
+        assert "mitel-help" in meta["quota_bypass_source_labels"]
+        assert "ascend-help" in meta["quota_bypass_source_labels"]
 
     def test_fallback_underfill(self):
         """Only 4 chunks, all same source → return all 4, no error."""
@@ -127,7 +151,7 @@ class TestSourceQuotaSelect:
         )
         mitel_count = sum(1 for c in selected if c["source_label"] == "mitel-help")
         assert mitel_count <= 1
-        assert meta.get("quota_bypass_source_label") is None
+        assert meta["quota_bypass_source_labels"] == []
 
     def test_metadata_structure(self):
         """Returned metadata must contain required keys."""
@@ -136,7 +160,7 @@ class TestSourceQuotaSelect:
         assert "quota_applied" in meta
         assert "quota_per_source_counts" in meta
         assert "quota_bypass_reason" in meta
-        assert "quota_bypass_source_label" in meta
+        assert "quota_bypass_source_labels" in meta
 
     def test_empty_input(self):
         """Empty reranked list → empty selection, no error."""

@@ -44,16 +44,39 @@ class TestBuildKeywordMap:
     def test_splits_source_label_on_separators(self):
         kmap = _build_keyword_map(CATALOG)
         assert "mitel" in kmap
-        assert kmap["mitel"] == "help.mitel.nl"
+        assert "help.mitel.nl" in kmap["mitel"]
 
     def test_includes_name_words(self):
         kmap = _build_keyword_map(CATALOG)
         assert "voys" in kmap
-        assert kmap["voys"] == "help.voys.nl"
+        assert "help.voys.nl" in kmap["voys"]
 
     def test_skips_short_tokens(self):
         kmap = _build_keyword_map(CATALOG)
         assert "nl" not in kmap  # too short (2 chars)
+
+    def test_no_description_words_in_map(self):
+        """Description words should NOT be in keyword map (too generic)."""
+        kmap = _build_keyword_map(CATALOG)
+        # "documentatie" is in Mitel's description but should be filtered
+        assert "documentatie" not in kmap
+
+    def test_stop_words_filtered(self):
+        """Generic words like 'help', 'docs', 'wiki' should not be routing tokens."""
+        kmap = _build_keyword_map(CATALOG)
+        assert "help" not in kmap
+        assert "wiki" not in kmap
+
+    def test_collision_maps_to_both_sources(self):
+        """Two sources sharing a token should both be in the set."""
+        catalog = [
+            KBEntry(source_label="mitel-helpcenter", name="Mitel HC"),
+            KBEntry(source_label="mitel-wiki", name="Mitel Wiki"),
+        ]
+        kmap = _build_keyword_map(catalog)
+        assert "mitel" in kmap
+        assert "mitel-helpcenter" in kmap["mitel"]
+        assert "mitel-wiki" in kmap["mitel"]
 
 
 class TestLayer1Keyword:

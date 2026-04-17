@@ -329,10 +329,15 @@ async def _enrich_document(
             total_ms=total_ms,
         )
 
-    except Exception as exc:
+    except enrichment.EnrichmentError:
+        # Fail-loudly (SPEC-KB-021): LLM enrichment failure must propagate so
+        # Procrastinate retries the job.  Raw chunks from Phase 1 stay in Qdrant
+        # as a temporary fallback; they will be overwritten on successful retry.
+        # After max_attempts the job lands in permanent-failed state — visible in
+        # logs and the Procrastinate dashboard.
         total_ms = int((time.monotonic() - t_total) * 1000)
         logger.error(
-            "enrichment_failed",
+            "enrichment_failed_will_retry",
             kb_slug=kb_slug,
             path=path,
             org_id=org_id,
@@ -340,4 +345,20 @@ async def _enrich_document(
             total_ms=total_ms,
             exc_info=True,
         )
-        # Raw vectors remain in Qdrant -- document is still searchable
+        raise  # Procrastinate retry handles this
+
+    except Exception:
+        # Non-enrichment failures (embedding, Qdrant, network): log and swallow.
+        # Raw vectors remain in Qdrant — document is still searchable with
+        # basic embeddings.  These are infrastructure issues, not data quality
+        # issues, so retrying the enrichment LLM call would not help.
+        total_ms = int((time.monotonic() - t_total) * 1000)
+        logger.error(
+            "enrichment_infra_failed",
+            kb_slug=kb_slug,
+            path=path,
+            org_id=org_id,
+            artifact_id=artifact_id,
+            total_ms=total_ms,
+            exc_info=True,
+        )
