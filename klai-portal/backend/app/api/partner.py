@@ -397,14 +397,14 @@ async def widget_config(
     # @MX:REASON: Origin validated via origin_allowed(); token TTL 1h; no sensitive data returned
     # @MX:SPEC: SPEC-WIDGET-001 REQ-2
 
-    SPEC-WIDGET-001 REQ-2: Public endpoint, no API key required.
-    - Looks up widget by widget_id (id param) with integration_type='widget'
+    SPEC-WIDGET-002: Public endpoint, no API key required.
+    - Looks up widget by widget_id (id param) in the widgets table
     - Validates Origin header against allowed_origins (fail-closed)
     - Generates HS256 JWT session token (1 hour TTL)
     - Returns CORS headers for matched origin (never *)
 
     Error codes:
-        404 - widget_id not found or integration_type != 'widget'
+        404 - widget_id not found
         403 - missing or disallowed Origin
         503 - WIDGET_JWT_SECRET not configured
     """
