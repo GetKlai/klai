@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, AlertTriangle, Globe, FileText, Shield,
-  Settings, ChevronDown, ChevronRight, CheckCircle2, Loader2, Sparkles,
+  CheckCircle2, Loader2, Sparkles,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ASSERTION_MODE_OPTIONS } from './$kbSlug/-kb-helpers'
@@ -81,7 +82,6 @@ function EditConnectorPage() {
   const [isReconnecting, setIsReconnecting] = useState(false)
 
   // Web crawler preview state
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const [wcPreviewUrl, setWcPreviewUrl] = useState('')
   const [wcCookies, setWcCookies] = useState('')
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
@@ -133,8 +133,6 @@ function EditConnectorPage() {
       })
       setCanaryUrl(cfg.canary_url ?? '')
       setLoginIndicatorSelector(cfg.login_indicator_selector ?? '')
-      // Auto-expand Advanced if selector, cookies, or auth guard were previously saved
-      if (cfg.content_selector || cfg.canary_url || cfg.login_indicator_selector) setShowAdvanced(true)
     }
     if (connector.connector_type === 'github') {
       const cfg = connector.config as { installation_id?: number; repo_owner?: string; repo_name?: string; branch?: string; path_filter?: string }
@@ -276,41 +274,52 @@ function EditConnectorPage() {
         </Button>
       </div>
 
-          {/* Web crawler */}
+          {/* Web crawler — tabbed layout */}
           {connector?.connector_type === 'web_crawler' && (
-            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
-                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
-                <Input id="edit-conn-base-url" type="url" required value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
-              </div>
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }}>
+              <Tabs defaultValue="general" className="space-y-4">
+                <TabsList className="w-full justify-start">
+                  <TabsTrigger value="general">General</TabsTrigger>
+                  <TabsTrigger value="preview">Preview</TabsTrigger>
+                  <TabsTrigger value="auth">Authentication</TabsTrigger>
+                </TabsList>
 
-              {/* Preview URL + Advanced toggle (mirrors add-connector preview step) */}
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
-                <Input
-                  id="edit-conn-preview-url"
-                  type="url"
-                  placeholder={webcrawlerConfig.base_url}
-                  value={wcPreviewUrl}
-                  onChange={(e) => setWcPreviewUrl(e.target.value)}
-                />
-              </div>
-              <button
-                type="button"
-                className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
-                onClick={() => setShowAdvanced((p) => !p)}
-              >
-                <Settings className="h-3 w-3" />
-                Advanced settings
-                {showAdvanced ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              </button>
-              {showAdvanced && (
-                <div className="pl-4 border-l-2 border-[var(--color-border)] space-y-4">
-                  {/* CSS Selector */}
+                {/* ── Tab: General ── */}
+                <TabsContent value="general" className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                    <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-base-url">{m.admin_connectors_webcrawler_base_url()}</Label>
+                    <Input id="edit-conn-base-url" type="url" required value={webcrawlerConfig.base_url} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, base_url: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
+                    <Input id="edit-conn-path-prefix" value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
+                    <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>{m.admin_connectors_assertion_modes_label()}</Label>
+                    <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
+                  </div>
+                </TabsContent>
+
+                {/* ── Tab: Preview ── */}
+                <TabsContent value="preview" className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-conn-preview-url">{m.admin_connectors_webcrawler_preview_url()}</Label>
+                    <Input
+                      id="edit-conn-preview-url"
+                      type="url"
+                      placeholder={webcrawlerConfig.base_url}
+                      value={wcPreviewUrl}
+                      onChange={(e) => setWcPreviewUrl(e.target.value)}
+                    />
+                  </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="edit-conn-content-selector">Content selector</Label>
                     <Input
@@ -320,39 +329,119 @@ function EditConnectorPage() {
                       onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
                     />
                     <p className="text-xs text-[var(--color-muted-foreground)]">
-                      Only needed if the preview picks up menus or sidebars instead of the article.
-                      Leave empty to let AI detect this automatically.
+                      Only needed if the preview picks up menus instead of the article.
                     </p>
                   </div>
+                  {!webcrawlerConfig.content_selector && (
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                      disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
+                      onClick={() => runPreview({ try_ai: true })}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {m.admin_connectors_webcrawler_try_ai()}
+                    </button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
+                    onClick={() => runPreview()}
+                  >
+                    {previewMutation.isPending
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_preview_loading()}</>
+                      : m.admin_connectors_webcrawler_run_preview()
+                    }
+                  </Button>
+                  {previewError && !previewMutation.isPending && (
+                    <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
+                  )}
+                  {previewMutation.isPending && (
+                    <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {m.admin_connectors_webcrawler_preview_loading()}
+                    </div>
+                  )}
+                  {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length === 0 && previewResult.word_count > 0 && (
+                    <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                      <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(previewResult.word_count) })}</span>
+                    </div>
+                  )}
+                  {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length > 0 && (
+                    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
+                    </div>
+                  )}
+                  {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
+                    <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
+                    </div>
+                  )}
+                  {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
+                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-3 space-y-1.5">
+                      <p className="text-xs font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_ai_selector_use()}</p>
+                      <code className="text-xs text-[var(--color-accent-dark)] font-mono">{previewResult.content_selector}</code>
+                    </div>
+                  )}
+                  {previewResult !== null && !previewMutation.isPending && previewResult.fit_markdown && (
+                    <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
+                        <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
+                      </div>
+                      <div className={MARKDOWN_PROSE_CLASSES}>
+                        <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
 
-                  {/* Authentication cookies */}
+                {/* ── Tab: Authentication ── */}
+                <TabsContent value="auth" className="space-y-4">
+                  {!wcCookies && !canaryUrl && !loginIndicatorSelector ? (
+                    <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+                      <p className="text-sm font-medium text-[var(--color-foreground)]">
+                        Is this site behind a login?
+                      </p>
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        If this site requires authentication to see content, you&apos;ll need to provide cookies
+                        from your browser session.
+                      </p>
+                      <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3 text-xs text-[var(--color-success)]">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        No authentication configured &mdash; this connector treats the site as public.
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="space-y-1.5">
                     <Label htmlFor="edit-conn-cookies">Authentication cookies</Label>
                     <textarea
                       id="edit-conn-cookies"
-                      className="flex min-h-[60px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                      className="flex min-h-[80px] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-xs font-mono placeholder:text-[var(--color-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
                       placeholder={m.admin_connectors_webcrawler_cookies_placeholder()}
                       value={wcCookies}
                       onChange={(e) => setWcCookies(e.target.value)}
                     />
                     <p className="text-xs text-[var(--color-muted-foreground)]">
-                      Only needed for sites behind a login. Open the site in your browser, log in,
-                      then copy the Cookie value from your browser&apos;s developer tools (Network tab &gt; any request &gt; Cookie header).
+                      Open the site in your browser, log in, then copy the Cookie value from
+                      developer tools (Network tab &rarr; any request &rarr; Cookie header).
                     </p>
                   </div>
-
-                  {/* Auth guard (SPEC-CRAWL-004) */}
-                  <div className="space-y-3 pt-2 border-t border-[var(--color-border)]">
+                  <div className="space-y-3 pt-3 border-t border-[var(--color-border)]">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-foreground)]">
                       <Shield className="h-3.5 w-3.5" />
                       Auth protection
                     </div>
                     <p className="text-xs text-[var(--color-muted-foreground)]">
-                      Detects when your login expires between syncs. Usually set up automatically during preview &mdash;
-                      only change these if you know what you&apos;re doing.
+                      Usually set up automatically during preview. Only change these if you know what you&apos;re doing.
                     </p>
                     <div className="space-y-1.5">
-                      <Label htmlFor="edit-conn-canary-url" className="text-xs">Reference page URL</Label>
+                      <Label htmlFor="edit-conn-canary-url" className="text-xs">Reference page</Label>
                       <Input
                         id="edit-conn-canary-url"
                         className="text-xs"
@@ -361,7 +450,7 @@ function EditConnectorPage() {
                         onChange={(e) => setCanaryUrl(e.target.value)}
                       />
                       <p className="text-xs text-[var(--color-muted-foreground)]">
-                        A page with real content. Checked before every sync &mdash; if it looks different, the sync stops.
+                        Checked before every sync. If this page looks different, the sync stops.
                       </p>
                     </div>
                     <div className="space-y-1.5">
@@ -374,107 +463,15 @@ function EditConnectorPage() {
                         onChange={(e) => setLoginIndicatorSelector(e.target.value)}
                       />
                       <p className="text-xs text-[var(--color-muted-foreground)]">
-                        A CSS selector for an element only visible when logged in (e.g. a logout button).
-                        Pages without it are skipped as login walls.
+                        Pages without this element are skipped as login walls.
                       </p>
                     </div>
                   </div>
-                </div>
-              )}
-              {!webcrawlerConfig.content_selector && (
-                <button
-                  type="button"
-                  className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
-                  disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
-                  onClick={() => runPreview({ try_ai: true })}
-                >
-                  <Sparkles className="h-3 w-3" />
-                  {m.admin_connectors_webcrawler_try_ai()}
-                </button>
-              )}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={previewMutation.isPending || !webcrawlerConfig.base_url}
-                onClick={() => runPreview()}
-              >
-                {previewMutation.isPending
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_preview_loading()}</>
-                  : m.admin_connectors_webcrawler_run_preview()
-                }
-              </Button>
-              {previewError && !previewMutation.isPending && (
-                <p className="text-sm text-[var(--color-destructive)]">{previewError}</p>
-              )}
-              {previewMutation.isPending && (
-                <div className="rounded-lg border border-[var(--color-border)] p-4 flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {m.admin_connectors_webcrawler_preview_loading()}
-                </div>
-              )}
-              {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length === 0 && previewResult.word_count > 0 && (
-                <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                  <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(previewResult.word_count) })}</span>
-                </div>
-              )}
-              {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length > 0 && (
-                <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>{m.admin_connectors_webcrawler_warning_nav_detected()}</span>
-                </div>
-              )}
-              {previewResult !== null && !previewMutation.isPending && previewResult.word_count === 0 && previewResult.selector_source !== 'ai' && (
-                <div className="space-y-2">
-                  <div className="flex gap-2 items-start rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                    <span>{m.admin_connectors_webcrawler_preview_no_content()}</span>
-                  </div>
-                  {!webcrawlerConfig.content_selector && (
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-accent)] transition-colors"
-                      onClick={() => runPreview({ try_ai: true })}
-                    >
-                      <Sparkles className="h-3 w-3" />
-                      {m.admin_connectors_webcrawler_try_ai()}
-                    </button>
-                  )}
-                </div>
-              )}
-              {previewResult !== null && !previewMutation.isPending && previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-3 space-y-1.5">
-                  <p className="text-xs font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_ai_selector_use()}</p>
-                  <code className="text-xs text-[var(--color-accent-dark)] font-mono">{previewResult.content_selector}</code>
-                </div>
-              )}
-              {previewResult !== null && !previewMutation.isPending && previewResult.fit_markdown && (
-                <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-[var(--color-foreground)]">{m.admin_connectors_webcrawler_preview_title()}</span>
-                    <span className="text-xs text-[var(--color-muted-foreground)]">{m.admin_connectors_webcrawler_preview_word_count({ count: String(previewResult.word_count) })}</span>
-                  </div>
-                  <div className={MARKDOWN_PROSE_CLASSES}>
-                    <ReactMarkdown components={{ a: ({ children }) => <span className="text-[var(--color-accent)]">{children}</span> }}>{previewResult.fit_markdown}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
+                </TabsContent>
+              </Tabs>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-path-prefix">{m.admin_connectors_webcrawler_path_prefix()}</Label>
-                <Input id="edit-conn-path-prefix" value={webcrawlerConfig.path_prefix} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-conn-max-pages">{m.admin_connectors_webcrawler_max_pages()}</Label>
-                <Input id="edit-conn-max-pages" type="number" min="1" max="2000" value={webcrawlerConfig.max_pages} onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, max_pages: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{m.admin_connectors_assertion_modes_label()}</Label>
-                <MultiSelect options={ASSERTION_MODE_OPTIONS} value={allowedAssertionModes} onChange={setAllowedAssertionModes} placeholder={m.admin_connectors_assertion_modes_placeholder()} />
-              </div>
               {renderError()}
-              <div className="pt-2">
+              <div className="pt-4">
                 <Button type="submit" size="sm" disabled={updateMutation.isPending}>{m.admin_connectors_save()}</Button>
               </div>
             </form>
