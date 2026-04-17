@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased] — 2026-04-17 — SPEC-WIDGET-002: Split API Keys and Chat Widgets
+
+### Added — SPEC-WIDGET-002: Independent API keys and Chat widgets domains
+
+- **Separate database tables:** New `widgets` + `widget_kb_access` tables with own RLS policies. Widget auth is 100% JWT-based (`WIDGET_JWT_SECRET`) — no shared secrets with API keys. Data migrated from combined `partner_api_keys` table.
+- **Separate admin endpoints:** `/api/api-keys/*` and `/api/widgets/*` replace the combined `/api/integrations/*`. Each has full CRUD with domain-specific schemas.
+- **Separate admin UI:** Two sidebar items "API keys" and "Chat widgets". Each has its own wizard (4 steps) and tabbed detail view (5 tabs matching wizard steps 1-to-1). No `if (isWidget)` branches.
+- **Widget streaming chat:** Embedded `klai-chat.js` (56KB gzip 21KB) with SSE streaming via `fetchEventSource`, grounded KB-only system prompt (refuses to guess), markdown rendering via `snarkdown` + `DOMPurify` XSS protection.
+- **Klai brand styling:** Widget defaults to amber primary (#fcaa2d), warm ivory background (#fffef2), cream cards (#f3f2e7), Parabole font. Dark text on amber (WCAG compliant).
+- **Widget i18n:** NL + EN labels auto-detected from browser locale, overridable via `data-locale` attribute.
+- **Wildcard origin matching:** `https://*.getklai.com` matches all tenant subdomains. Fail-closed (empty list blocks everything).
+- **CI pipeline:** Widget bundle built inside portal-frontend workflow. Triggers on `klai-widget/src/**` changes.
+- **Tests:** 26 tests covering smoke (12), integration (7), widget-config (5), origin matching (5).
+
+### Removed
+
+- **`/api/integrations/*` endpoints** — hard-removed, returns 404.
+- **Revoke/active concept** — no soft-delete for either domain. `DELETE` is the only way to end an API key or widget. `active` column dropped from `partner_api_keys`.
+- **`integration_type` discriminator** — column dropped. No `if (isWidget)` branches in code.
+- **`admin_integrations_*` paraglide keys** — 48 dead keys removed, 68 renamed to `admin_api_keys_*`, `admin_widgets_*`, `admin_shared_*`.
+
+### Fixed
+
+- **RLS DELETE policy** on `partner_api_keys` — was missing, caused silent 204 with 0 rows affected.
+- **RLS SELECT policies** on `widgets` and `widget_kb_access` — changed to permissive (`USING true`) for the public widget-config endpoint.
+- **`set_tenant` in admin `_get_caller_org`** — was missing, caused `InvalidTextRepresentationError` on all admin writes to RLS-scoped tables.
+- **Partner chat retrieval URL** — `/retrieve/v1/query` corrected to `/retrieve` (the actual endpoint).
+- **Embed snippet URL** — `cdn.getklai.com` (not a real CDN) corrected to `my.getklai.com` (portal Caddy).
+- **Widget JS MIME type** — self-hosted in portal `public/widget/` served as `text/javascript` by Caddy (previously returned `text/html` from Astro catch-all).
+
 ## [Unreleased] — 2026-04-17 — SPEC-CRAWL-004: Automatic Auth Guard Setup
 
 ### Added — SPEC-CRAWL-004: AI-first auth guard in connector wizard
