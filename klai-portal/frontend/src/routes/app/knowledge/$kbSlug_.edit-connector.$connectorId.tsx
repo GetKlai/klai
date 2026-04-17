@@ -292,8 +292,12 @@ function EditConnectorPage() {
               { id: 'auth',    label: 'Authentication', icon: Shield },
             ]
             function setTab(tab: WcTabId) {
+              // Update search param only — preserves current route + params.
+              // Using from/search function form to satisfy TanStack Router's strict types
+              // on this $kbSlug_ layout route (param name mismatch with explicit `to`).
               void navigate({
-                search: { tab } as Record<string, unknown>,
+                from: Route.fullPath,
+                search: () => ({ tab }),
               })
             }
             return (
