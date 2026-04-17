@@ -98,7 +98,7 @@ export const BlockPageEditor = forwardRef<
 
   return (
     <div
-      className="min-h-full"
+      className="min-h-full mx-auto max-w-[760px] px-12 pt-4 pb-16"
       onClickCapture={(e) => {
         const target = e.target as Element
         const anchor = target.closest('[data-wikilink-page-id]')
