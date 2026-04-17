@@ -280,8 +280,9 @@ function CollectionRow({
             </Badge>
           )}
           <span className="ml-2 text-xs text-gray-400">
-            {itemCount + sourceCount}{' '}
-            {itemCount + sourceCount === 1 ? 'bron' : 'bronnen'}
+            {/* items = indexed pieces (includes connector output + uploads).
+                Connectors alone, without content, count via the status badge. */}
+            {itemCount} {itemCount === 1 ? 'bron' : 'bronnen'}
           </span>
         </Link>
 
