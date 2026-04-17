@@ -46,14 +46,13 @@ CREATE POLICY widgets_delete ON widgets
 
 -- 5. RLS policies on `widget_kb_access`. Junction inherits tenant scope
 --    from its parent widget's org_id.
+-- SELECT is permissive (USING true) because the widget-config endpoint
+-- loads KB IDs from this junction without tenant context (public endpoint).
+-- Same reasoning as widgets_select.
 DROP POLICY IF EXISTS widget_kb_access_select ON widget_kb_access;
 CREATE POLICY widget_kb_access_select ON widget_kb_access
     FOR SELECT TO portal_api
-    USING (EXISTS (
-        SELECT 1 FROM widgets w
-        WHERE w.id = widget_kb_access.widget_id
-          AND w.org_id = current_setting('app.current_org_id', true)::integer
-    ));
+    USING (true);
 
 DROP POLICY IF EXISTS widget_kb_access_insert ON widget_kb_access;
 CREATE POLICY widget_kb_access_insert ON widget_kb_access

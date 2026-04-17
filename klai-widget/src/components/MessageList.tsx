@@ -1,6 +1,11 @@
 import { For, Show } from "solid-js";
+import DOMPurify from "dompurify";
 import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
+
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(snarkdown(text));
+}
 import type { Message } from "../api/chat-stream";
 
 interface MessageListProps {
@@ -40,7 +45,7 @@ export function MessageList(props: MessageListProps) {
                 {message.role === "user" ? (
                   message.content
                 ) : (
-                  <div class="klai-markdown" innerHTML={snarkdown(message.content)} />
+                  <div class="klai-markdown" innerHTML={renderMarkdown(message.content)} />
                 )}
               </div>
             </Show>
