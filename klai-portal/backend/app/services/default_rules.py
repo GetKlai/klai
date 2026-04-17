@@ -15,21 +15,8 @@ from app.models.rules import PortalRule
 
 logger = structlog.get_logger()
 
+# Rules = guardrails (block / redact). Prompt instructions go in Templates.
 DEFAULT_RULES: list[dict[str, str]] = [
-    {
-        "name": "Altijd in het Nederlands",
-        "slug": "altijd-in-het-nederlands",
-        "description": "Antwoord standaard in het Nederlands",
-        "rule_text": "Antwoord altijd in het Nederlands, tenzij de gebruiker expliciet om een andere taal vraagt.",
-        "rule_type": "instruction",
-    },
-    {
-        "name": "Houd antwoorden kort en bondig",
-        "slug": "houd-antwoorden-kort-en-bondig",
-        "description": "Geen onnodige uitweidingen",
-        "rule_text": "Houd antwoorden zo kort mogelijk zonder kerninformatie weg te laten. Ga direct naar het antwoord.",
-        "rule_type": "instruction",
-    },
     {
         "name": "E-mailadressen redacten",
         "slug": "e-mailadressen-redacten",
@@ -45,18 +32,18 @@ DEFAULT_RULES: list[dict[str, str]] = [
         "rule_type": "pii_redact",
     },
     {
+        "name": "IBAN-nummers redacten",
+        "slug": "iban-redacten",
+        "description": "Vervang IBAN-nummers door [IBAN]",
+        "rule_text": "",
+        "rule_type": "pii_redact",
+    },
+    {
         "name": "Creditcardnummers blokkeren",
         "slug": "creditcardnummers-blokkeren",
         "description": "Blokkeer berichten die creditcardnummers bevatten",
         "rule_text": "",
         "rule_type": "pii_block",
-    },
-    {
-        "name": "Geen juridisch of medisch advies",
-        "slug": "geen-juridisch-of-medisch-advies",
-        "description": "Geen definitief advies op gereguleerde terreinen",
-        "rule_text": "Geef geen definitief juridisch, medisch of fiscaal advies. Verwijs bij dit soort vragen altijd door naar een gekwalificeerde professional.",
-        "rule_type": "instruction",
     },
 ]
 
