@@ -26,6 +26,18 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/app/rules", tags=["app-rules"])
 
+# Allowed rule_type values. Enforced in the API layer (no DB CHECK), so new
+# types can be added without migrations.
+ALLOWED_RULE_TYPES: frozenset[str] = frozenset(
+    {
+        "instruction",
+        "pii_block",
+        "pii_redact",
+        "keyword_block",
+        "keyword_redact",
+    }
+)
+
 
 # -- Pydantic schemas ---------------------------------------------------------
 
@@ -35,6 +47,7 @@ class RuleCreate(BaseModel):
     description: str | None = None
     rule_text: str
     scope: str = "global"
+    rule_type: str = "instruction"
 
 
 class RulePatch(BaseModel):
@@ -43,6 +56,7 @@ class RulePatch(BaseModel):
     rule_text: str | None = None
     scope: str | None = None
     is_active: bool | None = None
+    rule_type: str | None = None
 
 
 class RuleOut(BaseModel):
@@ -51,6 +65,7 @@ class RuleOut(BaseModel):
     slug: str
     description: str | None
     rule_text: str
+    rule_type: str
     scope: str
     created_by: str
     is_active: bool
@@ -75,12 +90,22 @@ def _rule_out(r: PortalRule) -> RuleOut:
         slug=r.slug,
         description=r.description,
         rule_text=r.rule_text,
+        rule_type=r.rule_type,
         scope=r.scope,
         created_by=r.created_by,
         is_active=r.is_active,
         created_at=r.created_at.isoformat(),
         updated_at=r.updated_at.isoformat(),
     )
+
+
+def _validate_rule_type(rule_type: str) -> None:
+    """Raise 400 if the rule_type is not one of the allowed values."""
+    if rule_type not in ALLOWED_RULE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"rule_type must be one of: {sorted(ALLOWED_RULE_TYPES)}",
+        )
 
 
 async def _get_rule_or_404(slug: str, org_id: int, db: AsyncSession) -> PortalRule:
@@ -138,6 +163,8 @@ async def create_rule(
             detail="scope must be 'global' or 'personal'",
         )
 
+    _validate_rule_type(body.rule_type)
+
     slug = _slugify(body.name)
     if not slug:
         raise HTTPException(
@@ -151,6 +178,7 @@ async def create_rule(
         slug=slug,
         description=body.description,
         rule_text=body.rule_text,
+        rule_type=body.rule_type,
         scope=body.scope,
         created_by=zitadel_user_id,
     )
@@ -226,6 +254,10 @@ async def update_rule(
 
     if body.is_active is not None:
         rule.is_active = body.is_active
+
+    if body.rule_type is not None:
+        _validate_rule_type(body.rule_type)
+        rule.rule_type = body.rule_type
 
     try:
         await db.commit()
