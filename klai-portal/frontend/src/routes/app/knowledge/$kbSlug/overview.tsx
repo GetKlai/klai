@@ -167,7 +167,7 @@ function OverviewTab() {
           <div className="flex items-center gap-2 text-sm text-gray-400">
             <Zap className="h-4 w-4" />
             <span>
-              <strong className="text-gray-900">{items + sourceList.length}</strong> bronnen
+              <strong className="text-gray-900">{items}</strong> bronnen
             </span>
           </div>
           {isMyPersonalKb && (
