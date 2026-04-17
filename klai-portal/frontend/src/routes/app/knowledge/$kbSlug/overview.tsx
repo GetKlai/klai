@@ -181,11 +181,6 @@ function OverviewTab() {
               </span>
             </div>
           )}
-          {isMyPersonalKb && (
-            <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">
-              Mijn
-            </span>
-          )}
         </div>
 
         {canManageKb && (
