@@ -72,4 +72,36 @@ class KlaiConnectorClient:
             return [SyncRunData(**r) for r in response.json()]
 
 
+    async def compute_fingerprint(
+        self,
+        url: str,
+        cookies: list[dict] | None = None,
+    ) -> str | None:
+        """Compute the canary fingerprint for a URL via klai-connector.
+
+        SPEC-CRAWL-004 REQ-9: called when an admin manually changes the canary
+        URL in advanced settings. klai-connector crawls the page with cookie
+        injection and returns the 16-char hex SimHash.
+
+        Returns the fingerprint string on success, or None on any failure
+        (non-blocking — the connector is saved without canary if this fails).
+        """
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{settings.klai_connector_url}/api/v1/compute-fingerprint",
+                    headers=self._headers(),
+                    json={"url": url, "cookies": cookies},
+                )
+                response.raise_for_status()
+                return response.json().get("fingerprint")
+        except Exception:
+            logger.warning(
+                "compute_fingerprint failed for %s",
+                url,
+                exc_info=True,
+            )
+            return None
+
+
 klai_connector_client = KlaiConnectorClient()

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles, Globe, FileText,
+  ArrowLeft, ChevronRight, Settings, ChevronDown, AlertTriangle, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -35,6 +35,13 @@ interface WebCrawlerConfig {
   max_pages: string
   content_selector: string
   cookies: string
+}
+
+interface AuthGuardSuggestion {
+  canary_url: string | null
+  canary_fingerprint: string | null
+  login_indicator_selector: string | null
+  login_indicator_description: string | null
 }
 
 interface NotionConfig {
@@ -104,7 +111,9 @@ function AddConnectorPage() {
   const [previewResult, setPreviewResult] = useState<{
     fit_markdown: string; word_count: number; warnings: string[]
     content_selector: string | null; selector_source: string | null
+    auth_guard: AuthGuardSuggestion | null
   } | null>(null)
+  const [showAdvancedAuthGuard, setShowAdvancedAuthGuard] = useState(false)
 
   function parseCookies(): unknown[] | undefined {
     const raw = webcrawlerConfig.cookies.trim()
@@ -143,6 +152,15 @@ function AddConnectorPage() {
         if (webcrawlerConfig.content_selector) config.content_selector = webcrawlerConfig.content_selector
         const cookies = parseCookies()
         if (cookies) config.cookies = cookies
+        // SPEC-CRAWL-004: include auto-detected auth guard values from preview
+        const ag = previewResult?.auth_guard
+        if (ag?.canary_url) {
+          config.canary_url = ag.canary_url
+          if (ag.canary_fingerprint) config.canary_fingerprint = ag.canary_fingerprint
+        }
+        if (ag?.login_indicator_selector) {
+          config.login_indicator_selector = ag.login_indicator_selector
+        }
       }
       if (selectedType === 'notion') {
         config.access_token = notionConfig.access_token
@@ -204,6 +222,7 @@ function AddConnectorPage() {
       return apiFetch<{
         fit_markdown: string; word_count: number; warnings: string[]; url: string
         content_selector: string | null; selector_source: string | null
+        auth_guard: AuthGuardSuggestion | null
       }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, token, {
         method: 'POST',
         body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies || null }),
@@ -576,6 +595,58 @@ function AddConnectorPage() {
                       <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
                         <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                         <span>{m.admin_connectors_webcrawler_preview_looks_good({ count: String(previewResult.word_count) })}</span>
+                      </div>
+                    )}
+                    {/* SPEC-CRAWL-004: Auth guard auto-detection confirmation */}
+                    {previewResult?.auth_guard?.canary_url && !previewMutation.isPending && (
+                      <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">
+                        <div className="flex gap-2 items-center text-xs text-[var(--color-success)]">
+                          <Shield className="h-3.5 w-3.5 shrink-0" />
+                          <span>Auth protection enabled</span>
+                        </div>
+                        <p className="text-xs text-[var(--color-muted-foreground)] ml-5.5">
+                          We&apos;ll check this page before every sync to detect expired logins.
+                          {previewResult.auth_guard.login_indicator_selector && (
+                            <> Pages without login indicator will be excluded.</>
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-5.5"
+                          onClick={() => setShowAdvancedAuthGuard(!showAdvancedAuthGuard)}
+                        >
+                          <Settings className="h-3 w-3" />
+                          Advanced settings
+                        </button>
+                        {showAdvancedAuthGuard && (
+                          <div className="ml-5.5 space-y-2 pt-1">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Canary page URL</Label>
+                              <Input
+                                className="text-xs h-7"
+                                value={previewResult.auth_guard.canary_url ?? ''}
+                                onChange={(e) =>
+                                  setPreviewResult((p) =>
+                                    p ? { ...p, auth_guard: { ...p.auth_guard!, canary_url: e.target.value || null, canary_fingerprint: null } } : p
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Login indicator selector</Label>
+                              <Input
+                                className="text-xs h-7"
+                                placeholder=".logged-in-user-menu"
+                                value={previewResult.auth_guard.login_indicator_selector ?? ''}
+                                onChange={(e) =>
+                                  setPreviewResult((p) =>
+                                    p ? { ...p, auth_guard: { ...p.auth_guard!, login_indicator_selector: e.target.value || null } } : p
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     {previewResult !== null && !previewMutation.isPending && (previewResult.warnings ?? []).length > 0 && (

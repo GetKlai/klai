@@ -26,7 +26,11 @@ from knowledge_ingest.domain_selectors import (
 )
 from knowledge_ingest.models import CrawlRequest, CrawlResponse, IngestRequest
 from knowledge_ingest.routes.ingest import ingest_document
-from knowledge_ingest.selector_ai import detect_selector_via_llm
+from knowledge_ingest.fingerprint import compute_content_fingerprint
+from knowledge_ingest.selector_ai import (
+    detect_login_indicator_via_llm,
+    detect_selector_via_llm,
+)
 from knowledge_ingest.utils.url_validator import validate_url
 
 logger = structlog.get_logger()
@@ -77,6 +81,19 @@ class CrawlPreviewRequest(BaseModel):
     cookies: list[dict] | None = None  # browser cookies for authenticated crawling
 
 
+class AuthGuardSuggestion(BaseModel):
+    """Auto-detected auth guard config for SPEC-CRAWL-004.
+
+    Populated when a preview crawl succeeds with cookies. The preview URL
+    becomes the canary page; the login indicator is AI-detected from the DOM.
+    """
+
+    canary_url: str | None = None
+    canary_fingerprint: str | None = None  # 16-char hex SimHash
+    login_indicator_selector: str | None = None
+    login_indicator_description: str | None = None  # human-readable hint
+
+
 class CrawlPreviewResponse(BaseModel):
     url: str
     fit_markdown: str
@@ -84,6 +101,7 @@ class CrawlPreviewResponse(BaseModel):
     warnings: list[str] = []
     content_selector: str | None = None
     selector_source: str | None = None  # "user" | "ai" | None
+    auth_guard: AuthGuardSuggestion | None = None  # SPEC-CRAWL-004
 
 
 # Minimum word count for a crawl result to be considered usable content.
@@ -164,6 +182,33 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
                 extract_domain(body.url), body.org_id, effective_selector, selector_source
             )
 
+        # SPEC-CRAWL-004: auto-detect auth guard when cookies are present and
+        # the crawl succeeded with real content. The preview URL becomes the
+        # canary page; the login indicator is AI-detected from the DOM.
+        auth_guard: AuthGuardSuggestion | None = None
+        if body.cookies and word_count >= _MIN_WORD_COUNT:
+            canary_fp = compute_content_fingerprint(fit_md)
+            if canary_fp:
+                auth_guard = AuthGuardSuggestion(
+                    canary_url=body.url,
+                    canary_fingerprint=canary_fp,
+                )
+                # Try AI detection of login indicator (best-effort, non-blocking)
+                try:
+                    dom_summary = await crawl_dom_summary(body.url)
+                    if dom_summary:
+                        indicator = await detect_login_indicator_via_llm(dom_summary)
+                        if indicator:
+                            auth_guard.login_indicator_selector = indicator
+                            auth_guard.login_indicator_description = (
+                                f"Detected: {indicator}"
+                            )
+                except Exception:
+                    logger.debug(
+                        "auth_guard_login_indicator_detection_skipped",
+                        url=body.url,
+                    )
+
         return CrawlPreviewResponse(
             url=body.url,
             fit_markdown=fit_md,
@@ -171,6 +216,7 @@ async def preview_crawl(body: CrawlPreviewRequest) -> CrawlPreviewResponse:
             warnings=warnings,
             content_selector=effective_selector,
             selector_source=selector_source,
+            auth_guard=auth_guard,
         )
     except Exception as exc:
         logger.warning("crawl_preview_failed", url=body.url, error=str(exc))

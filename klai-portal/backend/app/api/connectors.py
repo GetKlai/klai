@@ -24,6 +24,37 @@ from app.services.klai_connector_client import SyncRunData, klai_connector_clien
 
 logger = logging.getLogger(__name__)
 
+
+async def _auto_fill_canary_fingerprint(config: dict) -> dict:
+    """Auto-compute canary_fingerprint when canary_url is set but fingerprint is missing.
+
+    SPEC-CRAWL-004 REQ-9: the portal backend calls klai-connector to compute
+    the fingerprint. If computation fails, both canary fields are cleared so
+    the connector saves without auth guard (non-blocking).
+
+    Must be called BEFORE credential encryption (needs cookies in plaintext).
+    """
+    canary_url = config.get("canary_url")
+    canary_fp = config.get("canary_fingerprint")
+
+    if not canary_url or canary_fp:
+        # No canary, or fingerprint already present (from preview auto-detect) → no-op
+        return config
+
+    # Need to compute: canary_url is set but fingerprint is missing.
+    cookies = config.get("cookies")
+    fingerprint = await klai_connector_client.compute_fingerprint(canary_url, cookies)
+
+    if fingerprint:
+        config = {**config, "canary_fingerprint": fingerprint}
+        logger.info("canary_fingerprint auto-computed for %s", canary_url)
+    else:
+        # Crawl failed → clear canary to avoid half-configured state
+        config = {k: v for k, v in config.items() if k not in ("canary_url", "canary_fingerprint")}
+        logger.warning("canary_fingerprint computation failed for %s — canary disabled", canary_url)
+
+    return config
+
 router = APIRouter(
     prefix="/api/app/knowledge-bases/{kb_slug}/connectors",
     tags=["connectors"],
@@ -71,12 +102,17 @@ class WebcrawlerConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_canary_and_selector(self) -> "WebcrawlerConfig":
-        """Enforce XOR, fingerprint regex, URL prefix, and selector safety."""
-        # XOR: canary_url iff canary_fingerprint
+        """Validate canary config, fingerprint format, URL prefix, and selector safety.
+
+        canary_url without canary_fingerprint is ALLOWED on input — the portal
+        backend auto-computes the fingerprint via klai-connector on save
+        (SPEC-CRAWL-004 REQ-9). canary_fingerprint without canary_url is still
+        rejected (orphaned fingerprint has no meaning).
+        """
         url_set = self.canary_url is not None
         fp_set = self.canary_fingerprint is not None
-        if url_set != fp_set:
-            raise ValueError("canary_url and canary_fingerprint must be set together (both present or both absent)")
+        if fp_set and not url_set:
+            raise ValueError("canary_fingerprint requires canary_url to be set")
 
         # Fingerprint format: ^[0-9a-f]{16}$
         if fp_set and self.canary_fingerprint is not None:
@@ -261,14 +297,18 @@ async def create_connector(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid assertion modes: {sorted(invalid)}. Valid: {sorted(VALID_ASSERTION_MODES)}",
             )
+    # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
+    # (needs plaintext cookies from config).
+    config_for_save = await _auto_fill_canary_fingerprint(body.config)
+
     # Encrypt sensitive fields if credential store is configured
-    config_to_store = body.config
+    config_to_store = config_for_save
     encrypted_blob = None
     if credential_store is not None:
         encrypted_blob, config_to_store = await credential_store.encrypt_credentials(
             org_id=org.id,
             connector_type=body.connector_type,
-            config=body.config,
+            config=config_for_save,
             db=db,
         )
     connector = PortalConnector(
@@ -315,18 +355,20 @@ async def update_connector(
     if body.name is not None:
         connector.name = body.name
     if body.config is not None:
+        # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
+        config_for_save = await _auto_fill_canary_fingerprint(body.config)
         if credential_store is not None:
             encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
                 org_id=org.id,
                 connector_type=connector.connector_type,
-                config=body.config,
+                config=config_for_save,
                 db=db,
             )
             connector.config = stripped_config
             if encrypted_blob is not None:
                 connector.encrypted_credentials = encrypted_blob
         else:
-            connector.config = body.config
+            connector.config = config_for_save
     if body.schedule is not None:
         connector.schedule = body.schedule
     if body.is_enabled is not None:
