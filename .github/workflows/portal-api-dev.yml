@@ -115,7 +115,7 @@ jobs:
             fi
             echo "Pre-flight OK — /opt/klai/.env has required dev secrets."
 
-      - name: Deploy portal-api-dev to core-01
+      - name: Deploy dev stack to core-01
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -126,6 +126,6 @@ jobs:
             source /opt/klai/.env
             echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/portal-api:dev
-            cd /opt/klai && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d portal-api-dev
+            cd /opt/klai && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d portal-api-dev litellm-dev librechat-dev
             sleep 5
-            docker ps --filter name=portal-api-dev --format '{{.Names}} {{.Status}}'
+            docker ps --format '{{.Names}} {{.Status}}' | grep -E 'portal-api-dev|litellm-dev|librechat-dev'
