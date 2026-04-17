@@ -293,7 +293,7 @@ function EditConnectorPage() {
             ]
             function setTab(tab: WcTabId) {
               void navigate({
-                search: { tab },
+                search: { tab } as Record<string, unknown>,
               })
             }
             return (
