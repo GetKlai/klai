@@ -368,7 +368,7 @@ function NewWidgetPage() {
               </p>
               <pre className="text-xs font-mono text-[var(--color-foreground)] bg-[var(--color-muted)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
 {`<script
-  src="https://cdn.getklai.com/widget/klai-chat.js"
+  src="https://my.getklai.com/widget/klai-chat.js"
   data-widget-id="wgt_xxxxxxxxxxxxxxxxxxxx"
 ></script>`}
               </pre>

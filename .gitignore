@@ -213,3 +213,4 @@ dist-ssr/
 !.playwright-mcp/config.json
 /stock 
 .playwright-mcp/
+klai-portal/frontend/public/widget/klai-chat.js

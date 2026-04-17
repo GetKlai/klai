@@ -10,7 +10,7 @@ interface EmbedSnippetProps {
 }
 
 function buildSnippet(widgetId: string, title?: string, welcomeMessage?: string): string {
-  const attrs: string[] = [`  src="https://cdn.getklai.com/widget/klai-chat.js"`]
+  const attrs: string[] = [`  src="https://my.getklai.com/widget/klai-chat.js"`]
   attrs.push(`  data-widget-id="${widgetId}"`)
   if (title) attrs.push(`  data-title="${title}"`)
   if (welcomeMessage) attrs.push(`  data-welcome="${welcomeMessage}"`)
