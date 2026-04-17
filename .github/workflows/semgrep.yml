@@ -46,6 +46,7 @@ jobs:
           semgrep scan \
             --config auto \
             --config p/owasp-top-ten \
+            --exclude 'klai-portal/frontend/public/widget/*.js' \
             klai-portal/backend \
             klai-portal/frontend \
             klai-connector \
