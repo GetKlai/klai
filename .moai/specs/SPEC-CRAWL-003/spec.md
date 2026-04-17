@@ -1,9 +1,15 @@
 # SPEC-CRAWL-003: Connector Auth-Expiry Detection — Three-Layer Content Quality Guardrails
 
-**Status:** Planned
+**Status:** Deployed
 **Priority:** High
 **Created:** 2026-04-16
-**Revised:** 2026-04-16 (threshold calibration + module path correction)
+**Deployed:** 2026-04-17
+**Revised:** 2026-04-17 (post-deploy: six code quality improvements, LSH for >200 pages)
+
+**Implementation commits:** `9a05e159`..`73a89769` on `main`
+**Migration:** `005_add_sync_run_quality_status` applied on core-01
+**E2E verified:** Redcactus connector — Layer C detected 11/46 boilerplate cluster (23.9%),
+`quality_status=degraded`, product_events row 315 emitted with correct REQ-15 shape.
 
 ---
 
