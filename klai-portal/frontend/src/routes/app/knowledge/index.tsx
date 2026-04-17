@@ -410,6 +410,15 @@ function CollectionRow({
                 </InlineDeleteConfirm>
               )
             })
+          ) : itemCount > 0 ? (
+            <Link
+              to="/app/knowledge/$kbSlug/overview"
+              params={{ kbSlug: kb.slug }}
+              className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-900 px-3 py-2 transition-colors"
+            >
+              {itemCount} {itemCount === 1 ? 'bron' : 'bronnen'} — open collectie om te beheren
+              <ChevronRight className="h-3 w-3" />
+            </Link>
           ) : (
             <p className="text-xs text-gray-400 px-3 py-2">
               {m.sources_no_sources()}
