@@ -102,7 +102,7 @@ async def retrieve_context(
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
-            f"{retrieval_url}/retrieve/v1/query",
+            f"{retrieval_url}/retrieve",
             json=retrieve_body,
             headers={
                 "X-Internal-Secret": settings.internal_secret,
