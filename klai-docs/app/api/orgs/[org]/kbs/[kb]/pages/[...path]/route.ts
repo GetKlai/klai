@@ -181,13 +181,27 @@ export async function PUT(
   if (edit_access !== undefined) frontmatter.edit_access = edit_access;
   const fileContent = serializePage(frontmatter as Parameters<typeof serializePage>[0], content ?? "");
 
-  const writeResult = await gitea.putFile(
-    kb.gitea_repo,
-    filePath,
-    fileContent,
-    `Update ${filePath}`,
-    currentSha
-  );
+  let writeResult;
+  try {
+    writeResult = await gitea.putFile(
+      kb.gitea_repo,
+      filePath,
+      fileContent,
+      `Update ${filePath}`,
+      currentSha
+    );
+  } catch (err) {
+    // Gitea returns 422 when the SHA doesn't match (concurrent edit).
+    // Surface as 409 Conflict with the current SHA so the client can retry.
+    if (err instanceof gitea.GiteaError && err.status === 422 && err.body.includes("sha")) {
+      const freshFile = await gitea.getFile(kb.gitea_repo, filePath);
+      return NextResponse.json(
+        { detail: { error: "SHA conflict", sha: freshFile?.sha ?? null } },
+        { status: 409 }
+      );
+    }
+    throw err;
+  }
 
   // Append new slug to _sidebar.yaml when creating a new page
   if (isNewPage) {

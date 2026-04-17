@@ -21,6 +21,17 @@ type GiteaCreateOrg = {
   visibility?: "public" | "private";
 };
 
+export class GiteaError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly path: string,
+    public readonly body: string,
+  ) {
+    super(`Gitea ${path} → ${status}: ${body}`);
+    this.name = "GiteaError";
+  }
+}
+
 async function giteaFetch(path: string, init?: RequestInit) {
   const res = await fetch(`${GITEA_URL}/api/v1${path}`, {
     ...init,
@@ -33,7 +44,7 @@ async function giteaFetch(path: string, init?: RequestInit) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Gitea ${init?.method ?? "GET"} ${path} → ${res.status}: ${body}`);
+    throw new GiteaError(res.status, `${init?.method ?? "GET"} ${path}`, body);
   }
 
   // 204 No Content
