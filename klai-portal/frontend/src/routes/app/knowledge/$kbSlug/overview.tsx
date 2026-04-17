@@ -1,11 +1,32 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
-import { useQuery } from '@tanstack/react-query'
-import { FileText, Zap, Plus, Globe, ExternalLink, Upload, File } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import {
+  FileText,
+  Zap,
+  Plus,
+  Globe,
+  ExternalLink,
+  Upload,
+  File,
+  RefreshCw,
+  Loader2,
+  Trash2,
+} from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { apiFetch } from '@/lib/apiFetch'
+import { queryLogger } from '@/lib/logger'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { SyncStatusBadge } from './-kb-helpers'
-import type { KnowledgeBase, KBStats, ConnectorSummary, PersonalItemsResponse } from './-kb-types'
+import type {
+  KnowledgeBase,
+  KBStats,
+  ConnectorSummary,
+  PersonalItemsResponse,
+} from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/overview')({
   component: OverviewTab,
@@ -23,6 +44,17 @@ function OverviewTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
   const token = auth.user?.access_token
+  const myUserId = auth.user?.profile?.sub
+  const { user: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.isAdmin === true
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+
+  const [confirmingDeleteKb, setConfirmingDeleteKb] = useState(false)
+  const [confirmingDeleteConnectorId, setConfirmingDeleteConnectorId] = useState<string | null>(
+    null,
+  )
+  const [confirmingDeleteFileId, setConfirmingDeleteFileId] = useState<string | null>(null)
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
@@ -38,15 +70,77 @@ function OverviewTab() {
 
   const { data: connectors } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
-    queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token),
+    queryFn: async () =>
+      apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token),
     enabled: !!token && !!kb,
   })
 
-  // Personal KB: fetch actual files
   const { data: filesData } = useQuery<PersonalItemsResponse>({
     queryKey: ['personal-knowledge', kbSlug],
-    queryFn: async () => apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items', token),
+    queryFn: async () =>
+      apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items', token),
     enabled: !!token && kb?.owner_type === 'user',
+  })
+
+  // ── Mutations ────────────────────────────────────────────────────────
+
+  const deleteKbMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}`, token, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })
+      void navigate({ to: '/app/knowledge' })
+    },
+    onError: (err) => queryLogger.error('KB delete failed', { slug: kbSlug, err }),
+  })
+
+  const syncAllMutation = useMutation({
+    mutationFn: async (connectorIds: string[]) => {
+      await Promise.all(
+        connectorIds.map((id) =>
+          apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, token, {
+            method: 'POST',
+          }),
+        ),
+      )
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+    },
+    onError: (err) => queryLogger.error('Sync all failed', { slug: kbSlug, err }),
+  })
+
+  const syncConnectorMutation = useMutation({
+    mutationFn: async (connectorId: string) =>
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}/sync`, token, {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+    },
+  })
+
+  const deleteConnectorMutation = useMutation({
+    mutationFn: async (connectorId: string) =>
+      apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, token, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] })
+      setConfirmingDeleteConnectorId(null)
+    },
+  })
+
+  const deleteFileMutation = useMutation({
+    mutationFn: async (artifactId: string) =>
+      apiFetch(`/api/knowledge/personal/items/${artifactId}`, token, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['personal-knowledge', kbSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['kb-stats', kbSlug] })
+      setConfirmingDeleteFileId(null)
+    },
+    onError: (err, id) =>
+      queryLogger.error('File delete failed', { kb: kbSlug, artifactId: id, err }),
   })
 
   if (!kb) return null
@@ -55,24 +149,85 @@ function OverviewTab() {
   const sourceList = connectors ?? []
   const files = filesData?.items ?? []
 
+  const isMyPersonalKb =
+    kb.owner_type === 'user' && !!myUserId && kb.slug === `personal-${myUserId}`
+  const isOthersPersonalKb =
+    kb.owner_type === 'user' && !!myUserId && kb.slug !== `personal-${myUserId}`
+  const canManageKb = isAdmin || !isOthersPersonalKb
+
   return (
     <div className="space-y-8">
-      {/* Quick stats */}
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2 text-sm text-gray-400">
-          <FileText className="h-4 w-4" />
-          <span><strong className="text-gray-900">{items}</strong> bestanden</span>
+      {/* Quick stats + KB-level actions */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <FileText className="h-4 w-4" />
+            <span>
+              <strong className="text-gray-900">{items}</strong> bestanden
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <Zap className="h-4 w-4" />
+            <span>
+              <strong className="text-gray-900">{sourceList.length}</strong> bronnen
+            </span>
+          </div>
+          {isMyPersonalKb && (
+            <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">
+              Mijn
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2 text-sm text-gray-400">
-          <Zap className="h-4 w-4" />
-          <span><strong className="text-gray-900">{sourceList.length}</strong> bronnen</span>
-        </div>
+
+        {canManageKb && (
+          <div className="flex items-center gap-2">
+            {sourceList.length > 0 && (
+              <Tooltip label="Alle bronnen synchroniseren">
+                <button
+                  type="button"
+                  disabled={syncAllMutation.isPending}
+                  onClick={() => syncAllMutation.mutate(sourceList.map((c) => c.id))}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  {syncAllMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  Sync
+                </button>
+              </Tooltip>
+            )}
+            <InlineDeleteConfirm
+              isConfirming={confirmingDeleteKb}
+              isPending={deleteKbMutation.isPending}
+              label={`Collectie "${kb.name}" verwijderen?`}
+              cancelLabel="Annuleren"
+              onConfirm={() => {
+                deleteKbMutation.mutate()
+                setConfirmingDeleteKb(false)
+              }}
+              onCancel={() => setConfirmingDeleteKb(false)}
+            >
+              <button
+                type="button"
+                onClick={() => setConfirmingDeleteKb(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 hover:text-[var(--color-destructive)] transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Verwijder collectie
+              </button>
+            </InlineDeleteConfirm>
+          </div>
+        )}
       </div>
 
-      {/* Connected sources — like Superdock */}
+      {/* Connected sources */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Verbonden bronnen</h2>
+          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+            Verbonden bronnen
+          </h2>
           <Link
             to="/app/knowledge/$kbSlug/add-source"
             params={{ kbSlug }}
@@ -103,57 +258,120 @@ function OverviewTab() {
           <div className="space-y-2">
             {sourceList.map((c) => {
               const Icon = CONNECTOR_ICONS[c.connector_type] ?? Zap
+              const isSyncing =
+                syncConnectorMutation.isPending && syncConnectorMutation.variables === c.id
+              const isDeletingConnector =
+                deleteConnectorMutation.isPending && deleteConnectorMutation.variables === c.id
               return (
-                <div key={c.id} className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-3">
-                  <Icon className="h-5 w-5 text-gray-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{c.name || c.connector_type}</p>
-                    {c.last_sync_at && (
-                      <p className="text-xs text-gray-400">Laatst gesynchroniseerd</p>
+                <InlineDeleteConfirm
+                  key={c.id}
+                  isConfirming={confirmingDeleteConnectorId === c.id}
+                  isPending={isDeletingConnector}
+                  label={`Bron "${c.name || c.connector_type}" verwijderen?`}
+                  cancelLabel="Annuleren"
+                  onConfirm={() => deleteConnectorMutation.mutate(c.id)}
+                  onCancel={() => setConfirmingDeleteConnectorId(null)}
+                >
+                  <div className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-3 hover:bg-gray-50 transition-colors">
+                    <Icon className="h-5 w-5 text-gray-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {c.name || c.connector_type}
+                      </p>
+                      {c.last_sync_at && (
+                        <p className="text-xs text-gray-400">Laatst gesynchroniseerd</p>
+                      )}
+                    </div>
+                    <SyncStatusBadge status={c.last_sync_status} />
+                    {canManageKb && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Tooltip label="Synchroniseren">
+                          <button
+                            type="button"
+                            disabled={isSyncing}
+                            onClick={() => syncConnectorMutation.mutate(c.id)}
+                            aria-label="Sync connector"
+                            className="rounded-lg p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                          >
+                            {isSyncing ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={14} />
+                            )}
+                          </button>
+                        </Tooltip>
+                        <Tooltip label="Bron verwijderen">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingDeleteConnectorId(c.id)}
+                            aria-label="Delete connector"
+                            className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </Tooltip>
+                      </div>
                     )}
                   </div>
-                  <SyncStatusBadge status={c.last_sync_status} />
-                </div>
+                </InlineDeleteConfirm>
               )
             })}
           </div>
         )}
       </div>
 
-      {/* Bestanden — actual file list */}
+      {/* Bestanden */}
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
-            Bestanden {items > 0 && <span className="text-gray-400 normal-case font-normal">({items})</span>}
-          </h2>
-          <div className="flex items-center gap-2">
-            {kb.owner_type === 'user' && files.length > 0 && (
-              <Link
-                to="/app/knowledge/$kbSlug/items"
-                params={{ kbSlug }}
-                className="text-xs font-medium text-gray-400 hover:text-gray-900 transition-colors"
-              >
-                Beheer
-              </Link>
+            Bestanden{' '}
+            {items > 0 && (
+              <span className="text-gray-400 normal-case font-normal">({items})</span>
             )}
-          </div>
+          </h2>
         </div>
 
         {files.length > 0 ? (
           <div className="space-y-1">
-            {files.slice(0, 10).map((f) => (
-              <div key={f.id} className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5">
-                <File className="h-4 w-4 text-gray-400 shrink-0" />
-                <span className="text-sm text-gray-900 truncate">{f.path}</span>
-              </div>
-            ))}
-            {files.length > 10 && (
+            {files.slice(0, 20).map((f) => {
+              const isDeletingFile =
+                deleteFileMutation.isPending && deleteFileMutation.variables === f.id
+              return (
+                <InlineDeleteConfirm
+                  key={f.id}
+                  isConfirming={confirmingDeleteFileId === f.id}
+                  isPending={isDeletingFile}
+                  label={`Bestand "${f.path}" verwijderen?`}
+                  cancelLabel="Annuleren"
+                  onConfirm={() => deleteFileMutation.mutate(f.id)}
+                  onCancel={() => setConfirmingDeleteFileId(null)}
+                >
+                  <div className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5 hover:bg-gray-50 transition-colors">
+                    <File className="h-4 w-4 text-gray-400 shrink-0" />
+                    <span className="text-sm text-gray-900 truncate flex-1">{f.path}</span>
+                    {isMyPersonalKb && (
+                      <Tooltip label="Bestand verwijderen">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingDeleteFileId(f.id)}
+                          aria-label="Delete file"
+                          className="rounded-lg p-1.5 text-gray-400 hover:text-[var(--color-destructive)] hover:bg-gray-100 transition-colors shrink-0"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </Tooltip>
+                    )}
+                  </div>
+                </InlineDeleteConfirm>
+              )
+            })}
+            {files.length > 20 && (
               <Link
                 to="/app/knowledge/$kbSlug/items"
                 params={{ kbSlug }}
                 className="block text-center text-xs text-gray-400 hover:text-gray-900 py-2 transition-colors"
               >
-                + {files.length - 10} meer bestanden
+                + {files.length - 20} meer bestanden
               </Link>
             )}
           </div>
@@ -176,11 +394,13 @@ function OverviewTab() {
         )}
       </div>
 
-      {/* Documenten — block editor link */}
+      {/* Documenten link */}
       {kb.docs_enabled && kb.gitea_repo_slug && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Documenten</h2>
+            <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+              Documenten
+            </h2>
           </div>
           <Link
             to="/app/docs/$kbSlug"
