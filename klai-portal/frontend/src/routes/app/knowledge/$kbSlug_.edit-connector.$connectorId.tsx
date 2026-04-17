@@ -4,12 +4,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, AlertTriangle, Globe, FileText, Shield, Info, Eye,
+  ArrowLeft, AlertTriangle, Shield, Info, Eye,
   CheckCircle2, Loader2, Sparkles, Settings, ChevronDown, ChevronRight,
 } from 'lucide-react'
-import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
@@ -48,14 +46,6 @@ type PreviewResult = {
 
 const MARKDOWN_PROSE_CLASSES = 'overflow-y-auto max-h-64 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-[var(--color-foreground)] [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-[var(--color-foreground)] [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-[var(--color-foreground)] [&_h3]:mb-1 [&_p]:text-[var(--color-muted-foreground)] [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:text-[var(--color-muted-foreground)] [&_ul]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:text-[var(--color-muted-foreground)] [&_ol]:mb-1.5 [&_strong]:font-semibold [&_strong]:text-[var(--color-foreground)] [&_hr]:border-[var(--color-border)] [&_hr]:my-2'
 
-type ConnectorTypeInfo = { label: string; Icon: React.ComponentType<{ className?: string }> }
-const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
-  github:       { label: 'GitHub',       Icon: SiGithub },
-  web_crawler:  { label: 'Web',          Icon: Globe },
-  notion:       { label: 'Notion',       Icon: SiNotion },
-  google_drive: { label: 'Google Drive', Icon: SiGoogledrive },
-  ms_docs:      { label: 'MS Docs',      Icon: FileText },
-}
 
 function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
