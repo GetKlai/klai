@@ -220,7 +220,6 @@ function EditConnectorPage() {
       setPreviewError(null)
       if (data.selector_source === 'ai' && data.content_selector) {
         setWebcrawlerConfig((p) => ({ ...p, content_selector: data.content_selector! }))
-        setShowAdvanced(true)
       }
     },
     onError: (err) => {
