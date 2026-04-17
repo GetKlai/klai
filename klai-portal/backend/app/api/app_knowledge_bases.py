@@ -279,14 +279,32 @@ async def _resolve_org_kb(caller_id: str, org_id: int, db: AsyncSession) -> Port
 
 
 async def _require_owner(kb: PortalKnowledgeBase, caller_id: str, db: AsyncSession) -> None:
+    """Owner-only gate for destructive actions.
+
+    Admins of the same org can also pass this gate (they implicitly own
+    everything in their tenant — deleting KBs, managing members, etc.).
+    """
     role = await get_user_role_for_kb(
         kb.id, caller_id, db, default_org_role=kb.default_org_role, kb_org_id=kb.org_id, kb_created_by=kb.created_by
     )
-    if role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Owner access required",
+    if role == "owner":
+        return
+
+    # Admin bypass — org admins can manage any KB in their org.
+    caller_row = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == caller_id,
+            PortalUser.org_id == kb.org_id,
         )
+    )
+    caller = caller_row.scalar_one_or_none()
+    if caller and caller.role == "admin":
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Owner access required",
+    )
 
 
 def _validate_role(role: str) -> None:
