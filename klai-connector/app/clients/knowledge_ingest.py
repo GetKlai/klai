@@ -18,6 +18,7 @@ def _build_payload(
     source_url: str = "",
     content_type: str = "unknown",
     image_urls: list[str] | None = None,
+    connector_type: str = "",
 ) -> dict:
     """Build the JSON payload for the knowledge-ingest endpoint."""
     payload: dict = {
@@ -28,7 +29,10 @@ def _build_payload(
         "source_connector_id": source_connector_id,
         "source_ref": source_ref,
         "content_type": content_type,
+        "source_type": "connector",
     }
+    if connector_type:
+        payload["connector_type"] = connector_type
     extra: dict[str, object] = {}
     if source_url:
         extra["source_url"] = source_url
@@ -66,6 +70,7 @@ class KnowledgeIngestClient:
         content_type: str = "unknown",
         allowed_assertion_modes: list[str] | None = None,
         image_urls: list[str] | None = None,
+        connector_type: str = "",
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -98,6 +103,7 @@ class KnowledgeIngestClient:
             source_url=source_url,
             content_type=content_type,
             image_urls=image_urls,
+            connector_type=connector_type,
         )
         if allowed_assertion_modes is not None:
             payload["allowed_assertion_modes"] = allowed_assertion_modes

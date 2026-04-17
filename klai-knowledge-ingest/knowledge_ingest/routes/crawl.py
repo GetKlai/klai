@@ -328,6 +328,8 @@ async def crawl_url(request: CrawlRequest) -> CrawlResponse:
         kb_slug=request.kb_slug,
         path=path,
         content=fit_md,
+        source_type="crawl",
+        source_domain=urlparse(request.url).netloc,
         extra=extra,
     )
     result = await ingest_document(ingest_req)
