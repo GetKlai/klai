@@ -12,15 +12,14 @@ class Settings(BaseSettings):
     tei_timeout: float = 120.0  # seconds — TEI can take 35s+ on large batches with queue
     gitea_url: str = "http://gitea:3000"
     gitea_token: str = ""
+    # @MX:NOTE: reserved for future knowledge-ingest → docs-app service calls
+    # (docs-app accepts X-Internal-Secret via requireAuthOrService). Not yet wired.
     docs_internal_secret: str = ""
     knowledge_ingest_secret: str = ""  # X-Internal-Secret for service-to-service auth
     gitea_webhook_secret: str = ""  # HMAC secret for Gitea webhook verification
     # Max chars per chunk (roughly 300-400 tokens for BGE-M3)
     chunk_size: int = 1500
     chunk_overlap: int = 200
-    # Infinity reranker (optional — disabled when empty)
-    reranker_url: str = ""
-    reranker_model: str = "bge-reranker-v2-m3"
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
@@ -36,6 +35,8 @@ class Settings(BaseSettings):
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
     sparse_sidecar_timeout: float = 5.0
     sparse_sidecar_batch_size: int = 64
+    # @MX:TODO: SPEC-KB-007 AC-10 — wire into qdrant_store.ensure_collection sparse index config.
+    # Current code uses a different mechanism at collection creation; this flag is reserved.
     sparse_index_on_disk: bool = False  # AC-10: set True to move sparse index to disk
     # Qdrant collection name — single collection with named + sparse vectors
     qdrant_collection: str = "klai_knowledge"
