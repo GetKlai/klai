@@ -162,6 +162,18 @@ class ConnectorCredentialStore:
         old_cipher = AESGCMCipher(bytes.fromhex(old_kek_hex))
         new_cipher = AESGCMCipher(bytes.fromhex(new_kek_hex))
 
+        # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+        # @MX:REASON: [AUTO] KEK rotation re-encrypts every org's DEK in a single
+        #   administrative pass. This function is invoked only by operator-initiated
+        #   key rotation, never from a user request — scoping to a single org via
+        #   set_tenant() would defeat the purpose (partial rotation leaves the system
+        #   in a state where some orgs' credentials are unreadable under the new KEK).
+        #   Whether strict RLS under portal_api.bypassrls=false lets this sweep see
+        #   all rows is the unresolved F-015 "RLS paradox" tracked in
+        #   .moai/audit/04-3-prework-caddy.md PRE-A. Do not add set_tenant(db, org_id)
+        #   here without first resolving that paradox — doing so may silently make
+        #   rotation a no-op and leave orphaned DEKs permanently unreadable.
+        # @MX:SPEC: SPEC-SEC-007
         result = await db.execute(select(PortalOrg).where(PortalOrg.connector_dek_enc.isnot(None)))
         orgs = result.scalars().all()
         count = 0
