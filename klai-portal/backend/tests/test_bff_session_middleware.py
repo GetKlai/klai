@@ -185,6 +185,22 @@ class TestLogout:
         after = client.get("/api/auth/session", cookies={SESSION_COOKIE_NAME: sid})
         assert after.status_code == 401
 
+    def test_logout_also_clears_legacy_sso_cookie(self, client: TestClient) -> None:
+        """bff/logout MUST invalidate the legacy klai_sso cookie too.
+
+        Otherwise a race between removeUser() setting user=null and the
+        Zitadel end_session navigation causes AppLayout to navigate('/'),
+        LoginPage to auto-signinRedirect, and /api/auth/sso-complete to
+        succeed because klai_sso is still valid — re-logging the user in
+        they just signed out. Fixing this in the backend is cheaper than
+        perfectly ordering the frontend race.
+        """
+        resp = client.post("/api/auth/bff/logout")
+        set_cookies = resp.headers.get_list("set-cookie")
+        assert any("klai_sso" in c and "Max-Age=0" in c for c in set_cookies), (
+            f"bff/logout did not clear klai_sso. Set-Cookie: {set_cookies}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # CSRF enforcement on state-changing methods
