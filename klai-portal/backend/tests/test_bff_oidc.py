@@ -237,7 +237,9 @@ class TestOidcCallback:
 
         resp = client.get(f"/api/auth/oidc/callback?code=the-code&state={state}")
         assert resp.status_code == 302
-        assert resp.headers["location"] == "/app"
+        # Callback routes through /callback frontend page so workspaceHandoff
+        # can run; original return_to is preserved as a query param.
+        assert resp.headers["location"] == "/callback?return_to=/app"
         set_cookies = resp.headers.get_list("set-cookie")
         assert any(SESSION_COOKIE_NAME in c and "HttpOnly" in c for c in set_cookies)
         assert f"klai:oidc_pending:{state}" not in wire_redis._store
