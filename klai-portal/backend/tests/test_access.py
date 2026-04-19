@@ -151,7 +151,7 @@ class TestGetAccessibleKbSlugs:
 
         slugs = await get_accessible_kb_slugs("alice", db)
 
-        assert "personal" in slugs
+        assert "personal-alice" in slugs
         assert "org" in slugs
 
     @pytest.mark.asyncio
