@@ -8,12 +8,13 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
+from app.api.bearer import bearer
 from app.core.database import get_db
 from app.models.portal import PortalJoinRequest
 from app.services.join_request_token import generate_approval_token
@@ -23,7 +24,6 @@ from app.services.zitadel import zitadel
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api", tags=["auth"])
-bearer = HTTPBearer()
 
 # C6.3: rate limit 3/day per zitadel_user_id
 _RATE_LIMIT_PER_DAY = 3

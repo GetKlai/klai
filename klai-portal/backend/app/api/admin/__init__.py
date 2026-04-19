@@ -8,10 +8,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bearer import bearer
 from app.core.database import set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-bearer = HTTPBearer()
 
 
 async def _get_caller_org(

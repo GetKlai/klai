@@ -16,12 +16,13 @@ from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _get_caller_org, _require_admin
+from app.api.bearer import bearer
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
@@ -29,7 +30,6 @@ from app.services.events import emit_event
 from app.services.partner_keys import generate_partner_key
 
 logger = structlog.get_logger()
-bearer = HTTPBearer()
 
 router = APIRouter(prefix="/api/api-keys", tags=["API Keys Admin"])
 
