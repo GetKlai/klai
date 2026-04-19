@@ -957,13 +957,17 @@ services:
           memory: 4G
 
   # ─── FalkorDB (knowledge graph for Graphiti) ─────────────────────────────
+  # Persistence: FALKORDB_DATA_PATH=/var/lib/falkordb/data in the image (NOT /data).
+  # Mount MUST bind to /var/lib/falkordb/data or RDB is ephemeral and wiped on recreate.
+  # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
+  # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
     image: falkordb/falkordb:v4.18.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379"
     volumes:
-      - /opt/klai/falkordb-data:/data
+      - /opt/klai/falkordb-data:/var/lib/falkordb/data
     networks:
       - klai-net
 
