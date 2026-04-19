@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
-from app.api.bearer import bearer  # noqa: F401  re-export — many routes import bearer from here
+from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db, set_tenant
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
