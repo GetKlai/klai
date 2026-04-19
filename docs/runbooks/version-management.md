@@ -394,13 +394,43 @@ curl -s https://registry.npmjs.org/<package>/latest | jq -r '.version'
 
 ### 8.5 CI automation
 
-- **Renovate** (`renovate.yml` workflow): scheduled Monday 05:00 Amsterdam. Auto-merges patches and dev-only minors. Docker image groups get a grouped manual PR.
-- **Dependabot** (`.github/dependabot.yml`): weekly PRs for pip + npm + docker. Respects the upper bounds documented in `VERSIONS.md` (configure via `ignore:` rules).
-- **Trivy**: runs after every `portal-api` image build; fails on CRITICAL/HIGH with a fix available.
+- **Renovate** (`renovate.json` + `.github/workflows/renovate.yml`): scheduled Monday 05:00 Amsterdam. Auto-merges patches and dev-only minors. Docker image groups get a grouped manual PR. Single source of truth for version-update PRs across all managers (pip/pep621, npm, docker-compose, Dockerfile, github-actions).
+- **Dependabot security updates** (GitHub repo feature, not `dependabot.yml`): raises PRs automatically when a CVE is found in a dep. Independent of Renovate. Enabled via `gh api -X PUT repos/GetKlai/klai/automated-security-fixes`.
+- **Trivy per service** (each `<service>.yml` workflow has a `scan` job): runs after every internal image build; fails CI on CRITICAL/HIGH with a fix available.
+- **Trivy per pinned external image** (`.github/workflows/scan-pinned-images.yml`): weekly scheduled scan of every external image pinned in our compose files. Non-blocking — findings go to the Security tab.
+- **pip-audit / npm audit**: part of every service's quality job. Fails CI on unignored vulnerabilities.
+- **Semgrep** (`.github/workflows/semgrep.yml`): SAST on every push + PR.
+- **Secret scanning + push protection** (GitHub repo feature): blocks commits containing detected secrets from being pushed to GitHub.
+
+> **Not used**: `.github/dependabot.yml` (version-update PRs). Renovate supersedes it — running both creates duplicate conflicting PRs.
 
 ---
 
-## 9. Audit procedure
+## 9. CVE detection layers
+
+Five independent mechanisms detect vulnerabilities. The goal is defence in depth: if one misses, another catches. None of them is the single source of truth.
+
+| Layer | Covers | When it runs | Where alerts land |
+|---|---|---|---|
+| `pip-audit` in CI | Python deps in `uv.lock` | Every push + PR to `main` per service | PR status check (blocks merge) |
+| `npm audit` in CI | Node deps in `package-lock.json` | Every push + PR to `main` per frontend | PR status check (blocks merge) |
+| Trivy on internal image build | OS layer + installed packages in our `ghcr.io/getklai/*` images | Every internal image build | Security tab → Code scanning alerts |
+| Trivy on external pinned images | OS layer + installed packages in `mongo:8.2.7`, `redis:8-alpine`, etc. | Weekly (`scan-pinned-images.yml`) + on compose change | Security tab → Code scanning alerts |
+| Dependabot security updates | Python + Node deps across the whole repo | Real-time (GitHub's vulnerability DB) | Auto-PR + Security tab → Dependabot alerts |
+| Secret scanning + push protection | Accidentally committed API keys, tokens, credentials | On every push | Security tab → Secret scanning alerts + push block |
+
+### Response procedure
+
+When an alert fires:
+
+1. **Triage**: is it actually exploitable in our context? Many CVEs have a high CVSS but no reachable code path in our deployment (e.g., a feature we don't use).
+2. **Fix available?** → bump the dep (follow §3.1 for Python, §3.2 for Node, §3.3 for images).
+3. **No fix available?** → document the acceptance in `VERSIONS.md` with rationale + re-assess date. Add to `pip-audit --ignore-vuln` list if needed. Portal-api already ignores `CVE-2026-4539` and `CVE-2025-71176` with a "re-assess Q3 2026" note.
+4. **Actively exploited?** → bump immediately, skip the Renovate cadence (§10.1).
+
+---
+
+## 10. Audit procedure
 
 Quarterly, run a full audit:
 
@@ -425,16 +455,18 @@ Quarterly, run a full audit:
 
 ---
 
-## 10. When this playbook is wrong
+## 11. When this playbook is wrong
 
 This playbook describes a stable policy, not an algorithm. Use judgment:
 
-- If a CVE is being actively exploited, skip the cadence — bump immediately.
-- If an upstream has announced EOL, don't wait for the quarterly audit.
-- If a major bump has broken API surface and we can't fix in one PR, split: floor bump now, call-site migration later, upper bound removal last.
-- If `:latest` seems tempting for "this one service", write the rationale in `VERSIONS.md` first. If you can't articulate why it's an exception, it's not an exception.
+- **§10.1 — Actively exploited CVE**: skip the cadence, bump immediately. Security tab + Dependabot alert trump the weekly Renovate schedule.
+- **EOL upstream**: don't wait for the quarterly audit.
+- **Major bump with broken API surface** that can't land in one PR: split into three: floor bump now, call-site migration later, upper bound removal last.
+- **`:latest` temptation**: write the rationale in `VERSIONS.md` first. If you can't articulate why it's an exception, it's not an exception.
+- **Trivy complaining about a CVE with no upstream fix**: add to the service's `pip-audit --ignore-vuln <id>` or Trivy's `.trivyignore` with a re-assess date. Never silence globally.
+- **Secret scanning false positive**: use `# gitleaks:allow` or the equivalent and add a comment. Never disable push protection for the whole repo.
 
 ---
 
-*Playbook version: 1.0 (2026-04-19)*
+*Playbook version: 1.1 (2026-04-19) — added §9 CVE detection layers + §8.5 inventory after enabling Dependabot security updates, secret scanning, and the weekly external image scan.*
 *Source incidents: dependency-audit-2026-04-19, pin-all-images-2026-04-19*

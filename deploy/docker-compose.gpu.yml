@@ -35,7 +35,7 @@ services:
   # Infinity alleen voor reranking — dense embeddings verhuisd naar TEI
   # VRAM: ~3-4GB
   infinity:
-    image: michaelf34/infinity:latest
+    image: michaelf34/infinity:0.0.77
     restart: unless-stopped
     command: >
       v2
