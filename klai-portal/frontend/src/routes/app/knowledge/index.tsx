@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { Globe, Lock, Plus, AlertTriangle, Eye, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'

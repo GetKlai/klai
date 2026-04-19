@@ -1,6 +1,6 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { AlertCircle, CheckCircle, CreditCard, ExternalLink, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'

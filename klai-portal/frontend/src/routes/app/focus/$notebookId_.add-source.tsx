@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { focusLogger } from '@/lib/logger'
 import { useRef, useState } from 'react'

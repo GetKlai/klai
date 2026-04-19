@@ -1,6 +1,6 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import QRCode from 'react-qr-code'
 import { ArrowRight, Fingerprint, Mail, Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'

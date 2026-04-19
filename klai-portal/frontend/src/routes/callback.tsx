@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import { useAuth, type AuthContextProps } from 'react-oidc-context'
-import type { User } from 'oidc-client-ts'
+import { useAuth, type AuthContextProps } from '@/lib/auth'
 import * as Sentry from '@sentry/react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
@@ -40,22 +39,22 @@ type RouteDecision =
 // ---------------------------------------------------------------------------
 
 /** Fetch /api/me with a single retry on transient failure; aborts honour signal. */
-async function fetchMeWithRetry(token: string, signal: AbortSignal): Promise<MeResponse> {
+async function fetchMeWithRetry(signal: AbortSignal): Promise<MeResponse> {
   try {
-    return await fetchMe(token, signal)
+    return await fetchMe(undefined, signal)
   } catch (err) {
     if (isAborted(err) || !isRetryable(err)) throw err
     authLogger.warn('Post-login /api/me failed, retrying', { error: err })
     await delay(RETRY_DELAY_MS, signal)
-    return await fetchMe(token, signal)
+    return await fetchMe(undefined, signal)
   }
 }
 
 /** Soft billing-status probe. Failures never block post-login routing. */
-async function fetchBillingStatus(token: string, signal: AbortSignal): Promise<string | null> {
+async function fetchBillingStatus(signal: AbortSignal): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/api/billing/status`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
       signal,
     })
     if (!res.ok) return null
@@ -69,10 +68,10 @@ async function fetchBillingStatus(token: string, signal: AbortSignal): Promise<s
 }
 
 /** Resolve the next URL the user should land on after login. */
-async function resolveDestination(user: User, signal: AbortSignal): Promise<RouteDecision> {
+async function resolveDestination(signal: AbortSignal): Promise<RouteDecision> {
   let me: MeResponse
   try {
-    me = await fetchMeWithRetry(user.access_token, signal)
+    me = await fetchMeWithRetry(signal)
   } catch (err) {
     if (isAborted(err)) return { kind: 'error', error: err }
     if (err instanceof UnauthorizedError) {
@@ -96,7 +95,7 @@ async function resolveDestination(user: User, signal: AbortSignal): Promise<Rout
 
   const isAdmin = me.roles?.some((r) => ADMIN_ROLES.includes(r)) ?? false
   if (isAdmin) {
-    const billingStatus = await fetchBillingStatus(user.access_token, signal)
+    const billingStatus = await fetchBillingStatus(signal)
     if (billingStatus === 'pending') return { kind: 'navigate', url: '/admin/billing' }
   }
 
@@ -130,21 +129,18 @@ function workspaceHandoff(workspaceUrl: string | null | undefined): string | nul
 function CallbackPage() {
   const auth = useAuth()
   const { isLoading, isAuthenticated } = auth
-  const accessToken = auth.user?.access_token
 
   const redirected = useRef(false)
   const [postLoginError, setPostLoginError] = useState<unknown>(null)
   useLocale() // subscribe to locale changes so Paraglide re-renders on switch
 
   useEffect(() => {
-    if (isLoading || !isAuthenticated || !accessToken || redirected.current) return
-    const user = auth.user
-    if (!user) return
+    if (isLoading || !isAuthenticated || redirected.current) return
 
     redirected.current = true
     const controller = new AbortController()
 
-    void applyDecision(auth, user, controller.signal, setPostLoginError)
+    void applyDecision(auth, controller.signal, setPostLoginError)
 
     return () => {
       controller.abort()
@@ -156,7 +152,7 @@ function CallbackPage() {
     // render, which would abort and retry the fetch on benign updates. Depend
     // only on the primitives that actually gate the flow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, isAuthenticated, accessToken])
+  }, [isLoading, isAuthenticated])
 
   if (auth.error) {
     return <ErrorScreen error={auth.error} retryable={false} />
@@ -176,11 +172,10 @@ function CallbackPage() {
  */
 async function applyDecision(
   auth: AuthContextProps,
-  user: User,
   signal: AbortSignal,
   onError: (err: unknown) => void,
 ): Promise<void> {
-  const decision = await resolveDestination(user, signal)
+  const decision = await resolveDestination(signal)
   if (signal.aborted) return
 
   switch (decision.kind) {

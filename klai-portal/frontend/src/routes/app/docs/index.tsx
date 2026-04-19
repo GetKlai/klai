@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, BookMarked, Globe, Lock, Pencil, ExternalLink } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'

@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { ArrowRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
