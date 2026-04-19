@@ -129,37 +129,52 @@ class TestCharacterizeWriteTenantCaddyfile:
         assert (target / "test.caddyfile").exists()
 
 
-@pytest.mark.skip(
-    reason=(
-        "TODO: update for current _reload_caddy signature/behavior. Test mocks "
-        "call-site that no longer matches production code. Pre-existing issue "
-        "surfaced by stricter dep validation. See dependency-audit-2026-04-19.md."
-    )
-)
 class TestCharacterizeReloadCaddy:
-    """Characterization tests for _reload_caddy."""
+    """Characterization tests for _reload_caddy.
 
-    def test_executes_caddy_reload_command(self):
+    Current implementation (since ``admin off`` disables Caddy's Admin API)
+    restarts the container rather than calling ``caddy reload``. A ~1s TLS
+    interruption is acceptable at current scale.
+    """
+
+    def test_restarts_caddy_container(self):
         from app.services.provisioning import _reload_caddy
 
         mock_caddy = MagicMock()
-        mock_caddy.exec_run.return_value = (0, b"")
         with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
             mock_docker.from_env.return_value.containers.get.return_value = mock_caddy
             _reload_caddy()
-            mock_caddy.exec_run.assert_called_once()
-            cmd = mock_caddy.exec_run.call_args[0][0]
-            assert cmd[0] == "caddy"
-            assert "reload" in cmd
 
-    def test_raises_on_nonzero_exit(self):
+            mock_docker.from_env.assert_called_once()
+            mock_docker.from_env.return_value.containers.get.assert_called_once_with("klai-core-caddy-1")
+            mock_caddy.restart.assert_called_once_with(timeout=10)
+
+    def test_propagates_when_container_not_found(self):
+        """If Caddy isn't running, docker.NotFound propagates to the caller."""
+        import docker as docker_mod
+
+        from app.services.provisioning import _reload_caddy
+
+        with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
+            mock_docker.errors = docker_mod.errors
+            mock_docker.from_env.return_value.containers.get.side_effect = docker_mod.errors.NotFound(
+                "No such container: klai-core-caddy-1"
+            )
+            with pytest.raises(docker_mod.errors.NotFound):
+                _reload_caddy()
+
+    def test_propagates_when_restart_fails(self):
+        """Docker APIError on restart() propagates (no silent swallow)."""
+        import docker as docker_mod
+
         from app.services.provisioning import _reload_caddy
 
         mock_caddy = MagicMock()
-        mock_caddy.exec_run.return_value = (1, b"error")
+        mock_caddy.restart.side_effect = docker_mod.errors.APIError("restart failed")
         with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
+            mock_docker.errors = docker_mod.errors
             mock_docker.from_env.return_value.containers.get.return_value = mock_caddy
-            with pytest.raises(RuntimeError, match="Caddy reload failed"):
+            with pytest.raises(docker_mod.errors.APIError):
                 _reload_caddy()
 
 
