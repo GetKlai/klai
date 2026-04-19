@@ -34,16 +34,27 @@ curl -s -o /dev/null -w "%{redirect_url}\n" \
 # NOT:      https://getklai.getklai.com/login?authRequest=V2_...
 ```
 
-**Fix (only as klai DB user, direct SQL — no Zitadel restart needed):**
-```sql
-UPDATE projections.instance_features5
-SET value = '{"base_uri": {"Host": "my.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
-    change_date = NOW(),
-    sequence = sequence + 1
-WHERE instance_id = '362757920133218310' AND key = 'login_v2';
+**Fix (via Zitadel v2 Feature API — writes event + updates projection atomically):**
+```bash
+PAT=$(ssh core-01 'docker exec klai-core-portal-api-1 printenv PORTAL_API_ZITADEL_PAT')
+curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
+  -H "Authorization: Bearer $PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"loginV2": {"required": true, "baseUri": "https://my.getklai.com"}}'
 ```
 
-**Prevention:** When running the zitadel-login-v2-recovery runbook Step 3, verify the Host in the SQL matches `my.getklai.com`. The recovery SQL is the most common place this bug gets reintroduced.
+**Why NOT direct projection UPDATE:** Zitadel is event-sourced. A direct
+`UPDATE projections.instance_features5` works temporarily but leaves the
+original wrong event in `eventstore.events2`. On the next projection rebuild
+(upgrade, `projection truncate`, disaster recovery) the bug returns.
+The Feature API writes a new `feature.instance.login_v2.set` event so the
+fix survives rebuilds. Payload format is `{"Value": {"base_uri": {...}}}`
+in Zitadel v4.12+ (not the older `baseURI` string).
+
+**Prevention:** Never write projection tables directly for config that is
+event-sourced. Always use the Zitadel API for features, OIDC apps, users,
+and policies. See `runbooks/platform-recovery.md` § zitadel-login-v2-recovery
+Step 3 for the full procedure including verification.
 
 ## Org per tenant
 One Zitadel Organization per customer. Org ID is the primary tenant identifier — stored in PostgreSQL alongside LibreChat container name and MongoDB database name.
