@@ -43,7 +43,9 @@ router = APIRouter(prefix="/api")
 _UPSTREAMS: Final[dict[str, str]] = {
     "research": "http://research-api:8030",
     "scribe": "http://scribe-api:8020",
-    "docs": "http://docs-app:3010",
+    # klai-docs has basePath "/docs" in next.config.ts — must be included here
+    # so that /api/docs/api/orgs/... resolves to /docs/api/orgs/... upstream.
+    "docs": "http://docs-app:3010/docs",
 }
 
 # Hop-by-hop headers that MUST NOT be forwarded (RFC 7230 §6.1). Plus a short
