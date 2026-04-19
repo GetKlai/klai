@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-012
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: implemented (research-api)
 created: 2026-04-19
 updated: 2026-04-19
 author: Mark Vletter
@@ -11,6 +11,10 @@ priority: high
 # SPEC-SEC-012: Mandatory JWT Audience Verification
 
 ## HISTORY
+
+### v0.2.0 (2026-04-19)
+- research-api implementation landed: pydantic `model_validator` rejects empty `RESEARCH_API_ZITADEL_AUDIENCE` at startup; `auth._decode_bearer` now always passes `audience=settings.zitadel_api_audience` (no conditional fallback, no `verify_aud: False` branch). RESEARCH_API_ZITADEL_AUDIENCE already set in SOPS + live on core-01.
+- scribe-api portion: superseded by SPEC-VEXA-003 rebuild (scribe now uses internal-secret + vexa-issued tokens, not Zitadel access tokens directly). This SPEC marked implemented against its remaining research-api scope; scribe/docs-app audience questions tracked under SEC-020.
 
 ### v0.1.0 (2026-04-19)
 - Initial draft. Combines audit findings F-002 (scribe-api hardcodes `verify_aud: False`) and F-004 (research-api audience check is opt-in) into a single remediation SPEC.
