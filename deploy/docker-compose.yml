@@ -815,6 +815,9 @@ services:
       REDIS_HOST: vexa-redis
       REDIS_PORT: "6379"
       ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
+      # Defense-in-depth: if someone bypasses api-gateway and hits meeting-api:8080
+      # directly on klai-net, require VEXA_API_KEY. Empty API_KEYS = dev mode = anyone can create bots.
+      API_KEYS: ${VEXA_API_KEY}
       RUNTIME_API_URL: http://runtime-api:8090
       RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
       MEETING_API_URL: http://meeting-api:8080
