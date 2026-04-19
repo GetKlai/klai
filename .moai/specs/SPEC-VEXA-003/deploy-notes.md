@@ -38,7 +38,20 @@ it is re-rendered.
 ## 2. Vexa DB bootstrap (REQUIRED for webhooks)
 
 On a fresh vexa database, the klai-system user and a matching API token
-must exist before portal-api can successfully call `/bots`. Bootstrap SQL:
+must exist before portal-api can successfully call `/bots`. Use the
+idempotent bootstrap script:
+
+```bash
+ssh core-01 /opt/klai/deploy/vexa/bootstrap.sh
+```
+
+Source: `deploy/vexa/bootstrap.sh`. Safe to re-run. Reads
+`VEXA_API_KEY` from `/opt/klai/.env`, upserts the `klai-system@klai.internal`
+user and the matching `api_tokens` row (scopes `{bot, browser, tx}`),
+then restarts `klai-core-api-gateway-1` to flush the 60 s token cache so
+the new scopes are live immediately.
+
+Manual SQL (for reference / recovery if the script path is broken):
 
 ```sql
 -- Klai's service account (user_id = 1)
