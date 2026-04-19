@@ -1,13 +1,29 @@
-version: 1.3.5
+version: 1.3.8
 
 cache: true
 
 registration:
   socialLogins: []
 
+# ── Interface ────────────────────────────────────────────────────────────────
+# Stripped-down UI for Klai tenants. Everything non-essential is disabled at
+# config level so new users start with the minimum surface area. Keep the list
+# exhaustive — missing keys fall back to LibreChat defaults (usually `true`),
+# and v0.8.5 has added keys that re-enabled surfaces we intentionally hid in
+# earlier versions (parameters, endpointsMenu, temporaryChat, peoplePicker,
+# fileCitations, marketplace, sidePanel).
+#
+# Reference: https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/interface
 interface:
+  # Enabled surfaces
   webSearch: true
-  # Stripped-down UI for new tenants — disable all non-essential features
+  mcpServers:
+    use: true
+    create: false
+    share: false
+
+  # Disabled surfaces — keep in this list even if the key appeared in a later
+  # LibreChat version; explicit false survives schema evolutions.
   agents:
     use: false
     create: false
@@ -16,16 +32,24 @@ interface:
     use: false
     create: false
     share: false
+  peoplePicker:
+    users: false
+    groups: false
+    roles: false
+  marketplace:
+    use: false
   memories: false
   bookmarks: false
   multiConvo: false
   presets: false
-  mcpServers:
-    use: true
-    create: false
-    share: false
   fileSearch: false
+  fileCitations: false
   runCode: false
+  modelSelect: false
+  endpointsMenu: false
+  parameters: false
+  sidePanel: false
+  temporaryChat: false
 
 balance:
   enabled: false
