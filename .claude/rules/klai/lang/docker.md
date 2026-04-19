@@ -60,3 +60,23 @@ S3 SDKs (minio, boto3) generate presigned URLs using the endpoint they were conf
 ## Recovery
 - If `.env` is corrupted: recover vars from still-running containers via `docker exec <ctr> printenv`.
 - NEVER restart containers before recovering — restart reads the broken `.env` and loses in-memory values.
+
+## Non-root USER and host volume ownership (HIGH)
+
+Adding `USER app` to a Dockerfile does NOT change ownership of host-mounted Docker volumes. The host directory retains its original owner (typically root). The non-root container user cannot write to it and fails silently or with "Permission denied".
+
+**Why:** Docker bind-mounts and named volumes retain host filesystem ownership. `chown` in Dockerfile only applies to the image layer, not the mounted path.
+
+**Fix sequence when adding USER to an existing service:**
+```bash
+# 1. Find the host volume path
+docker volume inspect <volume-name> | grep Mountpoint
+
+# 2. Chown on the host BEFORE container recreate
+sudo chown -R 1000:1000 /var/lib/docker/volumes/<volume>/_data
+
+# 3. Recreate container
+docker compose up -d <service>
+```
+
+**Prevention:** Any time you add `USER app` (uid 1000) to a Dockerfile that mounts a volume, immediately chown the host volume dir before deploy. Validate with `docker exec <ctr> touch /path/to/volume/test` after recreate.
