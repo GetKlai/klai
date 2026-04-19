@@ -83,6 +83,34 @@ git push origin "$BRANCH"
 **Exit gate**: `git log --oneline $BRANCH ^upstream/main` returns 0–2 commits, each
 with a clear message. `git rev-parse $BRANCH` captured for deploy/VERSIONS.md.
 
+### 1.5 Phase 1 outcome (2026-04-19)
+
+Branch `klai/main-260419` created at upstream/main commit `f0756bf`
+(Merge pull request #211 from Vexa-ai/dev). Both local fork fixes were
+assessed against upstream and **SKIPPED** per the decision matrix:
+
+- **`fdb751f` — participant registry MutationObserver**: cherry-pick
+  produced a 90-line conflict in `services/vexa-bot/core/src/platforms/googlemeet/recording.ts`.
+  Upstream already migrated from text-scan to `data-participant-id`
+  tiles, additionally using a "Leave call" button fallback to handle
+  screen-share mode where tiles disappear from the DOM. Our
+  MutationObserver-only approach has a screen-share blind spot that
+  upstream's implementation handles. **SKIP** — upstream is semantically
+  equivalent plus superior for presentation mode.
+- **`787e517` — remove `track.stop()` + transceiver renegotiation**:
+  upstream `services/vexa-bot/core/src/services/screen-content.ts`
+  contains the exact same fix at line 1289, with an additional
+  improvement: the disable is deferred via `setTimeout(0)` so Google
+  Meet's own `ontrack` handlers execute first and create the DOM
+  `<video>` elements needed for audio capture. **SKIP** — upstream is
+  strictly better.
+
+Result: `klai/main-260419` is functionally identical to upstream/main
+`f0756bf` with zero Klai-specific commits. Build from upstream vanilla.
+Acceptance §I will validate participant counting and WebRTC stability
+functionally in a 3-person Google Meet E2E test regardless of which
+implementation is live.
+
 ---
 
 ## Phase 2 (Priority High) — Finalise deployment decisions
