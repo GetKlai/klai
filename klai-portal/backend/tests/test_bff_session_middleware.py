@@ -139,14 +139,10 @@ class TestReadSession:
         assert resp.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_returns_session_info_for_valid_cookie(
-        self, app: FastAPI, wire_redis: AsyncMock
-    ) -> None:
+    async def test_returns_session_info_for_valid_cookie(self, app: FastAPI, wire_redis: AsyncMock) -> None:
         sid, csrf = await _create_session(wire_redis)
         client = TestClient(app)
-        resp = client.get(
-            "/api/auth/session", cookies={SESSION_COOKIE_NAME: sid}
-        )
+        resp = client.get("/api/auth/session", cookies={SESSION_COOKIE_NAME: sid})
         assert resp.status_code == 200
         body = resp.json()
         assert body["authenticated"] is True
@@ -164,18 +160,14 @@ class TestLogout:
         resp = client.post("/api/auth/logout")
         assert resp.status_code == 204
 
-    def test_logout_without_session_clears_cookies_anyway(
-        self, client: TestClient
-    ) -> None:
+    def test_logout_without_session_clears_cookies_anyway(self, client: TestClient) -> None:
         resp = client.post("/api/auth/logout")
         set_cookies = resp.headers.get_list("set-cookie")
         assert any(SESSION_COOKIE_NAME in c and "Max-Age=0" in c for c in set_cookies)
         assert any(CSRF_COOKIE_NAME in c and "Max-Age=0" in c for c in set_cookies)
 
     @pytest.mark.asyncio
-    async def test_logout_revokes_session_and_clears_cookies(
-        self, app: FastAPI, wire_redis: AsyncMock
-    ) -> None:
+    async def test_logout_revokes_session_and_clears_cookies(self, app: FastAPI, wire_redis: AsyncMock) -> None:
         sid, csrf = await _create_session(wire_redis)
         client = TestClient(app)
         # Mutating logout requires the CSRF header
@@ -203,9 +195,7 @@ class TestCsrfEnforcement:
         assert resp.status_code == 401  # 401 from get_session, not 403 CSRF
 
     @pytest.mark.asyncio
-    async def test_post_with_session_requires_matching_csrf(
-        self, app: FastAPI, wire_redis: AsyncMock
-    ) -> None:
+    async def test_post_with_session_requires_matching_csrf(self, app: FastAPI, wire_redis: AsyncMock) -> None:
         sid, csrf = await _create_session(wire_redis)
         client = TestClient(app)
         # Missing header
@@ -234,9 +224,7 @@ class TestCsrfEnforcement:
         assert resp.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_exempt_prefix_skips_csrf(
-        self, app: FastAPI, wire_redis: AsyncMock
-    ) -> None:
+    async def test_exempt_prefix_skips_csrf(self, app: FastAPI, wire_redis: AsyncMock) -> None:
         # /internal/ and /partner/ etc. must never be CSRF-blocked even when a
         # session happens to be attached.
         sid, _csrf = await _create_session(wire_redis)

@@ -51,9 +51,7 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
 class SessionMiddleware(BaseHTTPMiddleware):
     """Attach `request.state.session` and enforce CSRF when appropriate."""
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request.state.session = None
 
         record = await _load_session_from_cookie(request)
