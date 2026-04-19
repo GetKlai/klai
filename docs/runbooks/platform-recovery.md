@@ -33,9 +33,9 @@ Write to a file to avoid shell quoting problems:
 ```bash
 cat > /tmp/fix_login_v2.sql << 'EOF'
 UPDATE projections.instance_features5
-SET value = '{"base_uri": {"Host": "getklai.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
+SET value = '{"base_uri": {"Host": "my.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
     change_date = NOW(),
-    sequence = 5
+    sequence = sequence + 1
 WHERE instance_id = '362757920133218310' AND key = 'login_v2';
 EOF
 POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
