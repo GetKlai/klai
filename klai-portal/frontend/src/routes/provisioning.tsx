@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth, type AuthContextProps } from 'react-oidc-context'
-import type { User } from 'oidc-client-ts'
+import { useAuth, type AuthContextProps } from '@/lib/auth'
 import { CheckCircle, AlertCircle } from 'lucide-react'
 import * as Sentry from '@sentry/react'
 import * as m from '@/paraglide/messages'
@@ -40,7 +39,6 @@ function ProvisioningPage() {
   useLocale()
   const auth = useAuth()
   const { isLoading, isAuthenticated } = auth
-  const accessToken = auth.user?.access_token
 
   const [status, setStatus] = useState<Status>('polling')
   const [dots, setDots] = useState('')
@@ -54,17 +52,15 @@ function ProvisioningPage() {
   }, [])
 
   useEffect(() => {
-    if (isLoading || !isAuthenticated || !accessToken) return
-    const user = auth.user
-    if (!user) return
+    if (isLoading || !isAuthenticated) return
 
     const controller = new AbortController()
-    void pollProvisioning(auth, user, controller.signal, setStatus)
+    void pollProvisioning(auth, controller.signal, setStatus)
 
     return () => controller.abort()
     // See callback.tsx for why `auth` is excluded from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, isAuthenticated, accessToken])
+  }, [isLoading, isAuthenticated])
 
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-background)]">
@@ -101,7 +97,6 @@ function ProvisioningPage() {
  */
 async function pollProvisioning(
   auth: AuthContextProps,
-  user: User,
   signal: AbortSignal,
   setStatus: (s: Status) => void,
 ): Promise<void> {
@@ -116,7 +111,7 @@ async function pollProvisioning(
 
     let me: MeResponse
     try {
-      me = await fetchMe(user.access_token, signal)
+      me = await fetchMe(undefined, signal)
       consecutiveErrors = 0
     } catch (err) {
       if (isAborted(err)) return

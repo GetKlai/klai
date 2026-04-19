@@ -1,4 +1,4 @@
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Loader2, ExternalLink } from 'lucide-react'

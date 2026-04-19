@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, BookOpen, PlusCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'

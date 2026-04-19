@@ -1,14 +1,23 @@
 import { describe, it, expect } from 'vitest'
-import { ErrorResponse } from 'oidc-client-ts'
 import {
   REAUTHENTICATION_ERRORS,
   extractOidcErrorCode,
   isReauthenticationRequired,
 } from '../oidc-error'
 
+// The pre-BFF code relied on `ErrorResponse` from oidc-client-ts to surface
+// silent-renew failures. Now that auth is cookie-based we no longer import
+// from the OIDC library, but the extractor still needs to handle objects
+// shaped like legacy ErrorResponses — older backends, third-party apps, or
+// any future OIDC flow we add. The tests use a plain object that matches
+// the observed shape.
+function makeErrorResponse(args: { error: string; error_description?: string | null }): Record<string, unknown> {
+  return { name: 'ErrorResponse', error: args.error, error_description: args.error_description ?? null }
+}
+
 describe('extractOidcErrorCode', () => {
   it('reads .error from a direct ErrorResponse', () => {
-    const err = new ErrorResponse({ error: 'login_required' })
+    const err = makeErrorResponse({ error: 'login_required' })
     expect(extractOidcErrorCode(err)).toBe('login_required')
   })
 

@@ -1,9 +1,9 @@
 /**
- * Thin typed client for portal-api's /api/me endpoint.
+ * Thin typed client for portal-api's /api/me endpoint (SPEC-AUTH-008 Phase B).
  *
- * Shared by the post-login callback route and the provisioning poll so both
- * paths classify failures identically (via fetch-errors.ts) and stay in sync
- * with the backend contract.
+ * All requests are same-origin + cookie-authenticated. The `_legacyToken`
+ * parameter is kept for compatibility with callers written before the BFF
+ * migration; it is ignored.
  */
 
 import { API_BASE } from '@/lib/api'
@@ -26,15 +26,17 @@ export interface MeResponse {
 }
 
 /**
- * Fetch /api/me with the caller's access token, classifying failures as:
+ * Fetch /api/me via the BFF session cookie.
+ *
+ * Classifies failures as:
  *   - UnauthorizedError on 401 (token rot → reauth)
  *   - FetchError on any other non-OK status
  *   - TypeError pass-through on network failure
  *   - DOMException('AbortError') on signal abort
  */
-export async function fetchMe(token: string, signal: AbortSignal): Promise<MeResponse> {
+export async function fetchMe(_legacyToken: string | undefined, signal: AbortSignal): Promise<MeResponse> {
   const res = await fetch(`${API_BASE}/api/me`, {
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
     signal,
   })
   if (res.ok) return (await res.json()) as MeResponse

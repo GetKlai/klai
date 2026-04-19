@@ -1,6 +1,6 @@
 // TanStack Query hooks for admin widgets (SPEC-WIDGET-002)
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
 import type {
   WidgetResponse,

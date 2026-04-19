@@ -1,215 +1,202 @@
-import { AuthContext, AuthProvider, useAuth } from 'react-oidc-context'
-import { User, WebStorageStateStore } from 'oidc-client-ts'
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+/**
+ * BFF session provider — SPEC-AUTH-008 Phase B.
+ *
+ * Cookie-based auth replacement for the former react-oidc-context integration.
+ * The browser holds one `__Secure-klai_session` cookie (HttpOnly) + a readable
+ * `__Secure-klai_csrf` cookie; portal-api does the OIDC + token lifecycle.
+ *
+ * This file exports only the provider component. Hooks, types, and helpers
+ * live in `auth-context.ts` and are re-exported here so consumers keep the
+ * stable `@/lib/auth` import surface.
+ */
+
+/* eslint-disable react-refresh/only-export-components -- intentional re-export
+   of hooks + types from auth-context so consumers stay on @/lib/auth */
+
 import * as Sentry from '@sentry/react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { authLogger } from '@/lib/logger'
-import { registerTokenRefresher } from '@/lib/apiFetch'
-import { extractOidcErrorCode, isReauthenticationRequired } from '@/lib/oidc-error'
+import {
+  AuthContext,
+  type AuthContextValue,
+  type AuthUser,
+  type SessionResponse,
+  makeNoopEvents,
+  readCsrfCookie,
+  redirectToStart,
+} from '@/lib/auth-context'
+
+// Re-export non-component surface so consumers import everything from `@/lib/auth`.
+export {
+  useAuth,
+  useSession,
+  readCsrfCookie,
+  type AuthContextValue,
+  type AuthContextProps,
+  type AuthUser,
+  type User,
+  type UserProfile,
+} from '@/lib/auth-context'
 
 const AUTH_DEV_MODE = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
-// Configure in .env.local:
-//   VITE_OIDC_AUTHORITY=https://auth.getklai.com
-//   VITE_OIDC_CLIENT_ID=<client id from Zitadel>
-const oidcConfig = AUTH_DEV_MODE
-  ? null
-  : {
-      authority: import.meta.env.VITE_OIDC_AUTHORITY as string,
-      client_id: import.meta.env.VITE_OIDC_CLIENT_ID as string,
-      redirect_uri: `${window.location.origin}/callback`,
-      post_logout_redirect_uri: `${window.location.origin}/logged-out`,
-      // offline_access gives us a refresh token so renewal uses the token endpoint
-      // instead of a hidden iframe — survives Zitadel restarts.
-      scope: 'openid profile email offline_access',
-      revokeTokensOnSignout: true,
-      automaticSilentRenew: true,
-      // PKCE (S256) enabled by default in oidc-client-ts v3. Zitadel requires it.
-      // localStorage so sessions survive browser restarts and new tabs.
-      userStore: new WebStorageStateStore({ store: window.localStorage }),
-      // Fire accessTokenExpiring 5 min before expiry for the SessionBanner.
-      accessTokenExpiringNotificationTimeInSeconds: 300,
-    }
-
 // ---------------------------------------------------------------------------
-// Dev mode auth provider — bypasses OIDC entirely for local development.
-// Requires VITE_AUTH_DEV_MODE=true in .env.local.
-// The backend must also have AUTH_DEV_MODE=true and DEBUG=true.
+// Dev mode — bypass auth entirely (must match backend AUTH_DEV_MODE=true)
 // ---------------------------------------------------------------------------
 
 function DevAuthProvider({ children }: { children: ReactNode }) {
-  const mockAuth = useMemo(
+  useEffect(() => {
+    authLogger.warn('Auth dev mode active — authentication is bypassed. Never use in production!')
+  }, [])
+
+  const value = useMemo<AuthContextValue>(
     () => ({
-      // AuthState
-      user: {
-        access_token: 'dev-token',
-        token_type: 'Bearer',
-        profile: { sub: 'dev-user', iss: 'dev', aud: 'dev', exp: 0, iat: 0 },
-        expires_in: 99999,
-        expired: false,
-        scopes: ['openid', 'profile', 'email'],
-        toStorageString: () => '',
-      } as unknown as User,
       isLoading: false,
       isAuthenticated: true,
-      activeNavigator: undefined,
-      error: undefined,
-
-      // AuthContextProps methods (no-ops in dev mode)
-      settings: {} as never,
-      events: {
-        addUserSignedOut: () => () => {},
-        addUserLoaded: () => () => {},
-        addUserUnloaded: () => () => {},
-        addSilentRenewError: () => () => {},
-        addAccessTokenExpiring: () => () => {},
-        addAccessTokenExpired: () => () => {},
-      } as never,
-      clearStaleState: async () => {},
-      removeUser: async () => {},
-      signinPopup: () => Promise.resolve({} as User),
-      signinSilent: () => Promise.resolve(null),
+      error: null,
+      user: {
+        access_token: undefined,
+        profile: { sub: 'dev-user' },
+        csrf_token: 'dev-csrf',
+        access_token_expires_at: Number.MAX_SAFE_INTEGER,
+      },
+      events: makeNoopEvents(),
       signinRedirect: () => Promise.resolve(),
-      signinResourceOwnerCredentials: () => Promise.resolve({} as User),
+      removeUser: () => Promise.resolve(),
       signoutRedirect: () => Promise.resolve(),
-      signoutPopup: () => Promise.resolve(),
-      signoutSilent: () => Promise.resolve(),
-      querySessionStatus: () => Promise.resolve(null),
-      revokeTokens: () => Promise.resolve(),
-      startSilentRenew: () => {},
-      stopSilentRenew: () => {},
+      signinSilent: () => Promise.resolve(null),
+      clearStaleState: () => Promise.resolve(),
+      activeNavigator: undefined,
+      refetch: () => Promise.resolve(),
     }),
     [],
   )
 
-  useEffect(() => {
-    authLogger.warn(
-      '🔓 Auth dev mode active — authentication is bypassed. Never use in production!',
-    )
-  }, [])
-
-  return <AuthContext.Provider value={mockAuth}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 // ---------------------------------------------------------------------------
-// Session lifecycle hooks
+// Production BFF provider — fetches /api/auth/session on mount
 // ---------------------------------------------------------------------------
 
-/** Sync authenticated user identity to Sentry for error attribution. */
-function useSentryUserSync(): void {
-  const { isAuthenticated, user } = useAuth()
+function BffAuthProvider({ children }: { children: ReactNode }) {
+  const [isLoading, setIsLoading] = useState(true)
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [error, setError] = useState<Error | null>(null)
+  const isSigningOut = useRef(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/session', {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      })
+      if (res.status === 401) {
+        setUser(null)
+        setError(null)
+        return
+      }
+      if (!res.ok) {
+        throw new Error(`session endpoint returned ${res.status}`)
+      }
+      const body = (await res.json()) as SessionResponse
+      setUser({
+        access_token: undefined,
+        profile: { sub: body.zitadel_user_id },
+        csrf_token: body.csrf_token,
+        access_token_expires_at: body.access_token_expires_at,
+      })
+      setError(null)
+    } catch (err) {
+      authLogger.warn('BFF /api/auth/session failed', { error: err })
+      setUser(null)
+      setError(err instanceof Error ? err : new Error(String(err)))
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    if (isAuthenticated && user?.profile) {
+    void load()
+  }, [load])
+
+  // Sync identity to Sentry for error attribution.
+  useEffect(() => {
+    if (user) {
       Sentry.setUser({ id: user.profile.sub })
     } else {
       Sentry.setUser(null)
     }
-  }, [isAuthenticated, user])
-}
+  }, [user])
 
-/** Remove expired OIDC artifacts (abandoned code_verifier, stale tokens) on mount. */
-function useStaleStateCleanup(): void {
-  const auth = useAuth()
-
-  useEffect(() => {
-    auth.clearStaleState().catch((err: unknown) => {
-      authLogger.warn('Failed to clear stale OIDC state', { error: err })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
+  const signinRedirect = useCallback((opts: { returnTo?: string } = {}): Promise<void> => {
+    redirectToStart(opts.returnTo ?? window.location.pathname)
+    return Promise.resolve()
   }, [])
-}
 
-/**
- * Guard against invalid sessions from two sources:
- *
- * 1. Cross-tab logout — another tab cleared the localStorage user key
- * 2. Token renewal failure — refresh token expired, revoked, or the OP's
- *    session cookie is gone (iframe silent-renew returns login_required)
- *
- * Both paths call removeUser() exactly once, protected by a shared ref
- * to prevent re-entrant signout loops across tabs. After removeUser, the
- * root route fires signinRedirect on the next render, which is silent if
- * Zitadel still has a session cookie on auth.getklai.com or shows the
- * login form otherwise.
- */
-function useSessionGuard(): void {
-  const auth = useAuth()
-  const { error: authError } = auth
-  const isSigningOut = useRef(false)
-
-  useEffect(() => {
-    return auth.events.addUserSignedOut(() => {
-      if (auth.isAuthenticated && !isSigningOut.current) {
-        isSigningOut.current = true
-        authLogger.info('Signed out in another tab')
-        void auth.removeUser()
-      }
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.events is stable
-  }, [auth.isAuthenticated])
-
-  useEffect(() => {
-    // No active error — clear the signout guard so a future error (after a
-    // successful re-authentication in the same tab) is handled again.
-    if (!authError) {
-      isSigningOut.current = false
-      return
-    }
-
-    if (isReauthenticationRequired(authError)) {
-      if (isSigningOut.current) return
-      authLogger.info('Session ended, signing out', {
-        error: extractOidcErrorCode(authError),
+  const removeUser = useCallback(async (): Promise<void> => {
+    if (isSigningOut.current) return
+    isSigningOut.current = true
+    try {
+      const csrf = readCsrfCookie() ?? ''
+      const res = await fetch('/api/auth/bff/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrf },
       })
-      isSigningOut.current = true
-      void auth.removeUser()
-      return
+      const postLogout = res.headers.get('X-Post-Logout-Redirect')
+      setUser(null)
+      if (postLogout) {
+        // RP-initiated logout — hand the browser over to Zitadel for the
+        // end_session bounce, which returns to /logged-out.
+        window.location.href = postLogout
+        return
+      }
+      window.location.href = '/logged-out'
+    } catch (err) {
+      authLogger.error('BFF logout failed', err)
+      window.location.href = '/logged-out'
+    } finally {
+      isSigningOut.current = false
     }
+  }, [])
 
-    const errorCode = extractOidcErrorCode(authError) ?? 'unknown'
-    authLogger.error('Unexpected OIDC error during token renewal', authError)
-    Sentry.captureException(authError, {
-      tags: { domain: 'auth', phase: 'silent-renew', error_code: errorCode },
-      fingerprint: ['oidc-silent-renew', errorCode],
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.removeUser is stable
-  }, [authError])
+  const signoutRedirect = useCallback(
+    async (_opts: { post_logout_redirect_uri?: string } = {}): Promise<void> => {
+      await removeUser()
+    },
+    [removeUser],
+  )
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      isLoading,
+      isAuthenticated: user !== null,
+      user,
+      error,
+      events: makeNoopEvents(),
+      signinRedirect,
+      removeUser,
+      signoutRedirect,
+      // Silent renew is server-side in BFF — the client never holds tokens.
+      signinSilent: () => Promise.resolve(null),
+      clearStaleState: () => Promise.resolve(),
+      activeNavigator: undefined,
+      refetch: load,
+    }),
+    [isLoading, user, error, signinRedirect, removeUser, signoutRedirect, load],
+  )
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 // ---------------------------------------------------------------------------
-// Provider
+// Public entry point
 // ---------------------------------------------------------------------------
-
-/** Register the OIDC signinSilent as the apiFetch token refresher. */
-function useTokenRefresherRegistration(): void {
-  const auth = useAuth()
-
-  useEffect(() => {
-    registerTokenRefresher(async () => {
-      const user = await auth.signinSilent()
-      return user?.access_token ?? null
-    })
-  }, [auth])
-}
-
-/** Activates all session lifecycle hooks inside the AuthProvider context. */
-function AuthSession(): null {
-  useSentryUserSync()
-  useStaleStateCleanup()
-  useSessionGuard()
-  useTokenRefresherRegistration()
-  return null
-}
 
 export function KlaiAuthProvider({ children }: { children: ReactNode }) {
   if (AUTH_DEV_MODE) {
     return <DevAuthProvider>{children}</DevAuthProvider>
   }
-
-  return (
-    <AuthProvider {...oidcConfig!}>
-      <AuthSession />
-      {children}
-    </AuthProvider>
-  )
+  return <BffAuthProvider>{children}</BffAuthProvider>
 }

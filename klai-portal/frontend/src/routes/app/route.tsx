@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { MessageSquare, Mic, BookOpen, BookMarked, Brain } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { SessionBanner } from '@/components/SessionBanner'

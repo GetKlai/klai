@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { RefreshCw } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { authLogger } from '@/lib/logger'
