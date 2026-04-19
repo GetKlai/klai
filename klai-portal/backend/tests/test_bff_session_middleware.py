@@ -129,7 +129,7 @@ class TestReadSession:
     def test_returns_401_without_cookie(self, client: TestClient) -> None:
         resp = client.get("/api/auth/session")
         assert resp.status_code == 401
-        assert resp.json() == {"detail": "no_session"}
+        assert resp.json() == {"detail": "cookie_required"}
 
     def test_returns_401_for_unknown_sid(self, client: TestClient, wire_redis: AsyncMock) -> None:
         resp = client.get(
