@@ -43,7 +43,6 @@ interface NotebookResponse {
 function EditFocusPage() {
   const { notebookId } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -56,8 +55,8 @@ function EditFocusPage() {
 
   const { data: notebook } = useQuery<NotebookResponse>({
     queryKey: ['focus-notebook', notebookId],
-    queryFn: async () => apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks/${notebookId}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks/${notebookId}`),
+    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {
@@ -73,7 +72,7 @@ function EditFocusPage() {
 
   const editMutation = useMutation({
     mutationFn: async (data: NotebookForm) => {
-      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}`, token, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           name: data.name,

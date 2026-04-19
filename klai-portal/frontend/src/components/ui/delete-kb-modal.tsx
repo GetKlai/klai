@@ -24,7 +24,6 @@ interface DeleteKbModalProps {
   connectorCount: number
   hasGitea: boolean
   hasDocs: boolean
-  token: string
 }
 
 export function DeleteKbModal({
@@ -36,7 +35,6 @@ export function DeleteKbModal({
   connectorCount,
   hasGitea,
   hasDocs,
-  token,
 }: DeleteKbModalProps) {
   const [confirmValue, setConfirmValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +43,7 @@ export function DeleteKbModal({
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}`, token, { method: 'DELETE' })
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}`, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-knowledge-bases'] })

@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { focusLogger } from '@/lib/logger'
 import { useRef, useState } from 'react'
@@ -32,8 +31,6 @@ export const Route = createFileRoute('/app/focus/$notebookId_/add-source')({
 
 function AddSourcePage() {
   const { notebookId } = Route.useParams()
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/app/focus/$notebookId/add-source' })
 
@@ -63,7 +60,7 @@ function AddSourcePage() {
     mutationFn: async (file: File) => {
       const form = new FormData()
       form.append('file', file)
-      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, token, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, {
         method: 'POST',
         body: form,
       })
@@ -77,7 +74,7 @@ function AddSourcePage() {
 
   const addUrlMutation = useMutation({
     mutationFn: async (url: string) => {
-      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/url`, token, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/url`, {
         method: 'POST',
         body: JSON.stringify({ url, type: detectUrlType(url) }),
       })

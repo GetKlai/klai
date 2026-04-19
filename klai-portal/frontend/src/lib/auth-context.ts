@@ -27,9 +27,10 @@ export interface UserProfile {
 }
 
 export interface AuthUser {
-  access_token: undefined
   profile: UserProfile
   csrf_token: string
+  /** Epoch seconds. Server-side refresh runs before expiry — client uses this
+   *  only for diagnostics and stale-session hints. No tokens are held here. */
   access_token_expires_at: number
 }
 

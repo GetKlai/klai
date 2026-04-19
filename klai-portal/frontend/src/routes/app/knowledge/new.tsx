@@ -47,7 +47,6 @@ function slugify(value: string): string {
 
 function NewKnowledgeBasePage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -70,11 +69,8 @@ function NewKnowledgeBasePage() {
   const { data: groupsData } = useQuery({
     queryKey: ['app-groups'],
     queryFn: () =>
-      apiFetch<{ groups: OrgGroup[] }>(
-        '/api/app/groups',
-        token
-      ),
-    enabled: !!token && data.ownerType === 'org' && step >= 3,
+      apiFetch<{ groups: OrgGroup[] }>('/api/app/groups'),
+    enabled: auth.isAuthenticated && data.ownerType === 'org' && step >= 3,
   })
 
   const { data: usersData } = useQuery({
@@ -82,8 +78,8 @@ function NewKnowledgeBasePage() {
     queryFn: () =>
       apiFetch<{
         users: { zitadel_user_id: string; display_name: string; email: string }[]
-      }>('/api/app/users', token),
-    enabled: !!token && data.ownerType === 'org' && step >= 3,
+      }>('/api/app/users'),
+    enabled: auth.isAuthenticated && data.ownerType === 'org' && step >= 3,
   })
 
   const { mutate, isPending } = useMutation({
@@ -101,7 +97,7 @@ function NewKnowledgeBasePage() {
             ? 'contributor'
             : 'viewer'
 
-      return apiFetch<{ slug: string }>(`/api/app/knowledge-bases`, token, {
+      return apiFetch<{ slug: string }>(`/api/app/knowledge-bases`, {
         method: 'POST',
         body: JSON.stringify({
           name: data.name,

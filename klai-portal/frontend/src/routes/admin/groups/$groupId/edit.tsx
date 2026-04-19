@@ -39,7 +39,6 @@ function displayName(user: OrgUser): string {
 
 function EditGroupPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { groupId } = Route.useParams()
@@ -59,21 +58,21 @@ function EditGroupPage() {
 
   const { data: group, isLoading: groupLoading } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => apiFetch<{ groups: Group[] }>(`/api/admin/groups`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ groups: Group[] }>(`/api/admin/groups`),
+    enabled: auth.isAuthenticated,
     select: (data) => data.groups.find((g) => g.id === Number(groupId)),
   })
 
   const { data: membersData } = useQuery({
     queryKey: ['admin-group-members', groupId],
-    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`),
+    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {
@@ -120,18 +119,18 @@ function EditGroupPage() {
       const toRemove = [...originalMemberIds].filter((id) => !memberUserIds.has(id))
 
       await Promise.all([
-        apiFetch(`/api/admin/groups/${groupId}`, token, {
+        apiFetch(`/api/admin/groups/${groupId}`, {
           method: 'PATCH',
           body: JSON.stringify({ name: name.trim(), description: description.trim() || null }),
         }),
         ...toAdd.map((uid) =>
-          apiFetch(`/api/admin/groups/${groupId}/members`, token, {
+          apiFetch(`/api/admin/groups/${groupId}/members`, {
             method: 'POST',
             body: JSON.stringify({ zitadel_user_id: uid }),
           }),
         ),
         ...toRemove.map((uid) =>
-          apiFetch(`/api/admin/groups/${groupId}/members/${uid}`, token, { method: 'DELETE' }),
+          apiFetch(`/api/admin/groups/${groupId}/members/${uid}`, { method: 'DELETE' }),
         ),
       ])
 

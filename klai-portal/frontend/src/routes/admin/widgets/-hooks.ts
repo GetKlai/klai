@@ -12,34 +12,30 @@ import type {
 
 export function useWidgets() {
   const auth = useAuth()
-  const token = auth.user?.access_token
 
   return useQuery({
     queryKey: ['admin-widgets'],
-    queryFn: async () => apiFetch<WidgetResponse[]>('/api/widgets', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<WidgetResponse[]>('/api/widgets'),
+    enabled: auth.isAuthenticated,
   })
 }
 
 export function useWidget(id: string) {
   const auth = useAuth()
-  const token = auth.user?.access_token
 
   return useQuery({
     queryKey: ['admin-widget', id],
-    queryFn: async () => apiFetch<WidgetDetailResponse>(`/api/widgets/${id}`, token),
-    enabled: !!token && !!id,
+    queryFn: async () => apiFetch<WidgetDetailResponse>(`/api/widgets/${id}`),
+    enabled: auth.isAuthenticated && !!id,
   })
 }
 
 export function useCreateWidget() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (data: CreateWidgetRequest) =>
-      apiFetch<WidgetDetailResponse>('/api/widgets', token, {
+      apiFetch<WidgetDetailResponse>('/api/widgets', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -50,13 +46,11 @@ export function useCreateWidget() {
 }
 
 export function useUpdateWidget(id: string) {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (data: UpdateWidgetRequest) =>
-      apiFetch<WidgetResponse>(`/api/widgets/${id}`, token, {
+      apiFetch<WidgetResponse>(`/api/widgets/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
@@ -68,13 +62,11 @@ export function useUpdateWidget(id: string) {
 }
 
 export function useDeleteWidget() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (id: string) =>
-      apiFetch<void>(`/api/widgets/${id}`, token, {
+      apiFetch<void>(`/api/widgets/${id}`, {
         method: 'DELETE',
       }),
     onSuccess: () => {
@@ -85,15 +77,11 @@ export function useDeleteWidget() {
 
 export function useOrgKnowledgeBases() {
   const auth = useAuth()
-  const token = auth.user?.access_token
 
   return useQuery({
     queryKey: ['app-knowledge-bases-for-widgets'],
     queryFn: async () =>
-      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>(
-        '/api/app/knowledge-bases?owner_type=org',
-        token,
-      ),
-    enabled: !!token,
+      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>('/api/app/knowledge-bases?owner_type=org', ),
+    enabled: auth.isAuthenticated,
   })
 }

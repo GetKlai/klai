@@ -111,7 +111,7 @@ async function pollProvisioning(
 
     let me: MeResponse
     try {
-      me = await fetchMe(undefined, signal)
+      me = await fetchMe(signal)
       consecutiveErrors = 0
     } catch (err) {
       if (isAborted(err)) return

@@ -123,7 +123,6 @@ function stripMarkdown(md: string): string {
 function MeetingDetailPage() {
   const { meetingId } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
@@ -132,15 +131,15 @@ function MeetingDetailPage() {
 
   const { data: meeting, isLoading } = useQuery<MeetingDetail>({
     queryKey: ['meeting', meetingId],
-    queryFn: async () => apiFetch<MeetingDetail>(`${BOTS_BASE}/meetings/${meetingId}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<MeetingDetail>(`${BOTS_BASE}/meetings/${meetingId}`),
+    enabled: auth.isAuthenticated,
     refetchInterval: (query) =>
       query.state.data && ACTIVE_STATUSES.includes(query.state.data.status) ? 3000 : false,
   })
 
   const stopMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`${BOTS_BASE}/meetings/${meetingId}/stop`, token, { method: 'POST' })
+      await apiFetch(`${BOTS_BASE}/meetings/${meetingId}/stop`, { method: 'POST' })
     },
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: ['meeting', meetingId] }),
@@ -149,7 +148,7 @@ function MeetingDetailPage() {
   const summarizeMutation = useMutation({
     mutationFn: async (force: boolean) => {
       const url = `${BOTS_BASE}/meetings/${meetingId}/summarize${force ? '?force=true' : ''}`
-      return apiFetch(url, token, { method: 'POST' })
+      return apiFetch(url, { method: 'POST' })
     },
     onSuccess: () => {
       setSummaryError(null)

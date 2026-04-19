@@ -99,27 +99,26 @@ const columnHelper = createColumnHelper<Group>()
 
 function AdminGroups() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate({ from: '/admin/groups/' })
   const queryClient = useQueryClient()
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => apiFetch<{ groups: Group[] }>('/api/admin/groups', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ groups: Group[] }>('/api/admin/groups'),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => apiFetch<{ users: OrgUser[] }>('/api/admin/users', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>('/api/admin/users'),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: membershipsData } = useQuery({
     queryKey: ['admin-group-memberships'],
-    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number }[]> }>('/api/admin/group-memberships', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number }[]> }>('/api/admin/group-memberships'),
+    enabled: auth.isAuthenticated,
   })
 
   const groups = data?.groups ?? []
@@ -140,7 +139,7 @@ function AdminGroups() {
 
   const deleteMutation = useMutation({
     mutationFn: async (groupId: number) => {
-      return apiFetch(`/api/admin/groups/${groupId}`, token, {
+      return apiFetch(`/api/admin/groups/${groupId}`, {
         method: 'DELETE',
       })
     },

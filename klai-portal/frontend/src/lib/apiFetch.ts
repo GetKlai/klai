@@ -1,20 +1,15 @@
 /**
- * Portal-api HTTP client — BFF edition (SPEC-AUTH-008 Phase B).
+ * Portal-api HTTP client — BFF edition (SPEC-AUTH-008).
  *
  * All requests are same-origin and authenticated via the `__Secure-klai_session`
  * HttpOnly cookie that portal-api sets after the OIDC callback. State-changing
  * requests automatically carry the matching CSRF token from the readable
  * `__Secure-klai_csrf` cookie.
  *
- * The `token` parameter accepted by `apiFetch` is retained for migration
- * compatibility — it is ignored. The backend's session-aware `bearer` shim
- * authenticates from the session cookie regardless. Callers can pass
- * `undefined` (or any string) and the request will still work.
- *
  * `ApiError` extends the typed `FetchError` from `lib/fetch-errors` so the
- * same `isRetryable` / `friendlyErrorKey` helpers that the callback +
- * provisioning routes use also apply to every apiFetch response. `UnauthorizedError`
- * is re-exported for callers that want to check for token-rot explicitly.
+ * same `isRetryable` / `friendlyErrorKey` helpers used by the callback and
+ * provisioning routes apply uniformly. `UnauthorizedError` is re-exported
+ * for callers that want to detect session-rot explicitly.
  */
 
 import { API_BASE } from '@/lib/api'
@@ -22,10 +17,12 @@ import { readCsrfCookie } from '@/lib/auth'
 import { FetchError, UnauthorizedError } from '@/lib/fetch-errors'
 import { authLogger } from '@/lib/logger'
 
+export { UnauthorizedError } from '@/lib/fetch-errors'
+
 /**
- * Non-OK HTTP response from portal-api. Extends FetchError so callers can use
- * the shared transient-vs-permanent classification while still reading the
- * server-supplied `detail` string (typically for 409 Conflict handling).
+ * Non-OK HTTP response from portal-api. Extends FetchError so callers can
+ * use the shared transient-vs-permanent classification while still reading
+ * the server-supplied `detail` string (typically for 409 Conflict handling).
  */
 export class ApiError extends FetchError {
   readonly detail: string
@@ -38,15 +35,11 @@ export class ApiError extends FetchError {
   }
 }
 
-interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
+export interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-
-// ---------------------------------------------------------------------------
-// Core fetch wrapper
-// ---------------------------------------------------------------------------
 
 async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
   const { headers: extraHeaders, method = 'GET', ...rest } = options
@@ -87,18 +80,8 @@ async function doFetch<T>(path: string, options: ApiFetchOptions): Promise<T> {
   return res.json() as Promise<T>
 }
 
-/**
- * Authenticated fetch against portal-api.
- *
- * Signature kept compatible with the pre-BFF version — the `_legacyToken`
- * slot is ignored. Callers can write either `apiFetch(path, token, options)`
- * or `apiFetch(path, undefined, options)`.
- */
-export async function apiFetch<T>(
-  path: string,
-  _legacyToken?: string,
-  options: ApiFetchOptions = {},
-): Promise<T> {
+/** Authenticated fetch against portal-api. Cookies + CSRF authenticate. */
+export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   try {
     return await doFetch<T>(path, options)
   } catch (err) {

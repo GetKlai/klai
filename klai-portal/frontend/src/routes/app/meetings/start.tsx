@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -28,8 +27,6 @@ function detectPlatform(url: string): string | null {
 }
 
 function StartMeetingPage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
   const [meetingUrl, setMeetingUrl] = useState('')
   const [meetingTitle, setMeetingTitle] = useState('')
@@ -55,7 +52,7 @@ function StartMeetingPage() {
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      return apiFetch<{ id: string }>(`${BOTS_BASE}/meetings`, token, {
+      return apiFetch<{ id: string }>(`${BOTS_BASE}/meetings`, {
         method: 'POST',
         body: JSON.stringify({
           meeting_url: meetingUrl,

@@ -28,13 +28,12 @@ interface KBWithAccess {
 
 function DocsPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
 
   const { data: kbs = [], isLoading, error, refetch } = useQuery<KBWithAccess[]>({
     queryKey: ['docs-kbs-with-access'],
-    queryFn: async () => apiFetch<KBWithAccess[]>(`/api/app/knowledge-bases-with-access`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KBWithAccess[]>(`/api/app/knowledge-bases-with-access`),
+    enabled: auth.isAuthenticated,
   })
 
   const accessibleKbs = kbs.filter((kb) => kb.is_accessible)

@@ -58,8 +58,6 @@ export const Route = createFileRoute('/app/chat')({
 function ChatPage() {
   const baseUrl = useChatBaseUrl()
   const auth = useAuth()
-  const token = auth.user?.access_token
-
   const [phase, setPhase] = useState<Phase>('health_check')
   const [errorReason, setErrorReason] = useState<string | null>(null)
   const [iframeSrc, setIframeSrc] = useState<string | null>(null)
@@ -73,13 +71,13 @@ function ChatPage() {
   }, [])
 
   const runHealthCheck = useCallback(async () => {
-    if (!token) return
+    if (!auth.isAuthenticated) return
 
     setPhase('health_check')
     setErrorReason(null)
 
     try {
-      const health = await apiFetch<ChatHealth>('/api/app/chat-health', token)
+      const health = await apiFetch<ChatHealth>('/api/app/chat-health')
 
       if (!health.healthy) {
         chatKbLogger.warn('Chat health check failed', { reason: health.reason })
@@ -110,15 +108,15 @@ function ChatPage() {
       setIframeSrc(getIframeSrc(baseUrl))
       setPhase('loading_iframe')
     }
-  }, [token, baseUrl, clearStuckTimer])
+  }, [auth.isAuthenticated, baseUrl, clearStuckTimer])
 
-  // Run health check on mount and when token becomes available
+  // Run health check on mount once the session is resolved.
   useEffect(() => {
-    if (token) {
+    if (auth.isAuthenticated) {
       void runHealthCheck()
     }
     return clearStuckTimer
-  }, [token, runHealthCheck, clearStuckTimer])
+  }, [auth.isAuthenticated, runHealthCheck, clearStuckTimer])
 
   const handleIframeLoad = useCallback(() => {
     localStorage.setItem(LC_AUTH_KEY, Date.now().toString())

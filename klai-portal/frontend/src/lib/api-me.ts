@@ -1,9 +1,7 @@
 /**
- * Thin typed client for portal-api's /api/me endpoint (SPEC-AUTH-008 Phase B).
+ * Thin typed client for portal-api's /api/me endpoint (SPEC-AUTH-008).
  *
- * All requests are same-origin + cookie-authenticated. The `_legacyToken`
- * parameter is kept for compatibility with callers written before the BFF
- * migration; it is ignored.
+ * All requests are same-origin + cookie-authenticated.
  */
 
 import { API_BASE } from '@/lib/api'
@@ -29,12 +27,12 @@ export interface MeResponse {
  * Fetch /api/me via the BFF session cookie.
  *
  * Classifies failures as:
- *   - UnauthorizedError on 401 (token rot → reauth)
+ *   - UnauthorizedError on 401 (session expired → reauth)
  *   - FetchError on any other non-OK status
  *   - TypeError pass-through on network failure
  *   - DOMException('AbortError') on signal abort
  */
-export async function fetchMe(_legacyToken: string | undefined, signal: AbortSignal): Promise<MeResponse> {
+export async function fetchMe(signal: AbortSignal): Promise<MeResponse> {
   const res = await fetch(`${API_BASE}/api/me`, {
     credentials: 'include',
     signal,

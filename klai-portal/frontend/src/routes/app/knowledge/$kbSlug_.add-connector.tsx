@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -85,8 +84,6 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-connector')({
 function AddConnectorPage() {
   const { kbSlug } = Route.useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const token = user?.access_token
   const queryClient = useQueryClient()
 
   const [selectedType, setSelectedType] = useState<ConnectorType | null>(null)
@@ -172,7 +169,7 @@ function AddConnectorPage() {
         if (ids.length > 0) config.database_ids = ids
         if (notionConfig.max_pages && notionConfig.max_pages !== '500') config.max_pages = Number(notionConfig.max_pages)
       }
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
           name,
@@ -193,7 +190,7 @@ function AddConnectorPage() {
     mutationFn: async () => {
       const config: Record<string, unknown> = {}
       if (folderId.trim()) config.folder_id = folderId.trim()
-      const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
+      const result = await apiFetch<{ id: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
           name,
@@ -204,10 +201,7 @@ function AddConnectorPage() {
         }),
       })
       // Fetch the OAuth authorize URL (authenticated call sets the state cookie).
-      const { authorize_url } = await apiFetch<{ authorize_url: string }>(
-        `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`,
-        token,
-      )
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(result.id)}`, )
       return { authorizeUrl: authorize_url }
     },
     onSuccess: ({ authorizeUrl }) => {
@@ -224,7 +218,7 @@ function AddConnectorPage() {
         fit_markdown: string; word_count: number; warnings: string[]; url: string
         content_selector: string | null; selector_source: string | null
         auth_guard: AuthGuardSuggestion | null
-      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, token, {
+      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
         method: 'POST',
         body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies || null }),
       })

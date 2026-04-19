@@ -67,7 +67,6 @@ function meetingToUnified(item: MeetingListItem): UnifiedItem {
 
 function TranscribePage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/app/transcribe/' })
 
@@ -84,14 +83,14 @@ function TranscribePage() {
 
   const { data: transcriptionsData, isLoading: transcriptionsLoading, error: transcriptionsError, refetch: refetchTranscriptions } = useQuery<TranscriptionListResponse>({
     queryKey: ['transcriptions'],
-    queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: meetingsData, isLoading: meetingsLoading, error: meetingsError, refetch: refetchMeetings } = useQuery<MeetingListResponse>({
     queryKey: ['meetings'],
-    queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`),
+    enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
       const data = query.state.data
       if (!data) return false
@@ -112,21 +111,21 @@ function TranscribePage() {
 
   const deleteUploadMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}`, token, { method: 'DELETE' })
+      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}`, { method: 'DELETE' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions'] }),
   })
 
   const deleteMeetingMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiFetch(`${BOTS_BASE}/meetings/${id}`, token, { method: 'DELETE' })
+      await apiFetch(`${BOTS_BASE}/meetings/${id}`, { method: 'DELETE' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings'] }),
   })
 
   const renameMutation = useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string | null }) => {
-      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}`, token, {
+      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ name }),
       })
@@ -136,14 +135,14 @@ function TranscribePage() {
 
   const stopMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiFetch(`${BOTS_BASE}/meetings/${id}/stop`, token, { method: 'POST' })
+      await apiFetch(`${BOTS_BASE}/meetings/${id}/stop`, { method: 'POST' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['meetings'] }),
   })
 
   const retryMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}/retry`, token, { method: 'POST' })
+      await apiFetch(`${SCRIBE_BASE}/transcriptions/${id}/retry`, { method: 'POST' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['transcriptions'] }),
   })

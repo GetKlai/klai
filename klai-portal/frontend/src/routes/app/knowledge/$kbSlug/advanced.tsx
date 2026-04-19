@@ -15,25 +15,24 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/advanced')({
 function AdvancedTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: stats } = useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
-    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
-    enabled: !!token && !!kb,
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`),
+    enabled: auth.isAuthenticated && !!kb,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
-    enabled: !!token && !!kb,
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
+    enabled: auth.isAuthenticated && !!kb,
   })
 
   const myUserId = auth.user?.profile?.sub
@@ -70,7 +69,6 @@ function AdvancedTab() {
           connectorCount={stats?.connector_count ?? 0}
           hasGitea={!!kb.gitea_repo_slug}
           hasDocs={kb.docs_enabled}
-          token={auth.user?.access_token ?? ''}
         />
       </div>
     </div>
