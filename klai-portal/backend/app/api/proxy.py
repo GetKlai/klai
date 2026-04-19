@@ -33,7 +33,7 @@ from app.core.session import SessionContext
 
 logger = structlog.get_logger()
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Upstream map. Each entry: (public prefix, upstream base URL). The prefix is
