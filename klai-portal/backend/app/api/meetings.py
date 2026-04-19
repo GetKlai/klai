@@ -426,10 +426,16 @@ class SpeakerEvent(BaseModel):
 
 
 class VexaWebhookPayload(BaseModel):
-    """Vexa agentic-runtime webhook envelope.
+    """Vexa webhook envelope — accepts three wire formats.
 
-    Standard format: {event_type, meeting: {id, platform, native_meeting_id, status, ...}}
-    Completion format: {id, platform, native_meeting_id, status, ended_at, speaker_events}
+    1. Upstream v0.10 envelope (``WEBHOOK_API_VERSION = "2026-03-01"``):
+       ``{event_id, event_type, api_version, created_at, data: {meeting: {...}}}``
+    2. Legacy agentic-runtime envelope:
+       ``{event_type, meeting: {id, platform, native_meeting_id, status, ...}}``
+    3. Flat completion format (bare meeting dict):
+       ``{id, platform, native_meeting_id, status, ended_at, speaker_events}``
+
+    See SPEC-VEXA-003 research.md §3.5 for the full upstream schema.
     """
 
     platform: str | None = None
@@ -447,7 +453,24 @@ class VexaWebhookPayload(BaseModel):
     def _normalize(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        # Envelope format: {event_type, meeting: {...}}
+
+        # Shape 1: upstream v0.10 envelope — meeting nested under `data.meeting`.
+        inner = data.get("data")
+        if isinstance(inner, dict) and isinstance(inner.get("meeting"), dict):
+            meeting = inner["meeting"]
+            recording = inner.get("recording")
+            return {
+                "vexa_meeting_id": meeting.get("id"),
+                "platform": meeting.get("platform"),
+                "native_meeting_id": meeting.get("native_meeting_id"),
+                "status": meeting.get("status"),
+                "ended_at": meeting.get("end_time"),
+                "recording_id": recording.get("id")
+                if isinstance(recording, dict)
+                else None,
+            }
+
+        # Shape 2: legacy envelope — `meeting` at top level.
         if "meeting" in data and "platform" not in data:
             meeting = data["meeting"] or {}
             return {
@@ -460,7 +483,8 @@ class VexaWebhookPayload(BaseModel):
                 if isinstance(data.get("recording"), dict)
                 else None,
             }
-        # Flat completion format
+
+        # Shape 3: flat completion format.
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
