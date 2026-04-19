@@ -32,7 +32,6 @@ def _configure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "sso_cookie_key", "")
     monkeypatch.setattr(settings, "bff_session_ttl_seconds", 86400)
     monkeypatch.setattr(settings, "domain", "getklai.com")
-    monkeypatch.setattr(settings, "bff_enforce_cookies", False)
     from app.services import bff_session as svc_module
 
     svc_module.session_service._fernet = None
@@ -101,7 +100,7 @@ async def _make_session(wire_redis: AsyncMock, access_token: str = "live-at") ->
     return record.sid
 
 
-class TestBearerSessionPath:
+class TestBearerRequiresSession:
     @pytest.mark.asyncio
     async def test_session_synthesises_bearer_credentials(self, app: FastAPI, wire_redis: AsyncMock) -> None:
         sid = await _make_session(wire_redis, access_token="token-from-session")
@@ -112,36 +111,14 @@ class TestBearerSessionPath:
         assert body["token"] == "token-from-session"
         assert body["scheme"] == "Bearer"
 
-
-class TestBearerLegacyPath:
-    def test_real_bearer_header_still_works(self, app: FastAPI) -> None:
-        client = TestClient(app)
-        resp = client.get("/protected", headers={"Authorization": "Bearer legacy-at"})
-        assert resp.status_code == 200
-        assert resp.json()["token"] == "legacy-at"
-
-    def test_missing_credentials_returns_401(self, app: FastAPI) -> None:
-        client = TestClient(app)
-        resp = client.get("/protected")
-        assert resp.status_code == 401
-
-
-class TestBffEnforceCookiesFlag:
-    def test_enforce_cookies_rejects_bearer_without_session(
-        self, app: FastAPI, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings, "bff_enforce_cookies", True)
+    def test_bearer_only_request_is_rejected(self, app: FastAPI) -> None:
         client = TestClient(app)
         resp = client.get("/protected", headers={"Authorization": "Bearer legacy-at"})
         assert resp.status_code == 401
         assert resp.json()["detail"] == "cookie_required"
 
-    @pytest.mark.asyncio
-    async def test_enforce_cookies_accepts_session(
-        self, app: FastAPI, wire_redis: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings, "bff_enforce_cookies", True)
-        sid = await _make_session(wire_redis)
+    def test_missing_everything_returns_401(self, app: FastAPI) -> None:
         client = TestClient(app)
-        resp = client.get("/protected", cookies={SESSION_COOKIE_NAME: sid})
-        assert resp.status_code == 200
+        resp = client.get("/protected")
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "cookie_required"

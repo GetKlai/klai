@@ -66,11 +66,8 @@ class Settings(BaseSettings):
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
     # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
-    # When false (default during migration soak), both cookie-session and legacy Bearer auth
-    # are accepted. When true, only cookie-session is accepted; bearer requests fail with 401.
-    bff_enforce_cookies: bool = False
     # Fernet key for encrypting BFF session records at rest in Redis.
-    # Falls back to sso_cookie_key when unset (single key during the migration).
+    # Falls back to sso_cookie_key when unset — single key during the rollout.
     bff_session_key: str = ""  # PORTAL_API_BFF_SESSION_KEY
     bff_session_ttl_seconds: int = 30 * 24 * 3600  # 30 days, matches Zitadel refresh-token lifetime
     bff_access_token_skew_seconds: int = 60  # refresh this many seconds before expiry
@@ -99,6 +96,11 @@ class Settings(BaseSettings):
     # Internal service-to-service secret (used by klai-mailer → portal)
     # Generate with: openssl rand -hex 32
     internal_secret: str = ""
+
+    # SPEC-SEC-005 REQ-1.7: per-caller-IP rate limit ceiling for /internal/* endpoints.
+    # Sliding-window (60s) over Redis; fails open when Redis is unavailable.
+    # Tune via INTERNAL_RATE_LIMIT_RPM env var without code change.
+    internal_rate_limit_rpm: int = 100
 
     # klai-mailer service URL (for sending transactional emails)
     mailer_url: str = ""  # e.g. http://klai-mailer:8300
