@@ -35,6 +35,8 @@ import hashlib
 import json
 import secrets
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
@@ -85,6 +87,55 @@ class SessionDecryptError(RuntimeError):
     """Raised when a session blob cannot be decrypted (rotated key, corruption)."""
 
 
+class _PermanentRefreshFailure(Exception):
+    """OP rejected the refresh token — session is unrecoverable and must be revoked."""
+
+
+@dataclass(slots=True)
+class _LockEntry:
+    lock: asyncio.Lock
+    waiters: int = 0
+
+
+class _Singleflight:
+    """Per-key coalescing lock registry with reference-counted cleanup.
+
+    Callers acquire a lock for a given key via the async context manager;
+    concurrent callers for the same key serialise behind that lock. Entries
+    are removed from the registry as soon as the last waiter exits, so the
+    dict does not grow unbounded in long-running processes.
+
+    Scoped to a single asyncio event loop / process. For multi-worker
+    coalescing, replace with a Redis SETNX-based distributed lock.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, _LockEntry] = {}
+        self._mutex = asyncio.Lock()
+
+    @asynccontextmanager
+    async def acquire(self, key: str) -> AsyncIterator[None]:
+        async with self._mutex:
+            entry = self._entries.get(key)
+            if entry is None:
+                entry = _LockEntry(lock=asyncio.Lock())
+                self._entries[key] = entry
+            entry.waiters += 1
+            lock = entry.lock
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self._mutex:
+                entry.waiters -= 1
+                if entry.waiters == 0:
+                    self._entries.pop(key, None)
+
+    def _size(self) -> int:
+        """Number of active lock entries — for test assertions."""
+        return len(self._entries)
+
+
 class SessionService:
     """
     CRUD + helpers for the BFF session store.
@@ -96,10 +147,9 @@ class SessionService:
 
     def __init__(self) -> None:
         self._fernet: Fernet | None = None
-        # Per-sid asyncio.Lock registry for refresh coalescing (singleflight).
-        # See refresh_if_needed(). Scoped to this process; if portal-api ever
-        # scales to multiple uvicorn workers, move to Redis SETNX.
-        self._refresh_locks: dict[str, asyncio.Lock] = {}
+        # Singleflight coalescing for token refresh. Entries self-clean when
+        # the last waiter exits, so the dict does not grow with every session.
+        self._refresh_singleflight = _Singleflight()
 
     # ------------------------------------------------------------------ crypto
 
@@ -228,23 +278,28 @@ class SessionService:
         """
         Return a SessionRecord whose access_token is not about to expire.
 
-        If the current token still has more than `bff_access_token_skew_seconds`
-        of life left, return the record unchanged. Otherwise call Zitadel's
-        refresh_token endpoint, persist the new tokens, and return the updated
-        record. Returns None when the refresh is rejected — the caller must
-        treat the session as gone (revoke was handled here).
+        Behaviour:
 
-        Concurrent callers for the same sid coalesce onto a single refresh via
-        an in-process asyncio.Lock (singleflight pattern). After the winning
-        coroutine releases the lock, waiters read the freshly-updated record
-        from Redis rather than hitting Zitadel again.
+        - Token still fresh (>skew seconds of life left)  → return unchanged.
+        - Refresh succeeds                                → return updated record.
+        - OP rejects the refresh_token (invalid_grant,
+          invalid_client, etc.)                            → revoke session, return None.
+        - Transient failure (network, DNS, timeout)        → return None WITHOUT
+          revoking; the session keeps existing and the next request retries.
+          The current request's route will 401 because the access_token is past
+          expiry — acceptable degradation during a Zitadel outage.
+        - Session was concurrently revoked (e.g. logout)   → return None, do not
+          resurrect the record (race guard in _do_refresh).
+
+        Concurrent callers for the same sid coalesce via a ref-counted
+        singleflight lock: only one Zitadel roundtrip per expiry event; waiters
+        read the updated record from Redis.
         """
         skew = settings.bff_access_token_skew_seconds
         if record.access_token_expires_at - skew > int(time.time()):
             return record
 
-        lock = self._refresh_locks.setdefault(record.sid, asyncio.Lock())
-        async with lock:
+        async with self._refresh_singleflight.acquire(record.sid):
             # Re-check inside the lock: another coroutine may have refreshed
             # while we were waiting. Load the freshest record from Redis.
             fresh = await self.load(record.sid)
@@ -253,13 +308,23 @@ class SessionService:
             if fresh.access_token_expires_at - skew > int(time.time()):
                 return fresh
 
-            refreshed = await self._do_refresh(fresh)
-            if refreshed is None:
-                # Refresh failed — session is unrecoverable.
+            try:
+                return await self._do_refresh(fresh)
+            except _PermanentRefreshFailure:
+                # OP permanently rejected the refresh_token — wipe the session.
                 await self.revoke(fresh.sid)
-            return refreshed
+                return None
 
     async def _do_refresh(self, record: SessionRecord) -> SessionRecord | None:
+        """Run one refresh round-trip.
+
+        Returns:
+            - The updated SessionRecord on success.
+            - None on transient failure (network) OR concurrent revocation.
+        Raises:
+            - _PermanentRefreshFailure when the OP rejects the refresh token,
+              signalling the caller to revoke the session.
+        """
         # Local import avoids a circular dependency (bff_oidc → settings → …).
         from app.services.bff_oidc import OidcFlowError, refresh_access_token
 
@@ -272,9 +337,17 @@ class SessionService:
                 error=exc.code,
                 description=exc.description,
             )
-            return None
+            raise _PermanentRefreshFailure from exc
         except Exception as exc:
-            logger.warning("bff_session_refresh_error", sid=record.sid, error=str(exc))
+            logger.warning("bff_session_refresh_transient_error", sid=record.sid, error=str(exc))
+            return None
+
+        # Race guard: logout may have revoked the session while we were holding
+        # the Zitadel call open. If the record is gone from Redis, refusing to
+        # write makes the logout win — without this the update below would
+        # resurrect the session with fresh tokens.
+        if not await self._session_exists(record.sid):
+            logger.info("bff_session_refresh_aborted_session_gone", sid=record.sid)
             return None
 
         record.access_token = tokens.access_token
@@ -287,6 +360,13 @@ class SessionService:
         await self.update(record)
         logger.info("bff_session_refreshed", sid=record.sid)
         return record
+
+    async def _session_exists(self, sid: str) -> bool:
+        """Redis EXISTS without decrypt — used by the refresh race guard."""
+        pool = await self._optional_pool()
+        if pool is None:
+            return False
+        return bool(await pool.exists(self.session_key(sid)))
 
     # ------------------------------------------------------------------- pool
 

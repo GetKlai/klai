@@ -44,10 +44,14 @@ def fake_redis() -> AsyncMock:
             store.pop(k, None)
         return count
 
+    async def fake_exists(*keys: str) -> int:
+        return sum(1 for k in keys if k in store)
+
     pool = AsyncMock()
     pool.get.side_effect = fake_get
     pool.set.side_effect = fake_set
     pool.delete.side_effect = fake_delete
+    pool.exists.side_effect = fake_exists
     pool._store = store
     return pool
 
@@ -145,9 +149,13 @@ class TestRefreshFailureRevokesSession:
         assert service.session_key(record.sid) not in fake_redis._store
 
     @pytest.mark.asyncio
-    async def test_network_error_revokes_session_too(
+    async def test_network_error_keeps_session_alive(
         self, service: SessionService, monkeypatch: pytest.MonkeyPatch, fake_redis: AsyncMock
     ) -> None:
+        """Transient errors must NOT revoke — a 30-second Zitadel outage should
+        not sign every user out. The current request returns None (forcing a
+        401 downstream) but the session record stays so the next request can
+        retry the refresh when Zitadel is back."""
         record = await _seed_session(service, expires_at=int(time.time()) - 5)
 
         async def blowup(_rt: str) -> TokenSet:
@@ -159,7 +167,83 @@ class TestRefreshFailureRevokesSession:
 
         result = await service.refresh_if_needed(record)
         assert result is None
-        assert service.session_key(record.sid) not in fake_redis._store
+        # Session remains in Redis — next request will retry.
+        assert service.session_key(record.sid) in fake_redis._store
+
+
+class TestRefreshRaceGuard:
+    @pytest.mark.asyncio
+    async def test_refresh_aborts_when_session_revoked_concurrently(
+        self, service: SessionService, monkeypatch: pytest.MonkeyPatch, fake_redis: AsyncMock
+    ) -> None:
+        """Logout during refresh: the refresh must NOT resurrect the session.
+
+        Simulates the race where the user clicks logout between our Zitadel
+        refresh call and the Redis write-back.
+        """
+        record = await _seed_session(service, expires_at=int(time.time()) - 5)
+        session_key = service.session_key(record.sid)
+
+        async def fake_refresh_then_revoke(_rt: str) -> TokenSet:
+            # Simulate: while we were waiting for Zitadel, the logout handler
+            # deleted our session key.
+            del fake_redis._store[session_key]
+            return TokenSet(
+                access_token="at-resurrected",
+                refresh_token="rt-resurrected",
+                id_token="idt-resurrected",
+                expires_in=3600,
+            )
+
+        import app.services.bff_oidc as oidc
+
+        monkeypatch.setattr(oidc, "refresh_access_token", fake_refresh_then_revoke)
+
+        result = await service.refresh_if_needed(record)
+        assert result is None
+        # Crucially — the session stays gone. No resurrection.
+        assert session_key not in fake_redis._store
+
+
+class TestSingleflightCleanup:
+    @pytest.mark.asyncio
+    async def test_lock_registry_is_empty_after_refresh(
+        self, service: SessionService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ref-counted singleflight must remove its entry when the last waiter
+        exits, preventing unbounded growth in long-running processes."""
+        record = await _seed_session(service, expires_at=int(time.time()) - 5)
+
+        async def fake_refresh(_rt: str) -> TokenSet:
+            return TokenSet(
+                access_token="at-new",
+                refresh_token="rt-new",
+                id_token="idt-new",
+                expires_in=3600,
+            )
+
+        import app.services.bff_oidc as oidc
+
+        monkeypatch.setattr(oidc, "refresh_access_token", fake_refresh)
+
+        await service.refresh_if_needed(record)
+        assert service._refresh_singleflight._size() == 0
+
+    @pytest.mark.asyncio
+    async def test_lock_registry_cleans_up_after_failure(
+        self, service: SessionService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        record = await _seed_session(service, expires_at=int(time.time()) - 5)
+
+        async def failing(_rt: str) -> TokenSet:
+            raise OidcFlowError("invalid_grant")
+
+        import app.services.bff_oidc as oidc
+
+        monkeypatch.setattr(oidc, "refresh_access_token", failing)
+
+        await service.refresh_if_needed(record)
+        assert service._refresh_singleflight._size() == 0
 
 
 class TestRefreshCoalescesConcurrent:
