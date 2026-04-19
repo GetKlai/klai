@@ -166,8 +166,12 @@ function useSessionGuard(): void {
       return
     }
 
+    const errorCode = extractOidcErrorCode(authError) ?? 'unknown'
     authLogger.error('Unexpected OIDC error during token renewal', authError)
-    Sentry.captureException(authError)
+    Sentry.captureException(authError, {
+      tags: { domain: 'auth', phase: 'silent-renew', error_code: errorCode },
+      fingerprint: ['oidc-silent-renew', errorCode],
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.removeUser is stable
   }, [authError])
 }
