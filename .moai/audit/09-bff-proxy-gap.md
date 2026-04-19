@@ -74,8 +74,37 @@ SEC-023 wordt **nu** geïmplementeerd in deze sessie. Fasegewijs met commits als
 3. Caddy public routes verwijderen
 4. Deploy + smoke-test alle drie modules
 
+## CSRF review (post-deploy)
+
+BFF proxy accepts all HTTP methods on `/api/research|scribe|docs/*`. CSRF review
+(Task #33, 2026-04-19) concludes the proxy is **already fully CSRF-protected**:
+
+- `__Secure-klai_session` cookie: `SameSite=Lax` (app/core/session.py:23, api/auth.py:213)
+  — blocks cross-site form-submit for POST/PUT/DELETE.
+- `SessionMiddleware._check_csrf` (middleware/session.py:107) enforces
+  `X-CSRF-Token` header on all non-safe methods. Safe list: GET/HEAD/OPTIONS.
+  Exempt prefixes: `/api/auth/oidc/*`, `/api/signup`, `/api/health`, `/api/public/`,
+  `/internal/`, `/partner/`, `/widget/`. The `/api/research|scribe|docs/*` proxy
+  paths are **NOT exempt** — all mutations require a valid CSRF token.
+- Token validation uses constant-time `_secure_equal` (middleware/session.py:129).
+- Middleware registration order (main.py:170): SessionMiddleware runs BEFORE
+  the proxy router → CSRF check happens before upstream request is built.
+
+**No additional CSRF work required for SEC-023.**
+
+## Streaming upload follow-up (Task #32)
+
+Current `proxy.py` reads full request body with `body = await request.body()` and
+passes it as `content=body`. For large uploads (knowledge-ingest file imports) this
+buffers in portal-api memory. Safe but non-optimal. Follow-up: switch to
+`content=request.stream()` or pass the `Receive` callable directly to httpx. Not
+urgent — knowledge-ingest uploads currently bypass the BFF proxy entirely (direct
+`/api/v1/ingest` under portal-api itself, not under the new `/api/research|scribe|docs`
+prefixes). Listed as Task #32 for when streaming through the BFF proxy becomes needed.
+
 ## Changelog
 
 | Datum | Wijziging |
 |---|---|
 | 2026-04-19 | F-038 documented + SEC-023 scope bepaald. Implementation start nu. |
+| 2026-04-19 | SEC-023 LIVE on main (commits 9ea58b73 + 0bcbe579). Post-deploy CSRF review: full protection already in place via SessionMiddleware X-CSRF-Token enforcement + SameSite=Lax cookie. End-to-end browser verification outstanding (Task #31). |
