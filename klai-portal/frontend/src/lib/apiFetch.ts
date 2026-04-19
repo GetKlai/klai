@@ -47,18 +47,6 @@ interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 // ---------------------------------------------------------------------------
-// Migration compat — some callers still pass a TokenRefresher to auth.tsx.
-// With the BFF the backend handles refresh server-side, so this is a no-op
-// kept alive until the last caller is removed.
-// ---------------------------------------------------------------------------
-
-type TokenRefresher = () => Promise<string | null>
-
-export function registerTokenRefresher(_refresher: TokenRefresher): void {
-  // No-op in BFF mode — sessions are refreshed by portal-api middleware.
-}
-
-// ---------------------------------------------------------------------------
 // Core fetch wrapper
 // ---------------------------------------------------------------------------
 
