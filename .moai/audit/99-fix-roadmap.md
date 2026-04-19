@@ -22,7 +22,8 @@
 | ~~P0~~ | ~~SEC-010~~ | Retrieval-API hardening | F-001, F-010, F-014 | retrieval-api | **✅ LIVE on main** (f48381f4, a1b4d52f, 410965c9, bba52266, f803f687) |
 | ~~P1~~ | ~~SEC-011~~ | Knowledge-ingest fail-closed auth | F-003, F-012 | knowledge-ingest | **✅ LIVE on main** (3ca34341) |
 | ~~P3~~ | ~~SEC-009~~ | SERVERS.md doc-drift | F-017, F-018, F-020, F-022 | klai-infra docs | **✅ LIVE** (klai-infra 58f0b60) |
-| **OPEN** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | focus | Scribe deel vervalt (SPEC-VEXA-003 is gedaan). Research-api deel wacht op user B/C/D keuze. |
+| **BLOCKED** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | focus | Dependency op SEC-023 (proxy-pattern eerst). Na proxy-pattern wordt audience-check defense-in-depth ipv must. |
+| **IN_PROGRESS** | SEC-023 | Internal services BFF proxy (NEW, reframed from SEC-012) | F-038 | portal-api, frontend, Caddy, research-api, scribe-api, docs-app | Fixes silent-broken Focus/Scribe/Docs modules sinds AUTH-008. Proxy via portal-api ipv direct Caddy strip_prefix. |
 | ~~P1~~ | ~~SEC-008~~ | Caddy exposure hardening (reduced) | F-017, F-018 | connector, dev env | **✅ LIVE on main** (11d6c28f + klai-infra 41ff469). F-020/F-022 → SEC-013. |
 | **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus | Scribe rebuild klaar, focus deel kan door na SEC-012. F-009 portion al gefixt in SEC-008. |
 | ~~P2~~ | ~~SEC-005~~ | Internal-endpoint hardening | F-007 | portal | **✅ LIVE on main** (739a3177 + klai-infra 41ff469). Smoke-tested: 200 + audit row. |
