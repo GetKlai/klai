@@ -41,7 +41,8 @@
 | knowledge-ingest | SEC-011 fail-closed startup validator + middleware removal | **✅ live** |
 | portal-api | SEC-005 internal rate-limit + audit log + hmac.compare_digest | **✅ live, smoke-tested** (audit row persisted) |
 | portal-api | SEC-006 widget JWT DB cross-check for revocation | **✅ live** |
-| klai-connector | SEC-007 LRU cache + SEC-008 audience check + hmac.compare_digest | **✅ live** (warn-only fallback on audience — needs ZITADEL_API_AUDIENCE in SOPS for defense-in-depth) |
+| klai-connector | SEC-007 LRU cache + SEC-008 audience check + hmac.compare_digest | **✅ live** — ZITADEL_API_AUDIENCE in SOPS (Zitadel API app 365340910193475592), audience check active, no more warn-only fallback |
+| Caddy | SEC-008 F-018 — dev.getklai.com basic-auth gate | **✅ live** — smoke-tested: no auth → 401, correct creds → pass through to backend, wrong pw → 401 |
 | klai-infra | 3 rotation runbooks (INTERNAL_SECRET, CONNECTOR_SECRET, CADDY_DEV_HARDENING) | **✅ merged** |
 | SOPS | `RETRIEVAL_API_INTERNAL_SECRET` added, 8 dev vars restored | **✅ synced to `/opt/klai/.env`** |
 | SERVERS.md | SEC-009 complete Caddy route table | **✅ merged** (klai-infra) |
@@ -292,3 +293,4 @@ Fase 1+2+6 kunnen parallel met SEC-004 t/m SEC-012 fixes. Fase 4+5 bij voorkeur 
 | 2026-04-19 Parallel session | Dependency audit + CVE scanning infrastructure overhaul in aparte sessie landde op main: 26 images pinned, 6 CVE-detectielagen active, 1 critical CVE gefixt (LiteLLM), pytest in CI, 546 green tests. Dekt Fase 1+2 van het audit-plan grotendeels. |
 | 2026-04-19 Wave 3 | SEC-005/006/007/008 gebouwd (4 parallel agents), gegroepeerd naar 5 commits op main (739a3177, 78d7ce26, 1e3f9945, 11d6c28f, 0dcd8047) + klai-infra 41ff469 (3 runbooks). Smoke-tested: portal-api internal endpoint schrijft audit row naar portal_audit_log, klai-connector warnt bij ontbrekende audience, widget JWT revocation via DB cross-check. 73+ new tests, alle groen. |
 | 2026-04-19 Fase 4 | SAST scan afgerond. 0 critical, 7 findings (F-023..F-029, all MEDIUM/LOW). F-026 false positive. Rapport in .moai/audit/05-injection.md. |
+| 2026-04-19 Ops rollout | SEC-008 defense-in-depth geactiveerd: KLAI_CONNECTOR_ZITADEL_AUDIENCE (Zitadel app 365340910193475592) en CADDY_DEV basic-auth (bcrypt 14, 32-char random password) in SOPS. Caddyfile + compose bijgewerkt. Gotcha gevonden: sync-env.yml doet automatische `$` → `$$` escape voor docker-compose, SOPS moet dus single-\$ bcrypt opslaan (niet pre-escaped). Smoke-tested: dev.getklai.com basic-auth werkt, klai-connector audience actief. |
