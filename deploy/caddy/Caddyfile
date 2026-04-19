@@ -46,7 +46,7 @@
     @not-auth {
         not host auth.{$DOMAIN}
     }
-    header @not-auth X-Frame-Options "SAMEORIGIN"
+    header @not-auth Content-Security-Policy "frame-ancestors 'self' https://*.{$DOMAIN}"
 
     # Block /metrics from external access — scraped internally by Alloy
     handle /metrics {
@@ -173,6 +173,34 @@
             }
         }
         reverse_proxy portal-api:8010
+    }
+
+    # Dev environment — dev.getklai.com routes to portal-api-dev + /srv/portal-dev
+    # Must come BEFORE the general /api/* handler below.
+    # Uses `route` to preserve directive order.
+    #
+    # SPEC-SEC-008 F-018 — protected by basic_auth to gate public internet access.
+    # Credentials stored in SOPS (CADDY_DEV_USERNAME / CADDY_DEV_PASSWORD_HASH).
+    @dev-host host dev.{$DOMAIN}
+    handle @dev-host {
+        basic_auth {
+            {$CADDY_DEV_USERNAME} {$CADDY_DEV_PASSWORD_HASH}
+        }
+        route {
+            @dev-api path /api/*
+            reverse_proxy @dev-api portal-api-dev:8010
+
+            root * /srv/portal-dev
+
+            @dev-spa-assets path /assets/*
+            header @dev-spa-assets Cache-Control "public, max-age=31536000, immutable"
+
+            @dev-spa-html not path /assets/*
+            header @dev-spa-html Cache-Control "no-cache"
+
+            try_files {path} /index.html
+            file_server
+        }
     }
 
     handle /api/* {
