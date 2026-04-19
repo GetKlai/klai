@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     zitadel_introspection_url: str
     zitadel_client_id: str
     zitadel_client_secret: str
+    # Expected `aud` claim value for introspected tokens (SPEC-SEC-008 F-017).
+    # When empty, audience verification is skipped (warn-only fallback) so that
+    # existing deployments without a configured audience continue to work. SHOULD
+    # be set to the klai-connector Zitadel application audience for defense-in-depth.
+    zitadel_api_audience: str = ""
 
     # GitHub App
     github_app_id: str
