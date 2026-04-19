@@ -82,8 +82,3 @@ async def embed(texts: list[str]) -> list[list[float]]:
             batch_result = await _embed_batch(client, batch)
             results.extend(batch_result)
         return results
-
-
-async def embed_one(text: str) -> list[float]:
-    results = await embed([text])
-    return results[0]

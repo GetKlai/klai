@@ -343,50 +343,49 @@ async def save_to_docs(
         return "Error: X-Org-Slug header missing and DEFAULT_ORG_SLUG not set."
 
     # Resolve KB name — always fetch list to validate, auto-select if only one
-    if True:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs",
-                    headers={
-                        _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
-                        "X-User-ID": identity.user_id,
-                        "X-Org-ID": identity.org_id,
-                    },
-                )
-        except httpx.RequestError as exc:
-            logger.error("KB list fetch failed: %s", exc)
-            return _ERR_SAVE
-
-        if resp.status_code != 200:
-            logger.error(
-                "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
-                resp.status_code, resp.text[:200], org_slug, identity.org_id,
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{KLAI_DOCS_API_BASE}/api/orgs/{org_slug}/kbs",
+                headers={
+                    _INTERNAL_SECRET_HEADER: DOCS_INTERNAL_SECRET,
+                    "X-User-ID": identity.user_id,
+                    "X-Org-ID": identity.org_id,
+                },
             )
-            return _ERR_SAVE
+    except httpx.RequestError as exc:
+        logger.error("KB list fetch failed: %s", exc)
+        return _ERR_SAVE
 
-        kbs = resp.json()
-        if not kbs:
-            return "Error: geen documentatie-kennisbanken gevonden voor deze organisatie."
+    if resp.status_code != 200:
+        logger.error(
+            "KB list fetch returned %d: %s (org_slug=%s, org_id=%s)",
+            resp.status_code, resp.text[:200], org_slug, identity.org_id,
+        )
+        return _ERR_SAVE
 
-        valid_slugs = [kb.get("slug") for kb in kbs if kb.get("slug")]
+    kbs = resp.json()
+    if not kbs:
+        return "Error: geen documentatie-kennisbanken gevonden voor deze organisatie."
 
-        if kb_name is None:
-            if len(kbs) == 1:
-                kb_name = valid_slugs[0]
-            else:
-                options = ", ".join(
-                    f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs
-                )
-                return (
-                    f"Meerdere kennisbanken beschikbaar: {options}. "
-                    "Geef de slug op als kb_name bij de volgende aanroep."
-                )
-        elif kb_name not in valid_slugs:
-            options = ", ".join(valid_slugs)
+    valid_slugs = [kb.get("slug") for kb in kbs if kb.get("slug")]
+
+    if kb_name is None:
+        if len(kbs) == 1:
+            kb_name = valid_slugs[0]
+        else:
+            options = ", ".join(
+                f"{kb.get('slug', '?')} ({kb.get('name', '')})" for kb in kbs
+            )
             return (
-                f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}."
+                f"Meerdere kennisbanken beschikbaar: {options}. "
+                "Geef de slug op als kb_name bij de volgende aanroep."
             )
+    elif kb_name not in valid_slugs:
+        options = ", ".join(valid_slugs)
+        return (
+            f"Onbekende kb_name '{kb_name}'. Geldige slugs: {options}."
+        )
 
     # Build page path if not provided — land in inbox/ for manual organisation later
     if page_path is None:

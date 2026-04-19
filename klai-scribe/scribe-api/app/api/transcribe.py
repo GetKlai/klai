@@ -87,12 +87,6 @@ class SummarizeResponse(BaseModel):
 
 # -- Audio storage helpers ----------------------------------------------------
 
-def _audio_dir(user_id: str) -> Path:
-    d = Path(settings.audio_storage_dir) / user_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def _save_audio(user_id: str, txn_id: str, wav_bytes: bytes) -> str:
     """Save WAV bytes to disk. Returns the relative path."""
     rel = f"{user_id}/{txn_id}.wav"

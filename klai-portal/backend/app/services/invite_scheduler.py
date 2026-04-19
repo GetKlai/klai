@@ -186,8 +186,3 @@ async def _join_meeting(invite: ParsedInvite, zitadel_user_id: str, org_id: int 
         logger.exception("Unexpected error joining meeting uid=%s", invite.uid)
     finally:
         _scheduled.pop(invite.uid, None)
-
-
-def get_scheduled() -> dict[str, asyncio.Task[None]]:
-    """Return the scheduled tasks dict (for testing)."""
-    return _scheduled
