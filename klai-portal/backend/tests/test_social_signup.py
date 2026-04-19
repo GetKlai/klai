@@ -9,8 +9,6 @@ All external calls (Zitadel, DB, provisioning) are mocked.
 All string values below are test placeholders, NOT real credentials.
 """
 
-# ruff: noqa: S106  -- literal strings below are test placeholders, not real credentials
-
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 

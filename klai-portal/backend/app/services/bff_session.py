@@ -104,9 +104,7 @@ class SessionService:
             return self._fernet
         key = settings.bff_session_key or settings.sso_cookie_key
         if not key:
-            raise RuntimeError(
-                "BFF_SESSION_KEY (or SSO_COOKIE_KEY fallback) is not configured"
-            )
+            raise RuntimeError("BFF_SESSION_KEY (or SSO_COOKIE_KEY fallback) is not configured")
         self._fernet = Fernet(key.encode() if isinstance(key, str) else key)
         return self._fernet
 

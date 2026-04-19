@@ -10,8 +10,6 @@ Unit tests: all external calls (Zitadel, httpx, credential_store) are mocked.
 All string values below are test placeholders, NOT real credentials.
 """
 
-# ruff: noqa: S106  -- literal strings below are test placeholders, not real credentials
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx

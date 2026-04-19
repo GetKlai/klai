@@ -87,7 +87,7 @@ async def test_malformed_prefix_returns_401():
     from app.api.partner_dependencies import get_partner_key
 
     with pytest.raises(HTTPException) as exc:
-        await get_partner_key(request=_make_request(token="sk_test_bad"), db=AsyncMock())  # noqa: S106
+        await get_partner_key(request=_make_request(token="sk_test_bad"), db=AsyncMock())
     assert exc.value.status_code == 401
 
 
