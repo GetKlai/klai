@@ -292,11 +292,12 @@ KB slug filter (when active):
 - Exception: when scope is `"both"`, personal chunks (`user_id == request.user_id`)
   bypass the slug filter and are always included
 
-**Parallel graph search (when `graphiti_enabled`):**
-FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search. It resolves
-named entities in the query and traverses relationships to find conceptually connected
-chunks. Timeout: 5 seconds. Results are merged with Qdrant results using the same RRF
-formula before reranking.
+**Parallel graph search:**
+FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search, resolving
+named entities in the query and traversing relationships to find conceptually connected
+chunks. Results are merged with Qdrant results using the same RRF formula before
+reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in production;
+disabled for `scope=notebook` (AC-6 in `retrieve.py`).
 
 ---
 
@@ -609,7 +610,7 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `20` | Top-N sent to cross-encoder |
 | `EVIDENCE_SHADOW_MODE` | `true` | Log evidence tiers without reordering results |
-| `graphiti_enabled` | `true` | Include FalkorDB graph search (parallel) |
+| `graphiti_enabled` | `true` (both `retrieval-api` and `knowledge-ingest`) | Include FalkorDB graph search (parallel with Qdrant 3-leg RRF). |
 | `graph_search_timeout` | `5.0` | FalkorDB search timeout (seconds) |
 | `coreference_timeout` | `3.0` | Coreference LLM call timeout (seconds) |
 | `reranker_timeout` | `30.0` | Cross-encoder timeout (seconds) |
