@@ -200,7 +200,7 @@ services:
 
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:v1.83.7-stable
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
