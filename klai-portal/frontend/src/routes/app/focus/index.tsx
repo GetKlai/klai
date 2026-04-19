@@ -28,7 +28,7 @@ export const Route = createFileRoute('/app/focus/')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 interface Notebook {
   id: string

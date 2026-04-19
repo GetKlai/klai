@@ -33,7 +33,7 @@ export const Route = createLazyFileRoute('/app/focus/$notebookId')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

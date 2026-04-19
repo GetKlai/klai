@@ -20,7 +20,7 @@ export const Route = createFileRoute('/app/focus/$notebookId_/edit')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 type Scope = 'personal' | 'org'
 type Mode = 'narrow' | 'broad' | 'web'

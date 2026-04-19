@@ -25,6 +25,8 @@ from app.api.mcp_servers import router as mcp_servers_router
 from app.api.meetings import router as meetings_router
 from app.api.oauth import router as oauth_router
 from app.api.partner import router as partner_router
+from app.api.proxy import aclose as proxy_aclose
+from app.api.proxy import router as proxy_router
 from app.api.taxonomy import router as taxonomy_router
 from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
@@ -128,6 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         imap_task.cancel()
     if _event_tasks:
         await asyncio.gather(*list(_event_tasks), return_exceptions=True)
+    await proxy_aclose()  # SEC-023: close shared httpx client used by BFF proxy
     await vexa.close()
     await zitadel.close()
 
@@ -183,6 +186,8 @@ app.include_router(billing_router)
 app.include_router(knowledge_router)
 app.include_router(meetings_router)
 app.include_router(webhooks_router)
+# SEC-023 / F-038 — BFF proxy for internal services (research, scribe, docs)
+app.include_router(proxy_router)
 app.include_router(internal_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)

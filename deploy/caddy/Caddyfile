@@ -207,37 +207,12 @@
         reverse_proxy portal-api:8010
     }
 
-    # Research module (document Q&A)
-    handle /research/* {
-        request_body {
-            max_size 52428800
-        }
-        rate_limit {
-            zone research_per_ip {
-                key {remote_host}
-                events 30
-                window 1m
-            }
-        }
-        uri strip_prefix /research
-        reverse_proxy research-api:8030
-    }
-
-    # Scribe transcription service
-    handle /scribe/* {
-        request_body {
-            max_size 104857600
-        }
-        rate_limit {
-            zone scribe_per_ip {
-                key {remote_host}
-                events 20
-                window 1m
-            }
-        }
-        uri strip_prefix /scribe
-        reverse_proxy scribe-api:8020
-    }
+    # SEC-023 / F-038 — Research/Scribe/Docs are no longer publicly routed.
+    # Frontend calls /api/research/*, /api/scribe/*, /api/docs/* which hit the
+    # BFF proxy in portal-api (app/api/proxy.py). That handler pulls the Zitadel
+    # access_token from the BFF session and forwards to the internal service
+    # with Authorization: Bearer injected. The services listen only on the
+    # klai-net Docker network now — no Caddy exposure.
 
     # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
     # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`
@@ -252,18 +227,6 @@
         }
         uri strip_prefix /bots
         reverse_proxy api-gateway:8000
-    }
-
-    # Klai Docs — KB reader + editor + API under /docs/*
-    handle /docs/* {
-        rate_limit {
-            zone docs_per_ip {
-                key {remote_host}
-                events 60
-                window 1m
-            }
-        }
-        reverse_proxy docs-app:3010
     }
 
     # Portal SPA — static files (fallback for all *.${DOMAIN})

@@ -20,7 +20,7 @@ export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
   ),
 })
 
-const DOCS_BASE = '/docs/api'
+const DOCS_BASE = '/api/docs/api'
 
 function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]
