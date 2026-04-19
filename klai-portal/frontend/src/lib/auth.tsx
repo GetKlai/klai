@@ -134,6 +134,11 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
 
   const removeUser = useCallback(async (): Promise<void> => {
     if (isSigningOut.current) return
+    // Sticky flag — stays true until the page unloads. Calling setUser(null)
+    // before the hard navigation triggered AppLayout's "navigate to /" guard,
+    // which let LoginPage auto-signinRedirect race with the Zitadel end_session
+    // hop and re-authenticate the user. Skipping both the state mutation and
+    // the flag reset lets the browser navigation tear the React tree down.
     isSigningOut.current = true
     try {
       const csrf = readCsrfCookie() ?? ''
@@ -143,7 +148,6 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
         headers: { 'X-CSRF-Token': csrf },
       })
       const postLogout = res.headers.get('X-Post-Logout-Redirect')
-      setUser(null)
       if (postLogout) {
         // RP-initiated logout — hand the browser over to Zitadel for the
         // end_session bounce, which returns to /logged-out.
@@ -153,9 +157,10 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
       window.location.href = '/logged-out'
     } catch (err) {
       authLogger.error('BFF logout failed', err)
-      window.location.href = '/logged-out'
-    } finally {
+      // Navigation failed to even kick off — reset so the user can retry.
       isSigningOut.current = false
+      setUser(null)
+      window.location.href = '/logged-out'
     }
   }, [])
 
