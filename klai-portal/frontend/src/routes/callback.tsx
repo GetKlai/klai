@@ -20,9 +20,16 @@ import {
 const ADMIN_ROLES = ['org:owner', 'org:admin']
 const RETRY_DELAY_MS = 1000
 
-export const Route = createFileRoute('/callback')(({
+type CallbackSearch = {
+  return_to?: string
+}
+
+export const Route = createFileRoute('/callback')({
+  validateSearch: (search: Record<string, unknown>): CallbackSearch => ({
+    return_to: typeof search.return_to === 'string' ? search.return_to : undefined,
+  }),
   component: CallbackPage,
-}))
+})
 
 /**
  * Post-login routing outcome. `resolveDestination` computes one; the React
@@ -68,7 +75,10 @@ async function fetchBillingStatus(signal: AbortSignal): Promise<string | null> {
 }
 
 /** Resolve the next URL the user should land on after login. */
-async function resolveDestination(signal: AbortSignal): Promise<RouteDecision> {
+async function resolveDestination(
+  signal: AbortSignal,
+  returnTo: string,
+): Promise<RouteDecision> {
   let me: MeResponse
   try {
     me = await fetchMeWithRetry(signal)
@@ -88,7 +98,9 @@ async function resolveDestination(signal: AbortSignal): Promise<RouteDecision> {
     return { kind: 'navigate', url: '/provisioning' }
   }
 
-  const handoff = workspaceHandoff(me.workspace_url)
+  // Workspace handoff: if the user's workspace lives on a different subdomain
+  // ({tenant}.getklai.com), redirect cross-origin. Preserve return_to.
+  const handoff = workspaceHandoff(me.workspace_url, returnTo)
   if (handoff) return { kind: 'navigate', url: handoff }
 
   if (!me.mfa_enrolled) return { kind: 'navigate', url: '/setup/mfa' }
@@ -99,20 +111,27 @@ async function resolveDestination(signal: AbortSignal): Promise<RouteDecision> {
     if (billingStatus === 'pending') return { kind: 'navigate', url: '/admin/billing' }
   }
 
-  return { kind: 'navigate', url: '/app' }
+  return { kind: 'navigate', url: returnTo }
 }
 
 /**
  * URL to hand off to the tenant subdomain, or null if the current origin
  * already matches (or local dev, or workspace_url is malformed).
+ * The return_to path is preserved across the cross-origin redirect.
  */
-function workspaceHandoff(workspaceUrl: string | null | undefined): string | null {
+function workspaceHandoff(
+  workspaceUrl: string | null | undefined,
+  returnTo: string,
+): string | null {
   if (!workspaceUrl) return null
   const currentHost = window.location.hostname
   if (currentHost === 'localhost' || currentHost === '127.0.0.1') return null
   try {
-    const workspaceHost = new URL(workspaceUrl).hostname
-    return currentHost === workspaceHost ? null : workspaceUrl
+    const workspace = new URL(workspaceUrl)
+    if (currentHost === workspace.hostname) return null
+    // Append return_to path so the user lands where they originally wanted.
+    const target = new URL(returnTo, workspace.origin)
+    return target.toString()
   } catch (err) {
     authLogger.warn('Invalid workspace_url from /api/me, skipping handoff', {
       workspace_url: workspaceUrl,
@@ -129,6 +148,7 @@ function workspaceHandoff(workspaceUrl: string | null | undefined): string | nul
 function CallbackPage() {
   const auth = useAuth()
   const { isLoading, isAuthenticated } = auth
+  const { return_to } = Route.useSearch()
 
   const redirected = useRef(false)
   const [postLoginError, setPostLoginError] = useState<unknown>(null)
@@ -139,8 +159,9 @@ function CallbackPage() {
 
     redirected.current = true
     const controller = new AbortController()
+    const safeReturnTo = sanitizeReturnTo(return_to)
 
-    void applyDecision(auth, controller.signal, setPostLoginError)
+    void applyDecision(auth, safeReturnTo, controller.signal, setPostLoginError)
 
     return () => {
       controller.abort()
@@ -165,6 +186,13 @@ function CallbackPage() {
   return <LoadingScreen />
 }
 
+/** Same-origin check: refuse //other.host, javascript:, etc. */
+function sanitizeReturnTo(value: string | undefined): string {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/app'
+  if (value.includes('://')) return '/app'
+  return value
+}
+
 /**
  * Bridge from `resolveDestination` (pure) to the browser (side effects).
  * Records errors in Sentry with a fingerprint so retries don't spam unique
@@ -172,10 +200,11 @@ function CallbackPage() {
  */
 async function applyDecision(
   auth: AuthContextProps,
+  returnTo: string,
   signal: AbortSignal,
   onError: (err: unknown) => void,
 ): Promise<void> {
-  const decision = await resolveDestination(signal)
+  const decision = await resolveDestination(signal, returnTo)
   if (signal.aborted) return
 
   switch (decision.kind) {

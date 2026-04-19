@@ -201,7 +201,16 @@ async def oidc_callback(
         remote_ip=_client_ip(request),
     )
 
-    response = RedirectResponse(url=pending.return_to, status_code=302)
+    # Route through the frontend /callback page so workspaceHandoff() can
+    # redirect the user to their tenant subdomain before landing on
+    # return_to. Before this change the backend redirected straight to
+    # pending.return_to (e.g. /app) and the handoff never ran — every user
+    # ended up on my.getklai.com regardless of their workspace_url.
+    encoded_return_to = urllib.parse.quote(pending.return_to, safe="/")
+    response = RedirectResponse(
+        url=f"/callback?return_to={encoded_return_to}",
+        status_code=302,
+    )
     set_session_cookies(
         response,
         sid=record.sid,
