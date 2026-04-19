@@ -229,9 +229,10 @@ export function Sidebar({ navItems }: SidebarProps) {
         </Link>
         <button
           onClick={() => {
-            // sendBeacon is guaranteed to fire even when the page navigates away,
-            // unlike fetch which gets cancelled by signoutRedirect().
-            navigator.sendBeacon('/api/auth/logout')
+            // BFF logout via signoutRedirect → removeUser does the full flow:
+            // revoke server-side session, clear cookies, navigate to Zitadel
+            // end_session. No sendBeacon needed — legacy /api/auth/logout
+            // only clears a cookie the BFF doesn't use and fails CSRF.
             void auth.signoutRedirect()
           }}
           title={collapsed ? m.sidebar_logout() : undefined}
