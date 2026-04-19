@@ -35,8 +35,10 @@ etc). Use the v2 Feature API — it writes a new event AND updates the
 projection in one atomic step.
 
 ```bash
-# Pull the portal-api PAT (has IAM_OWNER/IAM_LOGIN_CLIENT; re-use for admin calls)
-PAT=$(ssh core-01 'docker exec klai-core-portal-api-1 printenv PORTAL_API_ZITADEL_PAT')
+# Pull the dedicated admin PAT (klai-admin-sa, IAM_OWNER only — scope-limited).
+# Never use PORTAL_API_ZITADEL_PAT for instance-level ops; that PAT is for
+# tenant provisioning and should not carry admin authority at runtime.
+PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
 
 # PUT — idempotent, writes event feature.instance.login_v2.set + updates projection
 curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
