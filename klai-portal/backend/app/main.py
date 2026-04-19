@@ -31,6 +31,7 @@ from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.logging_setup import setup_logging
 from app.middleware.logging_context import LoggingContextMiddleware
+from app.middleware.session import SessionMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.recording_cleanup import recording_cleanup_loop
@@ -160,10 +161,17 @@ async def no_cache_authenticated(request: Request, call_next: object) -> Respons
 
 
 app.add_middleware(LoggingContextMiddleware)
+# SessionMiddleware runs BEFORE LoggingContextMiddleware (Starlette executes in
+# reverse registration order), so org_id / user_id from the BFF session land in
+# every log entry.
+app.add_middleware(SessionMiddleware)
+
+from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 
 app.include_router(signup.router)
 app.include_router(me.router)
 app.include_router(auth_router)
+app.include_router(auth_bff_router)
 from app.api.auth_join import router as auth_join_router  # noqa: E402
 from app.api.auth_select import router as auth_select_router  # noqa: E402
 
