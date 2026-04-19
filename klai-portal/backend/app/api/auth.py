@@ -42,11 +42,12 @@ import structlog
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
@@ -58,7 +59,6 @@ logger = logging.getLogger(__name__)
 _slog = structlog.get_logger()
 
 router = APIRouter(prefix="/api", tags=["auth"])
-bearer = HTTPBearer()
 
 # ---------------------------------------------------------------------------
 # Generic TTL cache

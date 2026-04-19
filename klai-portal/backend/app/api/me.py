@@ -10,11 +10,12 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bearer import bearer
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.audit import PortalAuditLog
@@ -29,7 +30,6 @@ from app.services.zitadel import zitadel
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
-bearer = HTTPBearer()
 
 
 class LanguageUpdate(BaseModel):
