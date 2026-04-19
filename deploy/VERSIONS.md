@@ -67,6 +67,40 @@ API unchanged between 2.x and 3.x (PsycopgConnector, open_async(), run_worker_as
 
 ---
 
+## Explicitly pinned images (non-intentional, see rationale below)
+
+### `redis:8-alpine` (redis, vexa-redis)
+
+**Current:** Redis 8 (alpine)
+**Previous:** `redis:alpine` (implicitly followed latest major; auto-bumped from 7.x to 8.x) and `redis:7-alpine` (vexa-redis)
+**Pinned on:** 2026-04-19
+
+**Why pinned:** `redis:alpine` silently rolled forward from 7.x to 8.x when 8 went GA. Pinning to a specific major prevents surprise breakage on the next `docker compose pull`. Redis 8 brings Vector Sets and hash-field TTL; ACL defaults changed but our `--requirepass` usage is unaffected.
+
+**Upgrade path:** Test `redis:9-alpine` in a staging environment when Redis 9 is released. Both `redis` and `vexa-redis` should stay on the same major.
+
+---
+
+### `dxflrs/garage:v2.3.0` (garage)
+
+**Current:** Garage v2.3.0
+**Previous:** v2.2.0
+**Pinned on:** 2026-04-19
+
+**Why pinned:** Garage has a history of config-field-name changes between minor releases (e.g. `s3_web.bind_addr` vs `web_bind_addr`). Always pin an explicit version and re-verify config after upgrade. See `.claude/rules/klai/platform/garage.md`.
+
+---
+
+### `ghcr.io/huggingface/text-embeddings-inference:1.9` (tei, GPU)
+
+**Current:** TEI 1.9
+**Previous:** 1.5
+**Pinned on:** 2026-04-19
+
+**Why pinned:** Embedding models require stable output dimensions and tokenizer behavior. A pinned TEI version guarantees that downstream consumers (retrieval-api, knowledge-ingest) see identical embeddings for the same input. Upgrade by verifying `BAAI/bge-m3` output parity in staging first.
+
+---
+
 ## What is NOT pinned (intentional)
 
 All other Docker images use `:latest`. On `core-01`, run `docker compose pull` periodically to actually pull new versions — the image only updates on the server when explicitly pulled.
