@@ -34,7 +34,7 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 | `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.55.1` | Container metrics. **Upstream is stagnant** (last release Dec 2024). Acceptable; no alternative has equivalent Docker metric granularity. |
 | `alloy` | `grafana/alloy:v1.15.1` | Log and metric collection. Config format stable on minor bumps. |
 | `grafana` | `grafana/grafana:13.0.1` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
-| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:v6.1.6` | Error tracking. All three share the same image (different commands). |
+| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:6.1.6` | Error tracking. All three share the same image (different commands). |
 
 ### Inference + AI
 

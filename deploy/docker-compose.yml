@@ -344,7 +344,7 @@ services:
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
   glitchtip-web:
-    image: glitchtip/glitchtip:v6.1.6
+    image: glitchtip/glitchtip:6.1.6
     restart: unless-stopped
     depends_on:
       postgres:
@@ -377,7 +377,7 @@ services:
       start_period: 60s
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:v6.1.6
+    image: glitchtip/glitchtip:6.1.6
     restart: unless-stopped
     command: ./bin/run-celery-with-beat.sh
     depends_on:
@@ -401,7 +401,7 @@ services:
       - net-redis
 
   glitchtip-migrate:
-    image: glitchtip/glitchtip:v6.1.6
+    image: glitchtip/glitchtip:6.1.6
     command: "./manage.py migrate"
     restart: "no"
     depends_on:
