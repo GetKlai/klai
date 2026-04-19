@@ -1,0 +1,1 @@
+klai-knowledge-mcp\main.py:346: redundant if-condition (100% confidence)

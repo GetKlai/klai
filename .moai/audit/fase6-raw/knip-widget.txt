@@ -1,0 +1,6 @@
+[31mERROR[39m: Error loading C:/Users/markv/stack/02 - Voys/Code/klai/klai-widget/vite.config.ts
+Reason: Cannot find module 'vite'
+Require stack:
+- C:\Users\markv\stack\02 - Voys\Code\klai\klai-widget\vite.config.ts
+Module load error? Visit https://knip.dev/reference/known-issues
+Configuration file load error? Visit https://knip.dev/reference/known-issues
