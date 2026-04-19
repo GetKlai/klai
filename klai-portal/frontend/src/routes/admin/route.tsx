@@ -30,11 +30,16 @@ function AdminLayout() {
   ]
 
   useEffect(() => {
-    if (auth.isLoading || userLoading) return
+    if (auth.isLoading) return
+    // Redirect unauthenticated visitors BEFORE waiting on useCurrentUser —
+    // it is gated by `enabled: auth.isAuthenticated`, so its isPending
+    // stays true forever for logged-out visitors, leaving them stuck on a
+    // spinner instead of being bounced to login.
     if (!auth.isAuthenticated) {
       void navigate({ to: '/' })
       return
     }
+    if (userLoading) return
     if (!isAdmin && !isGroupAdmin) {
       void navigate({ to: '/app' })
       return
@@ -44,7 +49,7 @@ function AdminLayout() {
     }
   }, [auth.isLoading, auth.isAuthenticated, isAdmin, isGroupAdmin, user, userLoading, navigate])
 
-  if (auth.isLoading || userLoading || !auth.isAuthenticated || (!isAdmin && !isGroupAdmin)) {
+  if (auth.isLoading || !auth.isAuthenticated || userLoading || (!isAdmin && !isGroupAdmin)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />

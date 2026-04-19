@@ -43,17 +43,23 @@ function AppLayout() {
       })
 
   useEffect(() => {
-    if (auth.isLoading || userLoading) return
+    if (auth.isLoading) return
+    // Redirect to / BEFORE waiting on useCurrentUser — that query is gated
+    // by `enabled: auth.isAuthenticated`, so when the session is gone its
+    // `isPending` stays true forever. Waiting on `userLoading` here would
+    // leave an unauthenticated visitor staring at a spinner on every /app/*
+    // route instead of bouncing to the login flow.
     if (!auth.isAuthenticated) {
       void navigate({ to: '/' })
       return
     }
+    if (userLoading) return
     if (user?.requires_2fa_setup) {
       window.location.replace('/setup/2fa')
     }
   }, [auth.isLoading, auth.isAuthenticated, user, userLoading, navigate])
 
-  if (auth.isLoading || userLoading || !auth.isAuthenticated) {
+  if (auth.isLoading || !auth.isAuthenticated || userLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
