@@ -135,7 +135,12 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
                 return
         except Exception as exc:
             logger.debug("container_health_check_reload_failed", error=str(exc))
-        time.sleep(3)
+        # @MX:NOTE: sync sleep intentional — this function is invoked only via
+        # loop.run_in_executor() from async callers (app/api/mcp_servers.py + this
+        # module's provisioning orchestrator). Inside the executor thread there is
+        # no running event loop, so asyncio.sleep would raise RuntimeError. F-028
+        # verified via call-site trace.
+        time.sleep(3)  # nosemgrep: arbitrary-sleep
 
     logger.warning("librechat_container_not_running", container=container_name, timeout_seconds=30)
 

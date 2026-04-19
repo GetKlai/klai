@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
@@ -221,6 +222,21 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]
+
+    @model_validator(mode="after")
+    def _require_vexa_webhook_secret(self) -> "Settings":
+        """SEC-013 F-033: fail-closed on missing vexa_webhook_secret.
+
+        Vexa integration is active (SPEC-VEXA-003 rolled out). An empty/
+        whitespace-only secret silently disabled auth on /api/bots/internal/webhook
+        before this validator — same class of bug as F-003/F-012. Fail fast at
+        startup rather than accept un-authenticated webhooks.
+        """
+        if not self.vexa_webhook_secret or not self.vexa_webhook_secret.strip():
+            raise ValueError(
+                "Missing required: VEXA_WEBHOOK_SECRET (SEC-013 F-033). Set it in SOPS before starting portal-api."
+            )
+        return self
 
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env
