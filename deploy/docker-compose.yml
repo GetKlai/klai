@@ -92,7 +92,7 @@ services:
 
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
-    image: mongo:latest
+    image: mongo:8.2.7
     restart: unless-stopped
     volumes:
       - mongodb-data:/data/db
@@ -145,7 +145,7 @@ services:
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
-    image: getmeili/meilisearch:latest
+    image: getmeili/meilisearch:v1.42.1
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -163,7 +163,7 @@ services:
 
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
-    image: ghcr.io/zitadel/zitadel:latest
+    image: ghcr.io/zitadel/zitadel:v4.13.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -233,7 +233,7 @@ services:
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
   librechat-getklai:
-    image: ghcr.io/danny-avila/librechat:latest
+    image: ghcr.io/danny-avila/librechat:v0.8.5-rc1
     container_name: librechat-getklai
     restart: unless-stopped
     env_file:
@@ -261,7 +261,7 @@ services:
 
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.21.0
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -275,7 +275,7 @@ services:
 
   # ─── Docker socket proxy (limits portal-api to required Docker API calls only)
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:v0.4.2
     restart: unless-stopped
     environment:
       CONTAINERS: 1
@@ -344,7 +344,7 @@ services:
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
   glitchtip-web:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:v6.1.6
     restart: unless-stopped
     depends_on:
       postgres:
@@ -377,7 +377,7 @@ services:
       start_period: 60s
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:v6.1.6
     restart: unless-stopped
     command: ./bin/run-celery-with-beat.sh
     depends_on:
@@ -401,7 +401,7 @@ services:
       - net-redis
 
   glitchtip-migrate:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:v6.1.6
     command: "./manage.py migrate"
     restart: "no"
     depends_on:
@@ -418,7 +418,7 @@ services:
   # To migrate: update Alloy endpoint URLs to point to monitor-01.
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:latest
+    image: victoriametrics/victoria-metrics:v1.140.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -435,7 +435,7 @@ services:
           memory: 4G
 
   victorialogs:
-    image: victoriametrics/victoria-logs:latest
+    image: victoriametrics/victoria-logs:v1.50.0
     restart: unless-stopped
     volumes:
       - victorialogs-data:/vlogs-data
@@ -455,7 +455,7 @@ services:
           memory: 2G
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     restart: unless-stopped
     privileged: false
     cap_add:
@@ -477,7 +477,7 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.15.1
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -500,7 +500,7 @@ services:
       - monitoring
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.0.1
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
@@ -602,12 +602,20 @@ services:
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
       PORTAL_EVENTS_HOST: postgres
       PORTAL_EVENTS_PASSWORD: ${POSTGRES_PASSWORD}
+      # SEC-010 — authentication + rate limiting (SPEC-SEC-010)
+      INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      ZITADEL_ISSUER: https://auth.${DOMAIN}
+      ZITADEL_API_AUDIENCE: ${RETRIEVAL_API_ZITADEL_AUDIENCE:-}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      RATE_LIMIT_RPM: ${RETRIEVAL_API_RATE_LIMIT_RPM:-600}
     networks:
       - klai-net
       - net-postgres
+      - net-redis
     depends_on:
       - qdrant
       - falkordb
+      - redis
 
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
