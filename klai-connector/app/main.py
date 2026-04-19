@@ -161,4 +161,4 @@ def create_app() -> FastAPI:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:create_app", factory=True, host="0.0.0.0", port=8200)
+    uvicorn.run("app.main:create_app", factory=True, host="0.0.0.0", port=8200)  # noqa: S104  # Docker container bind, internal network only

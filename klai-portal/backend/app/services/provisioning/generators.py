@@ -47,7 +47,7 @@ def _generate_librechat_yaml(
 
     Returns the YAML string.
     """
-    with open(base_path) as f:
+    with open(base_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     if not mcp_servers:
@@ -56,7 +56,7 @@ def _generate_librechat_yaml(
     # Load MCP catalog (whitelist of supported servers)
     catalog_path = base_path.parent / "mcp_catalog.yaml"
     try:
-        with open(catalog_path) as f:
+        with open(catalog_path, encoding="utf-8") as f:
             catalog = yaml.safe_load(f)
     except FileNotFoundError:
         logger.warning("mcp_catalog_not_found", path=str(catalog_path))
