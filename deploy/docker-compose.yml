@@ -313,6 +313,11 @@ services:
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
+      # SPEC-AUTH-008 BFF — session store + migration flag
+      BFF_ENFORCE_COOKIES: ${BFF_ENFORCE_COOKIES:-false}
+      BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
+      ZITADEL_PORTAL_CLIENT_ID: ${ZITADEL_PORTAL_CLIENT_ID:-362901948573220875}
+      ZITADEL_PORTAL_CLIENT_SECRET: ${PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET:-}
       VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
       VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
@@ -725,7 +730,7 @@ services:
 
   # ─── Vexa admin-api (management) ────────────────────────────────────────
   admin-api:
-    image: vexaai/admin-api:0.10.0-pending
+    image: vexaai/admin-api:0.10.0-260419-1129
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -757,7 +762,7 @@ services:
 
   # ─── Vexa api-gateway (public entry, rate-limited, CORS) ────────────────
   api-gateway:
-    image: vexaai/api-gateway:0.10.0-pending
+    image: vexaai/api-gateway:0.10.0-260419-1129
     restart: unless-stopped
     environment:
       ADMIN_API_URL: http://admin-api:8001
@@ -789,7 +794,7 @@ services:
   # Network alias `vexa-meeting-api` retained for portal-api backwards compat
   # (REQ-E-001, REQ-U-001 — no config churn in portal-api during this migration).
   meeting-api:
-    image: vexaai/meeting-api:0.10.0-pending
+    image: vexaai/meeting-api:0.10.0-260419-1129
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -805,7 +810,7 @@ services:
       RUNTIME_API_URL: http://runtime-api:8090
       RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
       MEETING_API_URL: http://meeting-api:8080
-      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.0-pending
+      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.0-260419-1129
       DOCKER_NETWORK: vexa-bots
       TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
       # Storage backend: Garage speaks S3, so minio-* vars point at Garage.
@@ -850,11 +855,11 @@ services:
 
   # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
   runtime-api:
-    image: vexaai/runtime-api:0.10.0-pending
+    image: vexaai/runtime-api:0.10.0-260419-1129
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:0.10.0-pending
+      BROWSER_IMAGE: vexaai/vexa-bot:0.10.0-260419-1129
       AGENT_IMAGE: ""                              # agent profile not shipped in v1
       REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
       MINIO_ENDPOINT: garage:3900
