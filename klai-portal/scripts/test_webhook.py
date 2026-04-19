@@ -17,7 +17,10 @@ import sys
 import requests
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://getklai.getklai.com/api/bots/internal/webhook")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "eea93826eed5f725daa3d27383f090d116c6f6e3bd22b2590f4ef26eb0a562ea")
+_secret = os.getenv("WEBHOOK_SECRET")
+if not _secret:
+    sys.exit("Error: WEBHOOK_SECRET env var required. Get the value from SOPS (VEXA_WEBHOOK_SECRET).")
+WEBHOOK_SECRET = _secret
 
 HEADERS = {"Authorization": f"Bearer {WEBHOOK_SECRET}", "Content-Type": "application/json"}
 

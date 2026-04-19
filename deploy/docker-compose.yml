@@ -7,7 +7,7 @@ networks:
   socket-proxy:
     driver: bridge
     name: klai-socket-proxy
-    internal: true   # only portal-api <-> docker-socket-proxy
+    internal: true   # portal-api and runtime-api <-> docker-socket-proxy
   inference:
     driver: bridge
     name: klai-inference
@@ -888,20 +888,21 @@ services:
       PROFILES_PATH: /app/profiles.yaml
       ALLOW_PRIVATE_CALLBACKS: "1"
       LOG_LEVEL: INFO
-    group_add:
-      - "988"   # docker GID on core-01 — required for socket access
+      DOCKER_HOST: tcp://docker-socket-proxy:2375  # SEC-021: no direct socket mount
     volumes:
       - ./vexa/profiles.yaml:/app/profiles.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
     init: true
     depends_on:
       vexa-redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
     networks:
       - vexa-bots
       - net-postgres
+      - socket-proxy
     deploy:
       resources:
         limits:
