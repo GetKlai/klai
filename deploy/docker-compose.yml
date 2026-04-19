@@ -87,6 +87,9 @@ services:
       GRAFANA_CADDY_HASH: ${GRAFANA_CADDY_HASH}
       VICTORIALOGS_INGEST_TOKEN: ${VICTORIALOGS_INGEST_TOKEN}
       VICTORIALOGS_BASIC_AUTH_B64: ${VICTORIALOGS_BASIC_AUTH_B64}
+      # SPEC-SEC-008 F-018 — dev.getklai.com basic-auth credentials
+      CADDY_DEV_USERNAME: ${CADDY_DEV_USERNAME:-}
+      CADDY_DEV_PASSWORD_HASH: ${CADDY_DEV_PASSWORD_HASH:-}
     networks:
       - klai-net
       - monitoring
