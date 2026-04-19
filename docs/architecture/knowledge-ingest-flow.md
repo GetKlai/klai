@@ -41,9 +41,13 @@ Klai uses all three:
 | Semantic search | Qdrant | "Find relevant content for this question" |
 | Relationship traversal | FalkorDB (via Graphiti) | "What is connected to this?" |
 
-In practice, most retrieval today is Qdrant-only. The graph layer (FalkorDB) is
-implemented but gated behind a feature flag — it runs in production only when
-`settings.graphiti_enabled` is on.
+Retrieval today is Qdrant + FalkorDB: the Qdrant 3-leg RRF fusion runs in
+parallel with a Graphiti graph search against FalkorDB, and the two result
+sets are RRF-merged before reranking. `GRAPHITI_ENABLED=true` on both
+`knowledge-ingest` (write side) and `retrieval-api` (read side). Graph retrieval
+was briefly disabled in March 2026 while the LLM/reranker dependencies still
+ran on CPU; it is back online now that gpu-01 serves them. See
+`klai-knowledge-architecture.md §5.3`.
 
 ---
 

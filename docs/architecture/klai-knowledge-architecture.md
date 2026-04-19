@@ -103,7 +103,6 @@ This section captures what is running in production (core-01) as of March 2026. 
 | PostgreSQL `knowledge` schema populated | §5.2 | Tables exist but not yet used in production; Qdrant is the primary store for now |
 | Taxonomy / gap editorial inbox UI | §6, §8.4 | Gap events are fired by the hook but no editorial inbox UI exists yet |
 | Cross-org knowledge federation | §10.7 | Deferred to V2 |
-| Graph layer | §5.3 | Explicitly deferred — evidence does not support it for current query patterns |
 
 ### Completed migrations
 
@@ -442,7 +441,7 @@ C. **Sparse embed** — BGE-M3 sparse vectors (SPLADE-style) via the `bge-m3-spa
 
 D. **HyPE questions** — LLM generates 3–5 hypothetical questions the chunk answers. These are embedded and stored as a separate `vector_questions` index in Qdrant. Bridges the vocabulary gap between user query language and document language. Result: +42 pp precision, +45 pp recall vs. direct embedding (Vake et al., 2025 — single benchmark, real-world gains will be lower; validate on your corpus).
 
-E. **Knowledge graph** — Graphiti entity/relationship extraction → FalkorDB. Gated by `settings.graphiti_enabled` (default off in production). See §5.3.
+E. **Knowledge graph** — Graphiti entity/relationship extraction → FalkorDB. Controlled by `settings.graphiti_enabled`; **on** in production on both `knowledge-ingest` and `retrieval-api` now that LLM + reranker dependencies run on gpu-01. See §5.3.
 
 > Model selection for Phase 2 LLM calls: see §13.6.
 
@@ -567,9 +566,11 @@ SELECT * FROM lineage;
 
 The `id` is the shared key across both stores. Qdrant point ID = PostgreSQL `artifacts.id`.
 
-### 5.3 Knowledge graph: IMPLEMENTED — feature-flagged
+### 5.3 Knowledge graph: ACTIVE (ingest + retrieval)
 
-**Deployed but not yet active in production retrieval.** FalkorDB runs on core-01. Graphiti integration is built into `knowledge-ingest` Phase 2 enrichment (Step E). Activated per-org via `settings.graphiti_enabled` (default: off).
+FalkorDB runs on core-01. Graphiti integration is built into `knowledge-ingest` Phase 2 enrichment (Step E) and a parallel graph search branch is called from `retrieval-api` alongside the Qdrant 3-leg RRF fusion. `GRAPHITI_ENABLED=true` on both containers in `deploy/docker-compose.yml`.
+
+Graph retrieval was temporarily disabled on the retrieval side in March 2026 (commit `3c6d1002`) because graph search + reranker took 35–60 s per query when their LLM/embedding/reranker dependencies ran on CPU. Both are back online now that gpu-01 (GEX44, RTX 4000 Ada) is serving TEI, Infinity reranker, and LiteLLM-routed inference.
 
 **Original decision rationale (V1 gate):** do not activate the graph layer until query analysis justifies it for B2B knowledge base query patterns.
 
@@ -1361,9 +1362,9 @@ Using a sentinel (`"9999-12-31"`) instead of NULL for active items makes every Q
 - [XTDB](https://xtdb.com/) — native bi-temporal SQL (MPL-2.0, self-hostable). Correct long-term answer if regulatory audit trail is required. JVM service, adds operational complexity.
 - [temporal_tables extension](https://github.com/arkhipov/temporal_tables) — adds system-period versioning to PostgreSQL. Defer to V2.
 
-### 13.3 Graph layer decision [RESEARCHED — deferred pending query analysis]
+### 13.3 Graph layer decision [ACTIVE — measuring effect in production]
 
-**The graph layer is removed from the V1 stack.** See §5.3 for full rationale.
+**The graph layer is live in production on both ingest and retrieval** (`GRAPHITI_ENABLED=true` on both `knowledge-ingest` and `retrieval-api`). See §5.3. The research below is the background for whether it demonstrably improves recall on Klai's query mix — we now measure that directly in production instead of gating activation on it.
 
 Summary of findings:
 - LightRAG uses ~100,000 tokens per query (measured, not estimated) — the "90% fewer tokens" claim is inverted
@@ -1543,7 +1544,7 @@ No persistent volume mount for recordings — storage is ephemeral by design.
 | **Embeddings** | BGE-M3 dense via TEI + sparse via `bge-m3-sparse` sidecar (FlagEmbedding) | Both deployed on core-01. TEI cannot produce BGE-M3 sparse; sidecar handles sparse in a separate HTTP service. |
 | **Vector store** | Qdrant (self-hosted, core-01) | Two collections: `klai_knowledge` (org + personal KB) and `klai_focus` (research-api). `org_id`, `kb_slug`, `user_id` payload indexes. |
 | **Web search** | SearXNG (self-hosted, reconfigured) → Mojeek API if quality insufficient | Google/Bing removed; Startpage + DuckDuckGo active. Mojeek configured but disabled (API key needed). LibreChat webSearch deployed. See §13.8. |
-| **Graph layer** | None (V1) | Deferred: evidence does not support graph RAG for B2B single-hop/procedural query patterns. Gate condition: if >20% of real queries are multi-hop relational, evaluate HippoRAG2 + SpaCy. Kùzu (previously suggested) archived Oct 2025 by Apple acquisition. |
+| **Graph layer** | FalkorDB + Graphiti (ingest + retrieval, live) | `GRAPHITI_ENABLED=true` on both `knowledge-ingest` and `retrieval-api`. Graph entities/relationships are written at ingest and a parallel graph search branch is RRF-merged with the Qdrant 3-leg fusion. Empirical value for Klai's B2B query mix is under evaluation — see §5.3 and §13.3. |
 | **Structured storage** | PostgreSQL `knowledge` schema | Replaces SQLite. Artifacts, provenance DAG, entity registry, embedding outbox. Same cluster as klai-docs. |
 | **Taxonomy discovery** | BERTopic + HDBSCAN | Starting point; human approval gate required |
 | **Retrieval orchestration** | None (V1) — eigen `knowledge-ingest` service | Haystack was gepland maar verwijderd uit V1. Reden: Qdrant + de ingest pipeline dekten al de meeste orchestration-taken (chunking, embedding, vector search, scoping) — Haystack zou een extra abstractielaag toevoegen over functionaliteit die al aanwezig was. Eigen `knowledge-ingest` service gebouwd in plaats daarvan. Haystack heroverwegen als de retrieval pipeline complex genoeg wordt om pipeline-compositie (meerdere retrievers, rerankers, readers) via één definitie te rechtvaardigen. |
