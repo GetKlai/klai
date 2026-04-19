@@ -44,7 +44,7 @@ class TestIdpCallbackAutoProvision:
 
             response = await idp_callback(
                 id="intent-1",
-                token="tok-1",  # noqa: S106
+                token="tok-1",
                 auth_request_id="ar-1",
                 db=mock_db,
             )
@@ -87,7 +87,7 @@ class TestIdpCallbackAutoProvision:
 
             response = await idp_callback(
                 id="intent-1",
-                token="tok-1",  # noqa: S106
+                token="tok-1",
                 auth_request_id="ar-1",
                 db=mock_db,
             )
@@ -126,7 +126,7 @@ class TestIdpCallbackAutoProvision:
 
             response = await idp_callback(
                 id="intent-1",
-                token="tok-1",  # noqa: S106
+                token="tok-1",
                 auth_request_id="ar-1",
                 db=mock_db,
             )

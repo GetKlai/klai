@@ -138,18 +138,14 @@ class TestEncryption:
         with pytest.raises(SessionDecryptError):
             service._decrypt(tampered)
 
-    def test_missing_key_raises_on_first_use(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_key_raises_on_first_use(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "bff_session_key", "")
         monkeypatch.setattr(settings, "sso_cookie_key", "")
         svc = SessionService()
         with pytest.raises(RuntimeError, match="BFF_SESSION_KEY"):
             svc._encrypt("anything")
 
-    def test_sso_cookie_key_is_used_as_fallback(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_sso_cookie_key_is_used_as_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "bff_session_key", "")
         monkeypatch.setattr(settings, "sso_cookie_key", Fernet.generate_key().decode())
         svc = SessionService()
@@ -164,9 +160,7 @@ class TestEncryption:
 
 class TestCreateLoadRevoke:
     @pytest.mark.asyncio
-    async def test_create_stores_encrypted_record(
-        self, service: SessionService, fake_redis: AsyncMock
-    ) -> None:
+    async def test_create_stores_encrypted_record(self, service: SessionService, fake_redis: AsyncMock) -> None:
         record = await service.create(
             zitadel_user_id="user-1",
             org_id=7,
@@ -233,9 +227,7 @@ class TestCreateLoadRevoke:
         assert service.session_key("stale") not in fake_redis._store
 
     @pytest.mark.asyncio
-    async def test_update_rewrites_payload(
-        self, service: SessionService, fake_redis: AsyncMock
-    ) -> None:
+    async def test_update_rewrites_payload(self, service: SessionService, fake_redis: AsyncMock) -> None:
         record = await service.create(
             zitadel_user_id="u",
             org_id=None,
@@ -256,9 +248,7 @@ class TestCreateLoadRevoke:
         assert loaded.last_seen_at >= record.created_at
 
     @pytest.mark.asyncio
-    async def test_revoke_removes_key(
-        self, service: SessionService, fake_redis: AsyncMock
-    ) -> None:
+    async def test_revoke_removes_key(self, service: SessionService, fake_redis: AsyncMock) -> None:
         record = await service.create(
             zitadel_user_id="u",
             org_id=None,
@@ -281,9 +271,7 @@ class TestCreateLoadRevoke:
 
 class TestPoolUnavailable:
     @pytest.mark.asyncio
-    async def test_load_returns_none_when_pool_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_load_returns_none_when_pool_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         svc = SessionService()
 
         async def no_pool() -> None:
@@ -293,9 +281,7 @@ class TestPoolUnavailable:
         assert await svc.load("any") is None
 
     @pytest.mark.asyncio
-    async def test_create_raises_when_pool_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_create_raises_when_pool_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         svc = SessionService()
 
         async def no_pool() -> None:

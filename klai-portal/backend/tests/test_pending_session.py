@@ -24,7 +24,7 @@ class TestPendingSessionService:
             svc = PendingSessionService()
             ref = await svc.store(
                 session_id="sid",
-                session_token="stk",  # noqa: S106
+                session_token="stk",
                 zitadel_user_id="u1",
                 email="a@b.com",
                 auth_request_id="ar1",
