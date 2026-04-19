@@ -788,6 +788,12 @@ services:
       resources:
         limits:
           memory: 1G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ─── Vexa meeting-api (bot lifecycle, transcription collector) ──────────
   # Network alias `vexa-meeting-api` retained for portal-api backwards compat
