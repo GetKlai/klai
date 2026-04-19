@@ -1,7 +1,7 @@
 # Klai — Security, Code & Dead Code Audit Plan
 
 **Start:** 2026-04-19
-**Laatst bijgewerkt:** 2026-04-19 (na Fase 3 volledig + pre-work + Caddy verify)
+**Laatst bijgewerkt:** 2026-04-19 — Wave 1+2 LIVE op main, Wave 2C (SEC-012) gepauzeerd wegens scribe rebuild
 **Werklocatie:** `.moai/audit/`
 **Scope:** hele klai-monorepo (13 sub-repos)
 
@@ -10,17 +10,30 @@
 | Fase | Status | Artefact | # Findings |
 |---|---|---|---|
 | 0 — Inventaris | partial (via scope-tabel) | — | — |
-| 1 — Secrets & config | **todo** | `02-secrets.md` | — |
-| 2 — Dependencies | **todo** | `03-deps.md` | — |
+| 1 — Secrets & config | **grotendeels gedekt door parallelle session** | `reports/cve-triage-2026-04-19.md` (indirect) | secret scanning + push protection LIVE; gitleaks sweep niet strikt gedaan (accept risk — push protection dekt nieuwe commits) |
+| 2 — Dependencies | **grotendeels gedekt door parallelle session** | `reports/dependency-audit-2026-04-19.md`, `docs/runbooks/version-management.md` | 26 images pinned, 1 CRITICAL CVE gefixt (LiteLLM), 6 CVE-detectielagen actief, 3 critical upstream-blocked |
 | **3 — Tenant isolation** | **✅ completed** | `04-tenant-isolation.md`, `04-2-query-inventory.md`, `04-3-prework-caddy.md` | **22** (2 CRITICAL, 5 HIGH, 7 MEDIUM, 5 LOW, 2 POSITIVE, 1 unknown) |
 | 4 — Input validation / injection | **todo** | `05-injection.md` | — |
 | 5 — API hardening | partial (via Caddy verify) | `06-api-hardening.md` | (reeds dekt F-018, F-020, F-022) |
 | 6 — Dead code | **todo** | `07-dead-code.md` | — |
-| 7 — Synthesiseer | **in_progress (living)** | `99-fix-roadmap.md` | 9 fix-groepen + 2 pre-work DONE |
+| 7 — Synthesiseer | **in_progress (living)** | `99-fix-roadmap.md` | 9 fix-groepen + 2 pre-work DONE + 2 new follow-ups (SEC-013, SEC-014) |
 
-**Pre-work status (voor SEC-001 definitief kan):**
+**Pre-work status (voor SEC-010 definitief kan):**
 - [x] PRE-A — PG-role `bypassrls` = false voor `portal_api` ✓
 - [x] PRE-B — Zitadel org_ids zijn 18-digit Snowflake (enumereerbaar) → F-001 CRITICAL
+
+**Implementatie-status per SEC-fix-groep:**
+- [x] **SEC-010** Retrieval-API hardening — LIVE op main, smoke-tested
+- [x] **SEC-011** Knowledge-ingest fail-closed auth — LIVE op main
+- [x] **SEC-009** SERVERS.md doc drift — LIVE (klai-infra)
+- [ ] **SEC-012** JWT audience — **PAUSED** (scribe rebuild SPEC-VEXA-003) + research-api deel wacht op user decision B/C/D
+- [ ] SEC-008 Caddy exposure hardening — nog niet gestart
+- [ ] SEC-004 Defense-in-depth middleware — nog niet gestart (scribe deel pauzeert)
+- [ ] SEC-005 Internal-endpoint hardening — nog niet gestart
+- [ ] SEC-006 Widget JWT revocation — nog niet gestart
+- [ ] SEC-007 Code-quality — nog niet gestart
+- [ ] **SEC-013** External auth audit (vexa, docs-app) — SPEC nog te schrijven
+- [ ] **SEC-014** taxonomy.py portal_internal_token fail-open — SPEC nog te schrijven
 
 ## Principe
 

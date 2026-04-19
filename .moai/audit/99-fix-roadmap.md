@@ -2,28 +2,63 @@
 
 > **Living document.** Groeit mee met elke afgeronde audit-fase. Bevat geconsolideerde fix-groepen uit alle findings.
 
-**Laatst bijgewerkt:** 2026-04-19 na Fase 3 (Tenant isolation)
+**Laatst bijgewerkt:** 2026-04-19 — Wave 1 + Wave 2 (SEC-009/011) LIVE op main
 **Input documenten:**
 - `.moai/audit/04-tenant-isolation.md` — Fase 3.1 findings (F-001 t/m F-011)
 - `.moai/audit/04-2-query-inventory.md` — Fase 3.2+3.3 findings (F-012 t/m F-016)
+- `.moai/audit/04-3-prework-caddy.md` — Pre-work + Caddy verify (F-017 t/m F-022)
+- Parallel session output (2026-04-19): `reports/dependency-audit-2026-04-19.md`, `reports/cve-triage-2026-04-19.md`, `docs/runbooks/version-management.md` — dekt Fase 1+2 van het audit-plan indirect (dependency + CVE scanning)
 
 ## Overzicht — prioriteit matrix
 
-> **Update 2026-04-19 post-Caddy-verify:** F-001 upgraded to CRITICAL (Zitadel org_ids zijn enumereerbaar snowflake numerics). F-009 upgraded to HIGH (klai-connector is publiek). Nieuwe SEC-008 en SEC-009 toegevoegd. Zie `.moai/audit/04-3-prework-caddy.md`.
+> **Update 2026-04-19 post-Caddy-verify:** F-001 upgraded to CRITICAL (Zitadel org_ids zijn enumereerbaar snowflake numerics). F-009 upgraded to HIGH (klai-connector is publiek). Nieuwe SEC-008 en SEC-009 toegevoegd.
+>
+> **Update 2026-04-19 na Wave 1+2 deploy:** SEC-010, SEC-011, SEC-009 LIVE op main. SEC-012 gepauzeerd wegens parallelle scribe-rebuild (SPEC-VEXA-003). Nieuwe bevinding tijdens SEC-011 implementatie: `taxonomy.py:83 _verify_internal_token` heeft analoog fail-open patroon voor `portal_internal_token` (omgekeerde richting ingest → portal) — getrackt als SEC-014 follow-up.
 
 | Prio | SEC-ID | Titel | Findings | Services | Status |
 |---|---|---|---|---|---|
-| ~~P0~~ | ~~PRE-A~~ | PG-role `bypassrls` verificatie | F-015 context | — | **DONE** — portal_api has bypassrls=false |
-| ~~P0~~ | ~~PRE-B~~ | Zitadel org_id entropy check | F-001 context | — | **DONE** — 18-digit Snowflake, enumereerbaar → F-001 → CRITICAL |
-| **P0** | SEC-010 | Retrieval-API hardening (now CRITICAL) | F-001, F-010, F-014 | retrieval-api | escalated from P1 |
-| **P1** | SEC-011 | Knowledge-ingest fail-closed auth | F-003, F-012 | knowledge-ingest | — |
-| **P1** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | scribe, focus | — |
-| **P1** | SEC-008 | Caddy exposure hardening (NEW) | F-017, F-018, F-020, F-022 | connector, dev env, vexa-bots, docs | **connector is PUBLIC** contra SERVERS.md |
-| **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus, scribe, portal, connector | vereist SEC-012 eerst; F-009 nu HIGH |
+| ~~P0~~ | ~~PRE-A~~ | PG-role `bypassrls` verificatie | F-015 context | — | **✅ DONE** — portal_api has bypassrls=false |
+| ~~P0~~ | ~~PRE-B~~ | Zitadel org_id entropy check | F-001 context | — | **✅ DONE** — 18-digit Snowflake, enumereerbaar → F-001 → CRITICAL |
+| ~~P0~~ | ~~SEC-010~~ | Retrieval-API hardening | F-001, F-010, F-014 | retrieval-api | **✅ LIVE on main** (f48381f4, a1b4d52f, 410965c9, bba52266, f803f687) |
+| ~~P1~~ | ~~SEC-011~~ | Knowledge-ingest fail-closed auth | F-003, F-012 | knowledge-ingest | **✅ LIVE on main** (3ca34341) |
+| ~~P3~~ | ~~SEC-009~~ | SERVERS.md doc-drift | F-017, F-018, F-020, F-022 | klai-infra docs | **✅ LIVE** (klai-infra 58f0b60) |
+| **PAUSED** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | ~~scribe~~, focus | Scribe undergoing major rebuild (SPEC-VEXA-003) — defer scribe deel tot rebuild stabiel. Research-api deel kan los maar wacht op user decision (B/C/D keuze openstaand) |
+| **P1** | SEC-008 | Caddy exposure hardening | F-017, F-018, ~~F-020~~, ~~F-022~~ | connector, dev env | F-020/F-022 verplaatst naar SEC-013 |
+| **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus, ~~scribe~~, portal, connector | Scribe deel pauzeert (rebuild). Vereist SEC-012 first voor focus; F-009 nu HIGH |
 | **P2** | SEC-005 | Internal-endpoint hardening | F-007 | portal | — |
 | **P3** | SEC-006 | Widget JWT revocation | F-008 | portal partner API | — |
 | **P3** | SEC-007 | Code-quality / correctness | F-011, F-015 doc | connector, portal background | — |
-| **P3** | SEC-009 | SERVERS.md doc-drift (NEW) | F-017, F-018, F-020, F-022 | klai-infra docs | trivial |
+| **NEW** | SEC-013 | External service auth audit | F-020 (vexa-bot), F-022 (docs-app) | vexa-bot-manager (supply-chain HIGH), docs-app | Nog niet geschreven — requires source-inspection |
+| **NEW** | SEC-014 | knowledge-ingest taxonomy portal_internal_token fail-open | — | knowledge-ingest taxonomy.py:83 | Gevonden tijdens SEC-011 implementatie — analoog aan F-003/F-012 maar omgekeerde richting |
+
+## Deploy status (2026-04-19)
+
+| Service | Wave 1+2 changes | Deploy status |
+|---|---|---|
+| retrieval-api | SEC-010 middleware + bounds + rate-limit | **✅ live, smoke-tested** (401 zonder secret, 200 met secret) |
+| portal-api | SEC-010 caller `partner_chat.py` sends X-Internal-Secret | **✅ live** (via SOPS + deploy) |
+| focus research-api | SEC-010 caller `retrieval_client.py` sends X-Internal-Secret | **✅ live** |
+| knowledge-ingest | SEC-011 fail-closed startup validator + middleware removal | **⏳ waiting for CI build + container recreate** |
+| SOPS | `RETRIEVAL_API_INTERNAL_SECRET` added, 8 dev vars restored | **✅ synced to `/opt/klai/.env`** |
+| SERVERS.md | SEC-009 complete Caddy route table | **✅ merged** (klai-infra) |
+
+## Parallelle session (2026-04-19) — wat landde tegelijk
+
+Een andere sessie deed tegelijkertijd een volledige **dependency audit + CVE infrastructure overhaul**. Dat raakt audit-plan Fase 1 (secrets-drift) en Fase 2 (deps) **indirect maar grotendeels**. Relevante landings:
+
+- **Python deps bumped**: cryptography 43→46, redis-py 5→7, Python 3.12→3.13, pytest 8→9
+- **Docker images**: 26 externe images van `:latest` → expliciete versie-tag
+- **LiteLLM CVE-2026-35030** (CRITICAL) gefixt via pin bump
+- **6 CVE-detectie lagen** operationeel: pip-audit, npm audit, Trivy per internal build, Trivy weekly external, Dependabot security updates, secret scanning + push protection
+- **pytest now runs in CI** (was silent — 13 tests waren stil broken op main)
+- **546 tests green, 0 skipped, 0 warnings** (vs 531+9 skipped+5 warnings baseline)
+- **Living doc**: `docs/runbooks/version-management.md` v1.1
+- **CVE-triage**: 30 findings gedocumenteerd, 1 critical gefixt, 3 critical tracked upstream-blocked, 26 accepted (transitive in internal-network-only services)
+
+**Consequentie voor ons audit-plan:**
+- Fase 1 (secrets): gedeeltelijk gedekt door secret scanning + push protection enabling. Gitleaks-pass niet gedaan maar risico lager.
+- Fase 2 (deps): grotendeels gedekt door weekly Trivy + Dependabot + pip-audit + npm audit.
+- Fase 6 (dead code): nog niet gedaan.
 
 **Prio-legenda:**
 - **P0** — Pre-work: beantwoord fundamentele vraag voordat fix-scope scherp is
@@ -246,3 +281,8 @@ Fase 1+2+6 kunnen parallel met SEC-004 t/m SEC-012 fixes. Fase 4+5 bij voorkeur 
 |---|---|
 | 2026-04-19 | Initial roadmap — 9 fix-groepen + 2 pre-work items. Gebaseerd op Fase 3 (findings F-001 t/m F-016). |
 | 2026-04-19 (later) | SEC-001/002/003 IDs hernoemd naar SEC-010/011/012 wegens ID-collision met bestaande SPECs (NEN 7510, ISO 27001, RLS coverage). Bestaande SPECs blijven unchanged. |
+| 2026-04-19 Wave 1 deploy | SEC-010 LIVE op main — retrieval-api CRITICAL-fix. 5 commits on main + klai-infra SOPS update. Smoke-tested: 401 zonder X-Internal-Secret, 200 met, /health public. |
+| 2026-04-19 Wave 2 deploy | SEC-011 + SEC-009 LIVE op main — knowledge-ingest fail-closed + SERVERS.md complete. 1 parent commit (3ca34341) + klai-infra commit (58f0b60). 31 new tests pass. |
+| 2026-04-19 Wave 2C PAUSE | SEC-012 (JWT audience) uitgesteld: parallel session startte major scribe rebuild (SPEC-VEXA-003). Re-visit na scribe-rebuild. |
+| 2026-04-19 New findings | SEC-013 (vexa-bot supply-chain HIGH + docs-app auth) + SEC-014 (taxonomy.py:83 portal_internal_token fail-open) toegevoegd als follow-ups. |
+| 2026-04-19 Parallel session | Dependency audit + CVE scanning infrastructure overhaul in aparte sessie landde op main: 26 images pinned, 6 CVE-detectielagen active, 1 critical CVE gefixt (LiteLLM), pytest in CI, 546 green tests. Dekt Fase 1+2 van het audit-plan grotendeels. |
