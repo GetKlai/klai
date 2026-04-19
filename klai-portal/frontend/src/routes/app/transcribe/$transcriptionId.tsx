@@ -14,7 +14,7 @@ export const Route = createFileRoute('/app/transcribe/$transcriptionId')({
   component: TranscriptionDetailPage,
 })
 
-const SCRIBE_BASE = '/scribe/v1'
+const SCRIBE_BASE = '/api/scribe/v1'
 
 interface TranscriptionDetail {
   id: string

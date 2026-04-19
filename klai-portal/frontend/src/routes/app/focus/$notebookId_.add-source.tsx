@@ -10,7 +10,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 type AddTab = 'file' | 'url'
 
