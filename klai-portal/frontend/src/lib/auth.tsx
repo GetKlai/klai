@@ -1,9 +1,10 @@
 import { AuthContext, AuthProvider, useAuth } from 'react-oidc-context'
-import { ErrorResponse, User, WebStorageStateStore } from 'oidc-client-ts'
+import { User, WebStorageStateStore } from 'oidc-client-ts'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import * as Sentry from '@sentry/react'
 import { authLogger } from '@/lib/logger'
 import { registerTokenRefresher } from '@/lib/apiFetch'
+import { extractOidcErrorCode, isReauthenticationRequired } from '@/lib/oidc-error'
 
 const AUTH_DEV_MODE = import.meta.env.VITE_AUTH_DEV_MODE === 'true'
 
@@ -118,16 +119,18 @@ function useStaleStateCleanup(): void {
   }, [])
 }
 
-const REAUTHENTICATION_ERRORS = new Set(['invalid_grant', 'login_required'])
-
 /**
  * Guard against invalid sessions from two sources:
  *
  * 1. Cross-tab logout — another tab cleared the localStorage user key
- * 2. Token renewal failure — refresh token expired or revoked by Zitadel
+ * 2. Token renewal failure — refresh token expired, revoked, or the OP's
+ *    session cookie is gone (iframe silent-renew returns login_required)
  *
  * Both paths call removeUser() exactly once, protected by a shared ref
- * to prevent re-entrant signout loops across tabs.
+ * to prevent re-entrant signout loops across tabs. After removeUser, the
+ * root route fires signinRedirect on the next render, which is silent if
+ * Zitadel still has a session cookie on auth.getklai.com or shows the
+ * login form otherwise.
  */
 function useSessionGuard(): void {
   const auth = useAuth()
@@ -148,13 +151,11 @@ function useSessionGuard(): void {
   useEffect(() => {
     if (!authError) return
 
-    const isReauthError =
-      authError instanceof ErrorResponse &&
-      authError.error !== null &&
-      REAUTHENTICATION_ERRORS.has(authError.error)
-
-    if (isReauthError) {
-      authLogger.info('Session ended, signing out', { error: authError.error })
+    if (isReauthenticationRequired(authError)) {
+      if (isSigningOut.current) return
+      authLogger.info('Session ended, signing out', {
+        error: extractOidcErrorCode(authError),
+      })
       isSigningOut.current = true
       void auth.removeUser()
       return

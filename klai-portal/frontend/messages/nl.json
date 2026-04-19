@@ -353,6 +353,7 @@
   "logged_out_cta": "Opnieuw inloggen",
   "callback_error_heading": "Inloggen mislukt",
   "callback_error_back": "Terug naar inloggen",
+  "callback_error_retry": "Probeer opnieuw",
   "callback_loading": "Inloggen…",
   "verify_hero_heading": "Je werkruimte",
   "verify_hero_highlight": "staat klaar.",
