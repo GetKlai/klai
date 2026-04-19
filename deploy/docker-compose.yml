@@ -53,6 +53,7 @@ volumes:
   gitea-data:
   qdrant-data:
   vexa-recordings-data:
+  vexa-redis-data:
   scribe-audio-data:
 
 # Default log rotation — prevents unbounded disk growth on json-file driver.
@@ -714,11 +715,81 @@ services:
     depends_on:
       - postgres
 
-  # ─── Vexa meeting API (bot lifecycle, transcription collector) ──────────
-  # Built from feature/agentic-runtime @ 600cba04b9575c44cb74ee384c63b3fd7df98fe7
-  # Build: docker build -t vexa-meeting-api:klai -f services/meeting-api/Dockerfile .
-  vexa-meeting-api:
-    image: vexa-meeting-api:klai
+  # ─── Vexa stack (SPEC-VEXA-003 — upstream main v0.10.x, commit f0756bf) ──
+  # Source: https://github.com/Vexa-ai/vexa branch klai/main-260419
+  # Build pattern (Phase 6): on core-01 clone fork, run `make build` from
+  # deploy/compose/Makefile; images land as vexaai/<svc>:<version>-YYMMDD-HHMM.
+  # Tags below are placeholders — Phase 6 rewrites them to real build timestamps.
+  # The placeholder form is intentionally rejected by deploy/check-image-tags.sh
+  # so this compose file is NOT deploy-ready until Phase 6 completes.
+
+  # ─── Vexa admin-api (management) ────────────────────────────────────────
+  admin-api:
+    image: vexaai/admin-api:0.10.0-pending
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: vexa
+      DB_USER: vexa
+      DB_PASSWORD: ${VEXA_DB_PASSWORD}
+      DB_SSL_MODE: disable
+      ADMIN_API_TOKEN: ${VEXA_ADMIN_TOKEN}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      LOG_LEVEL: INFO
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - klai-net
+      - net-postgres
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─── Vexa api-gateway (public entry, rate-limited, CORS) ────────────────
+  api-gateway:
+    image: vexaai/api-gateway:0.10.0-pending
+    restart: unless-stopped
+    environment:
+      ADMIN_API_URL: http://admin-api:8001
+      MEETING_API_URL: http://meeting-api:8080
+      TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
+      MCP_URL: http://mcp:18888                     # harmless when mcp not deployed
+      CALENDAR_SERVICE_URL: http://calendar-service:8050   # unused in v1
+      AGENT_API_URL: http://agent-api:8100          # unused in v1
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      RATE_LIMIT_RPM: "120"
+      LOG_LEVEL: INFO
+      CORS_ORIGINS: "*"
+    init: true
+    depends_on:
+      admin-api:
+        condition: service_healthy
+      meeting-api:
+        condition: service_started
+    networks:
+      - klai-net
+      - vexa-bots   # needed to reach vexa-redis
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ─── Vexa meeting-api (bot lifecycle, transcription collector) ──────────
+  # Network alias `vexa-meeting-api` retained for portal-api backwards compat
+  # (REQ-E-001, REQ-U-001 — no config churn in portal-api during this migration).
+  meeting-api:
+    image: vexaai/meeting-api:0.10.0-pending
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -728,33 +799,48 @@ services:
       DB_PASSWORD: ${VEXA_DB_PASSWORD}
       DB_SSL_MODE: disable
       REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
-      API_KEYS: ${VEXA_API_KEY}
+      REDIS_HOST: vexa-redis
+      REDIS_PORT: "6379"
       ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
-      RUNTIME_API_URL: http://vexa-runtime-api:8090
-      MEETING_API_URL: http://vexa-meeting-api:8080
-      BOT_IMAGE_NAME: vexaai/vexa-bot:v20260315-2220
+      RUNTIME_API_URL: http://runtime-api:8090
+      RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
+      MEETING_API_URL: http://meeting-api:8080
+      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.0-pending
+      DOCKER_NETWORK: vexa-bots
+      TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
+      # Storage backend: Garage speaks S3, so minio-* vars point at Garage.
+      # RECORDING_ENABLED=false (REQ-U-001 GDPR) — S3 path is unused but config
+      # is required so the service can boot. See SPEC-VEXA-003 research.md §5.1.
+      STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      MINIO_BUCKET: vexa-recordings
+      MINIO_SECURE: "false"
+      RECORDING_ENABLED: "false"
+      CAPTURE_MODES: "audio"
       TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
       TRANSCRIPTION_SERVICE_TOKEN: internal
-      STORAGE_BACKEND: local
-      RECORDING_ENABLED: "false"
       POST_MEETING_HOOKS: http://portal-api:8010/api/bots/internal/webhook
-      TRANSCRIPTION_COLLECTOR_URL: http://vexa-meeting-api:8080
+      LOG_LEVEL: INFO
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
       vexa-redis:
         condition: service_healthy
-      vexa-runtime-api:
+      runtime-api:
         condition: service_started
+    networks:
+      klai-net:
+        aliases:
+          - vexa-meeting-api   # backwards-compat alias — portal-api config unchanged
+      net-postgres: {}
+      vexa-bots: {}
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 512M
-    networks:
-      - klai-net
-      - net-postgres
-      - vexa-bots   # bots call back to meeting-api via this network; vexa-redis also on this network
+          memory: 1G
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
@@ -762,35 +848,48 @@ services:
       retries: 3
       start_period: 60s
 
-  # ─── Vexa runtime API (container orchestration via Docker socket) ───────
-  # Built from feature/agentic-runtime @ 600cba04b9575c44cb74ee384c63b3fd7df98fe7
-  # Build: docker build -t vexa-runtime-api:klai -f services/runtime-api/Dockerfile services/runtime-api/
-  vexa-runtime-api:
-    image: vexa-runtime-api:klai
+  # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
+  runtime-api:
+    image: vexaai/runtime-api:0.10.0-pending
     restart: unless-stopped
     environment:
-      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
-      ORCHESTRATOR_BACKEND: docker
-      DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: vexa-bots
-      ALLOW_PRIVATE_CALLBACKS: "true"
+      BROWSER_IMAGE: vexaai/vexa-bot:0.10.0-pending
+      AGENT_IMAGE: ""                              # agent profile not shipped in v1
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      MINIO_BUCKET: vexa-recordings
+      BOT_API_TOKEN: ${BOT_API_TOKEN}
+      API_KEYS: ${BOT_API_TOKEN}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: vexa
+      DB_USER: vexa
+      DB_PASSWORD: ${VEXA_DB_PASSWORD}
+      DB_SSL_MODE: disable
       PROFILES_PATH: /app/profiles.yaml
+      ALLOW_PRIVATE_CALLBACKS: "1"
       LOG_LEVEL: INFO
     group_add:
       - "988"   # docker GID on core-01 — required for socket access
     volumes:
       - ./vexa/profiles.yaml:/app/profiles.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    init: true
     depends_on:
       vexa-redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - vexa-bots
+      - net-postgres
     deploy:
       resources:
         limits:
-          cpus: '0.5'
           memory: 256M
-    networks:
-      - vexa-bots
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
       interval: 30s
@@ -798,17 +897,25 @@ services:
       retries: 3
       start_period: 30s
 
-  # ─── Vexa Redis (bot state, pub/sub, transcription streams) ─────────────
+  # ─── Vexa Redis (bot state, pub/sub, streams) ───────────────────────────
+  # REQ-U-006: redis:8-alpine (same major as klai main redis). Upstream vexa
+  # pins redis:7.0-alpine but we do NOT downgrade if the new version works.
+  # Phase 7.7 runs the forward-compat battery (pub/sub, streams, consumer
+  # groups); if any fails, rollback to `redis:7.0-alpine` is a single image
+  # line change. See research.md §5.3 and acceptance.md §N.
   vexa-redis:
     image: redis:8-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}", "--appendfsync", "everysec"]
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
     networks:
       - vexa-bots   # isolated from klai-net-redis; bot containers resolve vexa-redis via this network
+      - net-redis   # api-gateway reads the shared broker from klai net-redis
+    volumes:
+      - vexa-redis-data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a $VEXA_REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
       interval: 10s
