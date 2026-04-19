@@ -777,7 +777,7 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       RATE_LIMIT_RPM: "120"
       LOG_LEVEL: INFO
-      CORS_ORIGINS: "*"
+      CORS_ORIGINS: "https://my.${DOMAIN},https://widget.${DOMAIN}"  # SEC-013 F-032 — explicit allowlist (was *)
     init: true
     depends_on:
       admin-api:
@@ -836,7 +836,7 @@ services:
       RECORDING_ENABLED: "false"
       CAPTURE_MODES: "audio"
       TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
-      TRANSCRIPTION_SERVICE_TOKEN: internal
+      TRANSCRIPTION_SERVICE_TOKEN: ${WHISPER_SERVICE_TOKEN:-internal}  # SEC-013 F-035 — prefer SOPS secret, fallback to legacy placeholder
       POST_MEETING_HOOKS: http://portal-api:8010/api/bots/internal/webhook
       LOG_LEVEL: INFO
     init: true

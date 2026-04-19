@@ -239,7 +239,9 @@
         reverse_proxy scribe-api:8020
     }
 
-    # Vexa meeting bot manager
+    # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
+    # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`
+    # service was replaced by `api-gateway` during the upstream-main rebuild.
     handle /bots/* {
         rate_limit {
             zone bots_per_ip {
@@ -249,7 +251,7 @@
             }
         }
         uri strip_prefix /bots
-        reverse_proxy vexa-bot-manager:8000
+        reverse_proxy api-gateway:8000
     }
 
     # Klai Docs — KB reader + editor + API under /docs/*
