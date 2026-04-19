@@ -353,6 +353,7 @@
   "logged_out_cta": "Log in again",
   "callback_error_heading": "Login failed",
   "callback_error_back": "Back to login",
+  "callback_error_retry": "Try again",
   "callback_loading": "Signing in…",
   "verify_hero_heading": "Your workspace",
   "verify_hero_highlight": "is ready.",
