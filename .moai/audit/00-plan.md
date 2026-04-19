@@ -23,18 +23,24 @@
 - [x] PRE-B — Zitadel org_ids zijn 18-digit Snowflake (enumereerbaar) → F-001 CRITICAL
 
 **Implementatie-status per SEC-fix-groep:**
-- [x] **SEC-010** Retrieval-API hardening — LIVE op main, smoke-tested
-- [x] **SEC-011** Knowledge-ingest fail-closed auth — LIVE op main
-- [x] **SEC-009** SERVERS.md doc drift — LIVE (klai-infra)
-- [x] **SEC-005** Internal-endpoint hardening — LIVE op main, audit row persisted in DB
-- [x] **SEC-006** Widget JWT revocation via DB cross-check — LIVE op main
-- [x] **SEC-007** Code-quality (connector LRU + portal @MX annotations) — LIVE op main
-- [x] **SEC-008** Connector hardening (audience warn-only + hmac + LRU) + dev env docs — LIVE op main
-- [ ] **SEC-012** JWT audience (scribe + research-api) — **PAUSED** (scribe rebuild SPEC-VEXA-003)
-- [ ] SEC-004 Defense-in-depth middleware — nog niet gestart (scribe deel pauzeert; F-009 portion al gedekt door SEC-008)
-- [ ] **SEC-013** External auth audit (vexa, docs-app) — SPEC nog te schrijven
-- [ ] **SEC-014** taxonomy.py portal_internal_token fail-open — SPEC nog te schrijven
-- [ ] SEC-016/017/018 (uit Fase 4) — nieuwe kleine follow-ups: noqa+encoding, time.sleep context, Dockerfile USER audit
+- [x] **SEC-005** Internal-endpoint hardening — LIVE (audit row persisted)
+- [x] **SEC-006** Widget JWT revocation via DB cross-check — LIVE
+- [x] **SEC-007** Code-quality (connector LRU + portal @MX annotations) — LIVE
+- [x] **SEC-008** Connector hardening (audience + hmac + LRU) + dev env basic-auth — LIVE
+- [x] **SEC-009** SERVERS.md doc drift — LIVE
+- [x] **SEC-010** Retrieval-API hardening (F-001 CRITICAL) — LIVE, smoke-tested
+- [x] **SEC-011** Knowledge-ingest fail-closed auth — LIVE
+- [x] **SEC-013** Vexa hardening F-030/032/033/035 — LIVE
+- [x] **SEC-016** Fase 4 noqa+encoding — LIVE
+- [x] **SEC-019** Dead-code cleanup Python+frontend (~1880 LOC) — LIVE
+- [ ] **SEC-012** JWT audience research-api — OPEN, wacht op user B/C/D keuze (scribe deel vervalt)
+- [ ] **SEC-004** Defense-in-depth middleware focus — OPEN, dependency op SEC-012
+- [ ] **SEC-014** taxonomy.py portal_internal_token fail-open — OPEN, klein fix
+- [ ] **SEC-018** Monorepo-wide Dockerfile USER audit — OPEN
+- [ ] **SEC-020** vexa-bot-manager + docs-app external auth audit — OPEN
+- [ ] **SEC-021** runtime-api docker-socket-proxy migratie (F-031) — OPEN
+- [ ] **SEC-022** vexa-bots network egress check (F-037) — OPEN
+- [ ] **DEAD-* batch** config+connector dead code — OPEN, pending user review
 
 ## Principe
 

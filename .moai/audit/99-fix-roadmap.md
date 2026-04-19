@@ -22,14 +22,21 @@
 | ~~P0~~ | ~~SEC-010~~ | Retrieval-API hardening | F-001, F-010, F-014 | retrieval-api | **✅ LIVE on main** (f48381f4, a1b4d52f, 410965c9, bba52266, f803f687) |
 | ~~P1~~ | ~~SEC-011~~ | Knowledge-ingest fail-closed auth | F-003, F-012 | knowledge-ingest | **✅ LIVE on main** (3ca34341) |
 | ~~P3~~ | ~~SEC-009~~ | SERVERS.md doc-drift | F-017, F-018, F-020, F-022 | klai-infra docs | **✅ LIVE** (klai-infra 58f0b60) |
-| **PAUSED** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | ~~scribe~~, focus | Scribe undergoing major rebuild (SPEC-VEXA-003) — defer scribe deel tot rebuild stabiel. Research-api deel kan los maar wacht op user decision (B/C/D keuze openstaand) |
+| **OPEN** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | focus | Scribe deel vervalt (SPEC-VEXA-003 is gedaan). Research-api deel wacht op user B/C/D keuze. |
 | ~~P1~~ | ~~SEC-008~~ | Caddy exposure hardening (reduced) | F-017, F-018 | connector, dev env | **✅ LIVE on main** (11d6c28f + klai-infra 41ff469). F-020/F-022 → SEC-013. |
-| **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus, ~~scribe~~, portal, connector | Scribe deel pauzeert (rebuild). Vereist SEC-012 first voor focus; F-009 portion gefixt in SEC-008 (hmac + audience) |
+| **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus | Scribe rebuild klaar, focus deel kan door na SEC-012. F-009 portion al gefixt in SEC-008. |
 | ~~P2~~ | ~~SEC-005~~ | Internal-endpoint hardening | F-007 | portal | **✅ LIVE on main** (739a3177 + klai-infra 41ff469). Smoke-tested: 200 + audit row. |
 | ~~P3~~ | ~~SEC-006~~ | Widget JWT revocation | F-008 | portal partner API | **✅ LIVE on main** (78d7ce26) |
 | ~~P3~~ | ~~SEC-007~~ | Code-quality / correctness | F-011, F-015 doc | connector, portal background | **✅ LIVE on main** (1e3f9945 + 11d6c28f) |
-| **NEW** | SEC-013 | External service auth audit | F-020 (vexa-bot), F-022 (docs-app) | vexa-bot-manager (supply-chain HIGH), docs-app | Nog niet geschreven — requires source-inspection |
-| **NEW** | SEC-014 | knowledge-ingest taxonomy portal_internal_token fail-open | — | knowledge-ingest taxonomy.py:83 | Gevonden tijdens SEC-011 implementatie — analoog aan F-003/F-012 maar omgekeerde richting |
+| ~~P1~~ | ~~SEC-013~~ | Vexa stack hardening (F-030/032/033/035) | F-030, F-032, F-033, F-035 | portal, caddy, compose | **✅ LIVE on main** (681b442a, cc5eff9d + klai-infra 9082cde). F-020/F-022 (vexa-bot-manager + docs-app) nog apart. |
+| ~~P3~~ | ~~SEC-016~~ | Fase 4 noqa+encoding cleanup | F-024, F-027 | connector, knowledge-ingest, portal | **✅ LIVE on main** (db2ea155). F-025 n/a (bandit niet configured). |
+| ~~P3~~ | ~~SEC-019~~ | Dead-code cleanup (Python+frontend) | DEAD-001..003, 006, 012, 013, 016-019, 023-026 | 6 Python services + frontend | **✅ LIVE on main** (f30c4cf5 + b406994c). ~1880 LOC weg. |
+| **OPEN** | SEC-014 | taxonomy.py portal_internal_token fail-open | — | knowledge-ingest taxonomy.py:83 | Analoog patroon aan F-003/F-012, omgekeerde richting. Klein SPEC, ~5 min fix. |
+| **OPEN** | SEC-018 | Monorepo-wide Dockerfile USER audit | F-029 | alle services met Dockerfile | Niet-triviale audit pass — welke services draaien nu als root? |
+| **OPEN** | SEC-020 | vexa-bot-manager + docs-app external auth audit | F-020, F-022 | extern | Was origineel SEC-013 scope, apart gezet want requires source-inspection |
+| **OPEN** | SEC-021 | runtime-api docker-socket-proxy migratie | F-031 | klai-infra + vexa runtime-api | Host takeover risk mitigation — infra SPEC nodig |
+| **OPEN** | SEC-022 | vexa-bots network egress audit | F-037 | klai-infra | Chromium data-exfil risk check |
+| **OPEN** | DEAD-* batch review | Config keys + connector internals | DEAD-004/005/009/010/011/020/021/022 | portal, knowledge-ingest, connector, mailer | Fase 6 agent skipte deze pending owner review |
 
 ## Deploy status (2026-04-19)
 
@@ -46,6 +53,13 @@
 | klai-infra | 3 rotation runbooks (INTERNAL_SECRET, CONNECTOR_SECRET, CADDY_DEV_HARDENING) | **✅ merged** |
 | SOPS | `RETRIEVAL_API_INTERNAL_SECRET` added, 8 dev vars restored | **✅ synced to `/opt/klai/.env`** |
 | SERVERS.md | SEC-009 complete Caddy route table | **✅ merged** (klai-infra) |
+| Caddy `/bots/*` | SEC-013 F-030 route target: api-gateway (was broken) | **✅ live, smoke-tested** (200 via curl) |
+| api-gateway | SEC-013 F-032 CORS scoped to my/widget.getklai.com | **✅ live** (compose synced) |
+| meeting-api | SEC-013 F-035 WHISPER_SERVICE_TOKEN from SOPS | **✅ live** (fallback retained) |
+| portal-api | SEC-013 F-033 Vexa webhook fail-closed + hmac | **✅ live** (VEXA_WEBHOOK_SECRET already in SOPS) |
+| SOPS | SEC-013 WHISPER_SERVICE_TOKEN added | **✅ synced** |
+| Python services | SEC-019 dead-code removal (112 LOC) | **✅ merged** |
+| Frontend | SEC-019 dead-code removal (1765 LOC + 5 npm deps) | **✅ merged** |
 
 ## Parallelle session (2026-04-19) — wat landde tegelijk
 
@@ -294,3 +308,7 @@ Fase 1+2+6 kunnen parallel met SEC-004 t/m SEC-012 fixes. Fase 4+5 bij voorkeur 
 | 2026-04-19 Wave 3 | SEC-005/006/007/008 gebouwd (4 parallel agents), gegroepeerd naar 5 commits op main (739a3177, 78d7ce26, 1e3f9945, 11d6c28f, 0dcd8047) + klai-infra 41ff469 (3 runbooks). Smoke-tested: portal-api internal endpoint schrijft audit row naar portal_audit_log, klai-connector warnt bij ontbrekende audience, widget JWT revocation via DB cross-check. 73+ new tests, alle groen. |
 | 2026-04-19 Fase 4 | SAST scan afgerond. 0 critical, 7 findings (F-023..F-029, all MEDIUM/LOW). F-026 false positive. Rapport in .moai/audit/05-injection.md. |
 | 2026-04-19 Ops rollout | SEC-008 defense-in-depth geactiveerd: KLAI_CONNECTOR_ZITADEL_AUDIENCE (Zitadel app 365340910193475592) en CADDY_DEV basic-auth (bcrypt 14, 32-char random password) in SOPS. Caddyfile + compose bijgewerkt. Gotcha gevonden: sync-env.yml doet automatische `$` → `$$` escape voor docker-compose, SOPS moet dus single-\$ bcrypt opslaan (niet pre-escaped). Smoke-tested: dev.getklai.com basic-auth werkt, klai-connector audience actief. |
+| 2026-04-19 Fase 6 | Dead-code scan afgerond (vulture + knip + CodeIndex orphans). 22 Python findings + 7 TS findings. DEAD-008 was false positive (deferred feature per SPEC-KB-007 AC-7). Rapport in .moai/audit/07-dead-code.md. |
+| 2026-04-19 Vexa audit | Vexa stack audit na SPEC-VEXA-003 rollout. 8 findings (V-001..V-008 / F-030..F-037). 2 HIGH (dode /bots route, docker.sock mount). Rapport in .moai/audit/08-vexa.md. |
+| 2026-04-19 Wave 4 | SEC-013 + SEC-016 + SEC-019 landed op main (5 commits). F-030/032/033/035 Vexa hardening, noqa+encoding cleanup, ~1880 LOC dead code weg. Lesson learned: parallel Agent subprocesses kunnen elkaars working tree mid-run resetten — sequentieel of worktree-isolation nodig bij file-overlap. 4 van 5 agents moesten handmatig re-applied. Smoke-tests groen: /bots/ → api-gateway 200, webhook wrong token 401, dev.getklai 401/passthrough. |
+| 2026-04-19 Doc sync | Roadmap gesynct na alle deploys. SEC-012 deblokkeerd (scribe rebuild klaar). Open tickets hernummerd: SEC-020 (vexa-bot+docs-app extern audit, was SEC-013 scope), SEC-021 (runtime-api docker-socket-proxy, F-031), SEC-022 (vexa-bots network egress, F-037). |
