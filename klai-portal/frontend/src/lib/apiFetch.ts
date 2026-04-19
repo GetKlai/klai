@@ -22,8 +22,6 @@ import { readCsrfCookie } from '@/lib/auth'
 import { FetchError, UnauthorizedError } from '@/lib/fetch-errors'
 import { authLogger } from '@/lib/logger'
 
-export { UnauthorizedError } from '@/lib/fetch-errors'
-
 /**
  * Non-OK HTTP response from portal-api. Extends FetchError so callers can use
  * the shared transient-vs-permanent classification while still reading the
