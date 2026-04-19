@@ -636,8 +636,14 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
-    if not payload.platform or not payload.native_meeting_id:
-        logger.info("Vexa webhook: no platform/native_meeting_id, ignoring", payload_status=payload.status)
+    # SPEC-VEXA-003: upstream `fire_post_meeting_hooks` omits native_meeting_id from the
+    # payload (only `meeting.id` + `meeting.platform`). Fall back to vexa_meeting_id
+    # lookup when the envelope lacks the natural key.
+    if not payload.vexa_meeting_id and (not payload.platform or not payload.native_meeting_id):
+        logger.info(
+            "Vexa webhook: no correlation key (vexa_meeting_id / platform+native_meeting_id), ignoring",
+            payload_status=payload.status,
+        )
         return {"status": "ignored"}
 
     VEXA_STATUS_MAP = {
@@ -649,18 +655,30 @@ async def vexa_webhook(
     }
     portal_status = VEXA_STATUS_MAP.get(payload.status or "")
 
-    meeting = await db.scalar(
-        select(VexaMeeting)
-        .where(
-            VexaMeeting.platform == payload.platform,
-            VexaMeeting.native_meeting_id == payload.native_meeting_id,
-            VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
+    # Prefer vexa_meeting_id (unambiguous FK); fall back to (platform, native_meeting_id)
+    # pair which can correlate even during the "pending" phase before a bot is spawned.
+    if payload.vexa_meeting_id is not None:
+        meeting = await db.scalar(
+            select(VexaMeeting)
+            .where(VexaMeeting.vexa_meeting_id == payload.vexa_meeting_id)
+            .order_by(VexaMeeting.created_at.desc())
         )
-        .order_by(VexaMeeting.created_at.desc())
-    )
+    else:
+        meeting = await db.scalar(
+            select(VexaMeeting)
+            .where(
+                VexaMeeting.platform == payload.platform,
+                VexaMeeting.native_meeting_id == payload.native_meeting_id,
+                VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
+            )
+            .order_by(VexaMeeting.created_at.desc())
+        )
     if meeting is None:
         logger.warning(
-            "Vexa webhook: no matching meeting", platform=payload.platform, native_meeting_id=payload.native_meeting_id
+            "Vexa webhook: no matching meeting",
+            vexa_meeting_id=payload.vexa_meeting_id,
+            platform=payload.platform,
+            native_meeting_id=payload.native_meeting_id,
         )
         return {"status": "ignored"}
 
