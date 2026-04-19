@@ -1,13 +1,21 @@
 ---
 id: SPEC-VEXA-003
-version: "1.0"
-status: draft
+version: "1.1"
+status: deployed-awaiting-e2e
 created: 2026-04-19
 updated: 2026-04-19
 author: MoAI
 priority: high
 supersedes: SPEC-VEXA-001
 folds_in: SPEC-VEXA-002
+deployed_commits:
+  - f3fbe275  # SPEC docs
+  - cde34810  # Phase 1+3 deploy manifests
+  - 84ec02cb  # Phase 4+5 portal webhook + scribe tier=deferred
+  - 484fb816  # Phase 6 image tag pins
+  - 9155355e  # deploy-notes runtime findings
+  - 38efe04e  # defense-in-depth API_KEYS
+outstanding_gate: Real Google Meet E2E test (acceptance §I — audio + transcript round-trip) pending user-initiated Meet URL. All synthetic checks pass.
 ---
 
 # SPEC-VEXA-003: Clean-Slate Rebuild on Upstream Vexa main (v0.10)
