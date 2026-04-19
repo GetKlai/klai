@@ -36,7 +36,7 @@ curl -s -o /dev/null -w "%{redirect_url}\n" \
 
 **Fix (via Zitadel v2 Feature API — writes event + updates projection atomically):**
 ```bash
-PAT=$(ssh core-01 'docker exec klai-core-portal-api-1 printenv PORTAL_API_ZITADEL_PAT')
+PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
 curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
   -H "Authorization: Bearer $PAT" \
   -H "Content-Type: application/json" \
