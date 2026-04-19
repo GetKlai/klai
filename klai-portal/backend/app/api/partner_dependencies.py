@@ -7,6 +7,10 @@ SPEC-API-001 REQ-2.1 through REQ-2.6 and SPEC-WIDGET-002:
 - Rate limit enforcement via Redis sliding window
 - Non-blocking last_used_at update
 - Error messages never distinguish not-found from deleted (no enumeration)
+
+SPEC-SEC-006:
+- Widget session tokens cross-check widget_kb_access on every auth call
+  so that admin revocations take effect in real time (no JWT expiry wait).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
+from app.models.widgets import Widget, WidgetKbAccess
 from app.services.partner_keys import verify_partner_key
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
@@ -76,9 +81,12 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
 
     # @MX:ANCHOR: Widget session token auth path
     # @MX:REASON: Called from get_partner_key for non-pk_live_ tokens; must be secure
+    # @MX:SPEC: SPEC-SEC-006 — DB cross-check of widget_kb_access for real-time revocation
 
     Raises 401 for invalid/expired tokens.
     Raises 401 if WIDGET_JWT_SECRET is not configured.
+    Raises 401 if the widget is missing or all its KB access has been revoked
+    (real-time revocation via DB cross-check, no JWT expiry wait).
 
     Args:
         token: Raw Bearer token value (not starting with pk_live_)
@@ -111,8 +119,22 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
     await set_tenant(db, org.id)
 
-    # Build kb_access with read-only access for all JWT kb_ids
-    kb_access = {kb_id: "read" for kb_id in kb_ids}
+    # SPEC-SEC-006: DB cross-check widget_kb_access for real-time revocation.
+    # Without this, a revoked widget's JWT would remain valid for up to 1h TTL.
+    # The JWT wgt_id claim is the public identifier; resolve to internal UUID first.
+    widget_result = await db.execute(select(Widget).where(Widget.widget_id == wgt_id, Widget.org_id == org_id))
+    widget = widget_result.scalar_one_or_none()
+    if widget is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    kb_access_result = await db.execute(select(WidgetKbAccess.kb_id).where(WidgetKbAccess.widget_id == widget.id))
+    current_kb_ids: set[int] = set(kb_access_result.scalars().all())
+    allowed_kb_ids = set(kb_ids) & current_kb_ids
+    if not allowed_kb_ids:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
+
+    # Build kb_access with read-only access for JWT kb_ids still permitted in DB
+    kb_access = {kb_id: "read" for kb_id in allowed_kb_ids}
 
     # Apply rate limiting using wgt_id as the key (same limit as pk_live_ path)
     _SESSION_RATE_LIMIT_RPM = 60
