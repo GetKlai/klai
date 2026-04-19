@@ -38,15 +38,20 @@ async def get_chat_health(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> ChatHealthOut:
-    """Probe the tenant's LibreChat instance for endpoint availability.
+    """Probe the tenant's LibreChat instance for pre-flight availability.
 
     Checks:
     1. Org is provisioned (has a LibreChat container)
-    2. LibreChat container responds on /health
-    3. LibreChat has at least one configured endpoint (/api/endpoints)
+    2. LibreChat container responds on /health (liveness)
+    3. LibreChat serves /api/config (client bootstrap config, unauthenticated)
+
+    /api/config is the same endpoint LibreChat's own web client calls before
+    login; a 200 there means the app is fully booted and ready to serve the
+    iframe. We do NOT probe /api/endpoints — since LibreChat v0.8.5 that
+    endpoint requires auth and can't be used as an anonymous liveness check.
 
     Returns healthy=false with a machine-readable reason so the frontend
-    can show specific feedback (not provisioned / container down / no endpoints).
+    can show specific feedback (not provisioned / container down / not ready).
     """
     _, org, _ = await _get_caller_org(credentials, db)
 
@@ -66,16 +71,12 @@ async def get_chat_health(
                 _emit_failure(org.id, "container_unhealthy")
                 return ChatHealthOut(healthy=False, reason="container_unhealthy")
 
-            # Step 2: endpoints available?
-            ep_resp = await client.get(f"{base_url}/api/endpoints")
-            if ep_resp.status_code != 200:
-                _emit_failure(org.id, "endpoints_unreachable")
-                return ChatHealthOut(healthy=False, reason="endpoints_unreachable")
-
-            endpoints = ep_resp.json()
-            if not endpoints or (isinstance(endpoints, dict) and not any(endpoints.values())):
-                _emit_failure(org.id, "no_endpoints")
-                return ChatHealthOut(healthy=False, reason="no_endpoints")
+            # Step 2: app bootstrapped? /api/config is public by design
+            # (LibreChat's own web client hits it before login).
+            cfg_resp = await client.get(f"{base_url}/api/config")
+            if cfg_resp.status_code != 200:
+                _emit_failure(org.id, "app_not_ready")
+                return ChatHealthOut(healthy=False, reason="app_not_ready")
 
     except httpx.TimeoutException:
         _emit_failure(org.id, "timeout")
