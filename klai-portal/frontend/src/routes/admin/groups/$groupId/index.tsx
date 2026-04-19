@@ -73,7 +73,6 @@ function displayEmail(user: OrgUser | undefined): string {
 
 function AdminGroupDetail() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { groupId } = Route.useParams()
@@ -85,21 +84,21 @@ function AdminGroupDetail() {
 
   const { data: groupData, isLoading: groupLoading } = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: async () => apiFetch<{ groups: Group[] }>(`/api/admin/groups`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ groups: Group[] }>(`/api/admin/groups`),
+    enabled: auth.isAuthenticated,
     select: (data) => data.groups.find((g) => g.id === Number(groupId)),
   })
 
   const { data: membersData, isLoading: membersLoading } = useQuery({
     queryKey: ['admin-group-members', groupId],
-    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`),
+    enabled: auth.isAuthenticated,
   })
 
   const members = membersData?.members ?? []
@@ -112,7 +111,7 @@ function AdminGroupDetail() {
 
   const removeMemberMutation = useMutation({
     mutationFn: async (userId: string) => {
-      await apiFetch(`/api/admin/groups/${groupId}/members/${userId}`, token, { method: 'DELETE' })
+      await apiFetch(`/api/admin/groups/${groupId}/members/${userId}`, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-group-members', groupId] })

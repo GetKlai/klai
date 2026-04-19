@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from '@/lib/auth'
 import { useState } from 'react'
 import { Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -16,12 +15,9 @@ export const Route = createFileRoute('/admin/mcps/')({
 })
 
 function McpsListPage() {
-  const auth = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const token = auth.user?.access_token ?? ''
-
-  const { data, isLoading, isError } = useMcpServers(token)
+  const { data, isLoading, isError } = useMcpServers()
 
   const [confirmingDeactivateId, setConfirmingDeactivateId] = useState<string | null>(null)
 
@@ -29,7 +25,7 @@ function McpsListPage() {
   // accepts this as a deactivation and triggers the tenant container restart.
   const deactivateMutation = useMutation({
     mutationFn: async (server: McpServer) => {
-      return apiFetch(`/api/mcp-servers/${server.id}`, token, {
+      return apiFetch(`/api/mcp-servers/${server.id}`, {
         method: 'PUT',
         body: JSON.stringify({ enabled: false, env: {} }),
       })

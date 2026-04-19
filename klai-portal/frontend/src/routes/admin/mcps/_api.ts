@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
 
 /**
@@ -26,11 +27,12 @@ const QUERY_KEY = ['mcp-servers'] as const
  * Shared across the list, picker and edit routes — TanStack Query dedupes
  * concurrent requests by queryKey.
  */
-export function useMcpServers(token: string) {
+export function useMcpServers() {
+  const auth = useAuth()
   return useQuery({
     queryKey: QUERY_KEY,
-    queryFn: async () => apiFetch<McpServersResponse>('/api/mcp-servers', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<McpServersResponse>('/api/mcp-servers'),
+    enabled: auth.isAuthenticated,
   })
 }
 

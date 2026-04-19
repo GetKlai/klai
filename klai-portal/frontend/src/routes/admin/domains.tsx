@@ -23,20 +23,19 @@ interface Domain {
 
 function AdminDomainsPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const [newDomain, setNewDomain] = useState('')
   const [error, setError] = useState('')
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-domains'],
-    queryFn: async () => apiFetch<{ domains: Domain[] }>('/api/admin/domains', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ domains: Domain[] }>('/api/admin/domains'),
+    enabled: auth.isAuthenticated,
   })
 
   const addMutation = useMutation({
     mutationFn: async (domain: string) =>
-      apiFetch('/api/admin/domains', token, {
+      apiFetch('/api/admin/domains', {
         method: 'POST',
         body: JSON.stringify({ domain }),
       }),
@@ -56,7 +55,7 @@ function AdminDomainsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) =>
-      apiFetch(`/api/admin/domains/${id}`, token, { method: 'DELETE' }),
+      apiFetch(`/api/admin/domains/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-domains'] })
     },

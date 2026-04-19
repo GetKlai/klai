@@ -36,7 +36,6 @@ interface KnowledgeBase {
 function EditKBPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const orgSlug = getOrgSlug()
@@ -47,12 +46,12 @@ function EditKBPage() {
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['docs-kb', orgSlug, kbSlug],
     queryFn: async () => {
-      const kbs = await apiFetch<KnowledgeBase[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, token)
+      const kbs = await apiFetch<KnowledgeBase[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`)
       const found = kbs.find((k) => k.slug === kbSlug)
       if (!found) throw new Error('Kennisbank niet gevonden')
       return found
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {
@@ -64,7 +63,7 @@ function EditKBPage() {
 
   const editMutation = useMutation({
     mutationFn: async () => {
-      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}`, token, {
+      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}`, {
         method: 'PATCH',
         body: JSON.stringify({ name, visibility }),
       })

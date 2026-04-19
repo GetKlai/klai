@@ -51,8 +51,7 @@ function EditConnectorPage() {
   const { kbSlug, connectorId } = Route.useParams()
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const token = user?.access_token
+  const auth = useAuth()
   const queryClient = useQueryClient()
 
   function goBack() {
@@ -61,8 +60,8 @@ function EditConnectorPage() {
 
   const { data: connectors = [] } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
-    queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`),
+    enabled: auth.isAuthenticated,
   })
 
   const connector = connectors.find((c) => c.id === connectorId)
@@ -94,10 +93,7 @@ function EditConnectorPage() {
   async function handleGoogleDriveReconnect() {
     setIsReconnecting(true)
     try {
-      const { authorize_url } = await apiFetch<{ authorize_url: string }>(
-        `/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`,
-        token,
-      )
+      const { authorize_url } = await apiFetch<{ authorize_url: string }>(`/api/oauth/google_drive/authorize?kb_slug=${encodeURIComponent(kbSlug)}&connector_id=${encodeURIComponent(connectorId)}`, )
       window.location.href = authorize_url
     } finally {
       setIsReconnecting(false)
@@ -194,7 +190,7 @@ function EditConnectorPage() {
       if (connector.connector_type === 'google_drive') {
         if (folderId.trim()) config.folder_id = folderId.trim()
       }
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           name,
@@ -211,11 +207,7 @@ function EditConnectorPage() {
 
   const previewMutation = useMutation({
     mutationFn: async ({ url, content_selector, try_ai, cookies }: { url: string; content_selector?: string; try_ai?: boolean; cookies?: unknown[] }) => {
-      return apiFetch<PreviewResult>(
-        `/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`,
-        token,
-        { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies ?? null }) },
-      )
+      return apiFetch<PreviewResult>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, { method: 'POST', body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies ?? null }) }, )
     },
     onSuccess: (data) => {
       setPreviewResult(data)

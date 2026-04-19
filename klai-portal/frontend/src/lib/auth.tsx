@@ -55,7 +55,6 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: true,
       error: null,
       user: {
-        access_token: undefined,
         profile: { sub: 'dev-user' },
         csrf_token: 'dev-csrf',
         access_token_expires_at: Number.MAX_SAFE_INTEGER,
@@ -101,7 +100,6 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
       }
       const body = (await res.json()) as SessionResponse
       setUser({
-        access_token: undefined,
         profile: { sub: body.zitadel_user_id },
         csrf_token: body.csrf_token,
         access_token_expires_at: body.access_token_expires_at,

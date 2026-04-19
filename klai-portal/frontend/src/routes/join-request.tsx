@@ -10,6 +10,8 @@ import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { authLogger } from '@/lib/logger'
+import { apiFetch } from '@/lib/apiFetch'
+import { fetchMe } from '@/lib/api-me'
 
 export const Route = createFileRoute('/join-request')({
   component: JoinRequestPage,
@@ -24,35 +26,21 @@ function JoinRequestPage() {
   // Prefetch email from /api/me to pre-fill display name
   const { data: me } = useQuery({
     queryKey: ['me'],
-    queryFn: async () => {
-      const res = await fetch('/api/me', {
-        headers: { Authorization: `Bearer ${auth.user!.access_token}` },
-      })
-      if (!res.ok) return null
-      return res.json() as Promise<{ email?: string; display_name?: string }>
-    },
-    enabled: !!auth.user,
+    queryFn: async ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated,
   })
 
   // Pre-fill display name from /api/me once loaded (only if the user hasn't typed anything)
   useEffect(() => {
     if (me && !displayName) {
-      setDisplayName(me.display_name ?? me.email?.split('@')[0] ?? '')
+      setDisplayName(me.name ?? me.email?.split('@')[0] ?? '')
     }
   }, [me]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const submitMutation = useMutation({
     mutationFn: async () => {
-      if (!auth.user) throw new Error('Not authenticated')
-      const res = await fetch('/api/auth/join-request', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${auth.user.access_token}` },
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `HTTP ${res.status}`)
-      }
-      return res.json()
+      if (!auth.isAuthenticated) throw new Error('Not authenticated')
+      return apiFetch<unknown>('/api/auth/join-request', { method: 'POST' })
     },
     onSuccess: () => {
       setSubmitted(true)

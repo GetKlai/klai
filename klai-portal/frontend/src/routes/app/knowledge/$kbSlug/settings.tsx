@@ -17,7 +17,6 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/settings')({
 function SettingsTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -25,14 +24,14 @@ function SettingsTab() {
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
-    enabled: !!token && !!kb,
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
+    enabled: auth.isAuthenticated && !!kb,
   })
 
   const myUserId = auth.user?.profile?.sub
@@ -49,7 +48,7 @@ function SettingsTab() {
 
   const updateMutation = useMutation({
     mutationFn: async (body: { name?: string; description?: string }) => {
-      return apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token, {
+      return apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       })

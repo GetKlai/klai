@@ -54,18 +54,17 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug')({
 function KbLayout() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const { data: kb, isLoading, isError } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => {
       try {
-        return await apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token)
+        return await apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`)
       } catch (err) {
         queryLogger.warn('KB fetch failed', { slug: kbSlug, error: err })
         throw err
       }
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
     retry: false,
   })
 
@@ -73,14 +72,14 @@ function KbLayout() {
   // (overview, settings, advanced) render immediately without an extra fetch.
   useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
-    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
-    enabled: !!token && !!kb,
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`),
+    enabled: auth.isAuthenticated && !!kb,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
-    enabled: !!token && !!kb,
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
+    enabled: auth.isAuthenticated && !!kb,
   })
 
   const myUserId = auth.user?.profile?.sub
@@ -92,12 +91,12 @@ function KbLayout() {
     queryKey: ['taxonomy-proposals-count', kbSlug],
     queryFn: async () => {
       try {
-        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`, token)
+        return await apiFetch<{ proposals: TaxonomyProposal[] }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals?status=pending`)
       } catch {
         return { proposals: [] }
       }
     },
-    enabled: !!token && !!kb,
+    enabled: auth.isAuthenticated && !!kb,
   })
   const pendingCount = pendingProposalsQuery.data?.proposals.length ?? 0
 

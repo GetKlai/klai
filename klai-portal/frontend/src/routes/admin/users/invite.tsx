@@ -32,7 +32,6 @@ interface OrgSettings {
 
 function InviteUserPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -40,12 +39,12 @@ function InviteUserPage() {
     queryKey: ['admin-org-settings'],
     queryFn: async () => {
       try {
-        return await apiFetch<OrgSettings>(`/api/admin/settings`, token)
+        return await apiFetch<OrgSettings>(`/api/admin/settings`)
       } catch {
         return null
       }
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   const defaultLanguage: Language = orgSettings?.default_language ?? 'nl'
@@ -60,7 +59,7 @@ function InviteUserPage() {
 
   const inviteMutation = useMutation({
     mutationFn: async (data: InviteForm) => {
-      await apiFetch(`/api/admin/users/invite`, token, {
+      await apiFetch(`/api/admin/users/invite`, {
         method: 'POST',
         body: JSON.stringify(data),
       })

@@ -194,7 +194,6 @@ function KbRow({
 
 function KnowledgePage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const myUserId = auth.user?.profile?.sub
   const navigate = useNavigate()
 
@@ -205,8 +204,8 @@ function KnowledgePage() {
 
   const { data: gapSummary } = useQuery<GapSummary>({
     queryKey: ['gap-summary'],
-    queryFn: () => apiFetch<GapSummary>('/api/app/gaps/summary', token),
-    enabled: !!token && isAdmin,
+    queryFn: () => apiFetch<GapSummary>('/api/app/gaps/summary'),
+    enabled: auth.isAuthenticated && isAdmin,
     retry: false,
   })
 
@@ -217,15 +216,15 @@ function KnowledgePage() {
     refetch: refetchKbs,
   } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases'],
-    queryFn: () => apiFetch<KBsResponse>('/api/app/knowledge-bases', token),
-    enabled: !!token,
+    queryFn: () => apiFetch<KBsResponse>('/api/app/knowledge-bases'),
+    enabled: auth.isAuthenticated,
     retry: false,
   })
 
   const { data: statsData } = useQuery<KBStatsSummaryResponse>({
     queryKey: ['app-knowledge-bases-stats-summary'],
-    queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary', token),
-    enabled: !!token,
+    queryFn: () => apiFetch<KBStatsSummaryResponse>('/api/app/knowledge-bases/stats-summary'),
+    enabled: auth.isAuthenticated,
     retry: false,
   })
 

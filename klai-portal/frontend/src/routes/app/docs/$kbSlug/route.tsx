@@ -51,7 +51,7 @@ function KBEditorLayout() {
   const pageId = 'pageId' in allParams ? (allParams as { pageId: string }).pageId : undefined
   const navigate = useNavigate()
   const auth = useAuth()
-  const token = auth.user?.access_token
+  const isAuthenticated = auth.isAuthenticated
   const orgSlug = getOrgSlug()
 
   // Shared display state — owned here, set by page component via context
@@ -67,8 +67,8 @@ function KBEditorLayout() {
   // Tree
   const { data: tree = [], refetch: refetchTree } = useQuery<NavNode[]>({
     queryKey: ['docs-tree', orgSlug, kbSlug],
-    queryFn: async () => apiFetch<NavNode[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<NavNode[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`),
+    enabled: isAuthenticated,
   })
 
   // PageIndex (id → slug mapping) — also settable synchronously for post-create update
@@ -76,12 +76,12 @@ function KBEditorLayout() {
     queryKey: ['docs-page-index', orgSlug, kbSlug],
     queryFn: async () => {
       try {
-        return await apiFetch<PageIndexEntry[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`, token)
+        return await apiFetch<PageIndexEntry[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-index`)
       } catch {
         return []
       }
     },
-    enabled: !!token,
+    enabled: isAuthenticated,
   })
 
   // REQ-EVT-02: Synchronous pageIndex state that can be updated after page creation
@@ -137,7 +137,7 @@ function KBEditorLayout() {
     setLocalTree(newTree)
     const pages = navToSidebarEntries(newTree)
     try {
-      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/sidebar`, token, {
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/sidebar`, {
         method: 'PUT',
         body: JSON.stringify({ pages }),
       })
@@ -146,7 +146,7 @@ function KBEditorLayout() {
       treeLogger.error('Sidebar reorder failed, reverting', err)
       setLocalTree(previousTree)
     }
-  }, [orgSlug, kbSlug, token, localTree, tree, refetchTree])
+  }, [orgSlug, kbSlug, localTree, tree, refetchTree])
 
   const handleAddSubpage = useCallback((parentPath: string) => {
     setNewPageParent(parentPath)
@@ -188,15 +188,11 @@ function KBEditorLayout() {
     const idempotencyKey = crypto.randomUUID()
 
     try {
-      const response = await apiFetch<CreatePageResponse>(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`,
-        token,
-        {
+      const response = await apiFetch<CreatePageResponse>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`, {
           method: 'PUT',
           headers: { 'Idempotency-Key': idempotencyKey },
           body: JSON.stringify({ title: newPageTitle, content: '' }),
-        }
-      )
+        })
 
       if (parentPath !== null) {
         const currentTree = localTree ?? tree
@@ -237,13 +233,13 @@ function KBEditorLayout() {
     } finally {
       creationLockRef.current = false
     }
-  }, [newPageTitle, orgSlug, kbSlug, token, displayTree, localTree, tree, handleSidebarUpdate, refetchTree, setPageIndex, navigateToPage])
+  }, [newPageTitle, orgSlug, kbSlug, displayTree, localTree, tree, handleSidebarUpdate, refetchTree, setPageIndex, navigateToPage])
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData()
       form.append('file', file)
-      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/upload`, token, {
+      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/upload`, {
         method: 'POST',
         body: form,
       })
@@ -253,7 +249,7 @@ function KBEditorLayout() {
 
   const deleteMutation = useMutation({
     mutationFn: async (path: string) => {
-      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`, token, {
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${path}`, {
         method: 'DELETE',
       })
     },
@@ -270,7 +266,7 @@ function KBEditorLayout() {
   const ctx = useMemo(() => ({
     orgSlug,
     kbSlug,
-    token,
+    isAuthenticated,
     displayTree,
     pageIndex,
     setPageIndex,
@@ -283,7 +279,7 @@ function KBEditorLayout() {
     setEditTitle,
     navigateToPage,
     setDeletePagePath,
-  }), [orgSlug, kbSlug, token, displayTree, pageIndex, setPageIndex, refetchTree, refetchPageIndex, saveStatus, editTitle, navigateToPage])
+  }), [orgSlug, kbSlug, isAuthenticated, displayTree, pageIndex, setPageIndex, refetchTree, refetchPageIndex, saveStatus, editTitle, navigateToPage])
 
   return (
     <KBEditorContext.Provider value={ctx}>

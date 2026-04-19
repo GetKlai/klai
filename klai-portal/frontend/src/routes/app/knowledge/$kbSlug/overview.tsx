@@ -18,21 +18,20 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/overview')({
 function OverviewTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const { user } = useCurrentUser()
 
   // These queries reuse the same queryKeys as the parent layout -- TanStack Query
   // serves cached data without re-fetching.
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: stats } = useQuery<KBStats>({
     queryKey: ['kb-stats', kbSlug],
-    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`, token),
-    enabled: !!token && !!kb,
+    queryFn: async () => apiFetch<KBStats>(`/api/app/knowledge-bases/${kbSlug}/stats`),
+    enabled: auth.isAuthenticated && !!kb,
   })
 
   if (!kb) return null

@@ -89,7 +89,6 @@ const columnHelper = createColumnHelper<User>()
 
 function UsersPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const currentUserId = auth.user?.profile?.sub
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -103,23 +102,23 @@ function UsersPage() {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`),
+    enabled: auth.isAuthenticated,
   })
 
   const users = data?.users ?? []
 
   const { data: membershipsData } = useQuery({
     queryKey: ['admin-group-memberships'],
-    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number; name: string; products: string[] }[]> }>(`/api/admin/group-memberships`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ memberships: Record<string, { id: number; name: string; products: string[] }[]> }>(`/api/admin/group-memberships`),
+    enabled: auth.isAuthenticated,
   })
 
   const membershipsByUser = membershipsData?.memberships ?? {}
 
   const resendInviteMutation = useMutation({
     mutationFn: async (user: User) => {
-      await apiFetch(`/api/admin/users/${user.zitadel_user_id}/resend-invite`, token, { method: 'POST' })
+      await apiFetch(`/api/admin/users/${user.zitadel_user_id}/resend-invite`, { method: 'POST' })
     },
     onSuccess: (_data, user) => {
       adminLogger.info('Invite resent', { userId: user.zitadel_user_id, email: user.email })
@@ -129,7 +128,7 @@ function UsersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (user: User) => {
-      await apiFetch(`/api/admin/users/${user.zitadel_user_id}`, token, { method: 'DELETE' })
+      await apiFetch(`/api/admin/users/${user.zitadel_user_id}`, { method: 'DELETE' })
     },
     onSuccess: (_data, user) => {
       adminLogger.info('User deleted', { userId: user.zitadel_user_id, email: user.email })

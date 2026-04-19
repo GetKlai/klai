@@ -41,12 +41,12 @@ type RouteDecision =
 /** Fetch /api/me with a single retry on transient failure; aborts honour signal. */
 async function fetchMeWithRetry(signal: AbortSignal): Promise<MeResponse> {
   try {
-    return await fetchMe(undefined, signal)
+    return await fetchMe(signal)
   } catch (err) {
     if (isAborted(err) || !isRetryable(err)) throw err
     authLogger.warn('Post-login /api/me failed, retrying', { error: err })
     await delay(RETRY_DELAY_MS, signal)
-    return await fetchMe(undefined, signal)
+    return await fetchMe(signal)
   }
 }
 

@@ -21,7 +21,7 @@ export const RETRYABLE_STATUS: ReadonlySet<number> = new Set([
   504, // Gateway Timeout
 ])
 
-/** The access_token has been rejected — the caller must force a fresh sign-in. */
+/** The BFF session cookie has been rejected — the caller must force a fresh sign-in. */
 export class UnauthorizedError extends Error {
   constructor() {
     super('Unauthorized')

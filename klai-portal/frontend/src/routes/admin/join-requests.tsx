@@ -23,18 +23,17 @@ interface JoinRequest {
 
 function AdminJoinRequestsPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-join-requests'],
-    queryFn: async () => apiFetch<{ requests: JoinRequest[] }>('/api/admin/join-requests', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ requests: JoinRequest[] }>('/api/admin/join-requests'),
+    enabled: auth.isAuthenticated,
   })
 
   const approveMutation = useMutation({
     mutationFn: async (id: number) =>
-      apiFetch(`/api/admin/join-requests/${id}/approve`, token, { method: 'POST' }),
+      apiFetch(`/api/admin/join-requests/${id}/approve`, { method: 'POST' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-join-requests'] })
       adminLogger.info('Join request approved')
@@ -43,7 +42,7 @@ function AdminJoinRequestsPage() {
 
   const denyMutation = useMutation({
     mutationFn: async (id: number) =>
-      apiFetch(`/api/admin/join-requests/${id}/deny`, token, { method: 'POST' }),
+      apiFetch(`/api/admin/join-requests/${id}/deny`, { method: 'POST' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-join-requests'] })
       adminLogger.info('Join request denied')

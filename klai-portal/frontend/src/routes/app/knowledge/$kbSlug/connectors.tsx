@@ -44,7 +44,6 @@ function ConnectorsTab() {
   const { kbSlug } = Route.useParams()
   const navigate = useNavigate({ from: Route.fullPath })
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const { oauth } = Route.useSearch()
   const [showOAuthBanner, setShowOAuthBanner] = useState(oauth === 'connected')
@@ -60,13 +59,13 @@ function ConnectorsTab() {
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
+    enabled: auth.isAuthenticated,
   })
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
+    enabled: auth.isAuthenticated,
   })
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
@@ -74,8 +73,8 @@ function ConnectorsTab() {
 
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
-    queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`),
+    enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
       const data = query.state.data
       if (Array.isArray(data) && data.some((c) => c.last_sync_status === 'RUNNING' || c.last_sync_status === 'running')) {
@@ -87,7 +86,7 @@ function ConnectorsTab() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, token, { method: 'DELETE' })
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}`, { method: 'DELETE' })
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['kb-connectors-portal', kbSlug] }),
   })
@@ -95,7 +94,7 @@ function ConnectorsTab() {
   async function handleSync(id: string) {
     setSyncingIds((prev) => new Set([...prev, id]))
     try {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, token, { method: 'POST' })
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${id}/sync`, { method: 'POST' })
       queryClient.setQueryData(['kb-connectors-portal', kbSlug], (old: ConnectorSummary[] | undefined) =>
         old?.map((c) => c.id === id ? { ...c, last_sync_status: 'running' } : c)
       )

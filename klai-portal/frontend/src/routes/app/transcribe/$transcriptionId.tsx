@@ -44,7 +44,6 @@ function stripMarkdown(md: string): string {
 function TranscriptionDetailPage() {
   const { transcriptionId } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -54,14 +53,14 @@ function TranscriptionDetailPage() {
 
   const { data: transcription, isLoading } = useQuery<TranscriptionDetail>({
     queryKey: ['transcription', transcriptionId],
-    queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`),
+    enabled: auth.isAuthenticated,
   })
 
   const summarizeMutation = useMutation({
     mutationFn: async (force: boolean) => {
       const url = `${SCRIBE_BASE}/transcriptions/${transcriptionId}/summarize${force ? '?force=true' : ''}`
-      return apiFetch(url, token, {
+      return apiFetch(url, {
         method: 'POST',
         body: JSON.stringify({
           recording_type: recordingType,

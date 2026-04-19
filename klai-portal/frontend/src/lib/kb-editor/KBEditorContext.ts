@@ -15,7 +15,8 @@ export class PageNotInIndexError extends Error {
 export interface KBEditorCtxValue {
   orgSlug: string
   kbSlug: string
-  token: string | undefined
+  /** True once the BFF session has resolved — gates queries that depend on auth. */
+  isAuthenticated: boolean
   displayTree: NavNode[]
   pageIndex: PageIndexEntry[]
   /** Synchronously update pageIndex with server-truth data. REQ-EVT-02 */

@@ -22,28 +22,27 @@ interface OrgKB {
 
 export function KBScopeBar() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const { data: pref } = useQuery<KBPref>({
     queryKey: ['kb-preference'],
-    queryFn: async () => apiFetch<KBPref>('/api/app/account/kb-preference', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KBPref>('/api/app/account/kb-preference'),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: kbsData } = useQuery<{ knowledge_bases: OrgKB[] }>({
     queryKey: ['org-kbs-for-bar'],
-    queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases?owner_type=org', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases?owner_type=org'),
+    enabled: auth.isAuthenticated,
   })
 
   const orgKbs = kbsData?.knowledge_bases ?? []
 
   const mutation = useMutation({
     mutationFn: async (patch: Partial<Omit<KBPref, 'kb_pref_version'>>) => {
-      return apiFetch<KBPref>('/api/app/account/kb-preference', token, {
+      return apiFetch<KBPref>('/api/app/account/kb-preference', {
         method: 'PATCH',
         body: JSON.stringify(patch),
       })

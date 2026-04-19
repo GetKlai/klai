@@ -5,6 +5,7 @@ import * as m from '@/paraglide/messages'
 import { Input } from '@/components/ui/input'
 import { DOCS_BASE, stripMdExt, slugify, DEFAULT_ICON } from '@/lib/kb-editor/tree-utils'
 import { useKBEditor, resolveSlug, shortId, PageNotInIndexError } from '@/lib/kb-editor/KBEditorContext'
+import { readCsrfCookie } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
 import { editorLogger } from '@/lib/logger'
 import { BlockPageEditor } from '@/components/kb-editor/BlockPageEditor'
@@ -27,7 +28,7 @@ interface PageData {
 function KBPageEditor() {
   const { kbSlug, pageId } = Route.useParams()
   const ctx = useKBEditor()
-  const { orgSlug, token, pageIndex, refetchTree, refetchPageIndex, doSaveRef, setSaveStatus, setEditTitle, navigateToPage } = ctx
+  const { orgSlug, isAuthenticated, pageIndex, refetchTree, refetchPageIndex, doSaveRef, setSaveStatus, setEditTitle, navigateToPage } = ctx
 
   // REQ-STA-04: Strict slug resolution — throws PageNotInIndexError when not found
   let selectedPath: string | null = null
@@ -81,12 +82,10 @@ function KBPageEditor() {
   useEffect(() => () => { isMountedRef.current = false }, [])
 
   // Stable refs for async save
-  const tokenRef = useRef(token)
   const selectedPathRef = useRef(selectedPath)
   const titleRef = useRef(currentPage.title)
   const iconRef = useRef(currentPage.icon)
   useEffect(() => {
-    tokenRef.current = token
     selectedPathRef.current = selectedPath
     titleRef.current = currentPage.title
     iconRef.current = currentPage.icon
@@ -98,8 +97,8 @@ function KBPageEditor() {
   // Load page data
   const { data: page } = useQuery<PageData>({
     queryKey: ['docs-page', orgSlug, kbSlug, selectedPath],
-    queryFn: async () => apiFetch<PageData>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token),
-    enabled: !!token && !!selectedPath && !pageNotFound,
+    queryFn: async () => apiFetch<PageData>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`),
+    enabled: isAuthenticated && !!selectedPath && !pageNotFound,
   })
 
   // Apply loaded page to editor
@@ -129,9 +128,8 @@ function KBPageEditor() {
       if (!isMountedRef.current) return
       const path = selectedPathRef.current
       const title = titleRef.current
-      const tok = tokenRef.current
       const icon = iconRef.current
-      if (!path || !tok) return
+      if (!path) return
       const content = editorRef.current?.getContent() ?? ''
 
       const currentSlug = stripMdExt(path)
@@ -141,7 +139,7 @@ function KBPageEditor() {
 
       if (newSlug !== currentSlug) {
         try {
-          await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`, tok, {
+          await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/page-rename/${currentSlug}`, {
             method: 'POST',
             body: JSON.stringify({ newSlug, title, content, icon }),
           })
@@ -166,7 +164,7 @@ function KBPageEditor() {
 
       try {
         const result = await apiFetch<{ ok: boolean; sha: string | null }>(
-          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
+          `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, {
             method: 'PUT',
             body: JSON.stringify({ title, content, icon, sha: shaRef.current }),
           }
@@ -193,7 +191,7 @@ function KBPageEditor() {
             shaRef.current = freshSha
             try {
               const retry = await apiFetch<{ ok: boolean; sha: string | null }>(
-                `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, tok, {
+                `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${currentSlug}`, {
                   method: 'PUT',
                   body: JSON.stringify({ title, content, icon, sha: shaRef.current }),
                 }
@@ -236,8 +234,9 @@ function KBPageEditor() {
   }, [doSaveRef, saveNow])
 
   // Flush pending save on full-page navigation (address bar, browser back/forward).
-  // fetch with keepalive:true continues after the page unloads and supports auth headers.
-  // Sidebar navigation is handled by doSaveRef (called in route.tsx onSelect).
+  // fetch with keepalive:true continues after the page unloads and carries the BFF session
+  // cookie when credentials:'include' is set. sendBeacon cannot set a CSRF header, so keepalive
+  // fetch is the only option for authenticated unload writes.
   //
   // Guard: only fires when there is a pending timer (unsaved changes not yet queued).
   // If saveTimerRef is null, either there are no unsaved changes or a save is already
@@ -248,13 +247,16 @@ function KBPageEditor() {
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
       const path = selectedPathRef.current
-      const tok = tokenRef.current
+      if (!path) return
       const content = editorRef.current?.getContent() ?? ''
-      if (!path || !tok) return
       const slug = stripMdExt(path)
+      const csrf = readCsrfCookie()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (csrf) headers['X-CSRF-Token'] = csrf
       fetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${slug}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current, sha: shaRef.current }),
         keepalive: true,
       }).catch(() => { /* fire-and-forget on unload */ })
@@ -277,12 +279,10 @@ function KBPageEditor() {
     const editAccess = accessState.mode === 'org' ? 'org' : accessState.users
     setAccessState((a) => ({ ...a, saveStatus: 'saving' }))
     try {
-      const result = await apiFetch<{ ok: boolean; sha: string | null }>(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, token, {
+      const result = await apiFetch<{ ok: boolean; sha: string | null }>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/pages/${selectedPath}`, {
           method: 'PUT',
           body: JSON.stringify({ title: titleRef.current, content, icon: iconRef.current, edit_access: editAccess, sha: shaRef.current }),
-        }
-      )
+        })
       if (result.sha) shaRef.current = result.sha
       setAccessState((a) => ({ ...a, saveStatus: 'saved' }))
       setTimeout(() => setAccessState((a) => ({ ...a, saveStatus: 'idle' })), 2000)
@@ -291,7 +291,7 @@ function KBPageEditor() {
       setAccessState((a) => ({ ...a, saveStatus: 'error' }))
       setTimeout(() => setAccessState((a) => ({ ...a, saveStatus: 'idle' })), 3000)
     }
-  }, [selectedPath, orgSlug, kbSlug, token, accessState.mode, accessState.users])
+  }, [selectedPath, orgSlug, kbSlug, accessState.mode, accessState.users])
 
   // Update URL to UUID once pageIndex has the UUID for this page (handles slug-based entry)
   useEffect(() => {

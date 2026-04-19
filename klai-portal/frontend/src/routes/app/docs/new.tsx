@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
@@ -22,8 +21,6 @@ function getOrgSlug(): string {
 }
 
 function NewKBPage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const orgSlug = getOrgSlug()
@@ -33,7 +30,7 @@ function NewKBPage() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      return apiFetch<{ slug: string }>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, token, {
+      return apiFetch<{ slug: string }>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, {
         method: 'POST',
         body: JSON.stringify({ name, visibility }),
       })

@@ -24,7 +24,6 @@ export function SaveToKnowledgeModal({
   initialContent, initialTitle, onClose, onSuccess,
 }: SaveToKnowledgeModalProps) {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const orgSlug = getOrgSlug()
   const userUuid = auth.user?.profile?.sub ?? ''
 
@@ -39,12 +38,12 @@ export function SaveToKnowledgeModal({
     queryKey: ['docs-page-index', orgSlug, 'personal'],
     queryFn: async () => {
       try {
-        return await apiFetch<Array<{ slug: string }>>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/page-index`, token)
+        return await apiFetch<Array<{ slug: string }>>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/page-index`)
       } catch {
         return []
       }
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   const saveMutation = useMutation({
@@ -73,14 +72,10 @@ export function SaveToKnowledgeModal({
 
       const fullContent = metaLines.join('\n') + initialContent
 
-      await apiFetch(
-        `${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/pages/users/${userUuid}/${pageSlug}`,
-        token,
-        {
+      await apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/personal/pages/users/${userUuid}/${pageSlug}`, {
           method: 'PUT',
           body: JSON.stringify({ title: title.trim(), content: fullContent, icon: '\u{1F4A1}' }),
-        }
-      )
+        })
       return { slug: pageSlug }
     },
     onSuccess: ({ slug }) => {

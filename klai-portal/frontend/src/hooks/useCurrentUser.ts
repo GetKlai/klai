@@ -27,19 +27,17 @@ export interface CurrentUser extends MeResponse {
 
 export function useCurrentUser() {
   const auth = useAuth()
-  const token = auth.user?.access_token
-
   const query = useQuery({
     queryKey: ['current-user'],
     queryFn: async () => {
-      const me = await apiFetch<MeResponse>('/api/me', token)
+      const me = await apiFetch<MeResponse>('/api/me')
       return {
         ...me,
         isAdmin: me.roles?.some((r) => ADMIN_ROLES.includes(r)) ?? false,
         isGroupAdmin: me.portal_role === 'group-admin',
       } satisfies CurrentUser
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
     staleTime: 5 * 60 * 1000,
   })
 

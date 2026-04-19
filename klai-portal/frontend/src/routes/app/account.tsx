@@ -16,7 +16,6 @@ export const Route = createFileRoute('/app/account')({
 
 function AccountPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const { locale, switchLocale } = useLocale()
 
   const [saved, setSaved] = useState(false)
@@ -27,12 +26,12 @@ function AccountPage() {
     queryKey: ['me-language'],
     queryFn: async () => {
       try {
-        return await apiFetch<{ preferred_language?: 'nl' | 'en' }>(`/api/me`, token)
+        return await apiFetch<{ preferred_language?: 'nl' | 'en' }>(`/api/me`)
       } catch {
         return null
       }
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {
@@ -43,7 +42,7 @@ function AccountPage() {
 
   const saveMutation = useMutation({
     mutationFn: async (preferred_language: 'nl' | 'en') => {
-      await apiFetch(`/api/me/language`, token, {
+      await apiFetch(`/api/me/language`, {
         method: 'PATCH',
         body: JSON.stringify({ preferred_language }),
       })
@@ -58,7 +57,7 @@ function AccountPage() {
 
   const sarMutation = useMutation({
     mutationFn: async () => {
-      return apiFetch(`/api/me/sar-export`, token, { method: 'POST' })
+      return apiFetch(`/api/me/sar-export`, { method: 'POST' })
     },
     onSuccess: (data: unknown) => {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })

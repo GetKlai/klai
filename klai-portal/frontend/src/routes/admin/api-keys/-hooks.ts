@@ -13,34 +13,30 @@ import type {
 
 export function useApiKeys() {
   const auth = useAuth()
-  const token = auth.user?.access_token
 
   return useQuery({
     queryKey: ['admin-api-keys'],
-    queryFn: async () => apiFetch<ApiKeyResponse[]>('/api/api-keys', token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<ApiKeyResponse[]>('/api/api-keys'),
+    enabled: auth.isAuthenticated,
   })
 }
 
 export function useApiKey(id: string) {
   const auth = useAuth()
-  const token = auth.user?.access_token
 
   return useQuery({
     queryKey: ['admin-api-key', id],
-    queryFn: async () => apiFetch<ApiKeyDetailResponse>(`/api/api-keys/${id}`, token),
-    enabled: !!token && !!id,
+    queryFn: async () => apiFetch<ApiKeyDetailResponse>(`/api/api-keys/${id}`),
+    enabled: auth.isAuthenticated && !!id,
   })
 }
 
 export function useCreateApiKey() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (data: CreateApiKeyRequest) =>
-      apiFetch<CreateApiKeyResponse>('/api/api-keys', token, {
+      apiFetch<CreateApiKeyResponse>('/api/api-keys', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -51,13 +47,11 @@ export function useCreateApiKey() {
 }
 
 export function useUpdateApiKey(id: string) {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (data: UpdateApiKeyRequest) =>
-      apiFetch<ApiKeyDetailResponse>(`/api/api-keys/${id}`, token, {
+      apiFetch<ApiKeyDetailResponse>(`/api/api-keys/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
@@ -69,13 +63,11 @@ export function useUpdateApiKey(id: string) {
 }
 
 export function useDeleteApiKey() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (id: string) =>
-      apiFetch<void>(`/api/api-keys/${id}`, token, {
+      apiFetch<void>(`/api/api-keys/${id}`, {
         method: 'DELETE',
       }),
     onSuccess: () => {
@@ -86,15 +78,11 @@ export function useDeleteApiKey() {
 
 export function useOrgKnowledgeBases() {
   const auth = useAuth()
-  const token = auth.user?.access_token
 
   return useQuery({
     queryKey: ['app-knowledge-bases-for-api-keys'],
     queryFn: async () =>
-      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>(
-        '/api/app/knowledge-bases?owner_type=org',
-        token,
-      ),
-    enabled: !!token,
+      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>('/api/app/knowledge-bases?owner_type=org', ),
+    enabled: auth.isAuthenticated,
   })
 }
