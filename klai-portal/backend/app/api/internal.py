@@ -959,26 +959,31 @@ async def regenerate_librechat_configs(
         await _audit_internal_call(request, org_id=0)
         return RegenerateResponse(tenants_updated=updated, errors=errors)
 
-    # Step 2: Flush Redis once (clears cached config for all tenants)
-    def _flush_and_restart_all(slugs: list[str]) -> list[str]:
+    # Step 2: Flush Redis directly via protocol (NOT docker exec).
+    # SEC-021 routes the Docker API through docker-socket-proxy, which denies
+    # /exec/*/start by design. Portal-api sits on klai-net with redis, so we
+    # talk Redis protocol straight to it — cleaner AND doesn't require EXEC=1.
+    import redis.asyncio as _aioredis
+
+    try:
+        redis_client = _aioredis.Redis(
+            host=settings.redis_host,
+            port=6379,
+            password=settings.redis_password or None,
+            decode_responses=True,
+        )
+        async with redis_client:
+            await redis_client.flushall()
+        logger.info("Redis FLUSHALL completed")
+    except Exception as exc:
+        logger.warning("Redis FLUSHALL failed: %s", exc)
+        errors.append(f"redis-flushall: {exc}")
+
+    # Step 3: Restart all tenant containers via docker-socket-proxy.
+    # Only /containers/{id}/restart is called here — allowed by CONTAINERS=1 + POST=1.
+    def _restart_all(slugs: list[str]) -> list[str]:
         client = docker.from_env()
         restart_errors: list[str] = []
-
-        try:
-            redis_ctr = client.containers.get(settings.redis_container_name)
-            redis_cmd = ["redis-cli"]
-            if settings.redis_password:
-                redis_cmd += ["-a", settings.redis_password]
-            redis_cmd.append("FLUSHALL")
-            exit_code, output = redis_ctr.exec_run(redis_cmd)
-            if exit_code != 0:
-                logger.warning("Redis FLUSHALL failed (exit %d): %s", exit_code, output.decode())
-            else:
-                logger.info("Redis FLUSHALL completed")
-        except docker.errors.NotFound:  # type: ignore[attr-defined]
-            logger.warning("Redis container '%s' not found", settings.redis_container_name)
-
-        # Step 3: Restart all tenant containers
         for slug in slugs:
             container_name = f"librechat-{slug}"
             try:
@@ -988,10 +993,9 @@ async def regenerate_librechat_configs(
             except Exception as exc:
                 restart_errors.append(f"{slug}: {exc}")
                 logger.warning("Restart failed for %s: %s", container_name, exc)
-
         return restart_errors
 
-    restart_errors = await loop.run_in_executor(None, _flush_and_restart_all, slugs_to_restart)
+    restart_errors = await loop.run_in_executor(None, _restart_all, slugs_to_restart)
     errors.extend(restart_errors)
 
     await _audit_internal_call(request, org_id=0)
