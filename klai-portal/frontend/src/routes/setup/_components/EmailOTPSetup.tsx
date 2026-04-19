@@ -18,7 +18,7 @@ export function EmailOTPSetup({ token, email, onSuccess, onBack }: EmailOTPSetup
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [resendAt, setResendAt] = useState<number | null>(null)
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
 
   // Tick every second to update resend countdown
   useEffect(() => {

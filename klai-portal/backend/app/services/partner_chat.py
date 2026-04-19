@@ -181,7 +181,7 @@ async def chat_completion_streaming(
     temperature: float,
     system_prompt: str,
     settings: Settings,
-) -> AsyncGenerator[bytes, None]:
+) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response byte-for-byte.
 
     POST to LiteLLM with stream=true, yield each chunk as-is.

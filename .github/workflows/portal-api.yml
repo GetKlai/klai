@@ -6,6 +6,11 @@ on:
     paths:
       - 'klai-portal/backend/**'
       - '.github/workflows/portal-api.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'klai-portal/backend/**'
+      - '.github/workflows/portal-api.yml'
 
 permissions:
   contents: read
@@ -24,7 +29,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -44,8 +49,12 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2025-71176
 
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
   build-push:
     needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:

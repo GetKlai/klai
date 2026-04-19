@@ -85,10 +85,12 @@ function KBPageEditor() {
   const selectedPathRef = useRef(selectedPath)
   const titleRef = useRef(currentPage.title)
   const iconRef = useRef(currentPage.icon)
-  tokenRef.current = token
-  selectedPathRef.current = selectedPath
-  titleRef.current = currentPage.title
-  iconRef.current = currentPage.icon
+  useEffect(() => {
+    tokenRef.current = token
+    selectedPathRef.current = selectedPath
+    titleRef.current = currentPage.title
+    iconRef.current = currentPage.icon
+  })
 
   // Keep layout's editTitle in sync (for sidebar save indicator)
   useEffect(() => { setEditTitle(currentPage.title) }, [currentPage.title, setEditTitle])

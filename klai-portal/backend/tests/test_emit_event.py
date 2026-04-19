@@ -1,7 +1,7 @@
 """Tests for the emit_event fire-and-forget utility."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -50,11 +50,8 @@ async def test_emit_event_failure_does_not_raise():
 
 @pytest.mark.asyncio
 async def test_emit_event_inserts_correct_data():
-    """The inserted ProductEvent must reflect the arguments passed to emit_event."""
-    added_events = []
-
+    """The raw SQL insert must carry the arguments passed to emit_event."""
     mock_session = AsyncMock()
-    mock_session.add = MagicMock(side_effect=added_events.append)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
@@ -62,9 +59,13 @@ async def test_emit_event_inserts_correct_data():
         emit_event("signup", org_id=42, user_id="zit-123", properties={"plan": "professional"})
         await asyncio.sleep(0.05)
 
-    assert len(added_events) == 1
-    event = added_events[0]
-    assert event.event_type == "signup"
-    assert event.org_id == 42
-    assert event.user_id == "zit-123"
-    assert event.properties == {"plan": "professional"}
+    assert mock_session.execute.await_count == 1
+    call = mock_session.execute.await_args
+    params = call.args[1]
+    assert params["event_type"] == "signup"
+    assert params["org_id"] == 42
+    assert params["user_id"] == "zit-123"
+    import json
+
+    assert json.loads(params["properties"]) == {"plan": "professional"}
+    assert mock_session.commit.await_count == 1

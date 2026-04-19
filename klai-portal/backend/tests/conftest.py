@@ -6,6 +6,7 @@ Sets required env vars before any app module is imported.
 
 import os
 import sys
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Suppress 'coroutine was never awaited' from mocked-asyncio tests.
@@ -15,11 +16,14 @@ import sys
 # during GC — which happens after pytest fixtures have already cleaned up, so
 # a fixture-scoped override arrives too late.  A module-level hook installed
 # at import time persists for the full session including interpreter shutdown.
+#
+# Python 3.13 no longer exposes sys.UnraisableHookArgs as a runtime attribute,
+# so we annotate the hook argument as Any.
 # ---------------------------------------------------------------------------
 _original_unraisablehook = sys.unraisablehook
 
 
-def _hook(unraisable: sys.UnraisableHookArgs) -> None:
+def _hook(unraisable: Any) -> None:
     if isinstance(unraisable.exc_value, RuntimeWarning) and "was never awaited" in str(unraisable.exc_value):
         return
     _original_unraisablehook(unraisable)

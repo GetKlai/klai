@@ -128,7 +128,7 @@ services:
 
   # ─── Redis ────────────────────────────────────────────────────────────────
   redis:
-    image: redis:alpine
+    image: redis:8-alpine
     restart: unless-stopped
     volumes:
       - redis-data:/data
@@ -594,7 +594,7 @@ services:
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
-      GRAPHITI_ENABLED: "false"
+      GRAPHITI_ENABLED: "true"
       GRAPH_SEARCH_TIMEOUT: "60.0"
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
@@ -792,7 +792,7 @@ services:
 
   # ─── Vexa Redis (bot state, pub/sub, transcription streams) ─────────────
   vexa-redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}"]
     deploy:
@@ -872,7 +872,7 @@ services:
   #   - S3 API on :3900 (authenticated uploads from klai-connector)
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
-    image: dxflrs/garage:v2.2.0
+    image: dxflrs/garage:v2.3.0
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
