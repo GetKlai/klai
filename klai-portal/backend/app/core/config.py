@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     zitadel_org_id: str = ""
     zitadel_portal_app_id: str = "362901948573155339"  # "Klai Portal" OIDC app
     zitadel_portal_org_id: str = "362757920133283846"  # Org where all portal users live
+    zitadel_portal_client_id: str = "362901948573220875"  # OIDC client_id for BFF code exchange
+    zitadel_portal_client_secret: str = ""  # PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET (SPEC-AUTH-008)
     zitadel_idp_google_id: str = ""  # ZITADEL_IDP_GOOGLE_ID — instance-level Google IDP
     zitadel_idp_microsoft_id: str = ""  # ZITADEL_IDP_MICROSOFT_ID — instance-level Microsoft IDP
 
@@ -62,6 +64,16 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
+
+    # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
+    # When false (default during migration soak), both cookie-session and legacy Bearer auth
+    # are accepted. When true, only cookie-session is accepted; bearer requests fail with 401.
+    bff_enforce_cookies: bool = False
+    # Fernet key for encrypting BFF session records at rest in Redis.
+    # Falls back to sso_cookie_key when unset (single key during the migration).
+    bff_session_key: str = ""  # PORTAL_API_BFF_SESSION_KEY
+    bff_session_ttl_seconds: int = 30 * 24 * 3600  # 30 days, matches Zitadel refresh-token lifetime
+    bff_access_token_skew_seconds: int = 60  # refresh this many seconds before expiry
 
     # Container name for the MongoDB instance (varies per docker-compose project name)
     mongodb_container_name: str = "mongodb"
