@@ -124,3 +124,44 @@ class TestFlatCompletionShape:
         assert len(model.speaker_events) == 2
         assert model.speaker_events[0].participant_name == "Alice"
         assert model.speaker_events[1].participant_name is None
+
+
+class TestUpstreamFirePostMeetingHooksShape:
+    """Shape 1b: `fire_post_meeting_hooks` in upstream meeting-api omits `native_meeting_id`.
+
+    Observed live on 2026-04-19 during SPEC-VEXA-003 real-meet E2E test (meeting 6):
+    the internal POST_MEETING_HOOKS delivery arrives with `meeting.platform` and
+    `meeting.id` but **without** `meeting.native_meeting_id`. Portal-api's handler
+    falls back to vexa_meeting_id correlation for this case.
+    """
+
+    def test_payload_without_native_meeting_id_extracts_vexa_meeting_id(self) -> None:
+        # Exact shape meeting-api's fire_post_meeting_hooks produces (see
+        # services/meeting-api/meeting_api/post_meeting.py `build_envelope`).
+        payload = {
+            "event_id": "evt_live",
+            "event_type": "meeting.completed",
+            "api_version": "2026-03-01",
+            "created_at": "2026-04-19T15:04:13+00:00",
+            "data": {
+                "meeting": {
+                    "id": 6,
+                    "user_id": 1,
+                    "user_email": "klai-system@klai.internal",
+                    "platform": "google_meet",
+                    "status": "completed",
+                    "duration_seconds": 137.96,
+                    "start_time": "2026-04-19T15:01:55+00:00",
+                    "end_time": "2026-04-19T15:04:12+00:00",
+                    "created_at": "2026-04-19T15:01:50+00:00",
+                    "transcription_enabled": True,
+                    # NOTE: no native_meeting_id field
+                },
+            },
+        }
+        model = VexaWebhookPayload.model_validate(payload)
+        assert model.vexa_meeting_id == 6
+        assert model.platform == "google_meet"
+        assert model.native_meeting_id is None  # known upstream gap
+        assert model.status == "completed"
+        assert model.ended_at == "2026-04-19T15:04:12+00:00"
