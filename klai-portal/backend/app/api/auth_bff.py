@@ -55,17 +55,22 @@ async def read_session(
 
 
 # ---------------------------------------------------------------------------
-# POST /api/auth/logout
+# POST /api/auth/bff/logout
 #
 # Clears the Redis record + both cookies. Always returns 204 — including when
 # no session was present, so a double-logout from two tabs never 401s.
+#
+# The path is namespaced under /bff/ during the migration soak so it does not
+# collide with the existing SPEC-AUTH-006 /api/auth/logout (which clears the
+# klai_sso cookie). Phase E will merge the two endpoints into a single
+# canonical /api/auth/logout that handles both flows.
 #
 # Phase A3 will additionally call Zitadel /oauth/v2/end_session with the stored
 # id_token_hint so the user is also signed out of the OP.
 # ---------------------------------------------------------------------------
 
 
-@router.post("/logout", status_code=204)
+@router.post("/bff/logout", status_code=204)
 async def logout(
     session: SessionContext | None = Depends(get_optional_session),
 ) -> Response:

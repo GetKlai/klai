@@ -151,17 +151,20 @@ class TestReadSession:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/auth/logout
+# POST /api/auth/bff/logout
+#
+# Namespaced under /bff/ during the migration soak so it doesn't collide
+# with the existing SPEC-AUTH-006 /api/auth/logout. Phase E will merge them.
 # ---------------------------------------------------------------------------
 
 
 class TestLogout:
     def test_logout_without_session_is_204(self, client: TestClient) -> None:
-        resp = client.post("/api/auth/logout")
+        resp = client.post("/api/auth/bff/logout")
         assert resp.status_code == 204
 
     def test_logout_without_session_clears_cookies_anyway(self, client: TestClient) -> None:
-        resp = client.post("/api/auth/logout")
+        resp = client.post("/api/auth/bff/logout")
         set_cookies = resp.headers.get_list("set-cookie")
         assert any(SESSION_COOKIE_NAME in c and "Max-Age=0" in c for c in set_cookies)
         assert any(CSRF_COOKIE_NAME in c and "Max-Age=0" in c for c in set_cookies)
@@ -172,7 +175,7 @@ class TestLogout:
         client = TestClient(app)
         # Mutating logout requires the CSRF header
         resp = client.post(
-            "/api/auth/logout",
+            "/api/auth/bff/logout",
             cookies={SESSION_COOKIE_NAME: sid, CSRF_COOKIE_NAME: csrf},
             headers={CSRF_HEADER_NAME: csrf},
         )
