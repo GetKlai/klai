@@ -30,6 +30,7 @@ The value is Fernet-encrypted JSON:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -95,6 +96,10 @@ class SessionService:
 
     def __init__(self) -> None:
         self._fernet: Fernet | None = None
+        # Per-sid asyncio.Lock registry for refresh coalescing (singleflight).
+        # See refresh_if_needed(). Scoped to this process; if portal-api ever
+        # scales to multiple uvicorn workers, move to Redis SETNX.
+        self._refresh_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------ crypto
 
@@ -216,6 +221,72 @@ class SessionService:
         if deleted:
             logger.info("bff_session_revoked", sid=sid)
         return bool(deleted)
+
+    # ----------------------------------------------------------- token refresh
+
+    async def refresh_if_needed(self, record: SessionRecord) -> SessionRecord | None:
+        """
+        Return a SessionRecord whose access_token is not about to expire.
+
+        If the current token still has more than `bff_access_token_skew_seconds`
+        of life left, return the record unchanged. Otherwise call Zitadel's
+        refresh_token endpoint, persist the new tokens, and return the updated
+        record. Returns None when the refresh is rejected — the caller must
+        treat the session as gone (revoke was handled here).
+
+        Concurrent callers for the same sid coalesce onto a single refresh via
+        an in-process asyncio.Lock (singleflight pattern). After the winning
+        coroutine releases the lock, waiters read the freshly-updated record
+        from Redis rather than hitting Zitadel again.
+        """
+        skew = settings.bff_access_token_skew_seconds
+        if record.access_token_expires_at - skew > int(time.time()):
+            return record
+
+        lock = self._refresh_locks.setdefault(record.sid, asyncio.Lock())
+        async with lock:
+            # Re-check inside the lock: another coroutine may have refreshed
+            # while we were waiting. Load the freshest record from Redis.
+            fresh = await self.load(record.sid)
+            if fresh is None:
+                return None
+            if fresh.access_token_expires_at - skew > int(time.time()):
+                return fresh
+
+            refreshed = await self._do_refresh(fresh)
+            if refreshed is None:
+                # Refresh failed — session is unrecoverable.
+                await self.revoke(fresh.sid)
+            return refreshed
+
+    async def _do_refresh(self, record: SessionRecord) -> SessionRecord | None:
+        # Local import avoids a circular dependency (bff_oidc → settings → …).
+        from app.services.bff_oidc import OidcFlowError, refresh_access_token
+
+        try:
+            tokens = await refresh_access_token(record.refresh_token)
+        except OidcFlowError as exc:
+            logger.warning(
+                "bff_session_refresh_rejected",
+                sid=record.sid,
+                error=exc.code,
+                description=exc.description,
+            )
+            return None
+        except Exception as exc:
+            logger.warning("bff_session_refresh_error", sid=record.sid, error=str(exc))
+            return None
+
+        record.access_token = tokens.access_token
+        if tokens.refresh_token:
+            # Zitadel rotates refresh tokens on every use (refresh_token_rotation).
+            record.refresh_token = tokens.refresh_token
+        record.access_token_expires_at = int(time.time()) + tokens.expires_in
+        if tokens.id_token:
+            record.id_token = tokens.id_token
+        await self.update(record)
+        logger.info("bff_session_refreshed", sid=record.sid)
+        return record
 
     # ------------------------------------------------------------------- pool
 

@@ -214,12 +214,19 @@ _jwks_client: PyJWKClient | None = None
 
 
 def _get_jwks_client() -> PyJWKClient:
+    """Return the process-wide JWKS client.
+
+    Keys are cached in memory with a 1-hour lifespan so Zitadel signing-key
+    rotations propagate within an hour even for tokens whose kid was already
+    cached. Cache misses (new kid) still trigger an immediate refetch.
+    """
     global _jwks_client
     if _jwks_client is None:
         _jwks_client = PyJWKClient(
             f"{settings.zitadel_base_url}/oauth/v2/keys",
             cache_keys=True,
             max_cached_keys=16,
+            lifespan=3600,
         )
     return _jwks_client
 

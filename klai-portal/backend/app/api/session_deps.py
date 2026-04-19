@@ -1,13 +1,9 @@
 """
 FastAPI dependencies for the BFF session (SPEC-AUTH-008).
 
-`get_session` is the successor to `Depends(bearer)`. Routes that need an
-authenticated caller depend on this; it returns the resolved
-:class:`~app.core.session.SessionContext` or raises 401.
-
-During the migration soak, routes may still fall back to the legacy bearer
-flow via `api.dependencies._get_caller_org`. This module does not touch the
-legacy path — it's the forward-looking surface for new and migrated routes.
+`get_session` returns the resolved :class:`~app.core.session.SessionContext`
+or raises 401 cookie_required. The error detail matches the session-aware
+bearer shim so the SPA has a single code path for "you need to log in".
 """
 
 from __future__ import annotations
@@ -18,12 +14,12 @@ from app.core.session import SessionContext
 
 
 def get_session(request: Request) -> SessionContext:
-    """Require a valid cookie-based session; raise 401 otherwise."""
+    """Require a valid cookie-based session; raise 401 cookie_required otherwise."""
     session = getattr(request.state, "session", None)
     if not isinstance(session, SessionContext):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="no_session",
+            detail="cookie_required",
         )
     return session
 

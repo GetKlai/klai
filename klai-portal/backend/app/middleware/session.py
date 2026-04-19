@@ -13,8 +13,6 @@ land in every log entry.
 
 from __future__ import annotations
 
-import time
-
 import structlog
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -78,6 +76,14 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
 
 async def _load_session_from_cookie(request: Request) -> SessionRecord | None:
+    """Resolve the session cookie and transparently refresh the access token.
+
+    Returns the (possibly refreshed) session record, or None when the cookie
+    is missing/stale/unrefreshable. The middleware does not block on refresh
+    failure — it simply presents no session, which causes downstream auth to
+    return 401 cookie_required and the SPA to redirect through
+    /api/auth/oidc/start for a fresh login.
+    """
     sid = request.cookies.get(SESSION_COOKIE_NAME)
     if not sid:
         return None
@@ -85,13 +91,7 @@ async def _load_session_from_cookie(request: Request) -> SessionRecord | None:
     if record is None:
         logger.info("bff_session_cookie_stale", sid_prefix=sid[:8])
         return None
-    if record.access_token_expires_at < int(time.time()):
-        # Access token is stale — leave handling to Phase A3 (refresh endpoint).
-        # For A2 we still surface the session; downstream Zitadel calls will 401
-        # and the frontend will trigger a refresh. This keeps the middleware
-        # narrow and unit-testable without a live Zitadel client.
-        logger.debug("bff_session_access_token_expired", sid_prefix=sid[:8])
-    return record
+    return await session_service.refresh_if_needed(record)
 
 
 def _to_context(record: SessionRecord) -> SessionContext:
