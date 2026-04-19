@@ -153,6 +153,8 @@ class Settings(BaseSettings):
 
     # Vexa meeting API (agentic-runtime)
     vexa_meeting_api_url: str = "http://vexa-meeting-api:8080"
+    # @MX:NOTE: reserved for Vexa admin API calls (tenant provisioning, quota inspection).
+    # Stored in SOPS + compose; no runtime reader yet. Keep until admin surface lands.
     vexa_admin_token: str = ""
     vexa_api_key: str = ""
     vexa_webhook_secret: str = ""

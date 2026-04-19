@@ -69,12 +69,3 @@ class ZitadelPayload(BaseModel):
     def footer_note(self) -> str:
         return (self.templateData and self.templateData.footerText) or ""
 
-    def preferred_language(self) -> str | None:
-        """
-        Return the user's preferred language from the payload, or None if unknown.
-
-        Zitadel's HTTP notification provider does NOT include preferredLanguage in its
-        webhook payload (confirmed against source: internal/notification/types/user_email.go).
-        This always returns None. The caller must handle None explicitly — no silent fallback.
-        """
-        return None
