@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +69,43 @@ class Settings(BaseSettings):
     portal_events_user: str = "klai"
     portal_events_password: str = ""
     portal_events_db: str = "klai"
+
+    # SPEC-SEC-010 — Authentication and request hardening
+    # Shared secret for internal service-to-service calls (portal-api, research-api, LiteLLM hook).
+    # REQ-1.1 + REQ-5.2: empty / whitespace-only value MUST cause startup failure.
+    internal_secret: str = ""
+    # Zitadel issuer + audience for JWT validation (REQ-1.2, REQ-5.1).
+    zitadel_issuer: str = ""
+    zitadel_api_audience: str = ""
+    # Sliding-window rate limit per caller identity (REQ-4.3).
+    rate_limit_rpm: int = 600
+    # Redis URL for the rate limiter (REQ-4.1). Fail-open when unreachable (REQ-4.5).
+    redis_url: str = ""
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self) -> Settings:
+        """REQ-1.1 / REQ-5.2: fail-closed on missing required security config.
+
+        The service MUST exit non-zero at startup if INTERNAL_SECRET, ZITADEL_ISSUER,
+        ZITADEL_API_AUDIENCE, or REDIS_URL is empty / whitespace-only. This prevents
+        the F-001 / F-003-style fail-open bug where an unset secret silently disabled
+        auth.
+        """
+        missing: list[str] = []
+        if not self.internal_secret or not self.internal_secret.strip():
+            missing.append("INTERNAL_SECRET")
+        if not self.zitadel_issuer or not self.zitadel_issuer.strip():
+            missing.append("ZITADEL_ISSUER")
+        if not self.zitadel_api_audience or not self.zitadel_api_audience.strip():
+            missing.append("ZITADEL_API_AUDIENCE")
+        if not self.redis_url or not self.redis_url.strip():
+            missing.append("REDIS_URL")
+        if missing:
+            raise ValueError(
+                "Missing required security configuration (SPEC-SEC-010 REQ-5.2): "
+                + ", ".join(missing)
+            )
+        return self
 
 
 settings = Settings()

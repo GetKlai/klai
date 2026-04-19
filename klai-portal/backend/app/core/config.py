@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""
 
+    # SPEC-SEC-010 REQ-6.1: shared secret for X-Internal-Secret header sent to
+    # retrieval-api. Must match retrieval-api's RETRIEVAL_API_INTERNAL_SECRET.
+    # Kept separate from ``internal_secret`` (mailer → portal) so the two
+    # cross-service trust boundaries can be rotated independently.
+    retrieval_api_internal_secret: str = ""
+
     # MongoDB root URI for lazy LibreChat user ID mapping (KB-010).
     # Needs read access to all tenant databases (root user or klai_readonly role).
     # Required for GET /internal/v1/users/{librechat_user_id}/feature/knowledge.
