@@ -79,10 +79,6 @@ class SessionRecord:
         return cls(**data)
 
 
-class SessionNotFoundError(LookupError):
-    """Raised when a requested session key is missing from Redis."""
-
-
 class SessionDecryptError(RuntimeError):
     """Raised when a session blob cannot be decrypted (rotated key, corruption)."""
 

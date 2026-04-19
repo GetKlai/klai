@@ -61,14 +61,6 @@ async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
     return entries
 
 
-def clear_catalog_cache(org_id: str | None = None) -> None:
-    """Clear catalog cache. For testing and cache invalidation."""
-    if org_id:
-        _catalog_cache.pop(org_id, None)
-    else:
-        _catalog_cache.clear()
-
-
 @dataclass
 class KBEntry:
     """A knowledge base source with its label and description."""

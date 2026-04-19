@@ -11,7 +11,7 @@ from pydantic import SecretStr
 
 def mask_secret_str(
     logger: Any,
-    method_name: str,
+    _method_name: str,
     event_dict: structlog.types.EventDict,
 ) -> structlog.types.EventDict:
     """Replace any top-level SecretStr values in the event dict with '***'.
