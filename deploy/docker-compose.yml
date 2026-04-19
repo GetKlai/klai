@@ -535,14 +535,14 @@ services:
   # ─── Research: document Q&A service ─────────────────────────────────────
 
   docling-serve:
-    image: ghcr.io/docling-project/docling-serve:latest
+    image: ghcr.io/docling-project/docling-serve:v1.16.1
     restart: unless-stopped
     networks:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
 
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.4.17-e8299a4c3
     restart: unless-stopped
     environment:
       SEARXNG_SECRET: "${SEARXNG_SECRET}"
@@ -620,7 +620,7 @@ services:
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
-    image: gitea/gitea:latest
+    image: gitea/gitea:1.26.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -817,7 +817,7 @@ services:
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.1
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -834,7 +834,7 @@ services:
 
   # ─── FalkorDB (knowledge graph for Graphiti) ─────────────────────────────
   falkordb:
-    image: falkordb/falkordb:latest
+    image: falkordb/falkordb:v4.18.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379"
@@ -937,7 +937,7 @@ services:
 
   # ─── Crawl4AI (internal web crawler for klai-connector) ─────────────────────
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    image: unclecode/crawl4ai:0.8.6
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
