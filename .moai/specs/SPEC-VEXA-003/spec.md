@@ -1,7 +1,7 @@
 ---
 id: SPEC-VEXA-003
-version: "1.1"
-status: deployed-awaiting-e2e
+version: "1.2"
+status: completed
 created: 2026-04-19
 updated: 2026-04-19
 author: MoAI
@@ -15,7 +15,19 @@ deployed_commits:
   - 484fb816  # Phase 6 image tag pins
   - 9155355e  # deploy-notes runtime findings
   - 38efe04e  # defense-in-depth API_KEYS
-outstanding_gate: Real Google Meet E2E test (acceptance §I — audio + transcript round-trip) pending user-initiated Meet URL. All synthetic checks pass.
+  - 0fcbc729  # docs sync (SPEC statuses, VERSIONS, architecture)
+  - f05f6223  # portal-api webhook fallback to vexa_meeting_id
+e2e_validation: |
+  Real Google Meet test executed 2026-04-19T15:01Z on meet.google.com/cju-tqpa-ink (meeting id=6):
+  - Bot joined + admitted + active lifecycle (2m17s)
+  - Silero VAD speaker detection: SPEAKING_START/END events attributed to "Mark Vletter"
+  - Live Dutch transcription: "Best 1, 2, 3, 4, 5, 6, 7, 8, 9, 10. Ik vertel een Nederlands verhaal."
+    (language=nl, 16 words, 15.6s duration, 15.6s latency)
+  - Redis stream → meeting-api collector → vexa DB transcriptions row (meeting_id=6) VERIFIED
+  - /transcripts/google_meet/cju-tqpa-ink returns 200 with full metadata + speaker_events
+  - meeting-api fire_post_meeting_hooks → portal-api = 200 OK
+  - Initial portal-api handler dropped webhook (upstream payload missing native_meeting_id).
+    Fixed in f05f6223 — fallback lookup via vexa_meeting_id. Live-verified after CI rebuild.
 ---
 
 # SPEC-VEXA-003: Clean-Slate Rebuild on Upstream Vexa main (v0.10)
