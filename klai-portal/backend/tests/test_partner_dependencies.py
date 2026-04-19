@@ -288,3 +288,183 @@ def test_validate_kb_access_none_filters_by_level():
         rate_limit_rpm=60,
     )
     assert validate_kb_access(auth, None, required_level="read_write") == [20]
+
+
+# ---------------------------------------------------------------------------
+# SPEC-SEC-006: Widget JWT revocation via DB cross-check of widget_kb_access
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeWidget:
+    id: str = "widget-uuid-1"
+    widget_id: str = "wgt_abcdef0123456789"
+    org_id: int = 42
+
+
+_TEST_WIDGET_SECRET = "test-widget-secret-at-least-32-bytes-long"
+
+
+def _make_jwt(wgt_id: str = "wgt_abcdef0123456789", org_id: int = 42, kb_ids: list[int] | None = None) -> str:
+    """Encode a widget session JWT using the test settings secret."""
+    import jwt as _jwt
+
+    from app.core.config import settings
+
+    payload = {
+        "wgt_id": wgt_id,
+        "org_id": org_id,
+        "kb_ids": kb_ids if kb_ids is not None else [1, 2],
+    }
+    # Use the real secret if configured, otherwise a test stand-in.
+    secret = settings.widget_jwt_secret or _TEST_WIDGET_SECRET
+    return _jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _session_patches(widget_secret: str = _TEST_WIDGET_SECRET):
+    """Patch settings + redis pool + set_tenant for session-token auth tests.
+
+    Returns a tuple of context managers; callers enter them in a `with`.
+    """
+    return (
+        patch("app.api.partner_dependencies.settings.widget_jwt_secret", widget_secret),
+        patch("app.api.partner_dependencies.get_redis_pool", AsyncMock(return_value=None)),
+        patch("app.api.partner_dependencies.set_tenant", AsyncMock(return_value=None)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_token_all_kbs_valid_returns_full_scope():
+    """JWT with all kb_ids still present in widget_kb_access → kb_access has all."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt(kb_ids=[1, 2, 3])
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),  # org lookup
+            FakeResult([FakeWidget()]),  # widget lookup (set_tenant is patched)
+            FakeResult(rows=[1, 2, 3]),  # widget_kb_access kb_ids
+        ],
+    )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        result = await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert result.kb_access == {1: "read", 2: "read", 3: "read"}
+    assert result.org_id == 42
+    assert result.key_id == "wgt_abcdef0123456789"
+
+
+@pytest.mark.asyncio
+async def test_session_token_partial_revocation_narrows_scope():
+    """One of three KBs revoked → kb_access dict has remaining two entries."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt(kb_ids=[1, 2, 3])
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),
+            FakeResult([FakeWidget()]),
+            FakeResult(rows=[1, 3]),  # kb_id 2 revoked
+        ],
+    )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        result = await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert result.kb_access == {1: "read", 3: "read"}
+    assert 2 not in result.kb_access
+
+
+@pytest.mark.asyncio
+async def test_session_token_full_revocation_returns_401():
+    """All JWT kb_ids revoked (empty intersection) → 401 opaque."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt(kb_ids=[1, 2])
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),
+            FakeResult([FakeWidget()]),
+            FakeResult(rows=[]),  # all access revoked
+        ],
+    )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == {"error": {"type": "authentication_error", "message": "Invalid API key"}}
+
+
+@pytest.mark.asyncio
+async def test_session_token_disjoint_kbs_returns_401():
+    """JWT kb_ids disjoint from DB (e.g. stale JWT after KB swap) → 401."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt(kb_ids=[1, 2])
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),
+            FakeResult([FakeWidget()]),
+            FakeResult(rows=[99, 100]),  # DB has different kb_ids
+        ],
+    )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_session_token_widget_deleted_returns_401():
+    """Widget row gone (deleted entirely) → 401 opaque, same shape."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt()
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeOrg()]),
+            FakeResult(rows=[]),  # widget not found
+        ],
+    )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_session_token_missing_secret_returns_401():
+    """WIDGET_JWT_SECRET not configured → 401 (pre-existing behaviour, regression guard)."""
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt()
+    db = AsyncMock()
+
+    patches = _session_patches(widget_secret="")
+    with patches[0], patches[1], patches[2]:
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
