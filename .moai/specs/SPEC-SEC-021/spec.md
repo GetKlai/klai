@@ -1,7 +1,7 @@
 ---
 id: SPEC-SEC-021
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: draft (claims verified)
 created: 2026-04-19
 updated: 2026-04-19
 author: Mark Vletter
@@ -11,6 +11,12 @@ priority: high
 # SPEC-SEC-021: runtime-api achter docker-socket-proxy
 
 ## HISTORY
+
+### v0.2.0 (2026-04-19)
+- Verified the foundational claim: portal-api already uses `tecnativa/docker-socket-proxy:v0.4.2` at `docker-compose.yml:281-292` with whitelist `CONTAINERS=1 NETWORKS=1 POST=1 DELETE=1` on the `socket-proxy` network (`internal: true`). Portal-api consumes it via `DOCKER_HOST: tcp://docker-socket-proxy:2375` at line 316.
+- runtime-api at line 890-895 still uses direct mount: `/var/run/docker.sock:/var/run/docker.sock` + `group_add: ["988"]`. This is the target to migrate.
+- Only two other services mount the host socket: `docker-socket-proxy` (:ro, expected), `alloy` (:ro, for container metadata scraping — acceptable as read-only).
+- Approach simplifies: no NEW proxy service — attach runtime-api to the existing `socket-proxy` network.
 
 ### v0.1.0 (2026-04-19)
 - Initial draft. Based on audit finding V-002 / F-031 in `.moai/audit/08-vexa.md`.
@@ -73,12 +79,20 @@ Remove the direct `/var/run/docker.sock` bind-mount from the Vexa `runtime-api` 
 
 ---
 
-## Approach
+## Approach (simplified after claim verification)
 
-1. Add a new `docker-socket-proxy` service in `deploy/docker-compose.yml` (if not already shared with portal-api — check first). Image: `ghcr.io/tecnativa/docker-socket-proxy:latest`. Env: `CONTAINERS=1 POST=1 DELETE=1 NETWORKS=1`. Networks: new internal `vexa-docker-proxy` network.
-2. Attach runtime-api to `vexa-docker-proxy` network. Set `DOCKER_HOST=tcp://docker-socket-proxy:2375` in its env block. Remove volume mount + group_add.
-3. Deploy via CI compose-sync. Watch logs for docker API errors during bot spawn.
+The existing `docker-socket-proxy` service in `deploy/docker-compose.yml:281-292` already has the exact whitelist runtime-api needs (`CONTAINERS=1 NETWORKS=1 POST=1 DELETE=1`). No new service required.
+
+1. Attach `runtime-api` to the existing `socket-proxy` network (currently `internal: true` — must stay internal; both portal-api and runtime-api are permitted consumers).
+2. In `runtime-api` service block (`deploy/docker-compose.yml:890-895`):
+   - Add `DOCKER_HOST: tcp://docker-socket-proxy:2375` to `environment:`
+   - Remove `group_add: ["988"]`
+   - Remove the `/var/run/docker.sock:/var/run/docker.sock` volume mount
+   - Add `- socket-proxy` to `networks:`
+3. Deploy via CI compose-sync. Watch runtime-api logs for docker API errors during the first bot spawn.
 4. Document revert in `klai-infra/SERVERS.md` under "Vexa bot lifecycle".
+
+No extra proxy instances — portal-api and runtime-api share the same proxy. If per-service whitelisting ever becomes needed (e.g., runtime-api needs IMAGES=1 for container create from custom image), spin up a second proxy instance then.
 
 ---
 
