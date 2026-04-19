@@ -1,11 +1,12 @@
 ---
 id: SPEC-AUTH-007
-version: "0.1.0"
+version: "0.2.0"
 status: research
 created: "2026-04-19"
 updated: "2026-04-19"
 author: MoAI
 priority: P2
+related: [SPEC-AUTH-008]
 ---
 
 ## HISTORY
@@ -13,6 +14,11 @@ priority: P2
 | Date       | Version | Change                                                     |
 |------------|---------|------------------------------------------------------------|
 | 2026-04-19 | 0.1.0   | Initial research memo — BFF migration exploration          |
+| 2026-04-19 | 0.2.0   | Add pointer to SPEC-AUTH-008 (implementation SPEC)         |
+
+> **This SPEC is a research memo: it documents the *why*. The implementation is
+> tracked in [SPEC-AUTH-008](../SPEC-AUTH-008/spec.md) — the *how*. Treat this
+> file as context for that SPEC, not as an action list.**
 
 # SPEC-AUTH-007: Research — Backend-for-Frontend (BFF) Auth Migration
 
