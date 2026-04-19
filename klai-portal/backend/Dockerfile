@@ -3,7 +3,11 @@ FROM python:3.13-slim AS builder
 # Install uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-WORKDIR /build
+# IMPORTANT: the venv lives at /app/.venv in BOTH stages. uv writes absolute
+# shebangs into the console scripts (e.g. #!/app/.venv/bin/python3.13), so the
+# build-stage and runtime-stage path MUST match — otherwise every script fails
+# with "no such file or directory" at exec.
+WORKDIR /app
 
 # Install deps from the lockfile. Copying only pyproject + lockfile first lets
 # Docker cache the dependency layer until deps actually change.
@@ -25,8 +29,8 @@ WORKDIR /app
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the prebuilt virtualenv from the builder
-COPY --from=builder /build/.venv /app/.venv
+# Copy the prebuilt virtualenv from the builder (same path → shebangs stay valid)
+COPY --from=builder /app/.venv /app/.venv
 
 # Make the venv the default python on PATH
 ENV PATH="/app/.venv/bin:${PATH}" \
