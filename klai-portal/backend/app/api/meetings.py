@@ -465,9 +465,7 @@ class VexaWebhookPayload(BaseModel):
                 "native_meeting_id": meeting.get("native_meeting_id"),
                 "status": meeting.get("status"),
                 "ended_at": meeting.get("end_time"),
-                "recording_id": recording.get("id")
-                if isinstance(recording, dict)
-                else None,
+                "recording_id": recording.get("id") if isinstance(recording, dict) else None,
             }
 
         # Shape 2: legacy envelope — `meeting` at top level.
