@@ -249,6 +249,21 @@ the correct value)
 issues), the commit log of `klai/main-YYMMDD-<sha>` SHALL contain a note explaining why,
 and the 3-participant test SHALL still pass on the unmodified upstream bot code.
 
+### Live validation (2026-04-19)
+
+Executed against `meet.google.com/cju-tqpa-ink` (meeting_id=6) with a single real human
+speaker (Mark Vletter). Dutch audio captured and transcribed end-to-end:
+
+- **Transcript written**: `"Best 1, 2, 3, 4, 5, 6, 7, 8, 9, 10. Ik vertel een Nederlands verhaal."`
+  language=`nl`, 16 words, 15.6 s duration, 15.6 s latency.
+- **Speaker attribution**: `SPEAKER_START`/`SPEAKER_END` events bound to `participant_id =
+  spaces/nM9-lkRF_wwB/devices/136` → `participant_name = "Mark Vletter"`.
+- **No `track.stop()` / renegotiation errors** in `6b708669efca86bc50c9` container logs.
+
+3-participant count could not be validated in this session (single-human test). Treat this
+sub-criterion as **pending** — runs in the next multi-participant demo. All other §I
+criteria met with upstream's unmodified bot code (fork fixes were dropped per plan.md §1.5).
+
 ---
 
 ## J. Database state (REQ-N-004)

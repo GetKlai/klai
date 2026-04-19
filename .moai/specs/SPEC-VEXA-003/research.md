@@ -347,6 +347,19 @@ Signing only applies to **per-client webhooks** (user-configured via
 **internal hooks** (`POST_MEETING_HOOKS` env var, used by Klai) receive the same
 envelope payload but **without HMAC signing** unless we configure a secret.
 
+**Discovered live 2026-04-19**: `fire_post_meeting_hooks` in
+`services/meeting-api/meeting_api/post_meeting.py` does **not** include
+`meeting.native_meeting_id` in the payload — only `meeting.id`,
+`meeting.user_id`, `meeting.user_email`, `meeting.platform`, `meeting.status`,
+`meeting.duration_seconds`, `meeting.start_time`, `meeting.end_time`,
+`meeting.created_at`, `meeting.transcription_enabled`. The schema above
+documents the full `clean_meeting_data()` shape but the internal-hooks path
+builds a narrower envelope. **Implication**: portal-api's correlation
+must not rely on `native_meeting_id` for this event — fall back to
+`vexa_meeting_id` (i.e. `data.meeting.id`) which is unambiguous. Applied in
+commit `f05f6223`; regression guarded by `TestUpstreamFirePostMeetingHooksShape`
+in `test_vexa_webhook.py`.
+
 Implication for Klai: Portal-api currently authenticates via source-IP allowlist
 (`172.x/10.x/192.168.x`) + optional bearer token. Upstream does NOT add a signature
 on internal POST_MEETING_HOOKS automatically. To gain HMAC verification, we can either:

@@ -556,6 +556,27 @@ Meetings UI stays on klai-portal.
 - Manual portal smoke test (preview env or staging) confirms start-bot → call reaches
   meeting-api placeholder (can stub with `httpbin`)
 
+### 4.5 Phase 4 outcome (2026-04-19)
+
+Live E2E test surfaced an **upstream payload shape gap** in `fire_post_meeting_hooks`:
+the `POST_MEETING_HOOKS` envelope contains `meeting.id` and `meeting.platform` but
+**not** `meeting.native_meeting_id`. Portal-api's handler used to drop such webhooks
+with `"no platform/native_meeting_id, ignoring"`, breaking the notify-on-complete
+contract.
+
+Fix (commit `f05f6223`):
+- `VexaWebhookPayload._normalize` unchanged — it still extracts `vexa_meeting_id` from
+  `data.meeting.id`.
+- `vexa_webhook()` handler now falls back to `VexaMeeting.vexa_meeting_id` correlation
+  when `native_meeting_id` is absent. Direct (platform, native_meeting_id) lookup path
+  is preserved as fallback for pre-bot-spawn status events.
+- `test_vexa_webhook.py::TestUpstreamFirePostMeetingHooksShape` guards the fixture
+  against silent regression.
+
+Verified live: post-fix webhook with real payload → portal-api log line switched from
+`"no platform/native_meeting_id, ignoring"` to `"no matching meeting"` with
+`vexa_meeting_id: 6` shown — handler parsed, gate passed, lookup attempted.
+
 ---
 
 ## Phase 5 (Priority High) — Scribe integration changes
