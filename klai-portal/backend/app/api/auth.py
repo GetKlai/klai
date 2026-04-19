@@ -9,7 +9,7 @@ POST /api/auth/totp/setup     -- initiate TOTP registration (requires Bearer tok
 POST /api/auth/totp/confirm   -- activate TOTP after scanning QR (requires Bearer token)
 
 The authRequestId is issued by Zitadel when it redirects to the custom login UI:
-  https://getklai.getklai.com/login?authRequest=<id>
+  https://my.getklai.com/login?authRequest=<id>
 
 The service account (zitadel_pat) must have the ``IAM_LOGIN_CLIENT`` role in Zitadel
 for the finalize step to succeed.
@@ -21,7 +21,7 @@ into the ``klai_sso`` cookie using Fernet symmetric encryption.  The cookie is s
 ``.getklai.com`` so all subdomains can send it.
 
 When LibreChat later opens an OIDC flow in an iframe, Zitadel redirects to
-``getklai.getklai.com/login?authRequest=<id>``.  The login page sends the cookie to
+``my.getklai.com/login?authRequest=<id>``.  The login page sends the cookie to
 ``/api/auth/sso-complete``, which decrypts it and reuses the session to finalize the auth
 request automatically -- no second password prompt.
 
