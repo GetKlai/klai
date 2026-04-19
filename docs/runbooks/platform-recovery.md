@@ -78,36 +78,85 @@ my.getklai.com".
 
 ## zitadel-pat-rotation
 
-**Situation:** `create_session failed 401: Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs. All users get login errors.
+**Situation:** `Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs (PAT
+expired or revoked), or scheduled quarterly rotation per
+`runbooks/credential-rotation.md`.
 
-### Step 1 — Generate a new PAT
+Applies to both Zitadel PATs (identical procedure, different SA IDs):
 
-Go to `https://auth.getklai.com/ui/console` (if Login V2 blocks you, see [#zitadel-login-v2-recovery](#zitadel-login-v2-recovery) above).
+| PAT | SA ID | SOPS key | Container to recreate |
+|---|---|---|---|
+| `PORTAL_API_ZITADEL_PAT` | `362780577813757958` | same | `portal-api` (recreate) |
+| `ZITADEL_ADMIN_PAT` | `369320953139691537` | same | none (consumed by runbooks/CI only) |
 
-Navigate to **Users** → **Service Accounts** tab → **Portal API** → **Personal Access Tokens** → **+ New** — copy the token value (shown once only).
+### Step 1 — Generate new PAT via API
 
-### Step 2 — Apply to running container
-
-```bash
-# Use sed to update the var in /opt/klai/.env
-sed -i 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' /opt/klai/.env
-cd /opt/klai && docker compose up -d portal-api   # must be up -d, not restart
-docker exec klai-core-portal-api-1 env | grep PORTAL_API_ZITADEL_PAT  # verify
-```
-
-### Step 3 — Verify the new PAT works
+Use `klai-admin-sa`'s PAT to mint a new one. If that PAT is itself
+expired, fall back to the Zitadel console (Users → Service Accounts →
+`klai-admin-sa` → Personal Access Tokens → + New).
 
 ```bash
-ssh core-01 "curl -s https://auth.getklai.com/v2/sessions \
-  -H 'Authorization: Bearer <new-token>' \
-  -H 'Content-Type: application/json' \
-  -d '{\"checks\":{\"user\":{\"loginName\":\"test\"},\"password\":{\"password\":\"test\"}}}'"
-# Expected: {"code":5, "message":"User could not be found"} — not 401
+ADMIN_PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+SA_ID="362780577813757958"   # change for whichever PAT you rotate
+EXPIRY=$(date -u -d "+1 year" +"%Y-%m-%dT%H:%M:%SZ")
+
+curl -sf -X POST "https://auth.getklai.com/management/v1/users/$SA_ID/pats" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846" \
+  -H "Content-Type: application/json" \
+  -d "{\"expirationDate\": \"$EXPIRY\"}"
+# Returns: {"tokenId": "<new-id>", "token": "<new-pat>", ...}
+# Save both — tokenId is needed for revocation in Step 5.
 ```
 
-### Step 4 — Update .env.sops
+### Step 2 — Update SOPS (server-side, no local age key needed)
 
-Run from `/tmp` to avoid `.sops.yaml` path mismatch:
+Use the server-side SOPS procedure. See
+`.claude/rules/klai/infra/sops-env.md` § "Non-interactive SOPS (for agents)".
+Replace the old value with the new token:
+
+```bash
+# In short: scp SOPS file + .sops.yaml to core-01:/tmp/klai-sops/core-01/,
+# decrypt, sed-replace the var, encrypt in-place, scp back, commit, push.
+# The sync-env GitHub Action then updates /opt/klai/.env automatically.
+```
+
+### Step 3 — Recreate portal-api (only for PORTAL_API_ZITADEL_PAT)
+
+```bash
+ssh core-01 "cd /opt/klai && docker compose up -d portal-api"
+ssh core-01 "docker logs --tail 10 klai-core-portal-api-1 | grep 'Zitadel PAT validated'"
+# Expected: "Zitadel PAT validated successfully"
+```
+
+`ZITADEL_ADMIN_PAT` needs no container restart — it is only read ad-hoc.
+
+### Step 4 — Verify the new PAT works
+
+```bash
+NEW_PAT=$(ssh core-01 "sudo grep '^PORTAL_API_ZITADEL_PAT=' /opt/klai/.env | cut -d= -f2-")
+curl -sf "https://auth.getklai.com/auth/v1/users/me" \
+  -H "Authorization: Bearer $NEW_PAT" | head -c 200
+# Expected: {"user":{"id":"362780577813757958",...}} — not 401
+```
+
+### Step 5 — Revoke the old PAT
+
+```bash
+ADMIN_PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+curl -sf -X DELETE "https://auth.getklai.com/management/v1/users/$SA_ID/pats/<OLD_TOKEN_ID>" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846"
+# Verify: list should show only the new PAT
+curl -sf -X POST "https://auth.getklai.com/management/v1/users/$SA_ID/pats/_search" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+### Legacy fallback (macOS SOPS with local age key)
+
+Only if the server is unreachable. Run from `/tmp`:
 
 ```bash
 cd /tmp
