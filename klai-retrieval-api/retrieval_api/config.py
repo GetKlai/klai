@@ -86,18 +86,22 @@ class Settings(BaseSettings):
     def _validate_security_settings(self) -> Settings:
         """REQ-1.1 / REQ-5.2: fail-closed on missing required security config.
 
-        The service MUST exit non-zero at startup if INTERNAL_SECRET, ZITADEL_ISSUER,
-        ZITADEL_API_AUDIENCE, or REDIS_URL is empty / whitespace-only. This prevents
-        the F-001 / F-003-style fail-open bug where an unset secret silently disabled
-        auth.
+        Required (fail-closed): INTERNAL_SECRET — without it, auth is bypassed.
+        Required (fail-closed): REDIS_URL — rate limiter fails open to identity
+            check only, but Redis config is still expected.
+
+        Optional (graceful degrade):
+          ZITADEL_ISSUER + ZITADEL_API_AUDIENCE — if either is empty, the JWT
+          auth path is disabled entirely. All requests MUST then come with a
+          valid X-Internal-Secret. Bearer JWTs are rejected with 401.
+
+          This is the correct state until SEC-012 lands: retrieval-api is only
+          called by trusted services (portal-api, focus, LiteLLM hook) using
+          the internal-secret path; no end-user JWT flows through it yet.
         """
         missing: list[str] = []
         if not self.internal_secret or not self.internal_secret.strip():
             missing.append("INTERNAL_SECRET")
-        if not self.zitadel_issuer or not self.zitadel_issuer.strip():
-            missing.append("ZITADEL_ISSUER")
-        if not self.zitadel_api_audience or not self.zitadel_api_audience.strip():
-            missing.append("ZITADEL_API_AUDIENCE")
         if not self.redis_url or not self.redis_url.strip():
             missing.append("REDIS_URL")
         if missing:
@@ -106,6 +110,16 @@ class Settings(BaseSettings):
                 + ", ".join(missing)
             )
         return self
+
+    @property
+    def jwt_auth_enabled(self) -> bool:
+        """True when both Zitadel issuer and audience are configured."""
+        return bool(
+            self.zitadel_issuer
+            and self.zitadel_issuer.strip()
+            and self.zitadel_api_audience
+            and self.zitadel_api_audience.strip()
+        )
 
 
 settings = Settings()
