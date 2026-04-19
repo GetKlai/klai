@@ -83,9 +83,21 @@ class Settings(BaseSettings):
         clear message naming the env var (the value itself is never logged).
         """
         if not self.knowledge_ingest_secret or not self.knowledge_ingest_secret.strip():
-            raise ValueError(
-                "Missing required: KNOWLEDGE_INGEST_SECRET (SPEC-SEC-011)"
-            )
+            raise ValueError("Missing required: KNOWLEDGE_INGEST_SECRET (SPEC-SEC-011)")
+        return self
+
+    @model_validator(mode="after")
+    def _require_portal_internal_token(self) -> Settings:
+        """SEC-014: fail-closed on empty/missing PORTAL_INTERNAL_TOKEN.
+
+        Same class of bug as F-003/F-012 but for the ingest→portal direction:
+        routes/taxonomy.py:_verify_internal_token historically returned without
+        check when the env var was empty, silently accepting any caller. Now
+        that portal taxonomy endpoints are actively consumed, missing config
+        must fail at startup rather than silently open the surface.
+        """
+        if not self.portal_internal_token or not self.portal_internal_token.strip():
+            raise ValueError("Missing required: PORTAL_INTERNAL_TOKEN (SEC-014)")
         return self
 
 

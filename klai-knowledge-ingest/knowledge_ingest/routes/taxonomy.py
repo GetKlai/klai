@@ -79,12 +79,15 @@ class BootstrapResponse(BaseModel):
 
 
 def _verify_internal_token(request: Request) -> None:
-    """Verify X-Internal-Token header."""
-    if not settings.portal_internal_token:
-        return
-    token = request.headers.get("x-internal-token", "")
+    """Verify X-Internal-Token header.
+
+    SEC-014: fail-closed. Empty/missing PORTAL_INTERNAL_TOKEN is caught at
+    startup by the pydantic validator in knowledge_ingest.config — here the
+    only failure mode is a wrong or absent header, which always returns 401.
+    """
     import hmac
 
+    token = request.headers.get("x-internal-token", "")
     if not token or not hmac.compare_digest(token, settings.portal_internal_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -367,7 +370,8 @@ class AutoCategoriseJobResponse(BaseModel):
     status_code=202,
 )
 async def taxonomy_auto_categorise_job(
-    request: Request, req: AutoCategoriseJobRequest,
+    request: Request,
+    req: AutoCategoriseJobRequest,
 ) -> AutoCategoriseJobResponse:
     """Enqueue an auto-categorise background job via Procrastinate.
 
@@ -440,6 +444,7 @@ async def taxonomy_top_tags(
     ]
     if taxonomy_node_id is not None:
         from qdrant_client.models import MatchAny
+
         must_conditions.append(
             FieldCondition(
                 key="taxonomy_node_ids",
@@ -644,7 +649,8 @@ async def _auto_categorise_impl(
 
 @router.post("/ingest/v1/taxonomy/auto-categorise", response_model=AutoCategoriseResponse)
 async def taxonomy_auto_categorise(
-    request: Request, req: AutoCategoriseRequest,
+    request: Request,
+    req: AutoCategoriseRequest,
 ) -> AutoCategoriseResponse:
     """Bulk assign taxonomy_node_id to existing documents matching a cluster centroid.
 
