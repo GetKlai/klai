@@ -32,6 +32,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   semgrep:
     runs-on: ubuntu-latest

@@ -23,6 +23,10 @@ permissions:
   contents: read
   security-events: write
 
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   enumerate:
     name: Enumerate external images
@@ -90,7 +94,7 @@ jobs:
           exit-code: '0'  # Don't fail the job — Security tab is the alert surface
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always() && hashFiles(format('trivy-{0}.sarif', steps.safe.outputs.name)) != ''
         with:
           sarif_file: 'trivy-${{ steps.safe.outputs.name }}.sarif'
