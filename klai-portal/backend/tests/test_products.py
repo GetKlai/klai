@@ -14,6 +14,18 @@ from sqlalchemy import select
 from app.core.plans import PLAN_PRODUCTS, get_plan_products
 from app.models.products import PortalUserProduct
 
+
+def _make_db_mock() -> AsyncMock:
+    """Return an AsyncMock DB session with the sync ``add()`` method overridden.
+
+    SQLAlchemy's ``Session.add()`` is synchronous; ``AsyncMock`` would wrap it
+    as a coroutine and leak a ``coroutine never awaited`` RuntimeWarning at GC.
+    """
+    db = AsyncMock()
+    db.add = MagicMock()
+    return db
+
+
 # ---------------------------------------------------------------------------
 # TS-001: PLAN_PRODUCTS mapping
 # ---------------------------------------------------------------------------
@@ -165,7 +177,7 @@ class TestAssignProduct:
         org = self._mock_org(plan="professional")
         caller = self._mock_caller()
 
-        mock_db = AsyncMock()
+        mock_db = _make_db_mock()
         # scalar() for user lookup returns a user
         mock_user = MagicMock()
         # scalar() for duplicate check returns None (no duplicate)
