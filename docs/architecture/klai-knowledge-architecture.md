@@ -1518,13 +1518,14 @@ SearXNG's privacy posture is fine — self-hosted, queries routed via server IP,
 
 Vexa meeting recordings are treated as ephemeral data:
 
-1. Recording captured in vexa-bot-manager container at `/var/lib/vexa/recordings/`
-2. Transcription completed by Whisper
-3. Recording automatically deleted after successful transcription (GDPR Art. 5(1)(c) data minimization)
+1. Recording captured in vexa-bot container at `/data/recordings/` (upstream main v0.10 path post SPEC-VEXA-003; previously `/var/lib/vexa/recordings/` on `bot-manager`).
+   In the current deploy `RECORDING_ENABLED=false` so this path is inert — audio is streamed directly to the transcription-service without local persistence.
+2. Transcription completed by `transcription-service` (Vexa faster-whisper workers on gpu-01 via gpu-tunnel `172.18.0.1:8000`).
+3. Any recording that IS stored would be cleaned up post-transcription (GDPR Art. 5(1)(c) data minimization). Not exercised while `RECORDING_ENABLED=false`.
 
 Implementation:
-- Cleanup via Docker SDK `container.exec_run()` (same pattern as `provisioning.py`)
-- Background cleanup task: recordings >30 min old with `status="done"` and `recording_deleted=False`
+- Meeting orchestrator: `meeting-api` (replaces the former `bot-manager`/`vexa-meeting-api:klai` internal build) — spawns and tears down `vexa-bot` containers via `runtime-api` and the Docker socket.
+- Background cleanup task in portal-api: recordings >30 min old with `status="done"` and `recording_deleted=False`
 - Tracked via `VexaMeeting.recording_deleted` and `recording_deleted_at` columns
 - Graceful failure: if cleanup fails, transcription pipeline continues
 

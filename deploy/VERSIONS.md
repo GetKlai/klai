@@ -6,7 +6,9 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 
 **Exception — internal CI-deployed services:** images under `ghcr.io/getklai/*` (portal-api, research-api, retrieval-api, knowledge-ingest, klai-connector, klai-mailer, klai-docs, klai-knowledge-mcp, scribe-api, caddy-hetzner, whisper-server) use `:latest` because GitHub Actions rebuild and re-push on every commit to `main` in their respective repos. Each CI workflow also tags the build with `:${github.sha}` so rollbacks are possible via explicit SHA pin. These are NOT production `:latest` anti-patterns — they are continuous-deployment rolling tags owned by our own CI pipelines.
 
-**Exception — local builds:** `vexa-runtime-api:klai`, `vexa-meeting-api:klai`, `klai/retrieval-api:local`, and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
+**Exception — local builds:** `klai/retrieval-api:local` and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
+
+**Exception — Vexa stack (SPEC-VEXA-003, 2026-04-19):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot`, `vexaai/transcription-service` are currently on `0.10.0-260419-1129`. Built locally on core-01 and gpu-01 from `Vexa-ai/vexa` upstream main `f0756bf`. Follow upstream's `<semver>-YYMMDD-HHMM` build convention; `deploy/check-image-tags.sh` enforces this in pre-commit. Rebuild cadence: monthly or when upstream ships a material fix (see deploy-notes in `.moai/specs/SPEC-VEXA-003/`).
 
 ---
 
@@ -75,7 +77,8 @@ Automated dependency updates are handled by Dependabot / Renovate. Upgrades foll
 |---|---|---|
 | `tei` | `ghcr.io/huggingface/text-embeddings-inference:1.9` | BGE-M3 dense embeddings. **Output-dimension critical** — verify bge-m3 embedding parity (same vector output for same input) before any upgrade, otherwise retrieval scores silently drift. |
 | `infinity` | `michaelf34/infinity:0.0.77` | BGE reranker-v2-m3. Upstream slowing (last release Aug 2025). |
-| `whisper-server` | `ghcr.io/getklai/whisper-server:latest` | Internal build. `faster-whisper` requires CUDA 12 + cuDNN 9. |
+| `transcription-worker-1`, `transcription-worker-2` | `vexaai/transcription-service:0.10.0-260419-1129` | Vexa transcription-service (SPEC-VEXA-003 §3.4). Replaces the legacy custom `whisper-server` 146-line Python script. `faster-whisper` + Silero VAD + hallucination detection + two-tier admission (realtime/deferred) behind Nginx LB. CUDA 12.3.2 + cuDNN 9. Host port `127.0.0.1:8000` retained so `gpu-tunnel.service` and all consumer URLs stay unchanged. |
+| `transcription-api` | `nginx:1.27-alpine` | Least-connections load balancer in front of the two CUDA workers. Config at `deploy/vexa-transcription/nginx.conf`. |
 | `bge-m3-sparse` | built from `./bge-m3-sparse` | Local build. Sparse embeddings sidecar for hybrid retrieval. |
 
 ---

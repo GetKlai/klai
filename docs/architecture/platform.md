@@ -197,7 +197,7 @@ Added early, already working in another stack. UI likely custom-built. Architect
 
 **Data Minimization (Art. 5(1)(c))**
 - Vexa recordings automatically deleted after successful transcription
-- Ephemeral storage in vexa-bot-manager container (`/var/lib/vexa/recordings/`)
+- Ephemeral storage in vexa-bot container (`/data/recordings/` — upstream main v0.10 path post SPEC-VEXA-003)
 - Background cleanup task: recordings >30 min old with `status="done"` and `recording_deleted=False`
 - Tracked via `VexaMeeting.recording_deleted` and `recording_deleted_at` columns
 

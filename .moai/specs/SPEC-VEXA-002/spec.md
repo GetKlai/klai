@@ -1,11 +1,13 @@
 ---
 id: SPEC-VEXA-002
-version: "1.0"
-status: draft
+version: "1.1"
+status: cancelled
 created: 2026-04-02
+updated: 2026-04-19
 author: MoAI
 priority: medium
 depends_on: SPEC-VEXA-001
+cancelled_reason: Folded into SPEC-VEXA-003 — transcription-service migration shipped as part of the clean-slate rebuild on 2026-04-19 (Phase 6f).
 ---
 
 # SPEC-VEXA-002: Vexa Transcription-Service Migratie

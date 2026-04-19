@@ -1,11 +1,12 @@
 ---
 id: SPEC-VEXA-001
-version: "1.4"
-status: completed
+version: "1.5"
+status: superseded
 created: 2026-04-02
-updated: 2026-04-02
+updated: 2026-04-19
 author: MoAI
 priority: high
+superseded_by: SPEC-VEXA-003
 ---
 
 # SPEC-VEXA-001: Vexa Agentic-Runtime Migratie
