@@ -26,24 +26,43 @@ docker exec $POSTGRES psql -U zitadel -d zitadel -c \
 
 Fix whatever caused portal login to break (missing env var, crashed container, etc.).
 
-### Step 3 — Re-enable Login V2
+### Step 3 — Re-enable Login V2 via the Zitadel Feature API
 
-Write to a file to avoid shell quoting problems:
+**Do NOT directly UPDATE the projection table.** Projections are derived from
+events in `eventstore.events2`; a direct UPDATE works temporarily but is
+overwritten on the next projection rebuild (upgrade, `projection truncate`,
+etc). Use the v2 Feature API — it writes a new event AND updates the
+projection in one atomic step.
 
 ```bash
-cat > /tmp/fix_login_v2.sql << 'EOF'
-UPDATE projections.instance_features5
-SET value = '{"base_uri": {"Host": "my.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
-    change_date = NOW(),
-    sequence = sequence + 1
-WHERE instance_id = '362757920133218310' AND key = 'login_v2';
-EOF
-POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
-docker cp /tmp/fix_login_v2.sql $POSTGRES:/tmp/fix_login_v2.sql
-docker exec $POSTGRES psql -U zitadel -d zitadel -f /tmp/fix_login_v2.sql
+# Pull the portal-api PAT (has IAM_OWNER/IAM_LOGIN_CLIENT; re-use for admin calls)
+PAT=$(ssh core-01 'docker exec klai-core-portal-api-1 printenv PORTAL_API_ZITADEL_PAT')
+
+# PUT — idempotent, writes event feature.instance.login_v2.set + updates projection
+curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
+  -H "Authorization: Bearer $PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"loginV2": {"required": true, "baseUri": "https://my.getklai.com"}}'
+
+# Verify event landed (expect a new feature.instance.login_v2.set row with my.getklai.com)
+ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d zitadel -c \
+  \"SELECT created_at, payload FROM eventstore.events2 \
+    WHERE event_type = 'feature.instance.login_v2.set' \
+    ORDER BY created_at DESC LIMIT 1;\""
+
+# Verify live OIDC flow hits my.getklai.com (not getklai.getklai.com)
+curl -s -o /dev/null -w '%{redirect_url}\n' \
+  "https://auth.getklai.com/oauth/v2/authorize?response_type=code&client_id=369262708920483857&redirect_uri=https%3A%2F%2Fmy.getklai.com%2Fapi%2Fauth%2Foidc%2Fcallback&scope=openid&state=x&code_challenge=x&code_challenge_method=S256"
+# Expected: https://my.getklai.com/login?authRequest=V2_...
 ```
 
-**Critical:** The value uses Go's `url.URL` struct serialization — do not abbreviate or change the structure. If you get this wrong, the projection row is written with `value = null` and Login V2 has no redirect target.
+**Why PUT, not PATCH:** Zitadel v2 API rejects PATCH on this endpoint (`Method
+Not Allowed`). PUT is idempotent — re-running it returns `No changes` if the
+state already matches.
+
+**Never** use `baseURI: "https://getklai.getklai.com"` or any `{tenant}.getklai.com`.
+See `.claude/rules/klai/platform/zitadel.md` § "Login V2 base_uri must be
+my.getklai.com".
 
 **Zitadel instance constants (core-01, do not guess):**
 
