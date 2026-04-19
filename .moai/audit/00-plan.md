@@ -1,7 +1,7 @@
 # Klai — Security, Code & Dead Code Audit Plan
 
 **Start:** 2026-04-19
-**Laatst bijgewerkt:** 2026-04-19 — SEC-023 BFF-proxy + SEC-018 Dockerfile-audit LIVE. Resterende tickets zijn low-prio of externe repo.
+**Laatst bijgewerkt:** 2026-04-19 — SEC-012 + SEC-014 + SEC-018 (core-01 + gpu-01) + SEC-023 LIVE. Kritische scope dicht. Resterende 5 tickets zijn defense-in-depth (SEC-004), externe repo (SEC-020), infra SPEC (SEC-021/022) of E2E-verificatie (#31) + non-urgent (#32).
 **Werklocatie:** `.moai/audit/`
 **Scope:** hele klai-monorepo (13 sub-repos)
 
@@ -18,7 +18,7 @@
 | **6 — Dead code** | **✅ completed** | `07-dead-code.md` | **29** (22 Python + 7 TS; DEAD-008 false positive — deferred feature) |
 | **Vexa audit** | **✅ completed** | `08-vexa.md` | **8** (V-001..V-008 / F-030..F-037; 2 HIGH) |
 | **BFF-proxy gap** | **✅ identified + fixed** | `09-bff-proxy-gap.md` | F-038 (SEC-023 LIVE) |
-| 7 — Synthesiseer | **in_progress (living)** | `99-fix-roadmap.md` | 13 fix-groepen DONE + 4 open (alle externe repo of low-prio) |
+| 7 — Synthesiseer | **in_progress (living)** | `99-fix-roadmap.md` | 15 fix-groepen DONE + 5 open (SEC-004 defense-in-depth middleware, SEC-020 externe repo, SEC-021/022 infra SPEC, #31 E2E verify) |
 
 **Pre-work status:**
 - [x] PRE-A — PG-role `bypassrls` = false voor `portal_api` ✓
@@ -37,12 +37,14 @@
 - [x] **SEC-016** Fase 4 noqa+encoding — LIVE
 - [x] **SEC-018** Monorepo-wide Dockerfile USER audit — LIVE (11 van 12 non-root; caddy intentional-root gedocumenteerd)
 - [x] **SEC-019** Dead-code cleanup Python+frontend (~1880 LOC) — LIVE
-- [x] **SEC-023** Internal services BFF proxy (F-038) — LIVE (portal-api proxy voor Focus/Scribe/Docs)
-- [ ] **SEC-012** JWT audience research-api — OPEN, defense-in-depth na SEC-023 (minder urgent — services niet meer direct extern bereikbaar)
-- [ ] **SEC-004** Defense-in-depth middleware focus — OPEN, dependency op SEC-012
+- [x] **SEC-023** Internal services BFF proxy (F-038) — LIVE (portal-api proxy voor Focus/Scribe/Docs) + CSRF review (al afgedekt)
+- [x] **SEC-012** JWT audience research-api — LIVE, smoke-tested (401 op bogus bearer). Scribe-deel superseded door SPEC-VEXA-003.
+- [ ] **SEC-004** Defense-in-depth middleware focus/scribe — OPEN, nu unblocked (dependency SEC-012 landed). Low-risk: huidige routes hebben al auth-deps; middleware is safety-net voor toekomstige PRs.
 - [ ] **SEC-020** vexa-bot-manager external auth audit — OPEN (externe repo, aparte pass). docs-app `lib/auth.ts` deel afgerond (BFF-flow werkt).
 - [ ] **SEC-021** runtime-api docker-socket-proxy migratie (F-031) — OPEN, infra SPEC nodig
 - [ ] **SEC-022** vexa-bots network egress check (F-037) — OPEN
+- [ ] **Task #31** SEC-023 end-to-end Playwright verify — OPEN (requires user login credentials)
+- [ ] **Task #32** BFF proxy streaming upload body — OPEN, non-urgent (huidige uploads gaan niet via BFF proxy)
 - [ ] **DEAD-* batch** config+connector dead code — OPEN, pending user review
 
 ## Principe
