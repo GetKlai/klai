@@ -52,9 +52,12 @@ router = APIRouter()
 
 
 def _verify_internal_secret(request: Request) -> None:
-    """Verify X-Internal-Secret header for service-to-service calls."""
-    if not settings.knowledge_ingest_secret:
-        return
+    """Verify X-Internal-Secret header for service-to-service calls.
+
+    SPEC-SEC-011: no fail-open branch. The config validator guarantees the
+    secret is non-empty at import time, so missing or mismatched headers
+    always raise 401 (constant-time comparison via :func:`hmac.compare_digest`).
+    """
     secret = request.headers.get("x-internal-secret", "")
     if not hmac.compare_digest(secret, settings.knowledge_ingest_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")

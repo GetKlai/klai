@@ -22,6 +22,8 @@ class TestAutoCategoriseJobEndpoint:
         mock_proc_app.run_auto_categorise = mock_task
 
         with patch("knowledge_ingest.enrichment_tasks.get_app", return_value=mock_proc_app):
+            # SPEC-SEC-011: ``client`` fixture sets the default
+            # ``X-Internal-Secret`` header; no per-request override needed.
             resp = client.post(
                 "/ingest/v1/taxonomy/auto-categorise-job",
                 json={
@@ -30,7 +32,6 @@ class TestAutoCategoriseJobEndpoint:
                     "node_id": 5,
                     "cluster_centroid": [0.1, 0.2, 0.3],
                 },
-                headers={"X-Internal-Secret": ""},
             )
 
         assert resp.status_code == 202
@@ -48,6 +49,7 @@ class TestAutoCategoriseJobEndpoint:
         mock_proc_app.run_auto_categorise = mock_task
 
         with patch("knowledge_ingest.enrichment_tasks.get_app", return_value=mock_proc_app):
+            # SPEC-SEC-011: default header comes from the ``client`` fixture.
             resp = client.post(
                 "/ingest/v1/taxonomy/auto-categorise-job",
                 json={
@@ -56,7 +58,6 @@ class TestAutoCategoriseJobEndpoint:
                     "node_id": 10,
                     "cluster_centroid": None,
                 },
-                headers={"X-Internal-Secret": ""},
             )
 
         assert resp.status_code == 202

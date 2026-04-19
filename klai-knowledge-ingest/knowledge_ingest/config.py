@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -68,6 +71,22 @@ class Settings(BaseSettings):
     taxonomy_centroid_max_age_hours: int = 48
 
     model_config = {"env_file": ".env"}
+
+    @model_validator(mode="after")
+    def _require_knowledge_ingest_secret(self) -> Settings:
+        """SPEC-SEC-011: fail-closed on empty/missing KNOWLEDGE_INGEST_SECRET.
+
+        Without this, the middleware and the per-route ``_verify_internal_secret``
+        helper both historically short-circuited to allow all traffic — a single
+        missing env var disabled every auth layer simultaneously. This validator
+        makes the secret a required configuration value; startup aborts with a
+        clear message naming the env var (the value itself is never logged).
+        """
+        if not self.knowledge_ingest_secret or not self.knowledge_ingest_secret.strip():
+            raise ValueError(
+                "Missing required: KNOWLEDGE_INGEST_SECRET (SPEC-SEC-011)"
+            )
+        return self
 
 
 settings = Settings()
