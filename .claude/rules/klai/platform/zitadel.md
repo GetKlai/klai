@@ -6,11 +6,42 @@ paths:
 ---
 # Zitadel
 
-## PAT rotation (CRIT)
-- PAT can become invalid after Zitadel upgrades. Symptom: `Errors.Token.Invalid (AUTH-7fs1e)`.
-- Rotate: Zitadel console → Service Accounts → Portal API → + New PAT.
-- Update in SOPS + restart portal-api.
-- Full procedure: `runbooks/platform-recovery.md#zitadel-pat-rotation`.
+## Service accounts & PATs (CRIT)
+
+Two machine users carry Zitadel authority; keep them separate.
+
+| SA | ID | Role | SOPS key | Used by |
+|---|---|---|---|---|
+| `portal-api` | `362780577813757958` | IAM_OWNER + IAM_LOGIN_CLIENT | `PORTAL_API_ZITADEL_PAT` | portal-api runtime: tenant provisioning, login session finalize |
+| `klai-admin-sa` | `369320953139691537` | IAM_OWNER | `ZITADEL_ADMIN_PAT` | Runbooks/scripts: instance features, OIDC app lifecycle, IAM |
+
+**Never** use `PORTAL_API_ZITADEL_PAT` for admin-only operations (features,
+app lifecycle). That breaks scope separation — a compromised portal-api
+container would yield instance-admin control. Use `ZITADEL_ADMIN_PAT` via
+`sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env` on core-01.
+
+**Rotation (both PATs, via API — no console clicking):**
+```bash
+# Use klai-admin-sa to rotate any PAT, including its own.
+ADMIN_PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+SA_ID="362780577813757958"   # portal-api, or 369320953139691537 for klai-admin-sa
+# 1. Generate new PAT (1-year expiry)
+curl -s -X POST "https://auth.getklai.com/management/v1/users/$SA_ID/pats" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846" \
+  -H "Content-Type: application/json" \
+  -d '{"expirationDate": "2027-04-19T00:00:00Z"}'
+# 2. Update SOPS, push — GitHub Action auto-syncs
+# 3. Recreate container: docker compose up -d portal-api  (for portal-api only)
+# 4. Revoke old token: DELETE /management/v1/users/$SA_ID/pats/$OLD_TOKEN_ID
+```
+
+Full runbook: `runbooks/platform-recovery.md#zitadel-pat-rotation`.
+
+PAT invalidation symptom (triggers rotation): `Errors.Token.Invalid (AUTH-7fs1e)`.
+
+Current PAT expiry: both PATs expire **2027-04-19**. Rotate at least quarterly
+regardless, per `runbooks/credential-rotation.md`.
 
 ## Login V2 deadlock (CRIT)
 - Login V2 routes ALL OIDC flows (including admin console) through portal login.
