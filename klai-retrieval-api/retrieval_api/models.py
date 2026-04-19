@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# SPEC-SEC-010 REQ-2.5: maximum allowed length of a single conversation_history entry's
+# content field. Longer strings are rejected with HTTP 422 at the Pydantic layer.
+_CONVERSATION_CONTENT_MAX_CHARS = 8_000
 
 
 class RetrieveRequest(BaseModel):
@@ -11,11 +15,32 @@ class RetrieveRequest(BaseModel):
     scope: Literal["personal", "org", "both", "notebook", "broad"] = "org"
     user_id: str | None = None
     notebook_id: str | None = None
-    top_k: int = 8
-    conversation_history: list[dict] = Field(default_factory=list)
-    kb_slugs: list[str] | None = None
-    taxonomy_node_ids: list[int] | None = None  # SPEC-KB-022 R3: optional taxonomy filter
-    tags: list[str] | None = None  # SPEC-KB-022 R3: optional tag filter
+    # SPEC-SEC-010 REQ-2.1: top_k bounded to [1, 50] to block abusive payloads (F-010).
+    top_k: int = Field(8, ge=1, le=50)
+    # SPEC-SEC-010 REQ-2.2: conversation_history length bounded to 20 entries.
+    conversation_history: list[dict] = Field(default_factory=list, max_length=20)
+    # SPEC-SEC-010 REQ-2.3: kb_slugs list length bounded to 20 entries.
+    kb_slugs: list[str] | None = Field(None, max_length=20)
+    # SPEC-SEC-010 REQ-2.4: taxonomy_node_ids list length bounded to 50 entries.
+    taxonomy_node_ids: list[int] | None = Field(None, max_length=50)
+    # SPEC-SEC-010 REQ-2.3 (tags parity): tags list length bounded to 20 entries.
+    tags: list[str] | None = Field(None, max_length=20)
+
+    @field_validator("conversation_history")
+    @classmethod
+    def _validate_conversation_content_length(cls, history: list[dict]) -> list[dict]:
+        """REQ-2.5: reject any conversation_history entry with content > 8 000 chars.
+
+        We do NOT silently truncate (REQ-2.6) — oversized payloads always yield 422.
+        """
+        for idx, entry in enumerate(history):
+            content = entry.get("content") if isinstance(entry, dict) else None
+            if isinstance(content, str) and len(content) > _CONVERSATION_CONTENT_MAX_CHARS:
+                raise ValueError(
+                    f"conversation_history[{idx}].content exceeds "
+                    f"{_CONVERSATION_CONTENT_MAX_CHARS} characters"
+                )
+        return history
 
 
 class ChunkResult(BaseModel):

@@ -120,12 +120,17 @@ async def retrieve_context(
         logger.warning("partner_chat_no_retrieval_url")
         return [], _build_system_prompt([], original_system)
 
+    # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
+    # retrieval_api_internal_secret (separate from portal-api's mailer secret).
+    retrieval_secret = (
+        settings.retrieval_api_internal_secret or settings.internal_secret
+    )
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             f"{retrieval_url}/retrieve",
             json=retrieve_body,
             headers={
-                "X-Internal-Secret": settings.internal_secret,
+                "X-Internal-Secret": retrieval_secret,
                 **get_trace_headers(),
             },
         )

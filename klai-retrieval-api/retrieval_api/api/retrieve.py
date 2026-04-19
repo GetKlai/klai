@@ -9,7 +9,7 @@ import os
 import time
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from retrieval_api.config import settings
 from retrieval_api.metrics import (
@@ -17,6 +17,7 @@ from retrieval_api.metrics import (
     retrieval_requests_total,
     step_latency_seconds,
 )
+from retrieval_api.middleware.auth import verify_body_identity
 from retrieval_api.models import ChunkResult, RetrieveMetadata, RetrieveRequest, RetrieveResponse
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
@@ -53,12 +54,15 @@ def _rrf_merge(qdrant_results: list[dict], graph_results: list[dict], k: int = 6
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
+async def retrieve(req: RetrieveRequest, request: Request) -> RetrieveResponse:
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
     if req.scope == "notebook" and not req.notebook_id:
         raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
+
+    # SPEC-SEC-010 REQ-3: cross-user / cross-org guard (JWT path only).
+    verify_body_identity(request, req.org_id, req.user_id)
 
     t0 = time.perf_counter()
     # @MX:NOTE: [AUTO] Shadow log for parameter tuning (SPEC-KB-021 Change 4).

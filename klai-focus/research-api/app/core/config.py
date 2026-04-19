@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Internal service URLs
     docling_url: str = "http://docling-serve:5001"
     retrieval_api_url: str = ""
+    # SPEC-SEC-010 REQ-6.2: shared secret for X-Internal-Secret header sent to
+    # retrieval-api. Must match retrieval-api's RETRIEVAL_API_INTERNAL_SECRET.
+    # Empty value is treated as "retrieval disabled" — we log and skip rather
+    # than send an unauthenticated request that is guaranteed to 401.
+    retrieval_api_internal_secret: str = ""
     tei_url: str = "http://172.18.0.1:7997"
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
