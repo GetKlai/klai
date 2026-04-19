@@ -6,6 +6,11 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/portal-api.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/portal-api.yml'
 
 permissions:
   contents: read
@@ -45,6 +50,7 @@ jobs:
 
   build-push:
     needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
