@@ -1,6 +1,6 @@
 # Klai Platform: Technical Decisions
 
-*Last updated: 2026-04-01. For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md).*
+*Last updated: 2026-04-19. For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md).*
 
 ## Stack
 
@@ -10,9 +10,11 @@
 | Routing (portal) | TanStack Router (code-based) | Type-safe routes and search params; React Router v7 as backup for simple navigation |
 | Data fetching (portal) | TanStack Query | Dashboard + mutations need caching and retry; SWR as alternative for simpler use |
 | Customer portal backend | FastAPI (Python) | One language for all backend services; provisioning, billing, Scribe, later RAG |
-| Billing | Mollie + custom module | External billing platforms are overkill for these requirements |
+| Public API | Partner API on portal-api (`api.getklai.com/partner/v1/*`) | OpenAI-compatible streaming, `pk_live_...` Bearer auth, KB-scoped keys (SPEC-API-001) |
+| Embeddable widget | `klai-widget` — SolidJS + Vite, FlowiseChatEmbed fork | Served from portal origin; `<script data-widget-id="wgt_...">` one-tag embed (SPEC-WIDGET-001/002) |
+| Billing | Moneybird (Unlimited plan) | Dutch accounting platform handles invoicing, VAT, SEPA direct debit, customer portal — replaces the previously planned custom Mollie module (see `klai-website/docs/moneybird-research.md`) |
 | Chat UI | LibreChat (no fork) | Custom UI only when LibreChat demonstrably blocks us |
-| Auth / Identity | Zitadel | Native B2B multi-tenancy, lightweight (Go binary) |
+| Auth / Identity | Zitadel + Google/Microsoft IDPs | Native B2B multi-tenancy; social signup via Zitadel IDP intents (SPEC-AUTH-001); domain allowlist + join-request self-service (SPEC-AUTH-006) |
 | Model Proxy | LiteLLM OSS -> Enterprise | Start free, upgrade at first revenue for audit trail |
 | Model routing | LiteLLM Complexity Router | Built into LiteLLM OSS; zero external calls, <1ms overhead; 4 tiers by query complexity |
 | Reverse proxy | Caddy (core-01) | Better LLM streaming than Traefik, lighter, easier to debug |
@@ -21,10 +23,53 @@
 
 ## Customer Portal
 
-Customers sign up, log in via Zitadel, and are redirected to their LibreChat environment. Billing module handles:
-- Monthly direct debit via Mollie (mandate at signup)
+Customers sign up (email, Google or Microsoft), log in via Zitadel, and land in the portal — a chat-first SPA with flat navigation:
+
+- **Chat** — embedded LibreChat with knowledge scope bar
+- **Kennis** — KB editor (BlockNote) + source catalogue (Superdock-style unified wizard for file upload, web crawler, Google Drive, Notion, GitHub, …)
+- **Regels** — guardrails (strict rules, not instructions) applied in the LiteLLM pre-call hook
+- **Templates** — reusable response scaffolds, also applied in the hook
+- **Team / MCP's / API keys / Chat widgets / Account** — admin surfaces
+
+Billing (handled by Moneybird, see Stack table):
+- Monthly direct debit via Moneybird Payments (SEPA mandate at signup)
 - Self-service: update company name and VAT number
-- Request PDF invoice (generated from Mollie data)
+- PDF invoices generated and delivered by Moneybird
+
+### Public API surface
+
+`api.getklai.com/partner/v1/*` exposes the platform to external developers (SPEC-API-001). Endpoints: `/chat/completions` (OpenAI-compatible streaming SSE), `/feedback`, `/knowledge/append`, `/widget-config`. Bearer auth with `pk_live_<40-hex>` tokens, SHA-256 hashed in `partner_api_keys`. Every key carries a KB whitelist and per-key rate limit.
+
+### Chat widgets
+
+Embeddable SolidJS bundle served from the portal origin (`/klai-chat.js`). One-tag embed:
+
+```html
+<script src="https://getklai.com/klai-chat.js" data-widget-id="wgt_..."></script>
+```
+
+**Auth flow (JWT-only, no browser-visible API key):**
+1. Widget calls public `GET /partner/v1/widget-config?id=wgt_...` with Origin header
+2. Server validates Origin against `widget_config.allowed_origins` (fail-closed, wildcard subdomains supported)
+3. Server returns config + HS256 JWT session token (1h TTL, signed with deployment-level `WIDGET_JWT_SECRET`)
+4. Widget uses `Authorization: Bearer <jwt>` for subsequent `/chat/completions` calls
+
+Widgets live in their own `widgets` table with RLS tenant scoping (SPEC-WIDGET-002 split them out from `partner_api_keys`). No per-widget secret is persisted; rotating `WIDGET_JWT_SECRET` invalidates all live sessions. Bundle budget: <200 kB gzipped (CI-enforced).
+
+### Guardrails — Rules + Templates
+
+Both applied in the **LiteLLM pre-call hook**, before the user message reaches the model:
+- **Rules** — strict guardrails (no instructions). Scoped per org, injected into system prompt.
+- **Templates** — reusable response scaffolds, scoped per org/KB. Injected alongside KB context.
+
+Rules and Templates have independent CRUD UIs in the portal and mirror each other's data model. Rules never fall back to "instruction" semantics — they are guardrails by design.
+
+### SSO self-service (SPEC-AUTH-006)
+
+- **Domain allowlist**: Org admins add email domains (e.g. `@voys.nl`). Users signing up with a matching domain auto-join.
+- **Join requests**: If no matching org exists, users submit a request with justification. Org admins get mailer notifications (`/internal/send` endpoint) and approve/reject in `/admin/join-requests`.
+- **Multi-org workspace selection**: Users in multiple orgs pick a workspace on login.
+- **Pending session token**: Short-lived token held between IDP callback and org selection.
 
 ### User Groups & Lifecycle
 
@@ -44,6 +89,11 @@ Customers sign up, log in via Zitadel, and are redirected to their LibreChat env
 - Suspension: revokes access, preservable for reactivation
 - Offboarding: cascading cleanup of memberships, product assignments
 
+**Per-user personal KB**
+- Every user gets a personal KB on signup (one shared `personal` KB per org in Gitea, user-scoped paths — see [klai-knowledge-architecture.md §10.2](klai-knowledge-architecture.md#102-personal-knowledge-hard-isolation-within-an-org))
+- Portal surfaces it with a "Mijn" badge; admins can delete any personal KB (admin override)
+- Isolation is enforced at the retrieval API layer, not in UI — external consumers (widget, Partner API) never query personal scope
+
 ## Multi-tenancy model
 
 Per customer: own subdomain (`company.getklai.com`) with the full Klai application. Inside: Chat, Usage, Settings, Invoices. LibreChat runs as a feature within the application, not as the main page.
@@ -59,7 +109,7 @@ Architecture principle: tenant = isolation layer. Everything is stored and track
 Two layers, two machines, never mixed:
 
 - **public-01 (Coolify)** — website, CRM, feedback, status page. Coolify manages routing.
-- **core-01 (Caddy)** — AI stack: LiteLLM, LibreChat, customer portal, all `*.getklai.com` subdomains.
+- **core-01 (Caddy)** — AI stack: LiteLLM, LibreChat, customer portal, Partner API (`api.getklai.com/partner/v1/*`), widget bundle (served from portal origin), all `*.getklai.com` subdomains including `dev.getklai.com`.
 
 ## Server layout (Phase 1 complete — 2026-03)
 
@@ -71,7 +121,7 @@ For the authoritative and current service list per server, see `klai-infra/SERVE
 | Server | Type | Cost | Services |
 |---|---|---|---|
 | public-01 | CX42 — Hetzner HEL | €17/mo | Coolify, website, Twenty (CRM), Fider, Uptime Kuma |
-| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API, klai-mailer, GlitchTip, scribe-api, docling-serve, SearXNG, research-api, knowledge-ingest, retrieval-api, klai-knowledge-mcp |
+| core-01 | EX44 — Hetzner HEL | €47/mo | Caddy, Zitadel, MongoDB, Meilisearch, LiteLLM + Mistral API, Ollama (fallback), LibreChat containers, PostgreSQL, Redis, Qdrant, FalkorDB, VictoriaMetrics, VictoriaLogs, Grafana, Alloy, cAdvisor, Portal API (+ Partner API routes), klai-mailer, GlitchTip, scribe-api, docling-serve, SearXNG, Firecrawl, Crawl4AI, research-api, knowledge-ingest, klai-connector, retrieval-api, klai-knowledge-mcp. Dev-only: isolated LibreChat + LiteLLM for `dev.getklai.com` (shared infra secrets, own DB) |
 | gpu-01 | GEX44 + RTX 4000 Ada 20GB — Hetzner FSN | — | TEI (BGE-M3 dense, :7997), Infinity (reranker, :7998), bge-m3-sparse (:8001), whisper-server (:8000) — reached from core-01 via SSH tunnel at 172.18.0.1 |
 | monitor-01 _(planned)_ | CAX11 — Hetzner HEL | €5/mo | Dedicated VictoriaMetrics + VictoriaLogs + Grafana (currently co-hosted on core-01) |
 
@@ -90,6 +140,8 @@ EX44 is production-ready from day one (64 GB RAM, dedicated hardware). No migrat
 Principle: public-01 and core-01 share no ports and no machines. monitor-01 receives logs from all servers.
 
 **Phase 0 LiteLLM failover:** primary Mistral API, fallback Ollama on core-01. Automatic via LiteLLM fallback configuration.
+
+**Dev environment (`dev.getklai.com`):** parallel stack on core-01 with its own isolated LibreChat + LiteLLM containers, own dev database, Caddy routes `/api/*` via a dedicated `route` block. Inter-service infra secrets are reused from prod (KB / connector CRUD work without duplicating SOPS). Runbook in [`docs/dev.md`](../dev.md).
 
 **Phase 3+ networking (when self-hosting AI):** core-01 (Hetzner HEL) and ai-01 (Nebius HEL) are in the same city — latency 5-15 ms RTT. Connected via WireGuard tunnel. LiteLLM calls vLLM via private WireGuard IP. Failover to Scaleway Paris (H100) or RunPod EU if Nebius goes down. Nebius SLA: 99.9%, has official OpenTofu provider.
 
@@ -120,7 +172,7 @@ Usage reporting (token usage per user/company) does not exist natively in LibreC
 | Phase | Trigger | What's added | Status |
 |---|---|---|---|
 | 0 | Initial setup | Caddy + Zitadel + MongoDB + LiteLLM OSS + Mistral API + Ollama fallback + LibreChat + Alloy + VictoriaLogs | **Done** |
-| 1 | First paying customer | Customer portal live, Mollie direct debit active, provisioning service, VictoriaMetrics + Grafana | **Done** (2026-03) |
+| 1 | First paying customer | Customer portal live, Moneybird direct debit active, provisioning service, VictoriaMetrics + Grafana | **Done** (2026-03) |
 | 2 | Customers request documents | Klai Knowledge: knowledge-ingest + Qdrant + retrieval-api + bge-m3-sparse + LiteLLM hook (feature gate + gap detection) + klai-knowledge-mcp (personal + org KB writes) | **Done** (2026-03) — retrieval live, getklai tenant verified end-to-end |
 | 3 | Break-even self-hosting (~30K active users) | ai-01 GPU server, vLLM, Whisper (GPU) — model choice Qwen3-32B + Qwen3-8B | In progress |
 | 4 | First enterprise customer | SAML SSO per org, SCIM provisioning | Planned |
@@ -421,9 +473,12 @@ Hetzner Object Storage credentials via environment variables, SOPS/age encrypted
 
 ### Structured Logging (structlog)
 
-- All 8 Python services emit JSON to stdout via `structlog`
+- All Python services emit JSON to stdout via `structlog`
 - Standard fields: `timestamp` (ISO 8601), `level`, `service`, `logger`, `event`, context vars
 - FastAPI middleware auto-binds: `org_id`, `user_id`, `request_id`
+- `request_id` propagates Caddy → portal-api → downstream services (see `.claude/rules/klai/infra/observability.md`) — one `request_id:<uuid>` query shows the full chain in VictoriaLogs
+- Admin CRUD events carry `domain="api_key"` or `domain="widget"` (replaces the old `integration_type` field dropped by SPEC-WIDGET-002)
+- Product events emitted to `product_events` PostgreSQL table: `signup`, `billing.*`, `meeting.*`, `knowledge.uploaded`, `notebook.created/opened`, `source.added`, `knowledge.queried`, `widget.chat.started/completed`
 - Fallback: `LOG_FORMAT=console` for human-readable output
 - Logger naming: `logger = logging.getLogger(__name__)`
 
@@ -670,3 +725,22 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 | 🔜 Phase 3+ | LiteLLM to vLLM prefix | `hosted_vllm/` prefix in LiteLLM config — applicable when ai-01 GPU server is live. |
 | 🔜 Phase 3+ | MPS system setup | cloud-init or systemd unit for: EXCLUSIVE_PROCESS mode + MPS daemon + Hopper env vars, before Docker starts. |
 | N/A | rag_api image | Not used — custom knowledge-ingest + retrieval-api built instead of LibreChat rag_api. |
+
+### Delta 2026-04 (Week 17)
+
+| Status | Component | Note |
+|---|---|---|
+| ✅ Done | Partner API | `api.getklai.com/partner/v1/*` live (SPEC-API-001). `pk_live_...` Bearer auth, KB-scoped. |
+| ✅ Done | Chat widget | `klai-widget` bundle served from portal origin (SPEC-WIDGET-001). <200 kB gzipped. JWT session-token auth via `WIDGET_JWT_SECRET`, no browser-visible API key. Wildcard subdomain support in `allowed_origins`. |
+| ✅ Done | Domain split | `partner_api_keys` and `widgets` are two independent tables + admin routes (SPEC-WIDGET-002). `/api/integrations` hard-removed. Revoke concept gone from both domains. |
+| ✅ Done | Social signup | Google + Microsoft IDPs via Zitadel (SPEC-AUTH-001). Retries session creation on CQRS replication lag. |
+| ✅ Done | SSO self-service | Domain allowlist + join requests + multi-org workspace selection (SPEC-AUTH-006). |
+| ✅ Done | 401 storm fix | Singleflight on Zitadel userinfo + coalesced `signinSilent()` — eliminates parallel 401 → Zitadel → refresh cascade. |
+| ✅ Done | Rules + Templates | Both applied in LiteLLM pre-call hook. Rules CRUD mirrors Templates. `instruction` type removed from rules. |
+| ✅ Done | Two-phase web crawler | BFS discovery + extraction split (SPEC-CRAWL-002). Cookie auth, canary + login-indicator guard, SimHash-LSH dedup for >200 pages (SPEC-CRAWL-003), Layer A/B/C quality status. |
+| ✅ Done | Google Drive OAuth connector | SPEC-KB-025a. First OAuth-based connector. |
+| ✅ Done | Source-aware retrieval | `source_aware_select` replaces router+quota (SPEC-KB-021). Router-as-signal (keyword + semantic centroid). `source_label` Qdrant payload field enables Facet API. |
+| ✅ Done | KB editor reliability | Full-UUID page URLs, BlockNote JSON persistence, client-owned SHA + promise queue, 409 auto-retry (SPEC-DOCS-001). |
+| ✅ Done | Dev environment | Parallel stack on `dev.getklai.com` with isolated LibreChat + LiteLLM. |
+| ✅ Done | Graph retrieval re-enabled | `GRAPHITI_ENABLED=true` on both `knowledge-ingest` and `retrieval-api` now that LLM + reranker dependencies run on gpu-01. Graph search leg rejoins Qdrant 3-leg RRF fusion. |
+| ✅ Done | Billing | Moneybird (Unlimited plan) live — invoicing, VAT, SEPA direct debit. Custom Mollie module dropped. |
