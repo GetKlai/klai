@@ -494,31 +494,6 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
-    async def add_portal_redirect_uri(self, slug: str) -> None:
-        """Add {slug}.getklai.com/callback and /logged-out to the portal OIDC app's allowed URIs."""
-        if not settings.zitadel_portal_app_id:
-            return  # not configured yet, skip
-        # GET current config (full app endpoint includes oidcConfig)
-        get_resp = await self._http.get(
-            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}"
-        )
-        get_resp.raise_for_status()
-        current = get_resp.json().get("app", {}).get("oidcConfig", {})
-        existing_redirect: list[str] = current.get("redirectUris", [])
-        existing_logout: list[str] = current.get("postLogoutRedirectUris", [])
-        new_callback = f"https://{slug}.{settings.domain}/callback"
-        new_logged_out = f"https://{slug}.{settings.domain}/logged-out"
-        if new_callback in existing_redirect and new_logged_out in existing_logout:
-            return
-        updated_redirect = existing_redirect + ([new_callback] if new_callback not in existing_redirect else [])
-        updated_logout = existing_logout + ([new_logged_out] if new_logged_out not in existing_logout else [])
-        # PUT updated config — correct path is oidc_config, not oidc
-        put_resp = await self._http.put(
-            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc_config",
-            json={**current, "redirectUris": updated_redirect, "postLogoutRedirectUris": updated_logout},
-        )
-        put_resp.raise_for_status()
-
     # ── IDP (social login) ────────────────────────────────────────────────────
 
     async def create_idp_intent(self, idp_id: str, success_url: str, failure_url: str) -> dict:

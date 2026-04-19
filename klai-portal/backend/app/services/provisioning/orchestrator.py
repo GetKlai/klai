@@ -169,11 +169,10 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             litellm_team_key: str = key_resp.json()["key"]
             logger.info("litellm_team_key_created", slug=slug)
 
-        # Step 3: Add portal redirect URI for this tenant
-        try:
-            await zitadel.add_portal_redirect_uri(slug)
-        except Exception as exc:
-            logger.warning("portal_redirect_uri_failed", slug=slug, error=str(exc))
+        # Step 3: (was: add per-tenant redirect URI to the old SPA portal app)
+        # Removed in SPEC-AUTH-008 Phase C — the BFF confidential portal app uses
+        # a single redirect_uri (my.getklai.com/api/auth/oidc/callback) for every
+        # tenant, so no per-tenant OIDC bookkeeping is needed at provisioning.
 
         # Step 4: Create per-tenant MongoDB user (isolated credentials)
         mongo_tenant_password = secrets.token_hex(24)
