@@ -1,0 +1,2 @@
+klai-retrieval-api\retrieval_api\models.py:31: unused variable 'cls' (100% confidence)
+klai-retrieval-api\retrieval_api\services\evidence_tier.py:113: unused variable 'assertion_mode' (100% confidence)

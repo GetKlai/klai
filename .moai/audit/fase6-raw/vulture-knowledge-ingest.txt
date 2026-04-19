@@ -1,0 +1,2 @@
+klai-knowledge-ingest\knowledge_ingest\_patch_graphiti.py:402: unused variable 'cls' (100% confidence)
+klai-knowledge-ingest\knowledge_ingest\qdrant_store.py:358: unused variable 'sparse_weight' (100% confidence)
