@@ -149,7 +149,12 @@ function useSessionGuard(): void {
   }, [auth.isAuthenticated])
 
   useEffect(() => {
-    if (!authError) return
+    // No active error — clear the signout guard so a future error (after a
+    // successful re-authentication in the same tab) is handled again.
+    if (!authError) {
+      isSigningOut.current = false
+      return
+    }
 
     if (isReauthenticationRequired(authError)) {
       if (isSigningOut.current) return
