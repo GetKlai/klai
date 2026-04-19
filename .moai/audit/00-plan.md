@@ -26,14 +26,15 @@
 - [x] **SEC-010** Retrieval-API hardening — LIVE op main, smoke-tested
 - [x] **SEC-011** Knowledge-ingest fail-closed auth — LIVE op main
 - [x] **SEC-009** SERVERS.md doc drift — LIVE (klai-infra)
-- [ ] **SEC-012** JWT audience — **PAUSED** (scribe rebuild SPEC-VEXA-003) + research-api deel wacht op user decision B/C/D
-- [ ] SEC-008 Caddy exposure hardening — nog niet gestart
-- [ ] SEC-004 Defense-in-depth middleware — nog niet gestart (scribe deel pauzeert)
-- [ ] SEC-005 Internal-endpoint hardening — nog niet gestart
-- [ ] SEC-006 Widget JWT revocation — nog niet gestart
-- [ ] SEC-007 Code-quality — nog niet gestart
+- [x] **SEC-005** Internal-endpoint hardening — LIVE op main, audit row persisted in DB
+- [x] **SEC-006** Widget JWT revocation via DB cross-check — LIVE op main
+- [x] **SEC-007** Code-quality (connector LRU + portal @MX annotations) — LIVE op main
+- [x] **SEC-008** Connector hardening (audience warn-only + hmac + LRU) + dev env docs — LIVE op main
+- [ ] **SEC-012** JWT audience (scribe + research-api) — **PAUSED** (scribe rebuild SPEC-VEXA-003)
+- [ ] SEC-004 Defense-in-depth middleware — nog niet gestart (scribe deel pauzeert; F-009 portion al gedekt door SEC-008)
 - [ ] **SEC-013** External auth audit (vexa, docs-app) — SPEC nog te schrijven
 - [ ] **SEC-014** taxonomy.py portal_internal_token fail-open — SPEC nog te schrijven
+- [ ] SEC-016/017/018 (uit Fase 4) — nieuwe kleine follow-ups: noqa+encoding, time.sleep context, Dockerfile USER audit
 
 ## Principe
 

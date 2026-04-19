@@ -23,11 +23,11 @@
 | ~~P1~~ | ~~SEC-011~~ | Knowledge-ingest fail-closed auth | F-003, F-012 | knowledge-ingest | **✅ LIVE on main** (3ca34341) |
 | ~~P3~~ | ~~SEC-009~~ | SERVERS.md doc-drift | F-017, F-018, F-020, F-022 | klai-infra docs | **✅ LIVE** (klai-infra 58f0b60) |
 | **PAUSED** | SEC-012 | JWT audience verification mandatory | F-002, F-004 | ~~scribe~~, focus | Scribe undergoing major rebuild (SPEC-VEXA-003) — defer scribe deel tot rebuild stabiel. Research-api deel kan los maar wacht op user decision (B/C/D keuze openstaand) |
-| **P1** | SEC-008 | Caddy exposure hardening | F-017, F-018, ~~F-020~~, ~~F-022~~ | connector, dev env | F-020/F-022 verplaatst naar SEC-013 |
-| **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus, ~~scribe~~, portal, connector | Scribe deel pauzeert (rebuild). Vereist SEC-012 first voor focus; F-009 nu HIGH |
-| **P2** | SEC-005 | Internal-endpoint hardening | F-007 | portal | — |
-| **P3** | SEC-006 | Widget JWT revocation | F-008 | portal partner API | — |
-| **P3** | SEC-007 | Code-quality / correctness | F-011, F-015 doc | connector, portal background | — |
+| ~~P1~~ | ~~SEC-008~~ | Caddy exposure hardening (reduced) | F-017, F-018 | connector, dev env | **✅ LIVE on main** (11d6c28f + klai-infra 41ff469). F-020/F-022 → SEC-013. |
+| **P2** | SEC-004 | Defense-in-depth auth middleware | F-005, F-006, F-009 | focus, ~~scribe~~, portal, connector | Scribe deel pauzeert (rebuild). Vereist SEC-012 first voor focus; F-009 portion gefixt in SEC-008 (hmac + audience) |
+| ~~P2~~ | ~~SEC-005~~ | Internal-endpoint hardening | F-007 | portal | **✅ LIVE on main** (739a3177 + klai-infra 41ff469). Smoke-tested: 200 + audit row. |
+| ~~P3~~ | ~~SEC-006~~ | Widget JWT revocation | F-008 | portal partner API | **✅ LIVE on main** (78d7ce26) |
+| ~~P3~~ | ~~SEC-007~~ | Code-quality / correctness | F-011, F-015 doc | connector, portal background | **✅ LIVE on main** (1e3f9945 + 11d6c28f) |
 | **NEW** | SEC-013 | External service auth audit | F-020 (vexa-bot), F-022 (docs-app) | vexa-bot-manager (supply-chain HIGH), docs-app | Nog niet geschreven — requires source-inspection |
 | **NEW** | SEC-014 | knowledge-ingest taxonomy portal_internal_token fail-open | — | knowledge-ingest taxonomy.py:83 | Gevonden tijdens SEC-011 implementatie — analoog aan F-003/F-012 maar omgekeerde richting |
 
@@ -38,7 +38,11 @@
 | retrieval-api | SEC-010 middleware + bounds + rate-limit | **✅ live, smoke-tested** (401 zonder secret, 200 met secret) |
 | portal-api | SEC-010 caller `partner_chat.py` sends X-Internal-Secret | **✅ live** (via SOPS + deploy) |
 | focus research-api | SEC-010 caller `retrieval_client.py` sends X-Internal-Secret | **✅ live** |
-| knowledge-ingest | SEC-011 fail-closed startup validator + middleware removal | **⏳ waiting for CI build + container recreate** |
+| knowledge-ingest | SEC-011 fail-closed startup validator + middleware removal | **✅ live** |
+| portal-api | SEC-005 internal rate-limit + audit log + hmac.compare_digest | **✅ live, smoke-tested** (audit row persisted) |
+| portal-api | SEC-006 widget JWT DB cross-check for revocation | **✅ live** |
+| klai-connector | SEC-007 LRU cache + SEC-008 audience check + hmac.compare_digest | **✅ live** (warn-only fallback on audience — needs ZITADEL_API_AUDIENCE in SOPS for defense-in-depth) |
+| klai-infra | 3 rotation runbooks (INTERNAL_SECRET, CONNECTOR_SECRET, CADDY_DEV_HARDENING) | **✅ merged** |
 | SOPS | `RETRIEVAL_API_INTERNAL_SECRET` added, 8 dev vars restored | **✅ synced to `/opt/klai/.env`** |
 | SERVERS.md | SEC-009 complete Caddy route table | **✅ merged** (klai-infra) |
 
@@ -286,3 +290,5 @@ Fase 1+2+6 kunnen parallel met SEC-004 t/m SEC-012 fixes. Fase 4+5 bij voorkeur 
 | 2026-04-19 Wave 2C PAUSE | SEC-012 (JWT audience) uitgesteld: parallel session startte major scribe rebuild (SPEC-VEXA-003). Re-visit na scribe-rebuild. |
 | 2026-04-19 New findings | SEC-013 (vexa-bot supply-chain HIGH + docs-app auth) + SEC-014 (taxonomy.py:83 portal_internal_token fail-open) toegevoegd als follow-ups. |
 | 2026-04-19 Parallel session | Dependency audit + CVE scanning infrastructure overhaul in aparte sessie landde op main: 26 images pinned, 6 CVE-detectielagen active, 1 critical CVE gefixt (LiteLLM), pytest in CI, 546 green tests. Dekt Fase 1+2 van het audit-plan grotendeels. |
+| 2026-04-19 Wave 3 | SEC-005/006/007/008 gebouwd (4 parallel agents), gegroepeerd naar 5 commits op main (739a3177, 78d7ce26, 1e3f9945, 11d6c28f, 0dcd8047) + klai-infra 41ff469 (3 runbooks). Smoke-tested: portal-api internal endpoint schrijft audit row naar portal_audit_log, klai-connector warnt bij ontbrekende audience, widget JWT revocation via DB cross-check. 73+ new tests, alle groen. |
+| 2026-04-19 Fase 4 | SAST scan afgerond. 0 critical, 7 findings (F-023..F-029, all MEDIUM/LOW). F-026 false positive. Rapport in .moai/audit/05-injection.md. |
