@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+# SEC-018 F-029: create non-root user + writable model cache before runtime.
+RUN useradd --create-home --uid 1000 --shell /bin/bash app && \
+    mkdir -p /models && chown -R app:app /models
+
 WORKDIR /app
 
 # Install CUDA-enabled PyTorch (cu128 = CUDA 12.8, matches gpu-01 driver 570.x exactly).
@@ -15,11 +19,15 @@ RUN pip install --no-cache-dir \
     torch \
     --extra-index-url https://download.pytorch.org/whl/cu128
 
-COPY main.py .
+COPY --chown=app:app main.py .
 
 ENV WHISPER_DOWNLOAD_ROOT=/models
 ENV MODEL_NAME=BAAI/bge-m3
 ENV HF_HOME=/models
+
+# SEC-018: drop root for runtime — BGE-M3 writes model weights into /models
+# which is owned by the `app` user at build time.
+USER app
 
 EXPOSE 8001
 
