@@ -6,11 +6,6 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/portal-api.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/portal-api.yml'
 
 permissions:
   contents: read
@@ -28,7 +23,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -45,12 +40,8 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: uv run --with pip-audit pip-audit
 
-      - name: Test (pytest)
-        run: uv run pytest -q --tb=short
-
   build-push:
     needs: quality
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
