@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.audit import PortalAuditLog
 from app.models.events import ProductEvent
 from app.models.groups import PortalGroup, PortalGroupMembership
@@ -310,6 +310,12 @@ async def sar_export(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     org, portal_user = row
+
+    # All subsequent queries hit RLS-strict tables (portal_groups,
+    # portal_knowledge_bases, portal_user_kb_access, portal_audit_log,
+    # product_events, vexa_meetings). Set tenant context once here so the
+    # PostgreSQL fail-loud policy lets them through.
+    await set_tenant(db, org.id)
 
     # 2. Zitadel identity (live fetch - source of truth for name/email)
     zitadel_user_data: dict[str, Any] = {}
