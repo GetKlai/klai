@@ -194,15 +194,14 @@ async def invite_user(
     await db.commit()
     logger.info("User invited: email=%s, role=%s, org_id=%d", body.email, body.role, org.id)
 
-    # Create personal KB for the new user (non-fatal)
-    try:
-        from app.services.default_knowledge_bases import create_default_personal_kb
+    # Create personal KB for the new user. Fail-loud: if this raises, the 500
+    # surfaces in the admin UI. The Zitadel invite + portal_users row are
+    # already committed above, so retrying the invite is safe (idempotent) —
+    # the personal KB helper uses ON CONFLICT DO NOTHING semantics.
+    from app.services.default_knowledge_bases import create_default_personal_kb
 
-        await create_default_personal_kb(zitadel_user_id, org.id, db)
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        logger.warning("Could not create personal KB for invited user %s", body.email, exc_info=True)
+    await create_default_personal_kb(zitadel_user_id, org.id, db)
+    await db.commit()
 
     return InviteResponse(
         user_id=zitadel_user_id,

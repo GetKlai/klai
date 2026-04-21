@@ -60,17 +60,28 @@ async def _update_last_used(key_id: str, org_id: int) -> None:
 
     Uses raw SQL with explicit set_config because this runs as an asyncio.create_task
     on a fresh session — no tenant context from the request is available.
+
+    The connection is explicitly pinned via session.connection() before set_config;
+    without this, SQLAlchemy async can check out a different pooled connection for
+    the UPDATE, the SET is invisible, and RLS silently filters the row to zero
+    (UPDATEs don't raise when the USING clause excludes all rows).
     """
     try:
         async with AsyncSessionLocal() as db:
+            await db.connection()
             await db.execute(
                 text("SELECT set_config('app.current_org_id', :oid, false)"),
                 {"oid": str(org_id)},
             )
-            await db.execute(
+            result = await db.execute(
                 text("UPDATE partner_api_keys SET last_used_at = now() WHERE id = :id"),
                 {"id": key_id},
             )
+            if result.rowcount == 0:  # type: ignore[attr-defined]
+                raise RuntimeError(
+                    f"partner_api_keys last_used_at UPDATE matched 0 rows "
+                    f"(key_id={key_id}, org_id={org_id}) — RLS/tenant mismatch"
+                )
             await db.commit()
     except Exception:
         logger.exception("Failed to update last_used_at", partner_key_id=key_id)
