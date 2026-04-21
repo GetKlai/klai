@@ -8,6 +8,7 @@ external dependencies.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import docker.errors
 import pytest
 from pymongo.errors import OperationFailure
 from redis.exceptions import RedisError
@@ -16,7 +17,7 @@ from redis.exceptions import RedisError
 @pytest.fixture(autouse=True)
 def _mock_settings():
     """Provide deterministic settings for all tests."""
-    import app.services.provisioning.infrastructure  # noqa: F401
+    import app.services.provisioning.infrastructure  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
     with patch("app.services.provisioning.infrastructure.settings") as mock:
         mock.domain = "getklai.com"
@@ -215,30 +216,26 @@ class TestCharacterizeReloadCaddy:
 
     def test_propagates_when_container_not_found(self):
         """If Caddy isn't running, docker.NotFound propagates to the caller."""
-        import docker as docker_mod
-
         from app.services.provisioning import _reload_caddy
 
         with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
-            mock_docker.errors = docker_mod.errors
-            mock_docker.from_env.return_value.containers.get.side_effect = docker_mod.errors.NotFound(
+            mock_docker.errors = docker.errors
+            mock_docker.from_env.return_value.containers.get.side_effect = docker.errors.NotFound(
                 "No such container: klai-core-caddy-1"
             )
-            with pytest.raises(docker_mod.errors.NotFound):
+            with pytest.raises(docker.errors.NotFound):
                 _reload_caddy()
 
     def test_propagates_when_restart_fails(self):
         """Docker APIError on restart() propagates (no silent swallow)."""
-        import docker as docker_mod
-
         from app.services.provisioning import _reload_caddy
 
         mock_caddy = MagicMock()
-        mock_caddy.restart.side_effect = docker_mod.errors.APIError("restart failed")
+        mock_caddy.restart.side_effect = docker.errors.APIError("restart failed")
         with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
-            mock_docker.errors = docker_mod.errors
+            mock_docker.errors = docker.errors
             mock_docker.from_env.return_value.containers.get.return_value = mock_caddy
-            with pytest.raises(docker_mod.errors.APIError):
+            with pytest.raises(docker.errors.APIError):
                 _reload_caddy()
 
 
