@@ -26,6 +26,11 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       ZITADEL_PAT: ${PORTAL_API_DEV_ZITADEL_PAT}
+      # Same Klai Portal BFF OIDC app as prod (both my.getklai.com and
+      # dev.getklai.com are registered redirect_uris). Without these, BFF
+      # code exchange + refresh fail with invalid_client → /logged-out.
+      ZITADEL_PORTAL_CLIENT_ID: ${ZITADEL_PORTAL_CLIENT_ID:-369262708920483857}
+      ZITADEL_PORTAL_CLIENT_SECRET: ${PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET:-}
       DATABASE_URL: postgresql+asyncpg://portal_api_dev:${PORTAL_API_DEV_DB_PASSWORD}@postgres:5432/klai_dev
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       INTERNAL_SECRET: ${PORTAL_API_DEV_INTERNAL_SECRET}
