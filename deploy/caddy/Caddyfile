@@ -179,14 +179,10 @@
     # Dev environment — dev.getklai.com routes to portal-api-dev + /srv/portal-dev
     # Must come BEFORE the general /api/* handler below.
     # Uses `route` to preserve directive order: reverse_proxy for /api/*, static fallback for everything else.
-    #
-    # SPEC-SEC-008 F-018 — protected by basic_auth to gate public internet access.
-    # Credentials stored in SOPS (CADDY_DEV_USERNAME / CADDY_DEV_PASSWORD_HASH).
+    # Note: basic_auth (SPEC-SEC-008 F-018) verwijderd op verzoek — Zitadel OIDC
+    # login is de enige auth-laag voor dev (zelfde als prod).
     @dev-host host dev.{$DOMAIN}
     handle @dev-host {
-        basic_auth {
-            {$CADDY_DEV_USERNAME} {$CADDY_DEV_PASSWORD_HASH}
-        }
         route {
             @dev-api path /api/*
             reverse_proxy @dev-api portal-api-dev:8010

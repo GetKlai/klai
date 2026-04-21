@@ -78,6 +78,7 @@ services:
       - caddy-data:/data
       - caddy-config:/config
       - /opt/klai/portal-dist:/srv/portal:ro
+      - /opt/klai/portal-dev:/srv/portal-dev:ro
       - /opt/klai/caddy-logs:/var/log/caddy
     environment:
       HETZNER_AUTH_API_TOKEN: ${HETZNER_AUTH_API_TOKEN}
