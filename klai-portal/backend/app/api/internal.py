@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+import redis.asyncio as aioredis
 import structlog
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -31,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -963,10 +965,13 @@ async def regenerate_librechat_configs(
     # SEC-021 routes the Docker API through docker-socket-proxy, which denies
     # /exec/*/start by design. Portal-api sits on klai-net with redis, so we
     # talk Redis protocol straight to it — cleaner AND doesn't require EXEC=1.
-    import redis.asyncio as _aioredis
-
+    #
+    # FLUSHALL is critical: librechat.yaml is cached in Redis with no TTL
+    # (see platform/librechat.md), so a silent failure here leaves every
+    # tenant reading stale yaml forever. We surface the failure in the
+    # response `errors` list AND log a warning so both CI and operators see it.
     try:
-        redis_client = _aioredis.Redis(
+        redis_client = aioredis.Redis(
             host=settings.redis_host,
             port=6379,
             password=settings.redis_password or None,
@@ -975,7 +980,7 @@ async def regenerate_librechat_configs(
         async with redis_client:
             await redis_client.flushall()
         logger.info("Redis FLUSHALL completed")
-    except Exception as exc:
+    except RedisError as exc:
         logger.warning("Redis FLUSHALL failed: %s", exc)
         errors.append(f"redis-flushall: {exc}")
 
@@ -990,7 +995,7 @@ async def regenerate_librechat_configs(
                 ctr = client.containers.get(container_name)
                 ctr.restart(timeout=10)
                 logger.info("Restarted container %s", container_name)
-            except Exception as exc:
+            except docker.errors.APIError as exc:  # type: ignore[attr-defined]
                 restart_errors.append(f"{slug}: {exc}")
                 logger.warning("Restart failed for %s: %s", container_name, exc)
         return restart_errors

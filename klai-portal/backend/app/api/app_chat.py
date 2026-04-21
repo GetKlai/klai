@@ -1,10 +1,14 @@
 """App-facing chat health API.
 
-GET /api/app/chat-health — probe the tenant's LibreChat container for endpoint availability.
+GET /api/app/chat-health — pre-flight probe of the tenant's LibreChat container.
 
 Called by the frontend chat page to detect broken iframe state before/during load.
 Returns a structured health status so the UI can show actionable feedback instead of
 silently hanging on "Welcome back" forever.
+
+The probe uses only public, unauthenticated LibreChat endpoints (/health and
+/api/config) — /api/endpoints requires auth since v0.8.5 and is therefore unusable
+as a liveness signal from portal-api.
 """
 
 import logging
