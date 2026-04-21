@@ -29,9 +29,7 @@ async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list
     """
     # Resolve user's tenant. portal_users has a permissive-on-missing policy
     # so this lookup is safe without prior set_tenant().
-    org_row = await db.execute(
-        select(PortalUser.org_id).where(PortalUser.zitadel_user_id == zitadel_user_id)
-    )
+    org_row = await db.execute(select(PortalUser.org_id).where(PortalUser.zitadel_user_id == zitadel_user_id))
     org_id = org_row.scalar_one_or_none()
     if org_id is None:
         return []
