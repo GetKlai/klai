@@ -1,7 +1,5 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib/auth'
-import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import QRCode from 'react-qr-code'
 import { ArrowRight, Fingerprint, Mail, Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,6 +7,7 @@ import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { authLogger } from '@/lib/logger'
 
 export const Route = createLazyFileRoute('/setup/mfa')({
@@ -105,8 +104,7 @@ function MethodCard({
 
 // ── Passkey setup step ───────────────────────────────────────────────────────
 
-function PasskeySetup({
-  onSuccess,
+function PasskeySetup({ onSuccess,
   onBack,
 }: {
   onSuccess: () => void
@@ -215,8 +213,7 @@ function PasskeySetup({
 
 // ── Email OTP setup step ─────────────────────────────────────────────────────
 
-function EmailOTPSetup({
-  email,
+function EmailOTPSetup({ email,
   onSuccess,
   onBack,
 }: {
@@ -379,8 +376,7 @@ function EmailOTPSetup({
 
 // ── TOTP setup step ──────────────────────────────────────────────────────────
 
-function TOTPSetup({
-  onSuccess,
+function TOTPSetup({ onSuccess,
   onBack,
 }: {
   onSuccess: () => void
@@ -518,16 +514,14 @@ function TOTPSetup({
 
 function SetupMFAPage() {
   useLocale()
-  const auth = useAuth()
-  const { user: currentUser, canRender } = useProtectedRoute()
 
   const [selectedMethod, setSelectedMethod] = useState<Method | null>(null)
   const [step, setStep] = useState<Step>('pick')
 
+  const { user: currentUser } = useCurrentUser()
   const mfaPolicy = currentUser?.mfa_policy ?? 'optional'
   const isRequired = mfaPolicy === 'required'
-
-  const email = auth.user?.profile?.email as string ?? ''
+  const email = ''
 
   function handleMethodChosen() {
     if (!selectedMethod) return
@@ -548,14 +542,6 @@ function SetupMFAPage() {
 
   function handleSkip() {
     window.location.replace(currentUser?.isAdmin ? '/admin' : '/app')
-  }
-
-  if (!canRender) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
-      </div>
-    )
   }
 
   const leftContent = (

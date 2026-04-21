@@ -200,7 +200,7 @@ function AddSourcePage() {
   const { data: allKbsData } = useQuery({
     queryKey: ['app-knowledge-bases'],
     queryFn: () => apiFetch<{ knowledge_bases: { id: number; name: string; slug: string }[] }>('/api/app/knowledge-bases'),
-      })
+  })
   const allKbs = allKbsData?.knowledge_bases ?? []
 
   function goBack() {

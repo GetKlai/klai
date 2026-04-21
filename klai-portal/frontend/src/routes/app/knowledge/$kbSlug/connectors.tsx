@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
-  RefreshCw, Trash2, Loader2, Plus, Pencil, Globe, FileText, CheckCircle2, X,
+  RefreshCw, Trash2, Loader2, Plus, Pencil, Globe, FileText,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -24,9 +24,6 @@ import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary, KnowledgeBase, MembersResponse } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/connectors')({
-  validateSearch: (search: Record<string, unknown>) => ({
-    oauth: typeof search.oauth === 'string' ? search.oauth : undefined,
-  }),
   component: ConnectorsTab,
 })
 
@@ -45,27 +42,16 @@ function ConnectorsTab() {
   const navigate = useNavigate({ from: Route.fullPath })
   const auth = useAuth()
   const queryClient = useQueryClient()
-  const { oauth } = Route.useSearch()
-  const [showOAuthBanner, setShowOAuthBanner] = useState(oauth === 'connected')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
-
-  // Clean up the ?oauth= param from the URL after mounting so a reload doesn't re-show the banner.
-  useEffect(() => {
-    if (oauth === 'connected') {
-      window.history.replaceState({}, '', window.location.pathname)
-    }
-  }, [oauth])
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
-    enabled: auth.isAuthenticated,
   })
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
-    enabled: auth.isAuthenticated,
   })
   const myUserId = auth.user?.profile?.sub
   const isCreator = !!(myUserId && kb?.created_by === myUserId)
@@ -74,7 +60,6 @@ function ConnectorsTab() {
   const { data: connectors = [], isLoading } = useQuery<ConnectorSummary[]>({
     queryKey: ['kb-connectors-portal', kbSlug],
     queryFn: async () => apiFetch<ConnectorSummary[]>(`/api/app/knowledge-bases/${kbSlug}/connectors/`),
-    enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
       const data = query.state.data
       if (Array.isArray(data) && data.some((c) => c.last_sync_status === 'RUNNING' || c.last_sync_status === 'running')) {
@@ -112,15 +97,6 @@ function ConnectorsTab() {
 
   return (
     <div className="space-y-3">
-      {showOAuthBanner && (
-        <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success)]">
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">{m.admin_connectors_oauth_success()}</span>
-          <button onClick={() => setShowOAuthBanner(false)} aria-label="Dismiss" className="hover:opacity-70 transition-opacity">
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      )}
       {connectors.length > 0 && (
         <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
@@ -160,11 +136,6 @@ function ConnectorsTab() {
                   </td>
                   <td className="py-4 pr-4 align-top w-32">
                     <SyncStatusBadge status={c.last_sync_status} lastSyncAt={c.last_sync_at} />
-                    {c.last_sync_documents_ok != null && c.last_sync_documents_ok > 0 && (
-                      <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] tabular-nums">
-                        {c.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
-                      </p>
-                    )}
                   </td>
                   {isOwner && (
                     <td className="py-4 align-top text-right w-28">

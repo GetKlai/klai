@@ -10,7 +10,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
-const SCRIBE_BASE = '/api/scribe/v1'
+const SCRIBE_BASE = '/scribe/v1'
 const ACCEPTED_TYPES = '.wav,.mp3,.m4a,.ogg,.webm'
 const MAX_MB = 100
 

@@ -1,6 +1,5 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib/auth'
 import { AlertCircle, CheckCircle, CreditCard, ExternalLink, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -128,19 +127,16 @@ function Field({
 // --- Main page ---
 
 function BillingPage() {
-  const auth = useAuth()
-
   const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!auth.isAuthenticated) return
     apiFetch<BillingStatusResponse>(`/api/billing/status`)
       .then(setBillingStatus)
       .catch(() => setFetchError(m.admin_billing_error_fetch()))
       .finally(() => setLoadingStatus(false))
-  }, [auth.isAuthenticated])
+  }, [])
 
   if (loadingStatus) {
     return (
@@ -194,8 +190,7 @@ function BillingPage() {
 
 // --- State: pending ---
 
-function SetupView({
-  onComplete,
+function SetupView({ onComplete,
 }: {
   onComplete: (s: BillingStatusResponse) => void
 }) {
@@ -496,8 +491,7 @@ function MandateRequestedView() {
 
 // --- State: active ---
 
-function ActiveView({
-  status,
+function ActiveView({ status,
   onCancel,
 }: {
   status: BillingStatusResponse

@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { List } from 'lucide-react'
@@ -15,14 +14,12 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug/items')({
 
 function ItemsTab() {
   const { kbSlug } = Route.useParams()
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<PersonalItemsResponse>({
     queryKey: ['personal-knowledge', kbSlug],
     queryFn: async () => apiFetch<PersonalItemsResponse>('/api/knowledge/personal/items'),
-    enabled: auth.isAuthenticated,
   })
 
   const deleteMutation = useMutation({

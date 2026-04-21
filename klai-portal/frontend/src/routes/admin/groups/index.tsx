@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
@@ -98,7 +97,6 @@ function MemberAvatars({
 const columnHelper = createColumnHelper<Group>()
 
 function AdminGroups() {
-  const auth = useAuth()
   const navigate = useNavigate({ from: '/admin/groups/' })
   const queryClient = useQueryClient()
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
@@ -106,19 +104,16 @@ function AdminGroups() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-groups'],
     queryFn: async () => apiFetch<{ groups: Group[] }>('/api/admin/groups'),
-    enabled: auth.isAuthenticated,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
     queryFn: async () => apiFetch<{ users: OrgUser[] }>('/api/admin/users'),
-    enabled: auth.isAuthenticated,
   })
 
   const { data: membershipsData } = useQuery({
     queryKey: ['admin-group-memberships'],
     queryFn: async () => apiFetch<{ memberships: Record<string, { id: number }[]> }>('/api/admin/group-memberships'),
-    enabled: auth.isAuthenticated,
   })
 
   const groups = data?.groups ?? []

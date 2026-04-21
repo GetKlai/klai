@@ -14,7 +14,7 @@ export const Route = createFileRoute('/app/docs/new')({
   component: NewKBPage,
 })
 
-const DOCS_BASE = '/api/docs/api'
+const DOCS_BASE = '/docs/api'
 
 function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]

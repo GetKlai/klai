@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
@@ -31,7 +30,6 @@ interface OrgSettings {
 }
 
 function InviteUserPage() {
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -44,7 +42,6 @@ function InviteUserPage() {
         return null
       }
     },
-    enabled: auth.isAuthenticated,
   })
 
   const defaultLanguage: Language = orgSettings?.default_language ?? 'nl'

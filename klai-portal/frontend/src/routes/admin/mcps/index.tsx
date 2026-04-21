@@ -16,6 +16,7 @@ export const Route = createFileRoute('/admin/mcps/')({
 function McpsListPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+
   const { data, isLoading, isError } = useMcpServers()
 
   const [confirmingDeactivateId, setConfirmingDeactivateId] = useState<string | null>(null)

@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,14 +14,12 @@ export const Route = createFileRoute('/admin/settings')({
 })
 
 function AdminSettingsPage() {
-  const auth = useAuth()
   const [savedLang, setSavedLang] = useState(false)
   const [savedMfa, setSavedMfa] = useState(false)
 
   const { data: settings, isLoading, error } = useQuery({
     queryKey: ['admin-settings'],
     queryFn: async () => apiFetch<{ name: string; default_language: 'nl' | 'en'; mfa_policy: 'optional' | 'recommended' | 'required' }>(`/api/admin/settings`),
-    enabled: auth.isAuthenticated,
   })
 
   async function patchSettings(payload: { default_language?: 'nl' | 'en'; mfa_policy?: 'optional' | 'recommended' | 'required' }) {

@@ -98,7 +98,7 @@ function RulesPage() {
   const { data, isLoading } = useQuery<Rule[]>({
     queryKey: ['app-rules'],
     queryFn: async () => apiFetch<Rule[]>('/api/app/rules'),
-      })
+  })
 
   const createMutation = useMutation({
     mutationFn: async (body: RuleFormState) =>

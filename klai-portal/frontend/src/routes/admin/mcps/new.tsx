@@ -11,6 +11,7 @@ export const Route = createFileRoute('/admin/mcps/new')({
 
 function McpsNewPage() {
   const navigate = useNavigate()
+
   const { data, isLoading, isError } = useMcpServers()
 
   // Managed servers are always enabled and live in the main list — never in the picker.

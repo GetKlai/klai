@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft } from 'lucide-react'
@@ -20,7 +19,7 @@ export const Route = createFileRoute('/app/focus/$notebookId_/edit')({
   ),
 })
 
-const FOCUS_BASE = '/api/research/v1'
+const FOCUS_BASE = '/research/v1'
 
 type Scope = 'personal' | 'org'
 type Mode = 'narrow' | 'broad' | 'web'
@@ -42,7 +41,6 @@ interface NotebookResponse {
 
 function EditFocusPage() {
   const { notebookId } = Route.useParams()
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -56,7 +54,6 @@ function EditFocusPage() {
   const { data: notebook } = useQuery<NotebookResponse>({
     queryKey: ['focus-notebook', notebookId],
     queryFn: async () => apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks/${notebookId}`),
-    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {

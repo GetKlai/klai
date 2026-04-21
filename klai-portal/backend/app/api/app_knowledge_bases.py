@@ -7,7 +7,7 @@ from typing import Literal
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -244,21 +244,18 @@ async def _resolve_personal_kb(caller_id: str, org_id: int, db: AsyncSession) ->
 
     slug = personal_kb_slug(caller_id)
     result = await db.execute(
-        select(PortalKnowledgeBase)
-        .where(PortalKnowledgeBase.org_id == org_id, PortalKnowledgeBase.slug == slug)
-        .with_for_update()
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == org_id,
+            PortalKnowledgeBase.slug == slug,
+        )
     )
     kb = result.scalar_one_or_none()
     if kb:
         return kb
 
-    try:
-        kb = await create_default_personal_kb(caller_id, org_id, db)
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        logger.exception("fallback_personal_kb_creation_failed", caller_id=caller_id, org_id=org_id)
-        raise
+    # Fallback: provisioning didn't create it yet — create on the fly
+    kb = await create_default_personal_kb(caller_id, org_id, db)
+    await db.commit()
     return kb
 
 
@@ -267,33 +264,47 @@ async def _resolve_org_kb(caller_id: str, org_id: int, db: AsyncSession) -> Port
     from app.services.default_knowledge_bases import create_default_org_kb
 
     result = await db.execute(
-        select(PortalKnowledgeBase)
-        .where(PortalKnowledgeBase.org_id == org_id, PortalKnowledgeBase.slug == "org")
-        .with_for_update()
+        select(PortalKnowledgeBase).where(
+            PortalKnowledgeBase.org_id == org_id,
+            PortalKnowledgeBase.slug == "org",
+        )
     )
     kb = result.scalar_one_or_none()
     if kb:
         return kb
 
-    try:
-        kb = await create_default_org_kb(org_id, created_by=caller_id, db=db)
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        logger.exception("fallback_org_kb_creation_failed", org_id=org_id)
-        raise
+    kb = await create_default_org_kb(org_id, created_by=caller_id, db=db)
+    await db.commit()
     return kb
 
 
 async def _require_owner(kb: PortalKnowledgeBase, caller_id: str, db: AsyncSession) -> None:
+    """Owner-only gate for destructive actions.
+
+    Admins of the same org can also pass this gate (they implicitly own
+    everything in their tenant — deleting KBs, managing members, etc.).
+    """
     role = await get_user_role_for_kb(
         kb.id, caller_id, db, default_org_role=kb.default_org_role, kb_org_id=kb.org_id, kb_created_by=kb.created_by
     )
-    if role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Owner access required",
+    if role == "owner":
+        return
+
+    # Admin bypass — org admins can manage any KB in their org.
+    caller_row = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == caller_id,
+            PortalUser.org_id == kb.org_id,
         )
+    )
+    caller = caller_row.scalar_one_or_none()
+    if caller and caller.role == "admin":
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Owner access required",
+    )
 
 
 def _validate_role(role: str) -> None:
@@ -314,16 +325,9 @@ async def list_app_knowledge_bases(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AppKBsResponse:
-    """Return KBs visible to the caller: all org-owned KBs + caller's own personal KBs.
-
-    Other users' personal KBs are never returned.
-    """
-    caller_id, org, _ = await _get_caller_org(credentials, db)
-    query = select(PortalKnowledgeBase).where(
-        PortalKnowledgeBase.org_id == org.id,
-        # Org-owned KBs are visible to everyone; personal KBs only to their owner
-        (PortalKnowledgeBase.owner_type == "org") | (PortalKnowledgeBase.owner_user_id == caller_id),
-    )
+    """Return KBs for the caller's org. Optionally filter by docs_only or owner_type."""
+    _, org, _ = await _get_caller_org(credentials, db)
+    query = select(PortalKnowledgeBase).where(PortalKnowledgeBase.org_id == org.id)
     if docs_only:
         query = query.where(
             PortalKnowledgeBase.docs_enabled == True,  # noqa: E712
@@ -656,34 +660,17 @@ async def update_knowledge_base(
                 detail="default_org_role must be 'viewer', 'contributor', or empty",
             )
 
+    await db.commit()
+
     # expire_on_commit=False keeps all attributes valid after commit — no re-fetch needed.
     # A re-fetch after commit acquires a new connection without app.current_org_id set,
     # causing RLS to return no rows and a spurious 404.
-    #
-    # Visibility is a two-system invariant: portal_knowledge_bases.visibility
-    # must match the retrieval-side flag in knowledge-ingest. Propagate to
-    # knowledge-ingest FIRST, then commit portal — so a propagation failure
-    # leaves both systems in the old, consistent state instead of split-brain.
     if visibility_changed:
         try:
             await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
-        except Exception as exc:
-            # Revert the in-memory change; portal hasn't been committed yet.
-            await db.rollback()
-            logger.exception(
-                "kb_visibility_propagation_failed",
-                kb_slug=kb.slug,
-                org_id=org.id,
-                requested_visibility=kb.visibility,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=(
-                    "Could not propagate visibility change to knowledge-ingest; no changes were saved. Please retry."
-                ),
-            ) from exc
+        except Exception:
+            logger.warning("Failed to propagate visibility change to knowledge-ingest", kb_slug=kb.slug)
 
-    await db.commit()
     return _kb_out(kb)
 
 
@@ -1166,7 +1153,6 @@ class CrawlPreviewRequest(BaseModel):
     url: str
     content_selector: str | None = None
     try_ai: bool = False
-    cookies: list[dict] | None = None
 
 
 class CrawlPreviewResponse(BaseModel):
@@ -1194,7 +1180,6 @@ async def crawl_preview(
         content_selector=body.content_selector,
         org_id=str(org.id),
         try_ai=body.try_ai,
-        cookies=body.cookies,
     )
     return CrawlPreviewResponse(
         url=result.get("url", body.url),
@@ -1204,6 +1189,217 @@ async def crawl_preview(
         content_selector=result.get("content_selector"),
         selector_source=result.get("selector_source"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct content ingest (text paste, file upload)
+# ---------------------------------------------------------------------------
+
+
+class TextIngestRequest(BaseModel):
+    title: str
+    content: str
+    content_type: str = "text/plain"
+
+
+class IngestResponse(BaseModel):
+    artifact_id: str
+    status: str = "ingested"
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/text", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
+async def ingest_text(
+    kb_slug: str,
+    body: TextIngestRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestResponse:
+    """Ingest pasted text content into a KB. Requires contributor or owner role."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    # Personal KBs: pass user_id so content is user-scoped in Qdrant
+    user_id = caller_id if kb.owner_type == "user" else None
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=body.content,
+        title=body.title,
+        user_id=user_id,
+        source_type="manual_paste",
+        content_type=body.content_type,
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/upload", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
+async def upload_document(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+) -> IngestResponse:
+    """Upload a file into a KB. Supports PDF, DOCX, XLSX, TXT, MD, CSV, JSON, XML.
+    Requires contributor or owner role.
+    """
+    from app.services.file_parser import parse_file
+
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    raw = await file.read()
+    filename = file.filename or "untitled"
+    content = parse_file(raw, filename)
+    if not content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from file.",
+        )
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=filename,
+        user_id=user_id,
+        source_type="manual_upload",
+        content_type=file.content_type or "text/plain",
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/upload-image",
+    response_model=IngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_image(
+    kb_slug: str,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+) -> IngestResponse:
+    """Upload an image and extract text via OCR."""
+    from app.services.file_parser import parse_image_ocr
+
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    raw = await file.read()
+    filename = file.filename or "image.png"
+    content = parse_image_ocr(raw, filename)
+    if not content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from image.",
+        )
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=filename,
+        user_id=user_id,
+        source_type="image_ocr",
+        content_type="text/plain",
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+class YouTubeIngestRequest(BaseModel):
+    url: str
+    title: str | None = None
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/youtube", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
+async def ingest_youtube(
+    kb_slug: str,
+    body: YouTubeIngestRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestResponse:
+    """Extract transcript from YouTube video and ingest."""
+    import re
+
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    # Extract video ID
+    match = re.search(r"(?:v=|youtu\.be/|/embed/|/v/)([a-zA-Z0-9_-]{11})", body.url)
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid YouTube URL")
+    video_id = match.group(1)
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        transcript_list = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, video_id)  # type: ignore[attr-defined]
+        content = "\n".join(entry["text"] for entry in transcript_list)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not fetch transcript: {e}"
+        ) from None
+    title = body.title or f"YouTube: {video_id}"
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=title,
+        user_id=user_id,
+        source_type="youtube_transcript",
+        content_type="meeting_transcript",
+    )
+    return IngestResponse(artifact_id=artifact_id)
+
+
+class RSSIngestRequest(BaseModel):
+    url: str
+    title: str | None = None
+    max_items: int = 50
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/documents/rss", response_model=IngestResponse, status_code=status.HTTP_201_CREATED
+)
+async def ingest_rss(
+    kb_slug: str,
+    body: RSSIngestRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> IngestResponse:
+    """Parse RSS feed and ingest entries as documents."""
+    caller_id, org, _ = await _get_caller_org(credentials, db)
+    kb = await _get_kb_or_404(kb_slug, org.id, db)
+    user_id = caller_id if kb.owner_type == "user" else None
+    try:
+        import feedparser
+
+        feed = await asyncio.to_thread(feedparser.parse, body.url)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not parse RSS feed: {e}") from None
+    if not feed.entries:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No entries found in RSS feed")
+    # Combine entries into one document
+    parts = []
+    for entry in feed.entries[: body.max_items]:
+        entry_title = entry.get("title", "Untitled")
+        entry_content = entry.get("summary", entry.get("description", ""))
+        entry_link = entry.get("link", "")
+        parts.append(f"## {entry_title}\n{entry_content}\n\nSource: {entry_link}")
+    content = "\n\n---\n\n".join(parts)
+    title = body.title or feed.feed.get("title", "RSS Feed")  # type: ignore[attr-defined]
+    artifact_id = await knowledge_ingest_client.ingest_document(
+        org_id=org.zitadel_org_id,
+        kb_slug=kb.slug,
+        content=content,
+        title=title,
+        user_id=user_id,
+        source_type="rss_feed",
+        content_type="kb_article",
+    )
+    return IngestResponse(artifact_id=artifact_id)
 
 
 # ---------------------------------------------------------------------------

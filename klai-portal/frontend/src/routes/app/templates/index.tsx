@@ -34,7 +34,7 @@ function TemplatesPage() {
   const { data, isLoading } = useQuery<Template[]>({
     queryKey: ['app-templates'],
     queryFn: async () => apiFetch<Template[]>('/api/app/templates'),
-      })
+  })
 
   const createMutation = useMutation({
     mutationFn: async (body: typeof form) =>
