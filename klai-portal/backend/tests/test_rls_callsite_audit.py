@@ -202,9 +202,7 @@ class _QueryVisitor(ast.NodeVisitor):
         if queries and not establishes and name not in ALLOWED_HELPER_FUNCTIONS:
             self.offending.append((str(self.source_path), 0, name))
 
-    def _has_tenant_establishing_dependency(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> bool:
+    def _has_tenant_establishing_dependency(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         """True if the function signature includes `= Depends(<tenant_setter>)`
         — FastAPI resolves the dependency before the body runs, so the body
         can assume tenant context is set.
