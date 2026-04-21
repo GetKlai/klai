@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-005
-version: 0.2.0
-status: draft
+version: 0.3.0
+status: in_progress
 created: 2026-04-19
 updated: 2026-04-21
 author: Mark Vletter
@@ -11,6 +11,11 @@ priority: high
 # SPEC-INFRA-005: Stateful service persistence, backup, and observability hardening
 
 ## HISTORY
+
+### v0.3.0 (2026-04-21)
+- Phase 1 complete. `deploy/volume-mounts.yaml` catalogues 27 persistent mounts across 23 services — every RW bind or named volume declared in `deploy/docker-compose.yml`. Entries classified data/config/ephemeral with image, container_path, backup_method, retention, pii.
+- Phase 2 complete. `scripts/audit-compose-volumes.sh` runs a two-part check (inventory coverage + image-data-path match), with `scripts/test-audit-compose.sh` proving the audit actually rejects the 2026-04-19 regression pattern. `.github/workflows/audit-compose.yml` runs both on every PR touching compose or inventory. First green CI run: `24723119786`.
+- Class of bug that caused the 2026-04-19 incident is now categorically unmergable.
 
 ### v0.2.0 (2026-04-21)
 - Hidden-state sweep of klai-connector, klai-scribe, klai-focus/research-api, klai-retrieval-api, klai-knowledge-mcp, klai-mailer found two additional persistence surfaces not covered by v0.1.0: `scribe-audio-data` (WAV recordings, PII) and `/opt/klai/research-uploads` (user-uploaded documents, PII).
