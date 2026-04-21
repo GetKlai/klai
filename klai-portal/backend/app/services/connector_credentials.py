@@ -25,9 +25,14 @@ logger = structlog.get_logger()
 SENSITIVE_FIELDS: dict[str, list[str]] = {
     "github": ["access_token", "installation_token", "app_private_key"],
     "notion": ["access_token"],
-    "google_drive": ["oauth_token", "refresh_token", "access_token"],
+    "google_drive": ["oauth_token", "refresh_token", "access_token", "service_account_json"],
     "ms_docs": ["oauth_token", "refresh_token", "access_token"],
     "web_crawler": ["auth_headers", "cookies"],
+    "confluence": ["api_token"],
+    "slack": ["bot_token"],
+    "airtable": ["api_key"],
+    "gmail": ["service_account_json"],
+    "google_sheets": ["service_account_json"],
 }
 
 

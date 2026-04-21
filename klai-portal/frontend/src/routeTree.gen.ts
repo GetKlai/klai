@@ -37,6 +37,8 @@ import { Route as AdminDomainsRouteImport } from './routes/admin/domains'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
 import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppTemplatesIndexRouteImport } from './routes/app/templates/index'
+import { Route as AppRulesIndexRouteImport } from './routes/app/rules/index'
 import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
 import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
 import { Route as AppFocusIndexRouteImport } from './routes/app/focus/index'
@@ -70,6 +72,7 @@ import { Route as AppDocsKbSlugRouteRouteImport } from './routes/app/docs/$kbSlu
 import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
 import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
+import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
 import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
 import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
 import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
@@ -225,6 +228,16 @@ const LocaleSignupRoute = LocaleSignupRouteImport.update({
 const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
   id: '/transcribe/',
   path: '/transcribe/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppRulesIndexRoute = AppRulesIndexRouteImport.update({
+  id: '/rules/',
+  path: '/rules/',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
@@ -395,6 +408,12 @@ const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   path: '/groups/$groupId/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AppKnowledgeKbSlugAddSourceRoute =
+  AppKnowledgeKbSlugAddSourceRouteImport.update({
+    id: '/knowledge/$kbSlug_/add-source',
+    path: '/knowledge/$kbSlug/add-source',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppKnowledgeKbSlugAddConnectorRoute =
   AppKnowledgeKbSlugAddConnectorRouteImport.update({
     id: '/knowledge/$kbSlug_/add-connector',
@@ -546,6 +565,8 @@ export interface FileRoutesByFullPath {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
+  '/app/rules/': typeof AppRulesIndexRoute
+  '/app/templates/': typeof AppTemplatesIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -562,6 +583,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
@@ -620,6 +642,8 @@ export interface FileRoutesByTo {
   '/app/focus': typeof AppFocusIndexRoute
   '/app/gaps': typeof AppGapsIndexRoute
   '/app/knowledge': typeof AppKnowledgeIndexRoute
+  '/app/rules': typeof AppRulesIndexRoute
+  '/app/templates': typeof AppTemplatesIndexRoute
   '/app/transcribe': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -636,6 +660,7 @@ export interface FileRoutesByTo {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
@@ -700,6 +725,8 @@ export interface FileRoutesById {
   '/app/focus/': typeof AppFocusIndexRoute
   '/app/gaps/': typeof AppGapsIndexRoute
   '/app/knowledge/': typeof AppKnowledgeIndexRoute
+  '/app/rules/': typeof AppRulesIndexRoute
+  '/app/templates/': typeof AppTemplatesIndexRoute
   '/app/transcribe/': typeof AppTranscribeIndexRoute
   '/admin/groups/$groupId/add-member': typeof AdminGroupsGroupIdAddMemberRoute
   '/admin/groups/$groupId/edit': typeof AdminGroupsGroupIdEditRoute
@@ -716,6 +743,7 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug/settings': typeof AppKnowledgeKbSlugSettingsRoute
   '/app/knowledge/$kbSlug/taxonomy': typeof AppKnowledgeKbSlugTaxonomyRoute
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
+  '/app/knowledge/$kbSlug_/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
@@ -781,6 +809,8 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/gaps/'
     | '/app/knowledge/'
+    | '/app/rules/'
+    | '/app/templates/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -797,6 +827,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
+    | '/app/knowledge/$kbSlug/add-source'
     | '/admin/groups/$groupId/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
@@ -855,6 +886,8 @@ export interface FileRouteTypes {
     | '/app/focus'
     | '/app/gaps'
     | '/app/knowledge'
+    | '/app/rules'
+    | '/app/templates'
     | '/app/transcribe'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -871,6 +904,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug/add-connector'
+    | '/app/knowledge/$kbSlug/add-source'
     | '/admin/groups/$groupId'
     | '/app/docs/$kbSlug'
     | '/app/knowledge/$kbSlug'
@@ -934,6 +968,8 @@ export interface FileRouteTypes {
     | '/app/focus/'
     | '/app/gaps/'
     | '/app/knowledge/'
+    | '/app/rules/'
+    | '/app/templates/'
     | '/app/transcribe/'
     | '/admin/groups/$groupId/add-member'
     | '/admin/groups/$groupId/edit'
@@ -950,6 +986,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/settings'
     | '/app/knowledge/$kbSlug/taxonomy'
     | '/app/knowledge/$kbSlug_/add-connector'
+    | '/app/knowledge/$kbSlug_/add-source'
     | '/admin/groups/$groupId/'
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
@@ -1172,6 +1209,20 @@ declare module '@tanstack/react-router' {
       path: '/transcribe'
       fullPath: '/app/transcribe/'
       preLoaderRoute: typeof AppTranscribeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/templates/': {
+      id: '/app/templates/'
+      path: '/templates'
+      fullPath: '/app/templates/'
+      preLoaderRoute: typeof AppTemplatesIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/rules/': {
+      id: '/app/rules/'
+      path: '/rules'
+      fullPath: '/app/rules/'
+      preLoaderRoute: typeof AppRulesIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/knowledge/': {
@@ -1404,6 +1455,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/groups/$groupId/'
       preLoaderRoute: typeof AdminGroupsGroupIdIndexRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/app/knowledge/$kbSlug_/add-source': {
+      id: '/app/knowledge/$kbSlug_/add-source'
+      path: '/knowledge/$kbSlug/add-source'
+      fullPath: '/app/knowledge/$kbSlug/add-source'
+      preLoaderRoute: typeof AppKnowledgeKbSlugAddSourceRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/app/knowledge/$kbSlug_/add-connector': {
       id: '/app/knowledge/$kbSlug_/add-connector'
@@ -1662,11 +1720,14 @@ interface AppRouteRouteChildren {
   AppFocusIndexRoute: typeof AppFocusIndexRoute
   AppGapsIndexRoute: typeof AppGapsIndexRoute
   AppKnowledgeIndexRoute: typeof AppKnowledgeIndexRoute
+  AppRulesIndexRoute: typeof AppRulesIndexRoute
+  AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
   AppTranscribeIndexRoute: typeof AppTranscribeIndexRoute
   AppDocsKbSlugEditRoute: typeof AppDocsKbSlugEditRoute
   AppFocusNotebookIdAddSourceRoute: typeof AppFocusNotebookIdAddSourceRoute
   AppFocusNotebookIdEditRoute: typeof AppFocusNotebookIdEditRoute
   AppKnowledgeKbSlugAddConnectorRoute: typeof AppKnowledgeKbSlugAddConnectorRoute
+  AppKnowledgeKbSlugAddSourceRoute: typeof AppKnowledgeKbSlugAddSourceRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 
@@ -1689,11 +1750,14 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppFocusIndexRoute: AppFocusIndexRoute,
   AppGapsIndexRoute: AppGapsIndexRoute,
   AppKnowledgeIndexRoute: AppKnowledgeIndexRoute,
+  AppRulesIndexRoute: AppRulesIndexRoute,
+  AppTemplatesIndexRoute: AppTemplatesIndexRoute,
   AppTranscribeIndexRoute: AppTranscribeIndexRoute,
   AppDocsKbSlugEditRoute: AppDocsKbSlugEditRoute,
   AppFocusNotebookIdAddSourceRoute: AppFocusNotebookIdAddSourceRoute,
   AppFocusNotebookIdEditRoute: AppFocusNotebookIdEditRoute,
   AppKnowledgeKbSlugAddConnectorRoute: AppKnowledgeKbSlugAddConnectorRoute,
+  AppKnowledgeKbSlugAddSourceRoute: AppKnowledgeKbSlugAddSourceRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
 }

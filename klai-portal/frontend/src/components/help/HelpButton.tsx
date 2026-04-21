@@ -61,14 +61,12 @@ export function HelpButton() {
         <button
           onClick={toggle}
           data-help-id="help-button"
-          className={`flex items-center rounded-full shadow-md cursor-pointer outline-none ${
+          className={`flex items-center rounded-lg shadow-md cursor-pointer outline-none ${
             enabled ? 'gap-2 px-4 h-10' : 'w-10 h-10 justify-center p-0'
           }`}
           style={{
-            backgroundColor: enabled
-              ? 'var(--color-rl-accent)'
-              : 'var(--color-primary)',
-            color: 'var(--color-foreground)',
+            backgroundColor: 'var(--color-foreground)',
+            color: 'white',
             border: 'none',
           }}
           aria-label={m.help_toggle_label()}

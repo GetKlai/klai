@@ -22,6 +22,7 @@ from app.api.dependencies import _get_caller_org, bearer
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.templates import PortalTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class KBPreferenceOut(BaseModel):
     kb_slugs_filter: list[str] | None
     kb_narrow: bool
     kb_pref_version: int
+    active_template_ids: list[int] | None = None
 
 
 class KBPreferencePatch(BaseModel):
@@ -63,6 +65,7 @@ class KBPreferencePatch(BaseModel):
     kb_personal_enabled: bool | None = None
     kb_slugs_filter: list[str] | None = None
     kb_narrow: bool | None = None
+    active_template_ids: list[int] | None = None
 
 
 # -- Endpoints ----------------------------------------------------------------
@@ -81,6 +84,7 @@ async def get_kb_preference(
         kb_slugs_filter=user.kb_slugs_filter,
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
+        active_template_ids=user.active_template_ids,
     )
 
 
@@ -132,6 +136,31 @@ async def patch_kb_preference(
 
         user.kb_slugs_filter = slugs
 
+    if "active_template_ids" in body.model_fields_set:
+        template_ids = body.active_template_ids
+
+        # Normalize empty list to null
+        if template_ids is not None and len(template_ids) == 0:
+            template_ids = None
+
+        if template_ids is not None:
+            # Validate all template IDs belong to the caller's org
+            result = await db.execute(
+                select(PortalTemplate.id).where(
+                    PortalTemplate.org_id == org.id,
+                    PortalTemplate.id.in_(template_ids),
+                )
+            )
+            valid_ids = {row[0] for row in result}
+            invalid = set(template_ids) - valid_ids
+            if invalid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unknown template IDs for this org: {sorted(invalid)}",
+                )
+
+        user.active_template_ids = template_ids
+
     user.kb_pref_version += 1
     await db.commit()
 
@@ -144,4 +173,5 @@ async def patch_kb_preference(
         kb_slugs_filter=user.kb_slugs_filter,
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
+        active_template_ids=user.active_template_ids,
     )

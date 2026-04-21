@@ -186,7 +186,7 @@ function McpEditPage() {
   if (isLoading) {
     return (
       <div className="p-6 max-w-lg">
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_mcps_loading()}
         </p>
       </div>
@@ -217,10 +217,10 @@ function McpEditPage() {
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-xl/none font-semibold text-gray-900">
             {server.display_name || server.id}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">{server.description}</p>
+          <p className="text-sm text-gray-400">{server.description}</p>
         </div>
         <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -229,7 +229,7 @@ function McpEditPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <p className="text-sm font-medium text-[var(--color-foreground)]">
+        <p className="text-sm font-medium text-gray-900">
           {m.admin_mcps_required_vars()}
         </p>
 
@@ -256,7 +256,7 @@ function McpEditPage() {
         {successMsg && <p className="text-sm text-[var(--color-success)]">{successMsg}</p>}
         {errorMsg && <p className="text-sm text-[var(--color-destructive)]">{errorMsg}</p>}
 
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+        <p className="text-xs text-gray-400">
           {m.admin_mcps_restart_notice()}
         </p>
 

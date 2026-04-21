@@ -104,13 +104,13 @@ function FocusPage() {
         : null
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="text-2xl font-semibold text-gray-900">
             {m.app_tool_focus_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {!isLoading && countLabel}
           </p>
         </div>
@@ -129,16 +129,16 @@ function FocusPage() {
 
       {isLoading ? (
         <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
         </div>
       ) : notebooks.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <BookOpen className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
+          <BookOpen className="h-10 w-10 text-gray-300" />
           <div className="space-y-1">
-            <p className="font-medium text-[var(--color-foreground)]">
+            <p className="font-medium text-gray-900">
               {m.app_focus_empty_heading()}
             </p>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.app_focus_empty_body()}
             </p>
           </div>
@@ -163,23 +163,23 @@ function FocusPage() {
             />
           </div>
           {filteredNotebooks.length === 0 ? (
-            <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+            <p className="py-8 text-sm text-gray-400">
               {m.app_focus_search_empty()}
             </p>
           ) : (
-            <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+            <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
               <thead>
-                <tr className="border-b border-[var(--color-border)]">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                <tr className="border-b border-gray-200">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">
                     {m.app_focus_notebook_name_label()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-24">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-24">
                     {m.app_focus_sources_heading()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-32">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-32">
                     {m.app_focus_notebook_scope_label()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-28">
                     {m.app_focus_col_created()}
                   </th>
                   <th className="py-3 text-right w-20" />
@@ -193,10 +193,10 @@ function FocusPage() {
                   return (
                     <tr
                       key={nb.id}
-                      className="border-b border-[var(--color-border)] last:border-b-0"
+                      className="border-b border-gray-200 last:border-b-0"
                     >
                       <td
-                        className="py-4 pr-4 align-top text-[var(--color-foreground)] cursor-pointer hover:underline"
+                        className="py-4 pr-4 align-top text-gray-900 cursor-pointer hover:underline"
                         onClick={() =>
                           navigate({
                             to: '/app/focus/$notebookId',
@@ -206,20 +206,20 @@ function FocusPage() {
                       >
                         <p className="font-medium truncate">{nb.name}</p>
                         {nb.description && (
-                          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5 truncate">
+                          <p className="text-xs text-gray-400 mt-0.5 truncate">
                             {nb.description}
                           </p>
                         )}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)] tabular-nums w-24">
+                      <td className="py-4 pr-4 align-top text-gray-400 tabular-nums w-24">
                         {nb.sources_count}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)] w-32">
+                      <td className="py-4 pr-4 align-top text-gray-900 w-32">
                         {nb.scope === 'personal'
                           ? m.app_focus_notebook_scope_personal()
                           : m.app_focus_notebook_scope_org()}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)] whitespace-nowrap tabular-nums w-28">
+                      <td className="py-4 pr-4 align-top text-gray-900 whitespace-nowrap tabular-nums w-28">
                         {formatDate(nb.created_at)}
                       </td>
                       <td className="py-4 align-top text-right w-20">

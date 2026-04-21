@@ -132,7 +132,7 @@ function AdminGroupDetail() {
   if (groupLoading) {
     return (
       <div className="p-6">
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
         </p>
@@ -153,11 +153,11 @@ function AdminGroupDetail() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="page-title text-xl/none font-semibold text-gray-900">
             {groupData.name}
           </h1>
           {groupData.description && (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {groupData.description}
             </p>
           )}
@@ -217,28 +217,28 @@ function AdminGroupDetail() {
           </div>
 
           {membersLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
               Loading...
             </p>
           ) : members.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">
+            <p className="text-sm text-gray-400 py-4 text-center">
               {m.admin_groups_members_empty()}
             </p>
           ) : (
-            <table className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+            <table className="w-full text-sm table-fixed border-t border-b border-gray-200">
               <thead>
-                <tr className="border-b border-[var(--color-border)]">
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                <tr className="border-b border-gray-200">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">
                     {m.admin_groups_name()}
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">
                     Email
                   </th>
-                  <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-28">
+                  <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-28">
                     {m.admin_groups_members_joined_at()}
                   </th>
-                  <th className="py-3 text-right text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-16">
+                  <th className="py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-16">
                     {/* Actions */}
                   </th>
                 </tr>
@@ -254,15 +254,15 @@ function AdminGroupDetail() {
                   return (
                     <tr
                       key={member.zitadel_user_id}
-                      className="border-b border-[var(--color-border)] last:border-b-0"
+                      className="border-b border-gray-200 last:border-b-0"
                     >
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)]">
+                      <td className="py-4 pr-4 align-top text-gray-900">
                         {displayName(user, member)}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)]">
+                      <td className="py-4 pr-4 align-top text-gray-400">
                         {displayEmail(user)}
                       </td>
-                      <td className="py-4 pr-4 align-top text-[var(--color-foreground)] whitespace-nowrap tabular-nums w-28">
+                      <td className="py-4 pr-4 align-top text-gray-900 whitespace-nowrap tabular-nums w-28">
                         {formatDate(member.joined_at)}
                       </td>
                       <td className="py-4 align-top text-right w-16">

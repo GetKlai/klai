@@ -49,10 +49,10 @@ function AdminHome() {
   return (
     <div className="p-6 space-y-8 max-w-3xl">
       <div className="space-y-1">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_home_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_home_subtitle()}
         </p>
       </div>
@@ -62,18 +62,18 @@ function AdminHome() {
           <a
             key={section.title}
             href={section.href}
-            className="group flex flex-col gap-3 rounded-xl border bg-[var(--color-card)] p-5 transition-shadow hover:shadow-md"
+            className="group flex flex-col gap-3 rounded-lg border bg-white p-5 transition-shadow hover:shadow-md"
           >
             <section.icon
               size={20}
               strokeWidth={1.5}
-              className="text-[var(--color-muted-foreground)]"
+              className="text-gray-400"
             />
             <div>
-              <p className="text-sm font-medium text-[var(--color-foreground)] group-hover:text-[var(--color-rl-accent)] transition-colors">
+              <p className="text-sm font-medium text-gray-900 group-hover:text-gray-700 transition-colors">
                 {section.title}
               </p>
-              <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+              <p className="mt-0.5 text-xs text-gray-400">
                 {section.description}
               </p>
             </div>

@@ -45,13 +45,13 @@ function DocsPage() {
       : m.docs_kbs_count({ count: String(accessibleKbs.length) })
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="text-2xl font-semibold text-gray-900">
             {m.docs_kbs_title()}
           </h1>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {!isLoading && countLabel}
           </p>
         </div>
@@ -61,28 +61,28 @@ function DocsPage() {
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
       ) : isLoading ? (
         <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
         </div>
       ) : kbs.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <BookMarked className="h-10 w-10 text-[var(--color-muted-foreground)] opacity-40" />
+          <BookMarked className="h-10 w-10 text-gray-300" />
           <div className="space-y-1">
-            <p className="font-medium text-[var(--color-foreground)]">
+            <p className="font-medium text-gray-900">
               {m.docs_kb_empty_heading()}
             </p>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.docs_kb_empty_body()}
             </p>
           </div>
         </div>
       ) : (
-        <table data-help-id="docs-list" className="w-full text-sm table-fixed border-t border-b border-[var(--color-border)]">
+        <table data-help-id="docs-list" className="w-full text-sm table-fixed border-t border-b border-gray-200">
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]">
+            <tr className="border-b border-gray-200">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]">
                 {m.docs_kb_name_label()}
               </th>
-              <th className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em] w-32">
+              <th className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em] w-32">
                 {m.docs_kb_visibility_label()}
               </th>
               <th className="py-3 text-right w-24" />
@@ -93,10 +93,10 @@ function DocsPage() {
             {accessibleKbs.map((kb) => (
               <tr
                 key={kb.id}
-                className="border-b border-[var(--color-border)] last:border-b-0"
+                className="border-b border-gray-200 last:border-b-0"
               >
                 <td
-                  className="py-4 pr-4 align-top text-[var(--color-foreground)] font-medium cursor-pointer hover:underline"
+                  className="py-4 pr-4 align-top text-gray-900 font-medium cursor-pointer hover:underline"
                   onClick={() =>
                     navigate({ to: '/app/docs/$kbSlug', params: { kbSlug: kb.slug } })
                   }
@@ -104,7 +104,7 @@ function DocsPage() {
                   {kb.name}
                 </td>
                 <td className="py-4 pr-4 align-top w-32">
-                  <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
                     {kb.visibility === 'public' ? (
                       <Globe size={12} />
                     ) : (
@@ -124,7 +124,7 @@ function DocsPage() {
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label={m.docs_kb_view_public()}
-                          className="inline-flex items-center justify-center text-[var(--color-muted-foreground)] transition-opacity hover:opacity-70"
+                          className="inline-flex items-center justify-center text-gray-400 transition-opacity hover:opacity-70"
                         >
                           <ExternalLink className="h-4 w-4" />
                         </a>
@@ -150,9 +150,9 @@ function DocsPage() {
             {lockedKbs.map((kb) => (
               <tr
                 key={kb.id}
-                className="border-b border-[var(--color-border)] last:border-b-0 opacity-60"
+                className="border-b border-gray-200 last:border-b-0 opacity-60"
               >
-                <td className="py-4 pr-4 align-top text-[var(--color-muted-foreground)] font-medium">
+                <td className="py-4 pr-4 align-top text-gray-400 font-medium">
                   <Tooltip label={m.docs_kb_locked_tooltip()}>
                     <span className="inline-flex items-center gap-2 cursor-default">
                       <Lock size={12} className="shrink-0" />
@@ -168,7 +168,7 @@ function DocsPage() {
                     <button
                       disabled
                       aria-label={m.docs_kb_request_access()}
-                      className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] opacity-50 cursor-not-allowed px-2 py-1 rounded border border-[var(--color-border)]"
+                      className="flex items-center gap-1 text-xs text-gray-400 opacity-50 cursor-not-allowed px-2 py-1 rounded border border-gray-200"
                     >
                       {m.docs_kb_request_access()}
                     </button>

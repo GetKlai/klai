@@ -153,7 +153,7 @@ function EditGroupPage() {
   if (groupLoading) {
     return (
       <div className="p-6">
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
         </p>
@@ -172,7 +172,7 @@ function EditGroupPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_groups_edit()}
         </h1>
         <Button
@@ -211,7 +211,7 @@ function EditGroupPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={m.admin_groups_description_placeholder()}
                 rows={3}
-                className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
 
@@ -220,7 +220,7 @@ function EditGroupPage() {
               <Label className="mb-2 block">{m.admin_groups_members_title()}</Label>
 
               {currentMembers.length === 0 ? (
-                <p className="text-sm text-[var(--color-muted-foreground)] mb-3">
+                <p className="text-sm text-gray-400 mb-3">
                   {m.admin_groups_members_empty()}
                 </p>
               ) : (
@@ -228,10 +228,10 @@ function EditGroupPage() {
                   {currentMembers.map((user) => (
                     <div key={user.zitadel_user_id} className="flex items-center justify-between py-1">
                       <div>
-                        <span className="text-sm text-[var(--color-foreground)]">
+                        <span className="text-sm text-gray-900">
                           {displayName(user)}
                         </span>
-                        <span className="text-xs text-[var(--color-muted-foreground)] ml-2">
+                        <span className="text-xs text-gray-400 ml-2">
                           {user.email}
                         </span>
                       </div>

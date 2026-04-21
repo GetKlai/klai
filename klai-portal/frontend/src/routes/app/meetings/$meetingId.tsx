@@ -217,7 +217,7 @@ function MeetingDetailPage() {
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
       </div>
     )
   }
@@ -228,7 +228,7 @@ function MeetingDetailPage() {
   const hasTranscript = meeting.status === 'done' && !!(meeting.transcript_text || meeting.transcript_segments?.length)
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="mx-auto max-w-3xl px-6 py-10">
       <Button
         variant="ghost"
         size="sm"
@@ -243,13 +243,13 @@ function MeetingDetailPage() {
       {ACTIVE_STATUSES.includes(meeting.status) ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-xl font-semibold text-[var(--color-foreground)]">
+            <CardTitle className="text-xl font-semibold text-gray-900">
               {meeting.meeting_title ?? meeting.meeting_url}
             </CardTitle>
             <StatusBadge status={meeting.status} />
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.app_meetings_active_info()}
             </p>
           </CardContent>
@@ -273,7 +273,7 @@ function MeetingDetailPage() {
         </Card>
       ) : (
         <div className="flex items-start justify-between">
-          <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+          <h1 className="text-2xl font-semibold text-gray-900">
             {meeting.meeting_title ?? meeting.meeting_url}
           </h1>
           <StatusBadge status={meeting.status} />
@@ -286,7 +286,7 @@ function MeetingDetailPage() {
             <p className="text-sm font-medium text-[var(--color-destructive)]">
               {m.app_meetings_error_label()}
             </p>
-            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+            <p className="mt-1 text-sm text-gray-400">
               {meeting.error_message}
             </p>
           </CardContent>
@@ -330,20 +330,20 @@ function MeetingDetailPage() {
               <div className="space-y-2 text-sm">
                 {meeting.transcript_segments.map((seg, i) => (
                   <div key={i} className="flex gap-3">
-                    <span className="shrink-0 text-xs text-[var(--color-muted-foreground)] tabular-nums mt-0.5 w-14">
+                    <span className="shrink-0 text-xs text-gray-400 tabular-nums mt-0.5 w-14">
                       [{formatTimestamp(seg.start)}]
                     </span>
                     <div>
-                      <span className="font-medium text-[var(--color-foreground)]">
+                      <span className="font-medium text-gray-900">
                         {seg.speaker}:{' '}
                       </span>
-                      <span className="text-[var(--color-foreground)]">{seg.text}</span>
+                      <span className="text-gray-900">{seg.text}</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-[var(--color-muted-foreground)] whitespace-pre-wrap">
+              <p className="text-sm text-gray-400 whitespace-pre-wrap">
                 {meeting.transcript_text}
               </p>
             )}
@@ -379,7 +379,7 @@ function MeetingDetailPage() {
             <p className="text-sm font-medium text-[var(--color-destructive)]">
               {m.app_meetings_summary_error()}
             </p>
-            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{summaryError}</p>
+            <p className="mt-1 text-sm text-gray-400">{summaryError}</p>
           </CardContent>
         </Card>
       )}
@@ -420,7 +420,7 @@ function MeetingDetailPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-sm text-[var(--color-foreground)] space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
+            <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
               <Markdown>{fullSummaryMd}</Markdown>
             </div>
           </CardContent>
@@ -428,7 +428,7 @@ function MeetingDetailPage() {
       )}
 
       {meeting.status === 'done' && !hasTranscript && (
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.app_meetings_transcript_empty()}
         </p>
       )}

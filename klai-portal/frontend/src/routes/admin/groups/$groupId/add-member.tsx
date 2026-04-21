@@ -100,7 +100,7 @@ function AddMemberPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_groups_members_add()}
         </h1>
         <Button
@@ -152,7 +152,7 @@ function AddMemberPage() {
                               }}
                             >
                               <span>{label}</span>
-                              <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
+                              <span className="ml-auto text-xs text-gray-400">
                                 {u.email}
                               </span>
                             </CommandItem>

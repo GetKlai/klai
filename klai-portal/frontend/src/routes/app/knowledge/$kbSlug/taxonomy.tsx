@@ -53,7 +53,7 @@ function CoverageWidget({
 
   const barColor = (pct: number) => {
     if (pct >= 5) return 'bg-[var(--color-success)]'
-    return 'bg-amber-400'
+    return 'bg-gray-400'
   }
 
   function startEdit(nodeId: number, currentName: string, currentDescription: string): void {
@@ -80,7 +80,7 @@ function CoverageWidget({
 
   if (coverage.nodes.length === 0) {
     return (
-      <p className="text-sm text-[var(--color-muted-foreground)]">
+      <p className="text-sm text-gray-400">
         {m.knowledge_taxonomy_coverage_empty()}
       </p>
     )
@@ -99,8 +99,8 @@ function CoverageWidget({
             className={[
               'group/row w-full text-left rounded-lg border p-3 transition-colors cursor-pointer',
               isActive
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
-                : 'border-[var(--color-border)] hover:bg-[var(--color-secondary)]',
+                ? 'border-gray-900 bg-gray-50'
+                : 'border-gray-200 hover:bg-gray-50',
             ].join(' ')}
             onClick={() => { if (!isEditing && !isConfirmingDelete) onNodeClick(node.taxonomy_node_id) }}
             role="button"
@@ -116,12 +116,12 @@ function CoverageWidget({
                   <input
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
-                    className="text-sm font-medium text-[var(--color-foreground)] bg-[var(--color-card)] border border-[var(--color-border)] focus:border-[var(--color-accent)] ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-0.5 px-1.5 flex-1 min-w-0 outline-none"
+                    className="text-sm font-medium text-gray-900 bg-white border border-gray-200 focus:border-gray-900 ring-0 focus:ring-1 focus:ring-gray-900 rounded-md py-0.5 px-1.5 flex-1 min-w-0 outline-none"
                     autoFocus
                     onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
                   />
                 ) : (
-                  <span className="text-sm font-medium text-[var(--color-foreground)] truncate">
+                  <span className="text-sm font-medium text-gray-900 truncate">
                     {node.taxonomy_node_name}
                   </span>
                 )}
@@ -131,7 +131,7 @@ function CoverageWidget({
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); startEdit(node.taxonomy_node_id, node.taxonomy_node_name, node.description ?? '') }}
-                        className="flex h-5 w-5 items-center justify-center text-[var(--color-warning)] hover:opacity-70 transition-opacity"
+                        className="flex h-5 w-5 items-center justify-center text-gray-700 hover:opacity-70 transition-opacity"
                         aria-label={m.knowledge_taxonomy_node_rename()}
                       >
                         <Pencil className="h-3 w-3" />
@@ -171,7 +171,7 @@ function CoverageWidget({
                     </span>
                   )}
                   {!isConfirmingDelete && !isEditing && (
-                    <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                    <span className="text-xs text-gray-400 tabular-nums">
                       {pct}%
                     </span>
                   )}
@@ -181,29 +181,29 @@ function CoverageWidget({
                 <textarea
                   value={editingDescription}
                   onChange={(e) => setEditingDescription(e.target.value)}
-                  className="text-xs text-[var(--color-muted-foreground)] bg-[var(--color-card)] border border-[var(--color-border)] focus:border-[var(--color-accent)] ring-0 focus:ring-1 focus:ring-[var(--color-accent)] rounded-md py-1 px-1.5 mb-1 w-full outline-none resize-none"
+                  className="text-xs text-gray-400 bg-white border border-gray-200 focus:border-gray-900 ring-0 focus:ring-1 focus:ring-gray-900 rounded-md py-1 px-1.5 mb-1 w-full outline-none resize-none"
                   rows={2}
                   placeholder={m.knowledge_taxonomy_node_description_placeholder()}
                   onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
                 />
               ) : node.description ? (
-                <p className="text-xs text-[var(--color-muted-foreground)] mb-1 line-clamp-2">
+                <p className="text-xs text-gray-400 mb-1 line-clamp-2">
                   {node.description}
                 </p>
               ) : null}
             </form>
-            <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${barColor(pct)}`}
                 style={{ width: `${pct}%` }}
               />
             </div>
             <div className="flex items-center gap-3 mt-1.5">
-              <span className="text-xs text-[var(--color-muted-foreground)]">
+              <span className="text-xs text-gray-400">
                 {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
               </span>
               {node.gap_count > 0 && (
-                <span className="text-xs text-amber-600">
+                <span className="text-xs text-gray-400">
                   {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
                 </span>
               )}
@@ -213,13 +213,13 @@ function CoverageWidget({
       })}
 
       {coverage.untagged_count > 0 && (
-        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-3">
+        <div className="rounded-lg border border-dashed border-gray-200 p-3">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-sm text-[var(--color-muted-foreground)]">
+            <span className="text-sm text-gray-400">
               {m.knowledge_taxonomy_coverage_untagged()}
             </span>
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs text-[var(--color-muted-foreground)] tabular-nums">
+              <span className="text-xs text-gray-400 tabular-nums">
                 {total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%
               </span>
               {onSuggest && coverage.untagged_count >= 10 && total > 0 && Math.round((coverage.untagged_count / total) * 100) > 5 && (
@@ -227,7 +227,7 @@ function CoverageWidget({
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onSuggest() }}
                   disabled={isSuggesting}
-                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium bg-gray-900 text-white hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
                   {isSuggesting
                     ? <Loader2 className="h-3 w-3 animate-spin" />
@@ -238,13 +238,13 @@ function CoverageWidget({
               )}
             </div>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-[var(--color-border)] overflow-hidden">
+          <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
             <div
-              className="h-full rounded-full bg-[var(--color-border)]"
+              className="h-full rounded-full bg-gray-200"
               style={{ width: `${total > 0 ? Math.round((coverage.untagged_count / total) * 100) : 0}%` }}
             />
           </div>
-          <span className="text-xs text-[var(--color-muted-foreground)] mt-1.5 block">
+          <span className="text-xs text-gray-400 mt-1.5 block">
             {m.knowledge_taxonomy_coverage_chunks({ count: String(coverage.untagged_count) })}
           </span>
         </div>
@@ -282,8 +282,8 @@ function TagCloud({
             className={[
               'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 transition-colors',
               isActive
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-white'
-                : 'border-[var(--color-border)] bg-[var(--color-secondary)] text-[var(--color-foreground)] hover:border-[var(--color-accent)]/50',
+                ? 'border-gray-900 bg-gray-900 text-white'
+                : 'border-gray-200 bg-gray-50 text-gray-900 hover:border-gray-900/50',
             ].join(' ')}
             style={{ fontSize: `${fontSize}rem` }}
           >
@@ -584,13 +584,13 @@ function TaxonomyTab() {
       {/* Active filters bar */}
       {hasFilter && (
         <div className="flex items-center flex-wrap gap-2">
-          <Filter className="h-3.5 w-3.5 text-[var(--color-muted-foreground)] shrink-0" />
-          <span className="text-xs text-[var(--color-muted-foreground)]">{m.knowledge_taxonomy_filter_heading()}:</span>
+          <Filter className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          <span className="text-xs text-gray-400">{m.knowledge_taxonomy_filter_heading()}:</span>
           {activeNode && (
             <button
               type="button"
               onClick={() => setActiveNodeId(null)}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-accent)]/20 transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-900 bg-gray-900/10 px-2 py-0.5 text-xs text-gray-900 hover:bg-gray-900/20 transition-colors"
             >
               {m.knowledge_taxonomy_filter_node({ name: activeNode.name })}
               <X className="h-3 w-3" />
@@ -601,7 +601,7 @@ function TaxonomyTab() {
               key={tag}
               type="button"
               onClick={() => toggleTag(tag)}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2 py-0.5 text-xs text-[var(--color-foreground)] hover:bg-[var(--color-accent)]/20 transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-900 bg-gray-900/10 px-2 py-0.5 text-xs text-gray-900 hover:bg-gray-900/20 transition-colors"
             >
               {m.knowledge_taxonomy_filter_tag({ name: tag })}
               <X className="h-3 w-3" />
@@ -610,7 +610,7 @@ function TaxonomyTab() {
           <button
             type="button"
             onClick={clearAllFilters}
-            className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors ml-1"
+            className="text-xs text-gray-400 hover:text-gray-900 transition-colors ml-1"
           >
             {m.knowledge_taxonomy_filter_clear_all()}
           </button>
@@ -621,15 +621,15 @@ function TaxonomyTab() {
       {isAdmin && (
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+            <BarChart2 className="h-4 w-4 text-gray-900" />
+            <h2 className="text-sm font-semibold text-gray-900">
               {m.knowledge_taxonomy_categories_coverage_heading()}
             </h2>
             {activeNodeId !== null && (
               <button
                 type="button"
                 onClick={() => setActiveNodeId(null)}
-                className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                className="text-xs text-gray-400 hover:text-gray-900 transition-colors"
               >
                 {m.knowledge_taxonomy_coverage_filter_clear()}
               </button>
@@ -645,7 +645,7 @@ function TaxonomyTab() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-6 text-xs px-2 text-[var(--color-muted-foreground)]"
+                  className="h-6 text-xs px-2 text-gray-400"
                   onClick={() => backfillMutation.mutate()}
                   disabled={backfillMutation.isPending || suggestState === 'applying'}
                   title={backfillMutation.isPending || suggestState === 'applying'
@@ -662,7 +662,7 @@ function TaxonomyTab() {
             </div>
           </div>
           {coverageQuery.isLoading && (
-            <p className="py-3 text-sm text-[var(--color-muted-foreground)]">
+            <p className="py-3 text-sm text-gray-400">
               <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
               {m.knowledge_taxonomy_coverage_loading()}
             </p>
@@ -719,8 +719,8 @@ function TaxonomyTab() {
       {proposals.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <BarChart2 className="h-4 w-4 text-[var(--color-foreground)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-foreground)]">{m.knowledge_taxonomy_proposals_heading()}</h2>
+            <BarChart2 className="h-4 w-4 text-gray-900" />
+            <h2 className="text-sm font-semibold text-gray-900">{m.knowledge_taxonomy_proposals_heading()}</h2>
             <Badge variant="accent">{String(proposals.length)}</Badge>
           </div>
           <div className="space-y-3">
@@ -734,18 +734,18 @@ function TaxonomyTab() {
                         <div className="flex items-center gap-2 mb-1">
                           <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
                           {proposal.confidence_score != null && (
-                            <span className="text-xs text-[var(--color-muted-foreground)]">
+                            <span className="text-xs text-gray-400">
                               {m.knowledge_taxonomy_proposals_col_confidence()}: {Math.round(proposal.confidence_score * 100)}%
                             </span>
                           )}
                         </div>
-                        <p className="text-sm font-medium text-[var(--color-foreground)]">{proposal.title}</p>
+                        <p className="text-sm font-medium text-gray-900">{proposal.title}</p>
                         {typeof proposal.payload?.description === 'string' && (
-                          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                          <p className="text-xs text-gray-400 mt-0.5">
                             {proposal.payload.description}
                           </p>
                         )}
-                        <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+                        <p className="text-xs text-gray-400 mt-0.5">
                           {new Date(proposal.created_at).toLocaleDateString()}
                         </p>
                       </div>
@@ -806,7 +806,7 @@ function TaxonomyTab() {
                   size="sm"
                   onClick={() => applyAllMutation.mutate()}
                   disabled={applyAllMutation.isPending || backfillMutation.isPending}
-                  className="bg-[var(--color-accent)] text-white hover:opacity-90"
+                  className="bg-gray-900 text-white hover:opacity-90"
                 >
                   {applyAllMutation.isPending ? (
                     <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
@@ -824,24 +824,24 @@ function TaxonomyTab() {
       {/* Tag cloud */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <Tag className="h-4 w-4 text-[var(--color-foreground)]" />
-          <h2 className="text-sm font-semibold text-[var(--color-foreground)]">
+          <Tag className="h-4 w-4 text-gray-900" />
+          <h2 className="text-sm font-semibold text-gray-900">
             {m.knowledge_taxonomy_tags_heading()}
           </h2>
           {activeNodeId !== null && activeNode && (
-            <span className="text-xs text-[var(--color-muted-foreground)]">
+            <span className="text-xs text-gray-400">
               {m.knowledge_taxonomy_coverage_filter_active({ name: activeNode.name })}
             </span>
           )}
         </div>
         {topTagsQuery.isLoading && (
-          <p className="py-3 text-sm text-[var(--color-muted-foreground)]">
+          <p className="py-3 text-sm text-gray-400">
             <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
             {m.knowledge_taxonomy_tags_loading()}
           </p>
         )}
         {topTagsQuery.data && topTagsQuery.data.tags.length === 0 && (
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.knowledge_taxonomy_tags_empty()}
           </p>
         )}
@@ -856,23 +856,23 @@ function TaxonomyTab() {
 
       {/* Suggest flow banners */}
       {suggestState === 'proposals_ready' && proposals.length > 0 && (
-        <div className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)]/5 p-4">
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
+        <div className="rounded-lg border border-gray-900 bg-gray-50 p-4">
+          <p className="text-sm font-medium text-gray-900">
             {m.knowledge_taxonomy_suggest_ready({ count: String(proposals.length) })}
           </p>
         </div>
       )}
 
       {suggestState === 'applying' && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-secondary)] p-4 flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-[var(--color-accent)]" />
-          <p className="text-sm text-[var(--color-foreground)]">{m.knowledge_taxonomy_suggest_applying()}</p>
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+          <p className="text-sm text-gray-900">{m.knowledge_taxonomy_suggest_applying()}</p>
         </div>
       )}
 
       {suggestState === 'done' && (
         <div className="rounded-lg border border-[var(--color-success)] bg-[var(--color-success)]/5 p-4">
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
+          <p className="text-sm font-medium text-gray-900">
             {m.knowledge_taxonomy_suggest_done()}
           </p>
         </div>

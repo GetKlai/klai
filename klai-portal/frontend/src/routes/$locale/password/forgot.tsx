@@ -62,33 +62,33 @@ function ForgotPasswordPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
         <div className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
-            <Mail size={22} className="text-[var(--color-rl-cream)]" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-900">
+            <Mail size={22} className="text-white" />
           </div>
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.forgot_done_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.forgot_done_body()}
           </p>
-          <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline pt-2">
+          <a href="/" className="block text-xs text-gray-700 hover:underline pt-2">
             {m.forgot_back()}
           </a>
         </div>
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.forgot_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.forgot_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="email" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-900">
                 {m.forgot_field_email()}
               </label>
               <input
@@ -99,7 +99,7 @@ function ForgotPasswordPage() {
                 required
                 autoComplete="email"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
@@ -112,8 +112,8 @@ function ForgotPasswordPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-            <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
+          <p className="text-center text-xs text-gray-400">
+            <a href="/" className="text-gray-700 hover:underline">
               {m.forgot_back()}
             </a>
           </p>

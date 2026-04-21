@@ -75,8 +75,8 @@ function VerifyEmailPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {status === 'loading' && (
         <div className="space-y-4 text-center">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
+          <p className="text-sm text-gray-400">
             {m.verify_loading()}
           </p>
         </div>
@@ -86,10 +86,10 @@ function VerifyEmailPage() {
         <div className="space-y-6 text-center">
           <div className="space-y-3">
             <CheckCircle className="mx-auto h-12 w-12 text-[var(--color-success)]" />
-            <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h1 className="text-xl font-semibold text-gray-900">
               {m.verify_success_heading()}
             </h1>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.verify_success_body()}
             </p>
           </div>
@@ -104,16 +104,16 @@ function VerifyEmailPage() {
         <div className="space-y-6 text-center">
           <div className="space-y-3">
             <XCircle className="mx-auto h-12 w-12 text-[var(--color-destructive)]" />
-            <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h1 className="text-xl font-semibold text-gray-900">
               {m.verify_error_heading()}
             </h1>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {errorMessage ?? m.verify_error_invalid_link()}
             </p>
           </div>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-gray-400">
             {m.verify_error_hint()}{' '}
-            <a href="mailto:support@getklai.com" className="text-[var(--color-rl-accent-dark)] hover:underline">
+            <a href="mailto:support@getklai.com" className="text-gray-700 hover:underline">
               support@getklai.com
             </a>
             .

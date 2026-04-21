@@ -18,12 +18,12 @@ interface StepIndicatorProps {
 }
 
 /**
- * Pill-style wizard step indicator with amber accent.
+ * Pill-style wizard step indicator with gray accent.
  *
- * - Active step: solid amber pill with number.
- * - Completed steps: amber-tinted pill with check icon; clickable if `onClick` is provided.
+ * - Active step: solid dark pill with number.
+ * - Completed steps: gray-tinted pill with check icon; clickable if `onClick` is provided.
  * - Future steps: muted pill, not clickable.
- * - Steps are joined by short horizontal connectors that turn amber once reached.
+ * - Steps are joined by short horizontal connectors that turn dark once reached.
  *
  * Shared between the knowledge-base creation wizard (`/app/knowledge/new`)
  * and the add-connector wizard (`/app/knowledge/$kbSlug/add-connector`).
@@ -43,8 +43,8 @@ export function StepIndicator({ steps, currentIndex }: StepIndicatorProps) {
                 className={[
                   'h-px w-6',
                   isCompleted || isActive
-                    ? 'bg-[var(--color-accent)]'
-                    : 'bg-[var(--color-border)]',
+                    ? 'bg-gray-900'
+                    : 'bg-gray-200',
                 ].join(' ')}
               />
             )}
@@ -55,10 +55,10 @@ export function StepIndicator({ steps, currentIndex }: StepIndicatorProps) {
               className={[
                 'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors',
                 isActive
-                  ? 'bg-[var(--color-accent)] text-white'
+                  ? 'bg-gray-900 text-white'
                   : isCompleted
-                    ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)] cursor-pointer hover:bg-[var(--color-accent)]/20'
-                    : 'bg-[var(--color-secondary)] text-[var(--color-muted-foreground)] cursor-default',
+                    ? 'bg-gray-100 text-gray-700 cursor-pointer hover:bg-gray-200'
+                    : 'bg-gray-50 text-gray-400 cursor-default',
               ].join(' ')}
             >
               {isCompleted && !isActive ? (

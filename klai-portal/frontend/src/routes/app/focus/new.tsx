@@ -73,9 +73,9 @@ function NewFocusPage() {
   }
 
   return (
-    <div className="p-6 max-w-lg">
+    <div className="mx-auto max-w-lg px-6 py-10">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="text-2xl font-semibold text-gray-900">
           {m.app_focus_new_title()}
         </h1>
         <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>

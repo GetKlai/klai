@@ -280,6 +280,26 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         await db.commit()
         logger.info("provisioning_complete", slug=slug)
 
+        # Step 11: Seed default prompt templates (non-fatal — tenant is already 'ready')
+        try:
+            from app.services.default_templates import ensure_default_templates
+
+            await ensure_default_templates(org.id, first_user_id, db)
+            await db.commit()
+            logger.info("default_templates_seeded", slug=slug)
+        except Exception:
+            logger.warning("default_templates_seeding_failed", slug=slug, exc_info=True)
+
+        # Step 12: Seed default rules (non-fatal — tenant is already 'ready')
+        try:
+            from app.services.default_rules import ensure_default_rules
+
+            await ensure_default_rules(org.id, first_user_id, db)
+            await db.commit()
+            logger.info("default_rules_seeded", slug=slug)
+        except Exception:
+            logger.warning("default_rules_seeding_failed", slug=slug, exc_info=True)
+
     except Exception:
         logger.exception("provisioning_failed", org_id=org_id)
         await _rollback(state)

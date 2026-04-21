@@ -72,29 +72,29 @@ function MethodCard({
     <button
       type="button"
       onClick={onClick}
-      className={`w-full rounded-xl border-2 p-4 text-left transition-all
+      className={`w-full rounded-lg border-2 p-4 text-left transition-all
         ${selected
-          ? 'border-[var(--color-rl-accent)] bg-[var(--color-rl-accent)]/5'
-          : 'border-[var(--color-border)] bg-[var(--color-background)] hover:border-[var(--color-rl-accent)]/50'
+          ? 'border-gray-900 bg-gray-50'
+          : 'border-gray-200 bg-white hover:border-gray-400'
         }`}
     >
       <div className="flex items-start gap-3">
-        <div className={`mt-0.5 shrink-0 ${selected ? 'text-[var(--color-rl-accent)]' : 'text-[var(--color-rl-cream)]'}`}>
+        <div className={`mt-0.5 shrink-0 ${selected ? 'text-gray-700' : 'text-gray-300'}`}>
           {icon}
         </div>
         <div className="flex-1 space-y-0.5">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-[var(--color-foreground)]">{title}</span>
+            <span className="text-sm font-semibold text-gray-900">{title}</span>
             {recommended && (
-              <span className="rounded-full bg-[var(--color-rl-accent)] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
+              <span className="rounded-lg bg-gray-900 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
                 {m.setup_mfa_badge_recommended()}
               </span>
             )}
           </div>
-          <p className="text-xs text-[var(--color-muted-foreground)]">{description}</p>
+          <p className="text-xs text-gray-400">{description}</p>
         </div>
         {selected && (
-          <div className="mt-0.5 shrink-0 text-[var(--color-rl-accent)]">
+          <div className="mt-0.5 shrink-0 text-gray-700">
             <ShieldCheck size={16} />
           </div>
         )}
@@ -173,10 +173,10 @@ function PasskeySetup({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.setup_mfa_passkey_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.setup_mfa_passkey_body()}
         </p>
       </div>
@@ -205,7 +205,7 @@ function PasskeySetup({
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+        className="block text-xs text-gray-700 hover:underline"
       >
         {m.setup_mfa_back()}
       </button>
@@ -289,10 +289,10 @@ function EmailOTPSetup({
       {phase === 'send' ? (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_email_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.setup_mfa_email_body({ email })}
             </p>
           </div>
@@ -304,17 +304,17 @@ function EmailOTPSetup({
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_email_code_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.setup_mfa_email_code_body()}
             </p>
           </div>
 
           <form onSubmit={handleVerify} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="email-otp-code" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="email-otp-code" className="block text-sm font-medium text-gray-900">
                 {m.setup_mfa_email_field_code()}
               </label>
               <input
@@ -328,7 +328,7 @@ function EmailOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
@@ -352,12 +352,12 @@ function EmailOTPSetup({
                   type="button"
                   onClick={handleResend}
                   disabled={sending}
-                  className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+                  className="text-xs text-gray-700 hover:underline"
                 >
                   {m.setup_mfa_email_resend()}
                 </button>
               ) : (
-                <span className="text-xs text-[var(--color-muted-foreground)]">
+                <span className="text-xs text-gray-400">
                   {m.setup_mfa_email_resend()} ({Math.ceil((resendAt - now) / 1000)}s)
                 </span>
               )}
@@ -369,7 +369,7 @@ function EmailOTPSetup({
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+        className="block text-xs text-gray-700 hover:underline"
       >
         {m.setup_mfa_back()}
       </button>
@@ -426,10 +426,10 @@ function TOTPSetup({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+        <h2 className="text-xl font-semibold text-gray-900">
           {m.setup_2fa_heading()}
         </h2>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.setup_2fa_subheading()}
         </p>
       </div>
@@ -439,7 +439,7 @@ function TOTPSetup({
           <p className="text-sm text-[var(--color-destructive-text)]">{loadError}</p>
           <button
             onClick={() => setRetryCount((c) => c + 1)}
-            className="text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+            className="text-xs text-gray-700 hover:underline"
           >
             {m.setup_2fa_retry()}
           </button>
@@ -448,20 +448,20 @@ function TOTPSetup({
         <>
           <div className="flex flex-col items-center gap-4">
             {uri ? (
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-4">
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
                 <QRCode value={uri} size={180} />
               </div>
             ) : (
-              <div className="flex h-[212px] w-[212px] items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+              <div className="flex h-[212px] w-[212px] items-center justify-center rounded-lg border border-gray-200 bg-white">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
               </div>
             )}
             {secret && (
               <details className="w-full text-center">
-                <summary className="cursor-pointer select-none text-xs text-[var(--color-rl-accent-dark)] hover:underline">
+                <summary className="cursor-pointer select-none text-xs text-gray-700 hover:underline">
                   {m.setup_2fa_manual_label()}
                 </summary>
-                <p className="mt-2 break-all rounded-lg bg-[var(--color-border)] px-3 py-2 font-mono text-xs tracking-widest">
+                <p className="mt-2 break-all rounded-lg bg-gray-100 px-3 py-2 font-mono text-xs tracking-widest">
                   {secret}
                 </p>
               </details>
@@ -470,7 +470,7 @@ function TOTPSetup({
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="totp-code" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="totp-code" className="block text-sm font-medium text-gray-900">
                 {m.setup_2fa_field_code()}
               </label>
               <input
@@ -484,7 +484,7 @@ function TOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
             {error && (
@@ -506,7 +506,7 @@ function TOTPSetup({
       <button
         type="button"
         onClick={onBack}
-        className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline"
+        className="block text-xs text-gray-700 hover:underline"
       >
         {m.setup_mfa_back()}
       </button>
@@ -552,8 +552,8 @@ function SetupMFAPage() {
 
   if (!canRender) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
       </div>
     )
   }
@@ -580,13 +580,13 @@ function SetupMFAPage() {
       {/* ── Done state ── */}
       {step === 'done' && (
         <div className="space-y-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
-            <ShieldCheck size={22} className="text-[var(--color-rl-cream)]" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-900">
+            <ShieldCheck size={22} className="text-white" />
           </div>
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.setup_mfa_done_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.setup_mfa_done_body()}
           </p>
         </div>
@@ -596,10 +596,10 @@ function SetupMFAPage() {
       {step === 'pick' && (
         <div className="space-y-5">
           <div className="space-y-1">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.setup_mfa_subheading()}
             </p>
           </div>
@@ -644,7 +644,7 @@ function SetupMFAPage() {
               <button
                 type="button"
                 onClick={handleSkip}
-                className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-rl-accent-dark)] hover:underline"
+                className="text-xs text-gray-400 hover:text-gray-700 hover:underline"
               >
                 {m.setup_mfa_skip()}
               </button>

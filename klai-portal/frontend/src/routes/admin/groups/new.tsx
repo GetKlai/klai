@@ -59,7 +59,7 @@ function NewGroupPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_groups_create()}
         </h1>
         <Button
@@ -98,7 +98,7 @@ function NewGroupPage() {
             onChange={(e) => setDescription(e.target.value)}
             placeholder={m.admin_groups_description_placeholder()}
             rows={3}
-            className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-foreground)] outline-none transition-colors placeholder:text-[var(--color-muted-foreground)] focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-gray-400 disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
         {createMutation.error && createMutation.error.message !== 'duplicate' && (

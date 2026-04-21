@@ -40,6 +40,19 @@ PORTAL_RETRIEVAL_LOG_URL = os.getenv(
 )
 EMBEDDING_MODEL_VERSION = os.getenv("EMBEDDING_MODEL_VERSION", "bge-m3-v1")
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
+GUARDRAILS_TIMEOUT = float(os.getenv("KLAI_GUARDRAILS_TIMEOUT", "1.5"))
+GUARDRAILS_CACHE_TTL = float(os.getenv("KLAI_GUARDRAILS_CACHE_TTL", "30"))
+
+# Inline PII regex patterns — mirror app/services/pii_detector.py on portal-api.
+# Kept in-sync by convention; patterns below must match what the portal returns
+# in GuardrailDetector.detectors.
+_PII_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
+    "email": (re.compile(r"\b[\w.-]+@[\w.-]+\.\w{2,}\b"), "[EMAIL]"),
+    "bsn": (re.compile(r"\b\d{9}\b"), "[BSN]"),
+    "phone": (re.compile(r"(?:\+31|0)[1-9][\s-]?\d{1,3}[\s-]?\d{4,7}"), "[PHONE]"),
+    "creditcard": (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[CREDITCARD]"),
+    "iban": (re.compile(r"\b[A-Z]{2}\d{2}[ ]?(?:[A-Z0-9]{4}[ ]?){2,7}[A-Z0-9]{1,4}\b"), "[IBAN]"),
+}
 
 # Trivial message patterns — skip retrieval (NL + EN)
 _TRIVIAL_PATTERNS = re.compile(
@@ -144,6 +157,118 @@ async def _get_kb_feature(user_id: str, org_id: str, cache) -> dict:
     await cache.async_set_cache(version_key, str(version), ttl=30)
     await cache.async_set_cache(f"kb_feature:{org_id}:{user_id}:{version}", result, ttl=300)
     return result
+
+
+async def _get_guardrails(org_id: str, user_id: str, cache) -> dict:
+    """Fetch effective guardrails (templates + rules) for the user.
+
+    Shape:
+    {
+        "instructions": [{"source": "rule|template", "name": str, "text": str}, ...],
+        "detectors":    [{"action": "block|redact",
+                          "detectors": ["email", "bsn", ...],
+                          "keywords": [str, ...],
+                          "rule_name": str}, ...],
+    }
+
+    Cached 30s per (org, user). Fail-open: if portal unreachable, we return
+    empty guardrails so chat keeps working.
+    """
+    if not PORTAL_INTERNAL_SECRET:
+        return {"instructions": [], "detectors": []}
+
+    cache_key = f"guardrails:{org_id}:{user_id}"
+    cached = await cache.async_get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        async with httpx.AsyncClient(timeout=GUARDRAILS_TIMEOUT) as client:
+            resp = await client.get(
+                f"{PORTAL_API_URL}/internal/guardrails/effective",
+                params={"zitadel_org_id": org_id, "librechat_user_id": user_id},
+                headers={"Authorization": f"Bearer {PORTAL_INTERNAL_SECRET}"},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        logger.warning("KlaiKnowledgeHook: guardrails fetch failed (%s) — fail-open", exc)
+        result = {"instructions": [], "detectors": []}
+
+    await cache.async_set_cache(cache_key, result, ttl=GUARDRAILS_CACHE_TTL)
+    return result
+
+
+def _guardrail_hit(text: str, detectors: list[dict]) -> tuple[str | None, str]:
+    """Walk detectors. Returns (block_reason_or_None, possibly_redacted_text).
+
+    - First pass: any 'block' action whose pattern matches aborts immediately
+      with a reason (rule name).
+    - Second pass: apply 'redact' actions to the text.
+    """
+    # Check blocks first
+    for det in detectors:
+        if det.get("action") != "block":
+            continue
+        rule_name = det.get("rule_name") or "guardrail"
+        # PII detector keys
+        for key in det.get("detectors") or []:
+            pattern = _PII_PATTERNS.get(key, (None, None))[0]
+            if pattern is not None and pattern.search(text):
+                return f"{rule_name} ({key})", text
+        # Keyword patterns (case-insensitive substring)
+        for kw in det.get("keywords") or []:
+            if kw and kw.lower() in text.lower():
+                return f"{rule_name} (keyword: {kw!r})", text
+
+    # Apply redactions
+    redacted = text
+    for det in detectors:
+        if det.get("action") != "redact":
+            continue
+        for key in det.get("detectors") or []:
+            entry = _PII_PATTERNS.get(key)
+            if entry is None:
+                continue
+            pattern, placeholder = entry
+            redacted = pattern.sub(placeholder, redacted)
+        for kw in det.get("keywords") or []:
+            if not kw:
+                continue
+            redacted = re.sub(re.escape(kw), "[REDACTED]", redacted, flags=re.IGNORECASE)
+
+    return None, redacted
+
+
+def _replace_last_user_message(messages: list[dict], new_content: str) -> None:
+    """Overwrite the most recent user-role message in-place."""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            messages[i] = {**messages[i], "content": new_content}
+            return
+
+
+def _inject_guardrail_instructions(messages: list[dict], instructions: list[str]) -> None:
+    """Prepend guardrail instructions to the system prompt (or insert one).
+
+    Used on early-return paths where KB retrieval is skipped but instructions
+    still need to be applied.
+    """
+    if not instructions:
+        return
+    block = (
+        "[Guardrails — pas onderstaande instructies toe bij je antwoord]\n"
+        + "\n\n".join(instructions)
+        + "\n[Einde guardrails]"
+    )
+    system_idx = next(
+        (i for i, m in enumerate(messages) if m.get("role") == "system"), None
+    )
+    if system_idx is not None:
+        existing = messages[system_idx].get("content", "")
+        messages[system_idx] = {"role": "system", "content": f"{block}\n\n{existing}"}
+    else:
+        messages.insert(0, {"role": "system", "content": block})
 
 
 # @MX:NOTE: [AUTO] Gap thresholds (0.4 reranker, 0.35 dense) are configurable via
@@ -303,13 +428,48 @@ class KlaiKnowledgeHook(CustomLogger):
         if not user_id:
             return data
 
+        # ── Guardrails (rules + templates) ────────────────────────────────
+        # Run before retrieval so blocks short-circuit the expensive path and
+        # redactions shape the query that drives KB search.
+        guardrails = await _get_guardrails(org_id, user_id, cache)
+        detectors = guardrails.get("detectors") or []
+        if detectors:
+            block_reason, redacted_query = _guardrail_hit(query, detectors)
+            if block_reason:
+                logger.info(
+                    "KlaiKnowledgeHook: message blocked by guardrail",
+                    extra={"rule": block_reason, "org_id": org_id, "user_id": user_id},
+                )
+                raise Exception(f"Bericht geblokkeerd door guardrail: {block_reason}")
+            if redacted_query != query:
+                _replace_last_user_message(messages, redacted_query)
+                data["messages"] = messages
+                query = redacted_query
+
+        # Instructions (template prompts + instruction-type rules) — prepended
+        # to the system prompt after we build the KB context block below.
+        guardrail_instructions: list[str] = []
+        for inst in guardrails.get("instructions") or []:
+            text = (inst.get("text") or "").strip()
+            if text:
+                name = inst.get("name") or inst.get("source") or "rule"
+                guardrail_instructions.append(f"[{name}]\n{text}")
+
         # Feature gate + KB scope preference (version-based cache, 30s propagation)
         feature = await _get_kb_feature(user_id, org_id, cache)
         if not feature["enabled"]:
-            return data  # no entitlement — fail-closed
+            # No KB entitlement — still inject guardrail instructions if any.
+            if guardrail_instructions:
+                _inject_guardrail_instructions(messages, guardrail_instructions)
+                data["messages"] = messages
+            return data
 
         if not feature["kb_retrieval_enabled"]:
-            return data  # user disabled KB retrieval (REQ-E4 pre-step skip)
+            # User disabled KB retrieval (REQ-E4 pre-step skip). Instructions still apply.
+            if guardrail_instructions:
+                _inject_guardrail_instructions(messages, guardrail_instructions)
+                data["messages"] = messages
+            return data
 
         # Determine retrieval scope, KB slug filter, and answer mode
         scope = "both" if feature.get("kb_personal_enabled", True) else "org"
@@ -341,12 +501,18 @@ class KlaiKnowledgeHook(CustomLogger):
                 result = resp.json()
         except Exception as exc:
             logger.warning("KlaiKnowledgeHook: retrieval failed (%s) — degrading", exc)
+            if guardrail_instructions:
+                _inject_guardrail_instructions(messages, guardrail_instructions)
+                data["messages"] = messages
             return data
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
 
         # If the retrieval-gate determined no KB context is needed, skip injection
         if result.get("retrieval_bypassed"):
+            if guardrail_instructions:
+                _inject_guardrail_instructions(messages, guardrail_instructions)
+                data["messages"] = messages
             data.setdefault("metadata", {})["_klai_kb_meta"] = {
                 "org_id": org_id,
                 "user_id": user_id,
@@ -377,7 +543,7 @@ class KlaiKnowledgeHook(CustomLogger):
         if chunk_ids and not result.get("retrieval_bypassed"):
             _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
 
-        if not chunks:
+        if not chunks and not guardrail_instructions:
             return data
 
         # Build context block with provenance labels per chunk
@@ -442,7 +608,21 @@ class KlaiKnowledgeHook(CustomLogger):
                     lines.append(f"![afbeelding {i}]({img_url})")
             lines.append("")
         lines.append("[Einde kennisbank-context]")
-        context_block = "\n".join(lines)
+        kb_context_block = "\n".join(lines) if chunks else ""
+
+        # Combine guardrail instructions (templates + instruction-type rules) with
+        # the KB context. Both are system-level content injected ahead of the
+        # user's existing system prompt.
+        combined_parts: list[str] = []
+        if guardrail_instructions:
+            combined_parts.append(
+                "[Guardrails — pas onderstaande instructies toe bij je antwoord]\n"
+                + "\n\n".join(guardrail_instructions)
+                + "\n[Einde guardrails]"
+            )
+        if kb_context_block:
+            combined_parts.append(kb_context_block)
+        system_injection = "\n\n".join(combined_parts)
 
         # Prepend to existing system message or insert new one
         system_idx = next(
@@ -452,10 +632,10 @@ class KlaiKnowledgeHook(CustomLogger):
             existing = messages[system_idx].get("content", "")
             messages[system_idx] = {
                 "role": "system",
-                "content": f"{context_block}\n\n{existing}",
+                "content": f"{system_injection}\n\n{existing}",
             }
         else:
-            messages.insert(0, {"role": "system", "content": context_block})
+            messages.insert(0, {"role": "system", "content": system_injection})
 
         data["messages"] = messages
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)

@@ -196,6 +196,9 @@ class Settings(BaseSettings):
     imap_poll_interval_seconds: int = 60
     invite_bot_rate_limit_per_user_per_day: int = 10
 
+    # Docker container names (provisioning uses these to manage tenants)
+    mongodb_container_name: str = "mongodb"
+
     # Widget JWT secret (SPEC-WIDGET-001)
     # Generate with: openssl rand -hex 32
     # When empty, widget endpoints return 503.

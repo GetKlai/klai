@@ -66,7 +66,7 @@ function MemberAvatars({
   const visible = userIds.slice(0, 4)
   const extra = userIds.length - visible.length
   if (userIds.length === 0) {
-    return <span className="text-xs text-[var(--color-muted-foreground)]">—</span>
+    return <span className="text-xs text-gray-400">—</span>
   }
   return (
     <div className="flex items-center gap-1.5">
@@ -87,7 +87,7 @@ function MemberAvatars({
         )
       })}
       {extra > 0 && (
-        <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
+        <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-gray-100 text-gray-400">
           +{extra}
         </div>
       )}
@@ -157,9 +157,9 @@ function AdminGroups() {
     columnHelper.accessor('name', {
       header: () => m.admin_groups_name(),
       cell: (info) => (
-        <span className="font-medium text-[var(--color-foreground)] flex items-center gap-2">
+        <span className="font-medium text-gray-900 flex items-center gap-2">
           {info.row.original.is_system && (
-            <Lock className="h-3 w-3 text-[var(--color-muted-foreground)]" />
+            <Lock className="h-3 w-3 text-gray-400" />
           )}
           {info.getValue()}
         </span>
@@ -186,7 +186,7 @@ function AdminGroups() {
           <div className="flex items-center gap-2">
             <MemberAvatars userIds={memberIds} usersMap={usersMap} />
             {memberIds.length > 0 && (
-              <span className="text-xs text-[var(--color-muted-foreground)]">
+              <span className="text-xs text-gray-400">
                 {memberIds.length}
               </span>
             )}
@@ -240,7 +240,7 @@ function AdminGroups() {
                   })
                 }
                 aria-label={row.original.name}
-                className="inline-flex items-center justify-center text-[var(--color-accent)] transition-opacity hover:opacity-70"
+                className="inline-flex items-center justify-center text-gray-500 transition-opacity hover:opacity-70"
               >
                 <Eye className="h-4 w-4" />
               </button>
@@ -261,7 +261,7 @@ function AdminGroups() {
   return (
     <div className="p-6 space-y-6 max-w-4xl">
       <div className="flex items-start justify-between">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_groups_title()}
         </h1>
         <Button size="sm" onClick={() => void navigate({ to: '/admin/groups/new' })}>
@@ -273,31 +273,31 @@ function AdminGroups() {
       {error ? (
         <QueryErrorState error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void refetch()} />
       ) : isLoading ? (
-        <p className="py-8 text-sm text-[var(--color-muted-foreground)]">
+        <p className="py-8 text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
         </p>
       ) : groups.length === 0 ? (
         <div className="py-12 text-center space-y-3">
-          <p className="text-sm font-medium text-[var(--color-foreground)]">
+          <p className="text-sm font-medium text-gray-900">
             {m.admin_groups_empty()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.admin_groups_empty_description()}
           </p>
         </div>
       ) : (
-        <table className="w-full text-sm border-t border-b border-[var(--color-border)]">
+        <table className="w-full text-sm border-t border-b border-gray-200">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr
                 key={headerGroup.id}
-                className="border-b border-[var(--color-border)]"
+                className="border-b border-gray-200"
               >
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="py-3 pr-4 text-left text-xs font-medium text-[var(--color-rl-dark-30)] uppercase tracking-[0.04em]"
+                    className="py-3 pr-4 text-left text-xs font-medium text-gray-400 uppercase tracking-[0.04em]"
                   >
                     {flexRender(
                       header.column.columnDef.header,
@@ -312,12 +312,12 @@ function AdminGroups() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="border-b border-[var(--color-border)] last:border-b-0"
+                className="border-b border-gray-200 last:border-b-0"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="py-4 pr-4 align-top text-[var(--color-foreground)]"
+                    className="py-4 pr-4 align-top text-gray-900"
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>

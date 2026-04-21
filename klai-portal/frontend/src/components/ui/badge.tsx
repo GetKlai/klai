@@ -8,13 +8,13 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          'border-transparent bg-[var(--color-rl-accent)] text-[var(--color-foreground)]',
+          'border-transparent bg-gray-900 text-white',
         secondary:
-          'border-transparent bg-[var(--color-secondary)] text-[var(--color-secondary-foreground)]',
+          'border-transparent bg-gray-100 text-gray-700',
         accent:
-          'border-transparent bg-[var(--color-rl-accent)] text-[var(--color-foreground)]',
+          'border-transparent bg-gray-900 text-white',
         outline:
-          'border-[var(--color-border)] text-[var(--color-foreground)]',
+          'border-gray-200 text-gray-700',
         success:
           'border-transparent bg-[var(--color-success-bg)] text-[var(--color-success-text)]',
         warning:

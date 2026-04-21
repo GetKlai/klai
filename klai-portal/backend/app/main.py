@@ -14,6 +14,8 @@ from app.api.app_account import router as app_account_router
 from app.api.app_chat import router as app_chat_router
 from app.api.app_gaps import router as app_gaps_router
 from app.api.app_knowledge_bases import router as app_knowledge_bases_router
+from app.api.app_rules import router as app_rules_router
+from app.api.app_templates import router as app_templates_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.connectors import router as connectors_router
@@ -199,6 +201,8 @@ app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
 app.include_router(app_chat_router)
 app.include_router(app_knowledge_bases_router)
+app.include_router(app_templates_router)
+app.include_router(app_rules_router)
 app.include_router(app_gaps_router)
 app.include_router(connectors_router)
 app.include_router(taxonomy_router)

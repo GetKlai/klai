@@ -53,12 +53,12 @@ function AdminSettingsPage() {
   }, [settings])
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl" data-help-id="admin-settings-general">
+    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6" data-help-id="admin-settings-general">
       <div className="space-y-1">
-        <h1 className="page-title text-xl/none font-semibold text-[var(--color-foreground)]">
+        <h1 className="page-title text-xl/none font-semibold text-gray-900">
           {m.admin_settings_heading()}
         </h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
+        <p className="text-sm text-gray-400">
           {m.admin_settings_subtitle()}
         </p>
       </div>
@@ -72,7 +72,7 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : error ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
@@ -118,7 +118,7 @@ function AdminSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_users_loading()}</p>
+            <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
           ) : error ? (
             <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
           ) : (
@@ -137,7 +137,7 @@ function AdminSettingsPage() {
                   <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
                   <option value="required">{m.admin_settings_mfa_required()}</option>
                 </Select>
-                <p className="text-xs text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-gray-400">
                   {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
                   {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
                   {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
@@ -169,7 +169,7 @@ function AdminSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-[var(--color-muted-foreground)]">{m.admin_settings_placeholder()}</p>
+          <p className="text-sm text-gray-400">{m.admin_settings_placeholder()}</p>
         </CardContent>
       </Card>
     </div>

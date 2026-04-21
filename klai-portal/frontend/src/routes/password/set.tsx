@@ -86,7 +86,7 @@ function PasswordSetPage() {
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="space-y-3 text-center">
           <p className="text-sm text-[var(--color-destructive-text)]">{m.set_invalid_link()}</p>
-          <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline">
+          <a href="/" className="block text-xs text-gray-700 hover:underline">
             {m.set_invalid_link_back()}
           </a>
         </div>
@@ -98,30 +98,30 @@ function PasswordSetPage() {
     <AuthPageLayout leftContent={leftContent} showLocale>
       {done ? (
         <div className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-foreground)]">
-            <KeyRound size={22} className="text-[var(--color-rl-cream)]" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-gray-900">
+            <KeyRound size={22} className="text-white" />
           </div>
-          <p className="text-xl font-semibold text-[var(--color-foreground)]">
+          <p className="text-xl font-semibold text-gray-900">
             {m.set_done_heading()}
           </p>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-gray-400">
             {m.set_done_body()}
           </p>
         </div>
       ) : (
         <>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+            <h2 className="text-xl font-semibold text-gray-900">
               {m.set_heading()}
             </h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-gray-400">
               {m.set_subheading()}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="password" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-900">
                 {m.set_field_password()}
               </label>
               <input
@@ -132,12 +132,12 @@ function PasswordSetPage() {
                 required
                 autoComplete="new-password"
                 autoFocus
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
             <div className="space-y-1">
-              <label htmlFor="confirm" className="block text-sm font-medium text-[var(--color-foreground)]">
+              <label htmlFor="confirm" className="block text-sm font-medium text-gray-900">
                 {m.set_field_confirm()}
               </label>
               <input
@@ -147,7 +147,7 @@ function PasswordSetPage() {
                 onChange={(e) => setConfirm(e.target.value)}
                 required
                 autoComplete="new-password"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-gray-400"
               />
             </div>
 
@@ -160,8 +160,8 @@ function PasswordSetPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-            <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
+          <p className="text-center text-xs text-gray-400">
+            <a href="/" className="text-gray-700 hover:underline">
               {m.set_back()}
             </a>
           </p>
