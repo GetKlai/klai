@@ -37,6 +37,12 @@ _CSRF_EXEMPT_PREFIXES: tuple[str, ...] = (
     "/api/auth/oidc/callback",
     "/api/auth/idp-intent",
     "/api/auth/idp-callback",
+    # Zitadel Login V2 finishers — called from my.getklai.com/login without a
+    # portal BFF session. A stale cookie from a previous BFF login would
+    # otherwise cause the CSRF check to reject the password/TOTP finish.
+    "/api/auth/login",
+    "/api/auth/totp-login",
+    "/api/auth/sso-complete",
     "/api/signup",
     "/api/health",
     "/api/public/",
