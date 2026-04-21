@@ -133,6 +133,12 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const removeUser = useCallback(async (): Promise<void> => {
+    // TEMP DEBUG — identifying caller of duplicate bff/logout. Remove after diagnosis.
+    const stack = new Error().stack?.split('\n').slice(1, 5).join(' | ') ?? '(no stack)'
+    authLogger.warn('removeUser ENTERED', {
+      isSigningOut: isSigningOut.current,
+      stack,
+    })
     if (isSigningOut.current) return
     // Sticky flag — stays true until the page unloads. Calling setUser(null)
     // before the hard navigation triggered AppLayout's "navigate to /" guard,
