@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
 # backup.sh — Daily backup for all stateful services on core-01
 #
+# Inventory authority: deploy/volume-mounts.yaml (SPEC-INFRA-005).
+# Every `category: data` entry with `backup: <non-skip>` is produced here.
+#
 # What gets backed up:
-#   1. PostgreSQL  — pg_dumpall → postgres-all.sql (includes Gitea DB)
-#   2. Gitea       — git repositories + config → gitea-repos.tar.gz (PRIMARY: KB source of truth)
-#   3. MongoDB     — mongodump archive
-#   4. Redis       — BGSAVE + dump.rdb copy
-#   5. Meilisearch — snapshot trigger (written to volume)
-#   6. Upload      — rsync to Hetzner Storage Box (if configured)
+#   1. PostgreSQL       — pg_dumpall → postgres-all.sql
+#                         (includes klai, zitadel, litellm, gitea, glitchtip)
+#   2. Gitea repos      — git repos + config → gitea-repos.tar.gz
+#                         (KB source of truth; repos are content, DB is metadata)
+#   3. MongoDB          — mongodump archive
+#   4. Redis            — BGSAVE + dump.rdb copy
+#   5. Vexa Redis       — BGSAVE + dump.rdb copy
+#   6. Meilisearch      — snapshot trigger (written to volume)
+#   7. Qdrant           — snapshot per collection via API (zero downtime)
+#   8. FalkorDB         — BGSAVE + dump.rdb copy (knowledge graph)
+#   9. Garage meta      — `garage meta snapshot` (LMDB) + tar
+#  10. Garage data      — rsync blobs (immutable once written, live-safe)
+#  11. Firecrawl PG     — pg_dumpall → firecrawl-postgres-all.sql
+#  12. Scribe audio     — tar of /data/audio (retention handled by app; backup
+#                         of `failed` recordings only, successes auto-deleted)
+#  13. Research uploads — rsync of /opt/klai/research-uploads
+#  14. Encrypt + upload — age-encrypt then rsync to Hetzner Storage Box
 #
 # Usage:
 #   ./scripts/backup.sh                 # manual run
@@ -17,6 +31,7 @@
 #   MONGO_ROOT_PASSWORD   — MongoDB root password
 #   REDIS_PASSWORD        — Redis password
 #   MEILI_MASTER_KEY      — Meilisearch master key
+#   QDRANT_API_KEY        — Qdrant API key (header x-api-key)
 #
 # Optional env vars (for Storage Box upload):
 #   STORAGEBOX_HOST       — e.g. uXXXXXX.your-storagebox.de
@@ -37,11 +52,19 @@ MEILI_MASTER_KEY=$(cat "$SECRETS_DIR/meili_master_key.txt")
 REDIS_PASSWORD=$(docker inspect klai-core-redis-1 \
   --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | grep '^REDIS_PASSWORD=' | head -1 | cut -d'=' -f2-)
+# Qdrant API key from the same source (read from the running container — matches
+# what retrieval-api/knowledge-ingest are actually using).
+QDRANT_API_KEY=$(docker inspect klai-core-qdrant-1 \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep '^QDRANT__SERVICE__API_KEY=' | head -1 | cut -d'=' -f2- || true)
 # Storage Box config from .env
 _env_get() { grep "^${1}=" "$COMPOSE_DIR/.env" 2>/dev/null | head -1 | cut -d'=' -f2- || true; }
 STORAGEBOX_HOST=${STORAGEBOX_HOST:-$(_env_get STORAGEBOX_HOST)}
 STORAGEBOX_USER=${STORAGEBOX_USER:-$(_env_get STORAGEBOX_USER)}
 KUMA_TOKEN_BACKUP=${KUMA_TOKEN_BACKUP:-$(_env_get KUMA_TOKEN_BACKUP)}
+
+# Container-name helper. Compose prefixes names with `klai-core-` + `-1`.
+_ctr() { echo "klai-core-${1}-1"; }
 
 # ─── Uptime Kuma heartbeat ────────────────────────────────────────────────────
 # Push on success (at end of script). Push failure on EXIT with non-zero code.
@@ -65,7 +88,7 @@ cd "$COMPOSE_DIR"
 
 # ─── PostgreSQL ───────────────────────────────────────────────────────────────
 echo ""
-echo "${LOG_PREFIX} [1/6] PostgreSQL: dumping all databases..."
+echo "${LOG_PREFIX} [1/13] PostgreSQL: dumping all databases..."
 docker compose exec -T postgres pg_dumpall -U klai > "$BACKUP_DIR/postgres-all.sql"
 echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/postgres-all.sql" | cut -f1)"
 
@@ -74,7 +97,7 @@ echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/postgres-all.sql" | cut -f
 # DB is already in PostgreSQL (pg_dumpall above). We only need the repo files + config.
 # Uses docker run with --volumes-from to read the volume as non-root alpine.
 echo ""
-echo "${LOG_PREFIX} [2/6] Gitea: backing up repositories and config..."
+echo "${LOG_PREFIX} [2/13] Gitea: backing up repositories and config..."
 docker run --rm \
   --volumes-from klai-core-gitea-1:ro \
   -v "$BACKUP_DIR:/backup" \
@@ -83,7 +106,7 @@ echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/gitea-repos.tar.gz" | cut 
 
 # ─── MongoDB ──────────────────────────────────────────────────────────────────
 echo ""
-echo "${LOG_PREFIX} [3/6] MongoDB: dumping all databases..."
+echo "${LOG_PREFIX} [3/13] MongoDB: dumping all databases..."
 docker compose exec -T mongodb mongodump \
   --username klai \
   --password "${MONGO_ROOT_PASSWORD}" \
@@ -94,22 +117,178 @@ echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/mongodb-all.archive" | cut
 
 # ─── Redis ────────────────────────────────────────────────────────────────────
 echo ""
-echo "${LOG_PREFIX} [4/6] Redis: triggering BGSAVE and copying dump..."
+echo "${LOG_PREFIX} [4/13] Redis: triggering BGSAVE and copying dump..."
 docker compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning BGSAVE
 sleep 3
 docker compose cp redis:/data/dump.rdb "$BACKUP_DIR/redis-dump.rdb"
 echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/redis-dump.rdb" | cut -f1)"
 
+# ─── Vexa Redis ───────────────────────────────────────────────────────────────
+# Vexa's own Redis holds transcription pipeline state. Separate volume from
+# the shared Redis; lose it = a transcription batch is re-queued from scratch.
+echo ""
+echo "${LOG_PREFIX} [5/13] Vexa Redis: BGSAVE + dump copy..."
+if docker ps --format '{{.Names}}' | grep -q "^$(_ctr vexa-redis)$"; then
+  docker exec "$(_ctr vexa-redis)" redis-cli BGSAVE >/dev/null
+  sleep 3
+  docker cp "$(_ctr vexa-redis):/data/dump.rdb" "$BACKUP_DIR/vexa-redis-dump.rdb"
+  echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/vexa-redis-dump.rdb" | cut -f1)"
+else
+  echo "${LOG_PREFIX}       Skipped (container not running)"
+fi
+
 # ─── Meilisearch ──────────────────────────────────────────────────────────────
 # Snapshots are written to /meili_data/snapshots/ inside the meilisearch-data volume.
 # Meilisearch indexes rebuild from MongoDB automatically — snapshot is a nice-to-have.
 echo ""
-echo "${LOG_PREFIX} [5/6] Meilisearch: creating snapshot..."
+echo "${LOG_PREFIX} [6/13] Meilisearch: creating snapshot..."
 SNAPSHOT_RESPONSE=$(docker compose exec -T meilisearch \
   wget -qO- --post-data="" \
   --header="Authorization: Bearer ${MEILI_MASTER_KEY}" \
   http://127.0.0.1:7700/snapshots 2>/dev/null || echo '{"error":"snapshot failed"}')
 echo "${LOG_PREFIX}       Response: $SNAPSHOT_RESPONSE"
+
+# ─── Qdrant ───────────────────────────────────────────────────────────────────
+# Zero-downtime snapshot via API. One snapshot file per collection, written
+# inside the qdrant-data volume (/qdrant/storage/snapshots/<collection>/).
+# We enumerate collections first, then snapshot each. Consistent per-collection;
+# a full-storage snapshot is not exposed in v1.x.
+echo ""
+echo "${LOG_PREFIX} [7/13] Qdrant: snapshotting collections via API..."
+QDRANT_CONTAINER="$(_ctr qdrant)"
+if docker ps --format '{{.Names}}' | grep -q "^${QDRANT_CONTAINER}$"; then
+  COLLECTIONS=$(docker exec "${QDRANT_CONTAINER}" \
+    wget -qO- --header="api-key: ${QDRANT_API_KEY}" \
+    "http://127.0.0.1:6333/collections" 2>/dev/null \
+    | python3 -c "import json,sys; print('\n'.join(c['name'] for c in json.load(sys.stdin).get('result',{}).get('collections',[])))" \
+    || echo "")
+  if [ -z "${COLLECTIONS}" ]; then
+    echo "${LOG_PREFIX}       No collections found (or API unreachable) — skipping"
+  else
+    for col in ${COLLECTIONS}; do
+      RESP=$(docker exec "${QDRANT_CONTAINER}" \
+        wget -qO- --post-data="" --header="api-key: ${QDRANT_API_KEY}" \
+        "http://127.0.0.1:6333/collections/${col}/snapshots" 2>/dev/null \
+        || echo '{"error":"snapshot failed"}')
+      SNAP_NAME=$(echo "${RESP}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('name',''))" 2>/dev/null || echo "")
+      if [ -n "${SNAP_NAME}" ]; then
+        docker cp "${QDRANT_CONTAINER}:/qdrant/storage/snapshots/${col}/${SNAP_NAME}" \
+          "$BACKUP_DIR/qdrant-${col}.snapshot" 2>/dev/null || true
+        echo "${LOG_PREFIX}       ${col} → $(du -sh "$BACKUP_DIR/qdrant-${col}.snapshot" 2>/dev/null | cut -f1 || echo '?')"
+      else
+        echo "${LOG_PREFIX}       ${col} — snapshot API returned no name: ${RESP}" >&2
+      fi
+    done
+  fi
+else
+  echo "${LOG_PREFIX}       Skipped (container not running)"
+fi
+
+# ─── FalkorDB ─────────────────────────────────────────────────────────────────
+# Redis-protocol BGSAVE writes dump.rdb to /var/lib/falkordb/data/dump.rdb
+# (post SPEC-INFRA-005 the host bind mount is correct). No auth on FalkorDB
+# — it's on klai-net only, no external exposure.
+echo ""
+echo "${LOG_PREFIX} [8/13] FalkorDB: BGSAVE + dump copy (knowledge graph)..."
+FALKORDB_CONTAINER="$(_ctr falkordb)"
+if docker ps --format '{{.Names}}' | grep -q "^${FALKORDB_CONTAINER}$"; then
+  docker exec "${FALKORDB_CONTAINER}" redis-cli BGSAVE >/dev/null
+  sleep 3
+  docker cp "${FALKORDB_CONTAINER}:/var/lib/falkordb/data/dump.rdb" \
+    "$BACKUP_DIR/falkordb-dump.rdb"
+  echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/falkordb-dump.rdb" | cut -f1)"
+else
+  echo "${LOG_PREFIX}       Skipped (container not running)"
+fi
+
+# ─── Garage metadata ──────────────────────────────────────────────────────────
+# `garage meta snapshot` writes a consistent LMDB snapshot under
+# /var/lib/garage/meta/snapshots/ while the service keeps running (Garage
+# v0.9.4+). We tar the snapshot dir itself rather than the live LMDB file.
+echo ""
+echo "${LOG_PREFIX} [9/13] Garage: metadata snapshot..."
+GARAGE_CONTAINER="$(_ctr garage)"
+if docker ps --format '{{.Names}}' | grep -q "^${GARAGE_CONTAINER}$"; then
+  SNAP_OUT=$(docker exec "${GARAGE_CONTAINER}" /garage meta snapshot 2>&1 || echo 'snapshot-failed')
+  echo "${LOG_PREFIX}       ${SNAP_OUT}"
+  # Copy the most recent snapshot subdirectory out via volumes-from.
+  docker run --rm \
+    --volumes-from "${GARAGE_CONTAINER}:ro" \
+    -v "$BACKUP_DIR:/backup" \
+    alpine sh -c '
+      latest=$(ls -1td /var/lib/garage/meta/snapshots/*/ 2>/dev/null | head -1)
+      if [ -n "${latest}" ]; then
+        tar -czf /backup/garage-meta.tar.gz -C "${latest}" . && echo "tar OK"
+      else
+        echo "no snapshot dir found" >&2; exit 1
+      fi
+    '
+  echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/garage-meta.tar.gz" 2>/dev/null | cut -f1 || echo '—')"
+else
+  echo "${LOG_PREFIX}       Skipped (container not running)"
+fi
+
+# ─── Garage data (blobs) ──────────────────────────────────────────────────────
+# Blobs are immutable content-addressed files — rsync while live is safe.
+# Bind mount at /opt/klai/garage-data, tar via sibling container so we don't
+# shell-out to host tar (which would fight file ownership — garage runs root).
+echo ""
+echo "${LOG_PREFIX} [10/13] Garage: data (blob) tar..."
+if [ -d /opt/klai/garage-data ]; then
+  docker run --rm \
+    -v /opt/klai/garage-data:/data:ro \
+    -v "$BACKUP_DIR:/backup" \
+    alpine tar -czf /backup/garage-data.tar.gz -C /data .
+  echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/garage-data.tar.gz" | cut -f1)"
+else
+  echo "${LOG_PREFIX}       Skipped (no /opt/klai/garage-data)"
+fi
+
+# ─── Firecrawl PostgreSQL ─────────────────────────────────────────────────────
+echo ""
+echo "${LOG_PREFIX} [11/13] Firecrawl Postgres: pg_dumpall..."
+if docker ps --format '{{.Names}}' | grep -q "^$(_ctr firecrawl-postgres)$"; then
+  docker exec -u postgres "$(_ctr firecrawl-postgres)" pg_dumpall \
+    > "$BACKUP_DIR/firecrawl-postgres-all.sql" 2>/dev/null \
+    || echo "${LOG_PREFIX}       pg_dumpall failed (likely no super user) — skipping"
+  if [ -s "$BACKUP_DIR/firecrawl-postgres-all.sql" ]; then
+    echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/firecrawl-postgres-all.sql" | cut -f1)"
+  fi
+else
+  echo "${LOG_PREFIX}       Skipped (container not running)"
+fi
+
+# ─── Scribe audio (Vexa transcription recordings) ─────────────────────────────
+# Retention is event-driven (deleted on successful transcription). At rest
+# this volume holds only `failed` recordings awaiting retry. Small tar.
+echo ""
+echo "${LOG_PREFIX} [12/13] Scribe audio: tar of failed-retry recordings..."
+if docker ps --format '{{.Names}}' | grep -q "^$(_ctr scribe-api)$"; then
+  docker run --rm \
+    --volumes-from "$(_ctr scribe-api):ro" \
+    -v "$BACKUP_DIR:/backup" \
+    alpine tar -czf /backup/scribe-audio.tar.gz -C /data/audio . 2>/dev/null \
+    || true
+  if [ -s "$BACKUP_DIR/scribe-audio.tar.gz" ]; then
+    echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/scribe-audio.tar.gz" | cut -f1)"
+  else
+    rm -f "$BACKUP_DIR/scribe-audio.tar.gz"
+    echo "${LOG_PREFIX}       Empty (no retained recordings — good)"
+  fi
+else
+  echo "${LOG_PREFIX}       Skipped (container not running)"
+fi
+
+# ─── Research uploads (user-uploaded notebook sources) ────────────────────────
+# Bind-mount on host — rsync directly, no docker involved.
+echo ""
+echo "${LOG_PREFIX} [13/13] Research uploads: rsync of /opt/klai/research-uploads..."
+if [ -d /opt/klai/research-uploads ]; then
+  rsync -a --delete /opt/klai/research-uploads/ "$BACKUP_DIR/research-uploads/"
+  echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/research-uploads" | cut -f1)"
+else
+  echo "${LOG_PREFIX}       Skipped (no /opt/klai/research-uploads)"
+fi
 
 # ─── Encrypt for remote storage (age) ───────────────────────────────────────
 # Plaintext stays local (7-day retention). Only encrypted files go to the Storage Box.
@@ -119,15 +298,36 @@ AGE_RECIPIENTS=(
   "age15ztzw9vnngkdnw0pg5tn8upplglvhzkep23sm5zu86res5lcmv7syw5m4v"
 )
 ENCRYPT_DIR=$(mktemp -d)
-for f in "$BACKUP_DIR"/postgres-all.sql "$BACKUP_DIR"/gitea-repos.tar.gz "$BACKUP_DIR"/mongodb-all.archive "$BACKUP_DIR"/redis-dump.rdb; do
+# Encrypt every archive artifact produced above. Loop over all matching files
+# so we don't silently skip a new backup kind when the script is extended.
+shopt -s nullglob
+for f in \
+  "$BACKUP_DIR"/postgres-all.sql \
+  "$BACKUP_DIR"/gitea-repos.tar.gz \
+  "$BACKUP_DIR"/mongodb-all.archive \
+  "$BACKUP_DIR"/redis-dump.rdb \
+  "$BACKUP_DIR"/vexa-redis-dump.rdb \
+  "$BACKUP_DIR"/qdrant-*.snapshot \
+  "$BACKUP_DIR"/falkordb-dump.rdb \
+  "$BACKUP_DIR"/garage-meta.tar.gz \
+  "$BACKUP_DIR"/garage-data.tar.gz \
+  "$BACKUP_DIR"/firecrawl-postgres-all.sql \
+  "$BACKUP_DIR"/scribe-audio.tar.gz; do
   [ -f "$f" ] || continue
   age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" "$f" > "$ENCRYPT_DIR/$(basename "$f").age"
 done
+# research-uploads is a directory — tar first, then encrypt.
+if [ -d "$BACKUP_DIR/research-uploads" ]; then
+  tar -czf - -C "$BACKUP_DIR" research-uploads \
+    | age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" \
+    > "$ENCRYPT_DIR/research-uploads.tar.gz.age"
+fi
+shopt -u nullglob
 
 # ─── Upload to Hetzner Storage Box ───────────────────────────────────────────
 echo ""
 if [ -n "${STORAGEBOX_HOST:-}" ] && [ -n "${STORAGEBOX_USER:-}" ]; then
-  echo "${LOG_PREFIX} [6/6] Uploading encrypted backups to Hetzner Storage Box..."
+  echo "${LOG_PREFIX} [14/14] Uploading encrypted backups to Hetzner Storage Box..."
   REMOTE_PATH="backups/core-01/${BACKUP_DATE}"
 
   rsync \
@@ -145,7 +345,7 @@ if [ -n "${STORAGEBOX_HOST:-}" ] && [ -n "${STORAGEBOX_USER:-}" ]; then
 
   echo "${LOG_PREFIX}       Storage Box upload complete."
 else
-  echo "${LOG_PREFIX} [6/6] Storage Box niet geconfigureerd (STORAGEBOX_HOST/STORAGEBOX_USER niet gezet) -- upload overgeslagen."
+  echo "${LOG_PREFIX} [14/14] Storage Box niet geconfigureerd (STORAGEBOX_HOST/STORAGEBOX_USER niet gezet) -- upload overgeslagen."
   echo "${LOG_PREFIX}       Zie klai-infra/SERVERS.md voor setup-instructies."
 fi
 
