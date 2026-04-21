@@ -91,27 +91,33 @@ class TestCharacterizeCaddyLock:
         assert lock1 is lock2
 
 
-class TestCharacterizeRollback:
-    """Characterization tests for _rollback function."""
+class TestCompensators:
+    """SPEC-PROV-001 M3 — compensator functions (replacing the old _rollback).
 
-    def test_rollback_is_async(self):
-        from app.services.provisioning import _rollback
-
-        assert asyncio.iscoroutinefunction(_rollback)
-
-    @pytest.mark.asyncio()
-    async def test_rollback_empty_state_is_noop(self):
-        """Rollback with default state should do nothing and not raise."""
-        from app.services.provisioning import _ProvisionState, _rollback
-
-        state = _ProvisionState()
-        # Should not raise any exceptions
-        await _rollback(state)
+    Compensators are now individual functions registered on an AsyncExitStack.
+    These tests cover the two behaviours that the old _rollback test guaranteed:
+    1. An empty state results in no side effects.
+    2. A populated state's caddy compensator removes the tenant caddyfile.
+    """
 
     @pytest.mark.asyncio()
-    async def test_rollback_caddy_written_removes_file(self, tmp_path):
-        """Rollback removes the caddy file when caddy_written is True."""
-        from app.services.provisioning import _ProvisionState, _rollback
+    async def test_compensate_caddy_is_noop_when_not_written(self):
+        """caddy_written=False means no side effects."""
+        from app.services.provisioning.orchestrator import (
+            _compensate_caddy,
+            _ProvisionState,
+        )
+
+        state = _ProvisionState(slug="acme", caddy_written=False)
+        await _compensate_caddy(state)  # must not raise
+
+    @pytest.mark.asyncio()
+    async def test_compensate_caddy_removes_file_when_written(self, tmp_path):
+        """caddy_written=True removes the tenant caddyfile and reloads."""
+        from app.services.provisioning.orchestrator import (
+            _compensate_caddy,
+            _ProvisionState,
+        )
 
         tenant_file = tmp_path / "acme.caddyfile"
         tenant_file.write_text("test")
@@ -123,6 +129,6 @@ class TestCharacterizeRollback:
             patch("app.services.provisioning.orchestrator._reload_caddy"),
         ):
             mock_settings.caddy_tenants_path = str(tmp_path)
-            await _rollback(state)
+            await _compensate_caddy(state)
 
         assert not tenant_file.exists()

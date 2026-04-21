@@ -13,7 +13,7 @@ import pytest
 def _mock_org() -> MagicMock:
     org = MagicMock()
     org.slug = "acme"
-    org.provisioning_status = "active"
+    org.provisioning_status = "ready"
     org.mfa_policy = "optional"
     org.moneybird_contact_id = "mb-1"
     return org

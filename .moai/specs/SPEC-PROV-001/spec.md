@@ -333,7 +333,40 @@ is geen productie state maar zal na invoering van de CHECK constraint een
 **Mitigatie:** De migratie-tests opschonen als onderdeel van deze SPEC (zie migratie
 plan). Testfixture vervangen door `"ready"`.
 
-### R6. `provisioning_status` lekt in `/api/me` naar frontend
+### R6. Retry op soft-deleted rij vs. nieuwe signup race
+
+**Impact:** Als user-signup een nieuwe org-rij aanmaakt met slug `X` tussen het moment
+van `failed_rollback_complete` (soft-delete) en een admin `retry-provisioning` call, zijn
+er twee rijen: één soft-deleted met slug `X`, één actief met slug `X`. De partial unique
+index staat dit toe. Retry op de soft-deleted rij zou dan `deleted_at = NULL` willen
+zetten — dat zou de partial unique index schenden.
+
+**Mitigatie:** Retry endpoint verifieert binnen de `SELECT FOR UPDATE`-lock dat er geen
+andere actieve rij is met dezelfde slug. Zo ja → retourneer 409
+`{"error": "slug_in_use_by_new_org", "state": "failed_rollback_complete"}`. Admin moet
+dan beslissen: de soft-deleted rij definitief hard-deleten, of een andere actie.
+
+**Residual risk:** Ops-scenario, komt zelden voor. Documenteren in runbook (M6).
+
+### R7. Stuck-detector racet met lopende provisioning tijdens startup
+
+**Impact:** Een provisioning-run die ten tijde van portal-api shutdown net een state
+transitie committe maar nog niet had afgerond, zou door de stuck-detector op
+`failed_rollback_pending` gezet kunnen worden — terwijl er misschien nog een valide
+BackgroundTask elders loopt. Op een enkele core-01 node met één portal-api-instance
+speelt dit niet; de detector draait alleen bij startup en er is dan per definitie geen
+actieve BackgroundTask.
+
+**Mitigatie:** De detector gebruikt `updated_at < now() - interval '15 minutes'` als
+gate. Een provisioning-run die de afgelopen 15 minuten een state checkpoint heeft
+geschreven wordt overgeslagen. Na portal-api restart zonder legacy proces is de drempel
+altijd veilig.
+
+**Residual risk:** Als in de toekomst meerdere portal-api replicas gaan draaien, moet
+de stuck-detector met een advisory lock serialiseren. Voor nu (single-node) is
+`updated_at` voldoende.
+
+### R8. `provisioning_status` lekt in `/api/me` naar frontend
 
 **Impact:** Nieuwe tussenstaten (`creating_mongo_user` etc.) worden als string aan de
 frontend geleverd. Frontend heeft geen i18n voor deze waarden.

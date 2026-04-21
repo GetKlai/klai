@@ -1,43 +1,52 @@
 ---
 id: SPEC-PROV-001
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-04-21
 ---
 
 # Implementatieplan SPEC-PROV-001
 
 ## Overzicht
 
-Zes milestones, priority-based. Elk milestone is onafhankelijk testbaar en kan apart
-gemerged worden. M1 en M2 zijn blokkerend voor M3. M3 is blokkerend voor M4 en M5. M6
-staat los en kan eerder.
+Zeven milestones, priority-based. Elk milestone is onafhankelijk testbaar en kan apart
+gemerged worden. M1 en M2 zijn blokkerend voor M3. M3 is blokkerend voor M4, M5 en M7.
+M6 staat los en kan eerder.
 
 ## Milestones
 
-### M1 — Database schema + CHECK constraint (Priority High)
+### M1 — Database schema + soft-delete + CHECK constraint (Priority High)
 
-**Doel:** `provisioning_status` accepteert de volledige set waarden uit SPEC R8. Legacy
-data is gemigreerd.
+**Doel:** `portal_orgs` krijgt soft-delete ondersteuning, `provisioning_status` accepteert
+de volledige set waarden uit SPEC R8, en de twee bestaande test-orgs (Voys en Klai) zijn
+gemigreerd naar de nieuwe state machine.
 
 **Taken:**
 
-1. Nieuwe Alembic revision `add_provisioning_state_machine_constraint`:
-   - Voeg CHECK constraint toe (zie spec.md migratieplan §1).
-   - Geen default-wijziging — bestaande rijen blijven op hun huidige waarde.
-2. Ops-script `klai-portal/backend/scripts/migrate_failed_provisioning_status.py`:
-   - Leest alle orgs met `provisioning_status = 'failed'`.
-   - Per org: probeer Zitadel app op te halen, LiteLLM team, Mongo user, Docker container, caddyfile op disk.
-   - Output CSV met kolommen `org_id, slug, zitadel_present, litellm_present, mongo_present, docker_present, caddy_present, recommended_new_state`.
-   - Operator valideert CSV handmatig, dan tweede script-run met `--apply` voert de UPDATE uit.
+1. Nieuwe Alembic revision `add_provisioning_state_machine_constraint`. Eén revision
+   die het volgende in deze volgorde doet (zie spec.md migratieplan §1 voor SQL):
+   - Kolom `deleted_at TIMESTAMPTZ NULL` toevoegen aan `portal_orgs`.
+   - Bestaande unique index `ix_portal_orgs_slug` droppen.
+   - Partial unique index `ix_portal_orgs_slug_active` aanmaken (`UNIQUE (slug) WHERE deleted_at IS NULL`).
+   - Inline `UPDATE portal_orgs ...` voor de twee test-orgs (Voys + Klai) volgens spec §1b.
+   - Fail-safe `UPDATE` voor eventuele onverwachte `'failed'` rijen → `failed_rollback_pending`.
+   - CHECK constraint `ck_portal_orgs_provisioning_status`.
+2. Model-update in `klai-portal/backend/app/models/portal_org.py`:
+   - Voeg `deleted_at: Mapped[datetime | None]` kolom toe.
+   - SQLAlchemy event listener of `Query.filter(PortalOrg.deleted_at.is_(None))` in alle
+     default org-lookups (via een shared `_active_orgs()` helper om shotgun-wijzigingen te
+     voorkomen).
 3. Testfixture `tests/test_me_org_found.py:16`: wijzig `"active"` → `"ready"`.
-4. Portal-api Dockerfile: overweeg `COPY scripts/ scripts/` toe te voegen zodat het migratiescript runbaar is in de container (zie `portal-backend.md` notitie over scripts-dir).
+4. Pre-deploy check: operator voert `SELECT id, slug, provisioning_status FROM portal_orgs`
+   uit op productie om te verifiëren dat de twee UPDATE-statements de lading dekken (zie
+   spec §1b). Als er onverwachte rijen staan, revision aanpassen vóór deploy.
 
 **Verificatie:**
-- `alembic upgrade head` slaagt op een database met demo data.
+- `alembic upgrade head && alembic downgrade -1 && alembic upgrade head` slaagt idempotent.
 - `psql -c "INSERT INTO portal_orgs (...) VALUES (..., provisioning_status='foo')"` wordt afgewezen.
-- Bestaande orgs met `provisioning_status = 'ready'` of `'pending'` blijven onveranderd.
+- Twee rijen met slug `voys` (één `deleted_at=NULL`, één `deleted_at=now()`) zijn toegestaan.
+- Twee rijen met slug `voys` beide `deleted_at=NULL` worden geweigerd door de partial unique index.
 
 **Afhankelijkheden:** Geen.
 
@@ -77,24 +86,32 @@ failure handler zoals beschreven in R9 en R10.
 **Taken:**
 
 1. `orchestrator.py`:
-   - Vervang de huidige `_ProvisionState` dataclass door een kleinere variant die alleen `slug`, `start_times_per_step`, en de externe resource IDs bevat (zitadel_app_id, litellm_team_id, etc.). Deze blijft in-memory leven voor de rollback.
-   - Wrap elke forward step in:
+   - Vervang de huidige `_ProvisionState` dataclass door een kleinere variant die alleen `slug`, `start_times_per_step`, en de externe resource IDs bevat (zitadel_app_id, litellm_team_id, etc.). Deze blijft in-memory leven als lookup-context voor compensators.
+   - Gebruik `contextlib.AsyncExitStack` als rollback-mechaniek (Python stdlib, al gebruikt in `main.py` en `database.py` → consistent met projectstandaard). Patroon:
+     ```python
+     async with AsyncExitStack() as stack:
+         await transition_state(db, org_id, from_state=None, to_state="queued", step="begin")
+         for step_name, next_state in FORWARD_SEQUENCE:
+             await transition_state(db, org_id, from_state=<prev>, to_state=next_state, step=step_name)
+             result = await <forward_step>(state, ...)
+             stack.push_async_callback(<compensator>, state, result)
+         await transition_state(db, org_id, from_state=<last>, to_state="ready", step="ready")
+         stack.pop_all()  # happy path: consume stack zonder compensators te draaien
      ```
-     await transition_state(db, org_id, from_state=<prev>, to_state=<step_state>, step=<step>)
-     <execute step>
-     ```
-   - Tweede status-write bij step-succes naar de volgende state gebeurt aan het begin van de volgende step (dus elk checkpoint markeert "step X started"). Alternatief overwegen: dubbele write per step (started + completed) — keuze in detail-design tijdens implementatie.
+     Bij een exception draait `AsyncExitStack.__aexit__` automatisch alle geregistreerde compensators in LIFO-volgorde. Dit vervangt de handgeschreven `_rollback(state)` loop.
+   - Enkele checkpoint per stap ("step X started") — conform sparring-beslissing 6. Onze compensators zijn idempotent; een overbodige compensator-aanroep op een halfgelande stap is goedkoop.
    - Vervang `except Exception` block:
-     - `await transition_state(db, org_id, from_state=<last>, to_state="failed_rollback_pending", step="rollback_start")`
-     - Run compensators in omgekeerde volgorde van de bereikte step, elk in eigen try/except zoals huidige `_rollback`.
-     - Als alle compensators slaagden: `org.slug = ""`, `to_state="failed_rollback_complete"`.
-     - Als één of meer compensators faalden: laat status op `failed_rollback_pending`, log aggregatie.
-2. Verwijder de oude `_rollback` functie — vervangen door nieuwe inline-logica of `_run_compensators(state, up_to_step)` helper.
-3. Integratietest `tests/test_provisioning_orchestrator.py`:
+     - `await transition_state(db, org_id, from_state=<last>, to_state="failed_rollback_pending", step="rollback_start")` — vóórdat `AsyncExitStack.__aexit__` de compensators draait.
+     - Na succesvolle stack-unwind: `org.deleted_at = func.now()` + `to_state="failed_rollback_complete"` in één `SELECT FOR UPDATE`-transitie.
+     - Als één of meer compensators faalden (gevangen door een outer try/except rond de `async with` scope): status blijft op `failed_rollback_pending`, log aggregatie.
+2. Verwijder de oude `_rollback` functie en het handmatige inverse-call-patroon — vervangen door `AsyncExitStack`-registraties naast elke forward step.
+3. Guard aan het begin van `_provision`: als `provisioning_status == 'ready'`, log `provisioning_skipped_already_ready` en return zonder actie (zie acceptance EC5).
+4. Integratietest `tests/test_provisioning_orchestrator.py`:
    - Mock Zitadel + LiteLLM + Docker + Mongo clients.
    - Happy path: org gaat door alle states en eindigt op `ready`.
-   - Failure op stap 3 (`creating_mongo_user`): state gaat naar `failed_rollback_pending`, compensators voor step 2 en 1 lopen, daarna `failed_rollback_complete` en `org.slug = ""`.
-   - Failure op stap 3 + compensator failure op stap 1: state blijft `failed_rollback_pending`, log bevat aggregatie.
+   - Failure op stap 3 (`creating_mongo_user`): state gaat naar `failed_rollback_pending`, compensators voor step 2 en 1 lopen via de `AsyncExitStack`, daarna `failed_rollback_complete` en `org.deleted_at` is gezet.
+   - Failure op stap 3 + compensator failure op stap 1: state blijft `failed_rollback_pending`, log bevat aggregatie, `deleted_at` is niet gezet.
+   - Retry na `failed_rollback_complete`: een nieuwe signup met dezelfde slug slaagt (partial unique index laat dit toe).
 
 **Verificatie:**
 - Bestaande tests in `tests/test_provisioning*.py` slagen onaangepast of met minimal wijzigingen.
@@ -112,9 +129,12 @@ failure handler zoals beschreven in R9 en R10.
 1. Nieuwe route `klai-portal/backend/app/api/orgs_retry_provisioning.py`:
    - `POST /api/orgs/{slug}/retry-provisioning`
    - Dependency: `_get_caller_org` + admin-role check via bestaande `require_admin` helper (zie `portal-security.md`).
-   - `SELECT ... FOR UPDATE` op de org (via `_get_org_or_404_for_update(slug, db)` helper, volg bestaande org-scoping pattern uit `portal-security.md`).
-   - Guard:
-     - Status `failed_rollback_complete` → transitioneer naar `queued`, schedule BackgroundTask `provision_tenant(org.id)`, retourneer `202 {"status": "queued"}`.
+   - Lookup op `org.id` i.p.v. `slug` om de soft-deleted rij specifiek te kunnen pakken — path-param `slug` wordt gebruikt om de failed rij te vinden via een lookup die bewust óók soft-deleted rijen toont (`Query(PortalOrg).filter(PortalOrg.slug == slug)` zónder `deleted_at IS NULL` filter; indien meerdere rijen: pak de rij met `provisioning_status = 'failed_rollback_complete'`).
+   - `SELECT ... FOR UPDATE` op die rij.
+   - Guard (binnen lock):
+     - Status `failed_rollback_complete`:
+       - Check of er een andere actieve rij met dezelfde slug bestaat (`deleted_at IS NULL` + andere id) — zo ja → 409 `{"error": "slug_in_use_by_new_org"}` (zie spec R6).
+       - Anders: transitioneer naar `queued`, zet `deleted_at = NULL`, schedule BackgroundTask `provision_tenant(org.id)`, retourneer `202 {"status": "queued"}`.
      - Status `failed_rollback_pending` → retourneer `409 {"error": "manual_cleanup_required"}`.
      - Elke andere status (`ready`, `queued`, `creating_*`) → retourneer `409 {"error": "not_in_retryable_state", "state": <current>}`.
 2. Registreer route in `main.py` (of centrale router).
@@ -163,7 +183,9 @@ failure handler zoals beschreven in R9 en R10.
 
 1. Nieuwe rule `klai-portal/docs/runbooks/provisioning-retry.md`:
    - Wanneer gebruik je retry endpoint.
-   - Wat te doen bij `failed_rollback_pending`.
+   - Wat te doen bij `failed_rollback_pending` (handmatige inspectie van Zitadel/LiteLLM/Mongo/Docker/Caddy).
+   - Wat te doen bij `slug_in_use_by_new_org` (409 bij retry — soft-deleted rij is overbodig geworden, kan hard-deleted).
+   - Wat te doen na portal-api deploy: stuck-detector heeft gedraaid, controleer Grafana op `provisioning.stuck_recovered` events.
    - Verwijzing naar deprovisioning script voor manual cleanup.
 2. Update `.claude/rules/klai/projects/portal-backend.md`:
    - Nieuwe sectie "Provisioning state machine" met verwijzing naar SPEC-PROV-001.
@@ -172,7 +194,41 @@ failure handler zoals beschreven in R9 en R10.
 
 **Verificatie:** Runbook review door on-call ops.
 
-**Afhankelijkheden:** M3, M4.
+**Afhankelijkheden:** M3, M4, M7.
+
+### M7 — Startup stuck-detector (Priority Medium)
+
+**Doel:** Provisionings die vastzaten door een portal-api crash of deploy worden bij
+startup automatisch naar `failed_rollback_pending` gemapt zodat ze zichtbaar worden in
+Grafana en ops ze kan oppakken. Zie SPEC R21 en risico R7.
+
+**Taken:**
+
+1. Nieuwe module `klai-portal/backend/app/services/provisioning/stuck_detector.py`:
+   - Functie `async def reconcile_stuck_provisionings(db: AsyncSession) -> int` die alle
+     orgs vindt met een niet-terminale status en `updated_at < now() - interval '15 minutes'`.
+   - Per gevonden org: log `provisioning_stuck_detected`, transitioneer naar
+     `failed_rollback_pending` via de bestaande `transition_state` helper (M2), emit een
+     `product_event` `provisioning.stuck_recovered`.
+   - Géén compensators aanroepen — de in-memory `AsyncExitStack` is weg, compensatie is
+     niet veilig zonder garantie dat de resources nog bestaan zoals de `_ProvisionState`
+     dacht.
+2. Haak in op FastAPI `lifespan` startup in `app/main.py`:
+   - Na database connectie ready, vóór request serving begint.
+   - Failure in reconcile mag app-startup niet blokkeren — try/except met warning log.
+3. Unit tests `tests/test_stuck_detector.py`:
+   - Org in `creating_mongo_user` met `updated_at > now() - 15min` → overgeslagen.
+   - Org in `creating_mongo_user` met `updated_at < now() - 15min` → gemapt naar `failed_rollback_pending`.
+   - Org in `ready` → overgeslagen, ongeacht leeftijd.
+   - Org in `failed_rollback_pending` of `failed_rollback_complete` → overgeslagen (al terminaal).
+
+**Verificatie:**
+- Unit tests slagen.
+- Staging test: stop portal-api midden in een provisioning run, wacht 15 minuten,
+  start portal-api, verifieer dat de org in Grafana als `failed_rollback_pending`
+  verschijnt met een `provisioning.stuck_recovered` event.
+
+**Afhankelijkheden:** M1, M2, M3.
 
 ## Technische aanpak
 
@@ -203,18 +259,23 @@ Extra werk: waar wallow nog niet op plek is, toevoegen in M3.
 
 ### Retry na rollback
 
-Na `failed_rollback_complete` is `org.slug = ""`. De retry endpoint schedulet
-`provision_tenant(org_id)` opnieuw. De orchestrator regenereert het slug via
-`_slugify_unique(org.name, existing_slugs)` — zelfde pad als eerste provisioning. Het
-slug mag hetzelfde zijn als voorheen mits `_sync_drop_mongodb_tenant_user` en
-`_sync_remove_container` slaagden tijdens rollback (resources zijn weg → slug is vrij).
+Na `failed_rollback_complete` is `org.deleted_at` gezet (soft-deleted). De partial unique
+index `ix_portal_orgs_slug_active` geeft de slug automatisch vrij voor nieuwe signups of
+voor retry op dezelfde rij. Twee paden:
+
+1. **User retry via nieuwe signup:** gebruiker meldt zich opnieuw aan. Signup-flow maakt
+   een nieuwe `portal_orgs` rij aan, `_slugify_unique` kan dezelfde slug toewijzen
+   (partial index blokkeert niet want de oude rij is soft-deleted). Nieuwe `provision_tenant`
+   aanroep, nieuwe run.
+2. **Admin retry via endpoint:** endpoint zet `deleted_at = NULL` + `provisioning_status = 'queued'`
+   op de bestaande rij en herstart de provisioning op dezelfde rij. Vereist dat er op dat
+   moment geen andere actieve rij met dezelfde slug is (guard in M4 endpoint).
+
+In beide gevallen is de slug "vrij" zonder dat we `slug = ""` hoeven te zetten — het
+soft-delete + partial unique index patroon (Linear/Notion/GitLab standard) doet het werk.
 
 ## Risico's (implementation-level)
 
-- **Migratiescript veronderstelt dat alle externe resources bereikbaar zijn.** Als
-  LiteLLM of Zitadel down is tijdens `migrate_failed_provisioning_status.py --dry-run`,
-  staat de CSV output niet vast. Mitigatie: script retried per-org 3 keer, logt
-  "inconclusive" in de CSV, operator beslist handmatig.
 - **State transitie gefaald op CHECK constraint tijdens rollback.** Als een
   regressiedefect een verkeerde state-waarde probeert te schrijven tijdens rollback,
   raiset de DB `IntegrityError` en blijft de org op de laatst-succesvolle state. Dit
@@ -222,21 +283,30 @@ slug mag hetzelfde zijn als voorheen mits `_sync_drop_mongodb_tenant_user` en
 - **BackgroundTask vs explicit worker.** De huidige `provision_tenant` loopt in FastAPI
   BackgroundTasks. Bij portal-api restart tijdens provisioning gaat de BackgroundTask
   verloren. State blijft op de laatst-geschreven tussenstate (bv. `creating_mongo_user`).
-  Retry endpoint in M4 accepteert alleen `failed_rollback_complete` — een stuck
-  tussenstate is dus niet retryable via de HTTP endpoint. Mitigatie: operator kan via
-  de migratiescript (M1) een stuck tussenstate mappen naar `failed_rollback_complete`
-  na handmatige inspectie. Volwaardige oplossing (durable task queue) is out-of-scope.
+  De stuck-detector uit M7 maakt deze orgs automatisch zichtbaar als `failed_rollback_pending`
+  na 15 minuten. Ops kan ze vervolgens handmatig mappen naar `failed_rollback_complete`
+  (na resource-inspectie) waarna retry via M4 mogelijk is. Volwaardige oplossing
+  (durable task queue) blijft out-of-scope.
+- **Stuck-detector misidentificeert lopende provisioning.** Mitigatie: `updated_at`
+  drempel van 15 minuten is ruim meer dan een gezonde provisioning-run. Op single-node
+  single-process voldoende. Bij horizontale scaling later vereist een advisory lock.
+- **Soft-delete + referentiële integriteit.** Tabellen die naar `portal_orgs.id` verwijzen
+  (bv. `portal_memberships`, `product_events`) moeten blijven werken na soft-delete.
+  Verwachte gedrag: de FK's blijven geldig (soft-delete wijzigt geen id), alleen queries
+  die "actieve orgs" bedoelen moeten via de `_active_orgs()` helper. Audit tijdens M1/M3
+  dat er geen queries zijn die stilletjes soft-deleted rijen mee-filteren.
 
 ## Verificatie checklist
 
 Per milestone:
 
-- M1: CHECK constraint werkt, migratie idempotent, tests groen.
+- M1: CHECK constraint werkt, migratie idempotent, partial unique index gedraagt correct, twee test-orgs gemigreerd, tests groen.
 - M2: state_machine.py unit tests groen, product_events verschijnen in test-DB.
-- M3: orchestrator integratietests groen, happy + failure paden bewezen.
-- M4: retry endpoint tests groen, admin-only afgedwongen, concurrent race test groen.
+- M3: orchestrator integratietests groen, `AsyncExitStack` rollback werkt, happy + failure paden bewezen.
+- M4: retry endpoint tests groen, admin-only afgedwongen, concurrent race test groen, slug_in_use_by_new_org edge case getest.
 - M5: dashboard query werkt, alert rule configured (optional).
 - M6: runbook door ops goedgekeurd.
+- M7: stuck-detector unit tests groen, staging test (stop portal-api mid-run → start → zie `failed_rollback_pending`) succesvol.
 
 ## Co-auteurs en reviewers
 

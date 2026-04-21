@@ -25,13 +25,29 @@ class PortalOrg(Base):
     zitadel_org_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # @MX:NOTE: SPEC-PROV-001 M1 — soft-delete marker. When provisioning fails and rollback
+    # completes, `deleted_at` is set to release the slug via the partial unique index
+    # `ix_portal_orgs_slug_active` (Linear/Notion/GitLab pattern). Retry flow either
+    # creates a new row (via signup) or clears this back to NULL (admin retry endpoint).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # @MX:NOTE: SPEC-PROV-001 M7 — per-row freshness marker used by the stuck-detector
+    # at portal-api startup to distinguish live provisioning runs from crashed ones.
+    # Updated via SQLAlchemy's `onupdate=func.now()` so any state_machine transition
+    # implicitly refreshes the timestamp.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     moneybird_contact_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     moneybird_subscription_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     billing_status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
     plan: Mapped[str] = mapped_column(Text, nullable=False, default="professional", server_default="professional")
     billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly", server_default="monthly")
     seats: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
-    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # Slug uniqueness is enforced by the partial unique index `ix_portal_orgs_slug_active`
+    # (WHERE deleted_at IS NULL), defined in alembic/versions/p1r2o3v4s5b1.
+    slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     default_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"
     )
