@@ -865,8 +865,24 @@ async def create_gap_event(
     # SPEC-KB-022 R6 + SPEC-KB-026 R4: async gap classification via knowledge-ingest
     if payload.taxonomy_node_ids is None and payload.nearest_kb_slug:
 
-        async def _classify_gap(gap_id: int, org_zitadel_id: str, query_text: str, kb_slug: str) -> None:
-            """Classify gap query against KB taxonomy via knowledge-ingest. Best-effort."""
+        async def _classify_gap(
+            gap_id: int,
+            org_int_id: int,
+            org_zitadel_id: str,
+            query_text: str,
+            kb_slug: str,
+        ) -> None:
+            """Classify gap query against KB taxonomy via knowledge-ingest.
+
+            Runs in a fresh session (background task) so we must:
+              1. pin the connection — so session-level set_config is visible
+                 to the subsequent UPDATE
+              2. set app.current_org_id — otherwise RLS filters the UPDATE down
+                 to zero rows and silently no-ops (no exception raised)
+
+            Fail-loud: logs at error level with traceback so silent regressions
+            in this path surface in VictoriaLogs.
+            """
             try:
                 from app.services.knowledge_ingest_client import classify_gap_taxonomy
 
@@ -875,11 +891,26 @@ async def create_gap_event(
                     return
 
                 async with AsyncSessionLocal() as session:
+                    # Pin connection so set_config is visible to the UPDATE below.
+                    await session.connection()
                     await session.execute(
+                        text("SELECT set_config('app.current_org_id', :oid, false)"),
+                        {"oid": str(org_int_id)},
+                    )
+                    result = await session.execute(
                         update(PortalRetrievalGap)
                         .where(PortalRetrievalGap.id == gap_id)
                         .values(taxonomy_node_ids=node_ids)
                     )
+                    if result.rowcount == 0:  # type: ignore[attr-defined]
+                        # Defensive: if tenant context is wrong, RLS silently filters
+                        # the row out. Surface it loudly so we never silently lose
+                        # classification work again.
+                        raise RuntimeError(
+                            f"gap_classification UPDATE matched 0 rows "
+                            f"(gap_id={gap_id}, org_id={org_int_id}) — "
+                            f"likely RLS/tenant-context mismatch"
+                        )
                     await session.commit()
 
                 logger.info(
@@ -887,15 +918,20 @@ async def create_gap_event(
                     gap_id,
                     node_ids,
                 )
-            except Exception as exc:
-                logger.warning(
-                    "gap_classification_failed: gap_id=%s, error=%s",
+            except Exception:
+                logger.exception(
+                    "gap_classification_failed: gap_id=%s",
                     gap_id,
-                    str(exc),
                 )
 
         _task = asyncio.create_task(  # noqa: RUF006
-            _classify_gap(gap.id, payload.org_id, payload.query_text, payload.nearest_kb_slug)
+            _classify_gap(
+                gap.id,
+                org.id,
+                payload.org_id,
+                payload.query_text,
+                payload.nearest_kb_slug,
+            )
         )
 
     await _audit_internal_call(request, org_id=org.id)

@@ -229,12 +229,10 @@ def _start_librechat_container(
         network="klai-net",
     )
 
-    # Connect to additional networks
+    # Connect to additional networks. Fail-loud: LibreChat can't reach MongoDB /
+    # Meilisearch / Redis without these, so a silent skip leaves the tenant with
+    # a broken container. Let the exception bubble to the orchestrator's outer
+    # handler which rolls back provisioning.
     for net_name in ["klai-net-mongodb", "klai-net-meilisearch", "klai-net-redis"]:
-        try:
-            net = client.networks.get(net_name)
-            net.connect(container_name)
-        except Exception as exc:
-            logger.warning(
-                "container_network_connect_failed", container=container_name, network=net_name, error=str(exc)
-            )
+        net = client.networks.get(net_name)
+        net.connect(container_name)
