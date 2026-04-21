@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, pin_session
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
 from app.services.provisioning.generators import _generate_librechat_env, _slugify_unique
@@ -113,15 +113,10 @@ async def provision_tenant(org_id: int) -> None:
 
 
 async def _provision(org_id: int, db: AsyncSession) -> None:
-    # Pin the DB connection so session-level set_config('app.current_org_id', ...)
-    # calls made by downstream helpers (ensure_default_knowledge_bases,
-    # create_system_groups) stay visible to the INSERTs that follow. Without
-    # pinning, SQLAlchemy async lazily checks out a fresh pooled connection per
-    # statement, the SET lands on one connection and the INSERT lands on
-    # another, and RLS (`org_id = current_setting('app.current_org_id')`)
-    # silently blocks every row. See app.core.database.get_db for the same
-    # pattern applied to request sessions.
-    await db.connection()
+    # Pin the connection so session-level set_config('app.current_org_id', ...)
+    # calls from downstream helpers (ensure_default_knowledge_bases,
+    # create_system_groups) stay visible to the INSERTs that follow.
+    await pin_session(db)
 
     # Fetch org
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
@@ -213,25 +208,43 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
         logger.info("librechat_env_written", slug=slug)
 
-        # Step 6: Create personal KB via klai-docs API
-        # Fail-loud: if docs-app is unreachable or returns non-2xx, abort provisioning.
-        # Rationale: the docs KB is a first-class tenant resource; silently skipping
-        # it leaves the tenant with a broken "My knowledge" view.
-        async with httpx.AsyncClient(
-            base_url="http://docs-app:3000",
-            headers={
-                "X-Internal-Secret": settings.docs_internal_secret,
-                "X-User-ID": "system",
-                "Content-Type": "application/json",
-            },
-            timeout=10.0,
-        ) as docs_client:
-            kb_resp = await docs_client.post(
-                f"/api/orgs/{slug}/kbs",
-                json={"name": "Personal", "slug": "personal", "visibility": "private"},
+        # Step 6: Create personal KB via klai-docs API.
+        #
+        # docs-app is a SOFT dependency for tenant provisioning: the tenant
+        # still works (chat, scribe, portal KBs) without the docs KB. If
+        # docs-app is unreachable (container down, config issue), we:
+        #   1. log at ERROR with full context so the gap is visible,
+        #   2. mark the tenant so the docs KB can be reconciled later,
+        #   3. continue provisioning so the tenant is otherwise ready.
+        #
+        # Non-2xx from a REACHABLE docs-app is still fatal — it signals a
+        # real contract violation (auth, schema, etc.) that must not be
+        # silently tolerated.
+        try:
+            async with httpx.AsyncClient(
+                base_url="http://docs-app:3000",
+                headers={
+                    "X-Internal-Secret": settings.docs_internal_secret,
+                    "X-User-ID": "system",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            ) as docs_client:
+                kb_resp = await docs_client.post(
+                    f"/api/orgs/{slug}/kbs",
+                    json={"name": "Personal", "slug": "personal", "visibility": "private"},
+                )
+                kb_resp.raise_for_status()
+                logger.info("personal_kb_created", slug=slug)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+            # docs-app unreachable — soft failure, log loudly and degrade.
+            # The tenant is otherwise fine; admin tooling can reconcile the
+            # missing docs KB once docs-app is back up.
+            logger.exception(
+                "docs_kb_creation_degraded_docs_app_unreachable",
+                slug=slug,
+                org_id=org_id,
             )
-            kb_resp.raise_for_status()
-            logger.info("personal_kb_created", slug=slug)
 
         # Step 6b: Create default portal KB rows (org KB + admin's personal KB).
         # Fail-loud: exceptions bubble to the outer handler which rolls back external

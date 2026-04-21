@@ -656,17 +656,37 @@ async def update_knowledge_base(
                 detail="default_org_role must be 'viewer', 'contributor', or empty",
             )
 
-    await db.commit()
-
     # expire_on_commit=False keeps all attributes valid after commit — no re-fetch needed.
     # A re-fetch after commit acquires a new connection without app.current_org_id set,
     # causing RLS to return no rows and a spurious 404.
+    #
+    # Visibility is a two-system invariant: portal_knowledge_bases.visibility
+    # must match the retrieval-side flag in knowledge-ingest. Propagate to
+    # knowledge-ingest FIRST, then commit portal — so a propagation failure
+    # leaves both systems in the old, consistent state instead of split-brain.
     if visibility_changed:
         try:
-            await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
-        except Exception:
-            logger.warning("Failed to propagate visibility change to knowledge-ingest", kb_slug=kb.slug)
+            await knowledge_ingest_client.update_kb_visibility(
+                org.zitadel_org_id, kb.slug, kb.visibility
+            )
+        except Exception as exc:
+            # Revert the in-memory change; portal hasn't been committed yet.
+            await db.rollback()
+            logger.exception(
+                "kb_visibility_propagation_failed",
+                kb_slug=kb.slug,
+                org_id=org.id,
+                requested_visibility=kb.visibility,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "Could not propagate visibility change to knowledge-ingest; "
+                    "no changes were saved. Please retry."
+                ),
+            ) from exc
 
+    await db.commit()
     return _kb_out(kb)
 
 
