@@ -21,6 +21,10 @@ class IngestRequest(BaseModel):
     source_ref: str | None = None  # Source reference (e.g. URL, Notion page ID, repo path)
     synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
     allowed_assertion_modes: list[str] | None = None  # Connector-level hint: expected modes for this source
+    # SPEC-KB-021: source-aware enrichment
+    kb_name: str | None = None  # Human-readable KB name (e.g. "Voys Helpdesk")
+    connector_type: str | None = None  # Connector type slug (e.g. "redcactus-wiki", "webscrape")
+    source_domain: str | None = None  # Domain for crawl sources (e.g. "help.mitel.nl")
 
 
 class RetrieveRequest(BaseModel):

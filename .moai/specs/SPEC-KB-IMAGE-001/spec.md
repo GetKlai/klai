@@ -1,9 +1,9 @@
 ---
 id: SPEC-KB-IMAGE-001
-version: "1.0.0"
+version: "1.3.0"
 status: implemented
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-04-16
 author: Mark Vletter
 priority: high
 ---
@@ -15,6 +15,7 @@ priority: high
 | 2026-04-08 | 1.0.0 | Initial SPEC creation |
 | 2026-04-08 | 1.1.0 | Component correcties: Garage v2.2.0, minio SDK, filetype validatie, init-script |
 | 2026-04-08 | 1.2.0 | Implemented and deployed: Caddy website mode, env var secrets, E2E verified on production |
+| 2026-04-16 | 1.3.0 | Refactor: adapter-owned image URL resolution (DRY, typed, tested). No behavioural change. |
 
 ---
 
@@ -141,3 +142,50 @@ Het systeem **zal** maximaal 20 images per document verwerken.
 - **Garage region:** S3 client MOET `region="garage"` configureren, anders falen auth signatures
 - **Garage bootstrap:** Vereist post-start CLI interactie (layout assign + bucket create) via init-script
 - **S3 client:** `minio` SDK (sync) met `asyncio.to_thread()` — consistent met codebase die httpx gebruikt (geen aiohttp dependency)
+
+---
+
+## Implementation Notes — 2026-04-16 Refactor
+
+### What was refactored
+
+URL resolution voor afbeeldingen is verplaatst van `sync_engine.py` naar elke adapter afzonderlijk. Vóór de refactor bevatte `sync_engine` connector-type dispatch (`isinstance` checks) om relatieve URLs te resolven voor de webcrawler en om markdown image URLs te extraheren voor GitHub. Na de refactor doet elke adapter dit zelf als onderdeel van zijn `fetch_document()` of `_process_results()` logica.
+
+Concreet:
+- De `_extract_and_upload_images()` functie in `sync_engine` werd vereenvoudigd naar `_upload_images()` zonder `text`-parameter en zonder connector-type dispatch.
+- `extract_markdown_image_urls()` en `resolve_relative_url` imports zijn verwijderd uit `sync_engine`.
+- De `_image_cache` side-channel en de bijbehorende `get_cached_images()` methode zijn verwijderd uit de Notion adapter.
+
+### Why
+
+- Elimineer connector-type dispatch in `sync_engine` (violation of open/closed principle).
+- Maak het contract expliciet: elke adapter is verantwoordelijk voor zijn eigen `DocumentRef.images` met absolute URLs.
+- Maakt per-adapter testing mogelijk zonder `sync_engine` te instantiëren.
+
+### Files touched
+
+- `klai-connector/app/adapters/webcrawler.py` — `_process_results()` resolveert relatieve image URLs naar absoluut t.o.v. de pagina-URL.
+- `klai-connector/app/adapters/notion.py` — verwijderd `_image_cache` en `get_cached_images()`; `fetch_document()` zet `ref.images` direct.
+- `klai-connector/app/adapters/github.py` — `source_url` is nu de blob-view URL (`github.com/{owner}/{repo}/blob/{branch}/{path}`); nieuwe statische helper `_extract_markdown_images()` vult `ref.images` met absolute URLs voor `.md`/`.rst` bestanden.
+- `klai-connector/app/services/sync_engine.py` — `_extract_and_upload_images()` hernoemd naar `_upload_images()`; alle connector-type dispatch verwijderd; `ref` parameter getypt als `DocumentRef`.
+- `klai-connector/app/adapters/base.py` — docstrings documenteren nu het contract: `ImageRef.url` MUST be absolute HTTP(S); `DocumentRef.images` is URL-based only.
+
+### Tests added
+
+18 nieuwe unit tests verdeeld over 4 testbestanden:
+
+- `tests/adapters/test_github_images.py` (NIEUW) — 9 tests: relatieve URL, absolute URL, dot-slash, branch handling, data URI skipping, leading-slash urljoin semantics.
+- `tests/adapters/test_webcrawler.py::TestImageUrlResolution` — 4 tests: `_process_results()` absolute URL conversie.
+- `tests/adapters/test_notion.py` — 3 tests: `ref.images` populatie + afwezigheid van legacy `_image_cache`.
+- `tests/test_sync_engine_images.py::TestUploadImagesIsConnectorAgnostic` — 2 tests: connector-agnostic upload.
+
+### Contract clarified
+
+- `ImageRef.url` MUST be an absolute HTTP(S) URL. Adapters zijn verantwoordelijk voor het resolven van relatieve URLs vóór het zetten van `ref.images`.
+- `DocumentRef.images` is URL-based only. Embedded binary images (DOCX/PDF embeds) gaan via de parser pipeline (Unstructured.io `Image` elements), niet via dit veld.
+
+### Commits
+
+- `ddfac8c1` — `refactor(connector): each adapter owns its own image URL resolution`
+- `363441be` — `refactor(connector): complete adapter-owned image URL resolution`
+- `51b7150b` — `refactor(connector): tighten types and document image contract`

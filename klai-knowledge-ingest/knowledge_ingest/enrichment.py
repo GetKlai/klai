@@ -2,13 +2,15 @@
 LLM enrichment service: contextual prefix generation + HyPE question generation.
 
 Each chunk gets a single LLM call (via LiteLLM proxy) returning:
-  {"context_prefix": "...", "questions": ["...", ...]}
+  {"context_prefix": "...", "content_type": "...", "questions": ["...", ...]}
 
 Enriched chunk text = "{context_prefix}\n\n{original_text}"
 Questions are used for vector_questions (depth 0-1 only) and stored in payload.
+content_type classifies the chunk for downstream retrieval ranking.
 """
 import asyncio
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 import structlog
@@ -20,6 +22,8 @@ from knowledge_ingest.context_strategies import STRATEGIES
 logger = structlog.get_logger()
 
 ENRICHMENT_PROMPT = """\
+Kennisbank: {kb_name}
+Bron: {source_context}
 Documenttitel: {title}
 Pad: {path}
 
@@ -32,13 +36,18 @@ Pad: {path}
 </chunk>
 {participant_context}
 Genereer een JSON-object met:
-- "context_prefix": een zin van 1-2 regels die deze chunk plaatst binnen het document \
-(welk document, welk onderwerp, welke sectie).
+- "context_prefix": een zin van max 120 tokens die deze chunk plaatst binnen het document \
+(welke KB en bronsysteem, welk document/sectie, eventuele domeinspecifieke terminologie).
+- "content_type": classificeer de chunk als exact één van: \
+"procedural" (stap-voor-stap instructies), "conceptual" (uitleg van begrippen), \
+"reference" (naslag/specificaties), "warning" (waarschuwingen/beperkingen), \
+"example" (voorbeelden/cases).
 - "questions": 3-5 vragen die deze chunk beantwoordt. \
 {question_focus}
 
 Reply with ONLY a JSON object, no markdown, no explanation:
-{"context_prefix": "<string>", "questions": ["<string>", ...]}"""
+{{"context_prefix": "<string>", "content_type": "<procedural|conceptual|reference|warning|example>", \
+"questions": ["<string>", ...]}}"""
 
 
 class EnrichmentError(Exception):
@@ -47,6 +56,7 @@ class EnrichmentError(Exception):
 
 class EnrichmentResult(BaseModel):
     context_prefix: str
+    content_type: Literal["procedural", "conceptual", "reference", "warning", "example"]
     questions: list[str]
 
 
@@ -56,6 +66,7 @@ class EnrichedChunk:
     enriched_text: str       # "{context_prefix}\n\n{original_text}"
     context_prefix: str
     questions: list[str]     # embedded as vector_questions for depth 0-1; stored in payload for all
+    content_type: str = ""   # SPEC-KB-021: LLM-classified chunk type (procedural/conceptual/etc.)
 
 
 def _truncate_to_tokens(text: str, max_tokens: int) -> str:
@@ -84,10 +95,14 @@ async def enrich_chunk(
     question_focus: str = "",
     participant_context: str = "",
     context_window: str | None = None,
-) -> EnrichmentResult | None:
+    kb_name: str = "",
+    connector_type: str = "",
+    source_domain: str = "",
+) -> EnrichmentResult:
     """
     Call LiteLLM proxy to generate contextual prefix + HyPE questions for one chunk.
-    Returns None on any failure (timeout, HTTP error, parse error).
+    Raises EnrichmentError on any failure (timeout, HTTP error, parse error, invalid
+    content_type). Chunks must NOT be upserted to Qdrant when this raises.
     When context_window is provided, it is used as the document context in the prompt
     instead of truncating the full document_text.
     """
@@ -102,7 +117,19 @@ async def enrich_chunk(
     effective_focus = question_focus or (
         "De vragen moeten natuurlijke zoekopdrachten zijn die een gebruiker zou typen."
     )
+    # Build source context string for the prompt
+    source_parts = []
+    if kb_name:
+        source_parts.append(kb_name)
+    if connector_type:
+        source_parts.append(connector_type)
+    if source_domain:
+        source_parts.append(source_domain)
+    source_context = " | ".join(source_parts) if source_parts else "onbekend"
+
     prompt = ENRICHMENT_PROMPT.format(
+        kb_name=kb_name or "onbekend",
+        source_context=source_context,
         title=title,
         path=path,
         document_text=doc_context,
@@ -158,6 +185,9 @@ async def enrich_chunks(
     participant_context: str = "",
     context_strategy: str = "first_n",
     context_tokens: int = 2000,
+    kb_name: str = "",
+    connector_type: str = "",
+    source_domain: str = "",
 ) -> list[EnrichedChunk]:
     """
     Enrich all chunks with a semaphore limiting concurrent LLM calls.
@@ -167,6 +197,7 @@ async def enrich_chunks(
     context_strategy: name of a strategy in context_strategies.STRATEGIES.
     context_tokens: max tokens for the extracted context window.
     The strategy is applied per-chunk (with chunk_index) so rolling_window gets correct positioning.
+    kb_name, connector_type, source_domain: source-aware enrichment fields (SPEC-KB-021).
     """
     semaphore = asyncio.Semaphore(settings.enrichment_max_concurrent)
     strategy_fn = STRATEGIES.get(context_strategy, STRATEGIES["first_n"])
@@ -179,6 +210,9 @@ async def enrich_chunks(
                 question_focus=question_focus,
                 participant_context=participant_context,
                 context_window=context_window,
+                kb_name=kb_name,
+                connector_type=connector_type,
+                source_domain=source_domain,
             )
         enriched_text = f"{result.context_prefix}\n\n{chunk_text}"
         return EnrichedChunk(
@@ -186,6 +220,7 @@ async def enrich_chunks(
             enriched_text=enriched_text,
             context_prefix=result.context_prefix,
             questions=result.questions,
+            content_type=result.content_type,
         )
 
     return await asyncio.gather(*[_enrich_one(c, i) for i, c in enumerate(chunks)])

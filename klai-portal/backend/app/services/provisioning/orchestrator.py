@@ -6,13 +6,13 @@ _rollback compensating actions, and _ProvisionState tracking.
 """
 
 import asyncio
-import logging
 import secrets
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +32,7 @@ from app.services.provisioning.infrastructure import (
 from app.services.secrets import portal_secrets
 from app.services.zitadel import zitadel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # File lock to prevent concurrent tenant caddyfile writes
 _caddy_lock = asyncio.Lock()
@@ -63,26 +63,26 @@ async def _rollback(state: _ProvisionState) -> None:
             async with _caddy_lock:
                 await loop.run_in_executor(None, _reload_caddy)
         except Exception as exc:
-            logger.warning("Rollback: Caddy cleanup failed for %s: %s", state.slug, exc)
+            logger.warning("rollback_caddy_failed", slug=state.slug, error=str(exc))
 
     if state.container_started:
         try:
             await loop.run_in_executor(None, _sync_remove_container, f"librechat-{state.slug}")
         except Exception as exc:
-            logger.warning("Rollback: container removal failed for %s: %s", state.slug, exc)
+            logger.warning("rollback_container_removal_failed", slug=state.slug, error=str(exc))
 
     if state.env_file_path:
         try:
             tenant_dir = Path(state.env_file_path).parent
             shutil.rmtree(str(tenant_dir), ignore_errors=True)
         except Exception as exc:
-            logger.warning("Rollback: filesystem cleanup failed for %s: %s", state.slug, exc)
+            logger.warning("rollback_filesystem_failed", slug=state.slug, error=str(exc))
 
     if state.mongo_user_created and state.mongo_user_slug:
         try:
             await loop.run_in_executor(None, _sync_drop_mongodb_tenant_user, state.mongo_user_slug)
         except Exception as exc:
-            logger.warning("Rollback: MongoDB user deletion failed for %s: %s", state.mongo_user_slug, exc)
+            logger.warning("rollback_mongodb_user_failed", slug=state.mongo_user_slug, error=str(exc))
 
     if state.litellm_team_id:
         try:
@@ -93,13 +93,13 @@ async def _rollback(state: _ProvisionState) -> None:
             ) as client:
                 await client.post("/team/delete", json={"team_ids": [state.litellm_team_id]})
         except Exception as exc:
-            logger.warning("Rollback: LiteLLM team deletion failed for %s: %s", state.slug, exc)
+            logger.warning("rollback_litellm_team_failed", slug=state.slug, error=str(exc))
 
     if state.zitadel_app_id:
         try:
             await zitadel.delete_librechat_oidc_app(state.zitadel_app_id)
         except Exception as exc:
-            logger.warning("Rollback: Zitadel OIDC app deletion failed for %s: %s", state.slug, exc)
+            logger.warning("rollback_zitadel_app_failed", slug=state.slug, error=str(exc))
 
 
 async def provision_tenant(org_id: int) -> None:
@@ -113,6 +113,16 @@ async def provision_tenant(org_id: int) -> None:
 
 
 async def _provision(org_id: int, db: AsyncSession) -> None:
+    # Pin the DB connection so session-level set_config('app.current_org_id', ...)
+    # calls made by downstream helpers (ensure_default_knowledge_bases,
+    # create_system_groups) stay visible to the INSERTs that follow. Without
+    # pinning, SQLAlchemy async lazily checks out a fresh pooled connection per
+    # statement, the SET lands on one connection and the INSERT lands on
+    # another, and RLS (`org_id = current_setting('app.current_org_id')`)
+    # silently blocks every row. See app.core.database.get_db for the same
+    # pattern applied to request sessions.
+    await db.connection()
+
     # Fetch org
     result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id))
     org = result.scalar_one()
@@ -122,7 +132,12 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     existing_slugs = {row[0] for row in slugs_result.fetchall() if row[0]}
 
     slug = _slugify_unique(org.name, existing_slugs)
-    logger.info("Provisioning tenant %s (org_id=%d)", slug, org_id)
+    # Capture mcp_servers now — ensure_default_knowledge_bases (step 6b) commits the session,
+    # which expires all ORM attributes. Accessing org.mcp_servers after that triggers a
+    # synchronous lazy-load in an async context → MissingGreenlet crash.
+    mcp_servers = org.mcp_servers
+    zitadel_org_id = org.zitadel_org_id
+    logger.info("provisioning_tenant_start", slug=slug, org_id=org_id)
 
     state = _ProvisionState(slug=slug)
 
@@ -133,7 +148,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         client_id = oidc_data.get("clientId", "")
         client_secret = oidc_data.get("clientSecret", "")
         state.zitadel_app_id = oidc_data.get("appId", "")
-        logger.info("Created Zitadel OIDC app for %s: %s", slug, client_id)
+        logger.info("zitadel_oidc_app_created", slug=slug, client_id=client_id)
 
         # Step 2: Create LiteLLM team key for the tenant
         async with httpx.AsyncClient(
@@ -149,26 +164,25 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             team_resp.raise_for_status()
             team_id = team_resp.json()["team_id"]
             state.litellm_team_id = team_id
-            logger.info("Created LiteLLM team for %s: %s", slug, team_id)
+            logger.info("litellm_team_created", slug=slug, team_id=team_id)
 
             # Step 2b: Generate a team key with org_id metadata
             key_resp = await llm_client.post(
                 "/key/generate",
                 json={
                     "team_id": team_id,
-                    "metadata": {"org_id": org.zitadel_org_id},
+                    "metadata": {"org_id": zitadel_org_id},
                     "models": ["klai-llm", "klai-fallback"],
                 },
             )
             key_resp.raise_for_status()
             litellm_team_key: str = key_resp.json()["key"]
-            logger.info("Created LiteLLM team key for %s", slug)
+            logger.info("litellm_team_key_created", slug=slug)
 
-        # Step 3: Add portal redirect URI for this tenant
-        try:
-            await zitadel.add_portal_redirect_uri(slug)
-        except Exception as exc:
-            logger.warning("Could not add portal redirect URI for %s: %s", slug, exc)
+        # Step 3: (was: add per-tenant redirect URI to the old SPA portal app)
+        # Removed in SPEC-AUTH-008 Phase C — the BFF confidential portal app uses
+        # a single redirect_uri (my.getklai.com/api/auth/oidc/callback) for every
+        # tenant, so no per-tenant OIDC bookkeeping is needed at provisioning.
 
         # Step 4: Create per-tenant MongoDB user (isolated credentials)
         mongo_tenant_password = secrets.token_hex(24)
@@ -176,7 +190,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         await loop.run_in_executor(None, _create_mongodb_tenant_user, slug, mongo_tenant_password)
         state.mongo_user_created = True
         state.mongo_user_slug = slug
-        logger.info("Created MongoDB user for %s", slug)
+        logger.info("mongodb_user_created", slug=slug)
 
         # Step 5: Write LibreChat .env file
         env_content = _generate_librechat_env(
@@ -185,8 +199,8 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             client_secret,
             litellm_api_key=litellm_team_key,
             mongo_password=mongo_tenant_password,
-            zitadel_org_id=org.zitadel_org_id,
-            mcp_servers=org.mcp_servers,
+            zitadel_org_id=zitadel_org_id,
+            mcp_servers=mcp_servers,
         )
         container_data_base = Path(settings.librechat_container_data_path)
         tenant_dir = container_data_base / slug
@@ -197,60 +211,61 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         state.env_file_path = str(env_file_container_path)
         # Host path for Docker volume mount
         env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
-        logger.info("Wrote LibreChat .env for %s", slug)
+        logger.info("librechat_env_written", slug=slug)
 
         # Step 6: Create personal KB via klai-docs API
-        try:
-            async with httpx.AsyncClient(
-                base_url="http://docs-app:3000",
-                headers={
-                    "X-Internal-Secret": settings.docs_internal_secret,
-                    "X-User-ID": "system",
-                    "Content-Type": "application/json",
-                },
-                timeout=10.0,
-            ) as docs_client:
-                kb_resp = await docs_client.post(
-                    f"/api/orgs/{slug}/kbs",
-                    json={"name": "Personal", "slug": "personal", "visibility": "private"},
-                )
-                kb_resp.raise_for_status()
-                logger.info("Created personal KB for %s", slug)
-        except Exception as exc:
-            logger.warning("Could not create personal KB for %s: %s", slug, exc)
-
-        # Default user_id used across all downstream seeding steps (templates, rules, KBs).
-        # Resolved from DB if available; falls back to "system" so later steps still run if
-        # the lookup fails.
-        first_user_id: str = "system"
-
-        # Step 6b: Create default portal KB rows (org KB + admin's personal KB)
-        try:
-            from app.services.default_knowledge_bases import ensure_default_knowledge_bases
-
-            # Use the creator user_id from the first admin — looked up from signup caller
-            first_user_result = await db.execute(
-                select(PortalUser.zitadel_user_id).where(PortalUser.org_id == org.id).limit(1)
+        # Fail-loud: if docs-app is unreachable or returns non-2xx, abort provisioning.
+        # Rationale: the docs KB is a first-class tenant resource; silently skipping
+        # it leaves the tenant with a broken "My knowledge" view.
+        async with httpx.AsyncClient(
+            base_url="http://docs-app:3000",
+            headers={
+                "X-Internal-Secret": settings.docs_internal_secret,
+                "X-User-ID": "system",
+                "Content-Type": "application/json",
+            },
+            timeout=10.0,
+        ) as docs_client:
+            kb_resp = await docs_client.post(
+                f"/api/orgs/{slug}/kbs",
+                json={"name": "Personal", "slug": "personal", "visibility": "private"},
             )
-            first_user_id = first_user_result.scalar_one_or_none() or "system"
-            await ensure_default_knowledge_bases(org.id, first_user_id, db)
-        except Exception as exc:
-            logger.warning("Could not create default portal KBs for %s: %s", slug, exc)
+            kb_resp.raise_for_status()
+            logger.info("personal_kb_created", slug=slug)
+
+        # Step 6b: Create default portal KB rows (org KB + admin's personal KB).
+        # Fail-loud: exceptions bubble to the outer handler which rolls back external
+        # resources and marks provisioning_status='failed' so the admin UI sees it.
+        from app.services.default_knowledge_bases import ensure_default_knowledge_bases
+
+        # Use the creator user_id from the first admin — looked up from signup caller
+        first_user_result = await db.execute(
+            select(PortalUser.zitadel_user_id).where(PortalUser.org_id == org.id).limit(1)
+        )
+        first_user_id = first_user_result.scalar_one_or_none() or "system"
+        await ensure_default_knowledge_bases(org.id, first_user_id, db)
 
         # Step 7: Start Docker container
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path, org.mcp_servers)
+        await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path, mcp_servers)
         state.container_started = True
-        logger.info("Started container librechat-%s", slug)
+        logger.info("librechat_container_started", slug=slug)
 
         # Step 8: Write per-tenant Caddyfile and reload Caddy
         async with _caddy_lock:
             _write_tenant_caddyfile(slug)
             await loop.run_in_executor(None, _reload_caddy)
         state.caddy_written = True
-        logger.info("Caddy reloaded for %s", slug)
+        logger.info("caddy_reloaded", slug=slug)
 
-        # Step 9: Update DB
+        # Step 9: Create system groups (moved ahead of the ready-commit so a
+        # failure here aborts provisioning instead of landing a tenant in
+        # provisioning_status='ready' without its Admin / Chat / Scribe /
+        # Knowledge groups). Fail-loud — no try/except swallow.
+        await create_system_groups(org_id, db)
+        logger.info("system_groups_created", slug=slug)
+
+        # Step 10: Finalize org state
         org.slug = slug
         org.librechat_container = f"librechat-{slug}"
         org.zitadel_librechat_client_id = client_id
@@ -258,41 +273,37 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         org.litellm_team_key = portal_secrets.encrypt(litellm_team_key) if litellm_team_key else None
         org.provisioning_status = "ready"
         await db.commit()
-        logger.info("Tenant %s provisioning complete", slug)
+        logger.info("provisioning_complete", slug=slug)
 
-        # Step 10: Create system groups
-        try:
-            await create_system_groups(org.id, db)
-            logger.info("Created system groups for %s", slug)
-        except Exception as exc:
-            logger.warning("Could not create system groups for %s: %s", slug, exc)
-
-        # Step 11: Seed default prompt templates
+        # Step 11: Seed default prompt templates (non-fatal — tenant is already 'ready')
         try:
             from app.services.default_templates import ensure_default_templates
 
             await ensure_default_templates(org.id, first_user_id, db)
             await db.commit()
-            logger.info("Seeded default templates for %s", slug)
-        except Exception as exc:
-            logger.warning("Could not seed default templates for %s: %s", slug, exc)
+            logger.info("default_templates_seeded", slug=slug)
+        except Exception:
+            logger.warning("default_templates_seeding_failed", slug=slug, exc_info=True)
 
-        # Step 12: Seed default rules
+        # Step 12: Seed default rules (non-fatal — tenant is already 'ready')
         try:
             from app.services.default_rules import ensure_default_rules
 
             await ensure_default_rules(org.id, first_user_id, db)
             await db.commit()
-            logger.info("Seeded default rules for %s", slug)
-        except Exception as exc:
-            logger.warning("Could not seed default rules for %s: %s", slug, exc)
+            logger.info("default_rules_seeded", slug=slug)
+        except Exception:
+            logger.warning("default_rules_seeding_failed", slug=slug, exc_info=True)
 
-    except Exception as exc:
-        logger.exception("Provisioning failed for org_id=%d: %s", org_id, exc)
+    except Exception:
+        logger.exception("provisioning_failed", org_id=org_id)
         await _rollback(state)
         try:
             org.provisioning_status = "failed"
             await db.commit()
-        except Exception as db_exc:
-            logger.warning("Could not persist failed status for org_id=%d: %s", org_id, db_exc)
+        except Exception:
+            # Can't persist status='failed' — log with full traceback so the
+            # stuck 'provisioning' row is visible in VictoriaLogs. The original
+            # provisioning exception still bubbles up via the raise below.
+            logger.exception("failed_status_persist_error", org_id=org_id)
         raise

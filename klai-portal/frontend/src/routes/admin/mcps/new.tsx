@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
 import { ArrowLeft, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -11,11 +10,8 @@ export const Route = createFileRoute('/admin/mcps/new')({
 })
 
 function McpsNewPage() {
-  const auth = useAuth()
   const navigate = useNavigate()
-  const token = auth.user?.access_token ?? ''
-
-  const { data, isLoading, isError } = useMcpServers(token)
+  const { data, isLoading, isError } = useMcpServers()
 
   // Managed servers are always enabled and live in the main list — never in the picker.
   const availableServers = data?.servers.filter((s) => !s.enabled && !s.managed) ?? []

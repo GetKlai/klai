@@ -116,6 +116,23 @@ make frontend        # Frontend (in terminal 2)
 
 Open [http://localhost:5174](http://localhost:5174) in je browser.
 
+> **Let op:** Bij full-stack gebruik je een lege lokale database. Je Zitadel-account bestaat nog niet in `portal_users` — je krijgt een 401 na login. Zaai eerst je user:
+>
+> ```bash
+> docker exec -i klai-postgres-1 psql -U klai -d klai << 'EOF'
+> INSERT INTO portal_orgs (zitadel_org_id, name, slug, plan, provisioning_status)
+> VALUES ('<jouw_zitadel_org_id>', 'Dev Org', 'dev', 'professional', 'complete')
+> ON CONFLICT (zitadel_org_id) DO NOTHING;
+>
+> INSERT INTO portal_users (zitadel_user_id, org_id, role, display_name, email, status)
+> SELECT '<jouw_zitadel_user_id>', id, 'admin', 'Jouw Naam', 'jij@example.com', 'active'
+> FROM portal_orgs WHERE zitadel_org_id = '<jouw_zitadel_org_id>'
+> ON CONFLICT (zitadel_user_id) DO NOTHING;
+> EOF
+> ```
+>
+> Je Zitadel user ID en org ID vind je via de [Zitadel console](https://auth.getklai.com/ui/console) of via een teamlid.
+
 ---
 
 ## Configuratie

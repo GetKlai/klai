@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from 'react-oidc-context'
 import { useState, useEffect, useMemo } from 'react'
 import { ArrowLeft, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -30,7 +29,7 @@ interface TestResult {
 // form re-renders.
 // ---------------------------------------------------------------------------
 
-function McpTestButton({ serverId, token }: { serverId: string; token: string }) {
+function McpTestButton({ serverId }: { serverId: string }) {
   const [result, setResult] = useState<TestResult | null>(null)
   const [testing, setTesting] = useState(false)
 
@@ -38,7 +37,7 @@ function McpTestButton({ serverId, token }: { serverId: string; token: string })
     setTesting(true)
     setResult(null)
     try {
-      const data = await apiFetch<TestResult>(`/api/mcp-servers/${serverId}/test`, token, {
+      const data = await apiFetch<TestResult>(`/api/mcp-servers/${serverId}/test`, {
         method: 'POST',
       })
       setResult(data)
@@ -115,12 +114,9 @@ function buildInitialEnv(server: McpServer): Record<string, string> {
 
 function McpEditPage() {
   const { serverId } = Route.useParams()
-  const auth = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const token = auth.user?.access_token ?? ''
-
-  const { data, isLoading, isError } = useMcpServers(token)
+  const { data, isLoading, isError } = useMcpServers()
   const server = data?.servers.find((s) => s.id === serverId)
 
   const [envValues, setEnvValues] = useState<Record<string, string>>({})
@@ -150,7 +146,7 @@ function McpEditPage() {
           env[key] = value
         }
       }
-      return apiFetch(`/api/mcp-servers/${server.id}`, token, {
+      return apiFetch(`/api/mcp-servers/${server.id}`, {
         method: 'PUT',
         body: JSON.stringify({ enabled: true, env }),
       })
@@ -271,7 +267,7 @@ function McpEditPage() {
               : m.admin_mcps_save()}
           </Button>
           {server.enabled && server.configured_env_vars.length > 0 && (
-            <McpTestButton serverId={server.id} token={token} />
+            <McpTestButton serverId={server.id} />
           )}
         </div>
       </form>

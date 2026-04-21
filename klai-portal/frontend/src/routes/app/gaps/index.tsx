@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, BookOpen, PlusCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -60,7 +60,6 @@ const GAP_TYPE_CLASSES: Record<string, string> = {
 
 function GapsPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const { user } = useCurrentUser()
   const isAdmin = user?.isAdmin === true
   const navigate = useNavigate({ from: '/app/gaps/' })
@@ -76,20 +75,20 @@ function GapsPage() {
       const params = new URLSearchParams({ days: String(days), limit: '100' })
       if (gapType) params.set('gap_type', gapType)
       try {
-        return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`, token)
+        return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`)
       } catch (err) {
         queryLogger.warn('Gaps fetch failed', { error: err })
         throw err
       }
     },
-    enabled: !!token && isAdmin,
+    enabled: auth.isAuthenticated && isAdmin,
     retry: false,
   })
 
   const { data: kbsData } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases-for-gaps'],
-    queryFn: async () => apiFetch<KBsResponse>('/api/app/knowledge-bases', token),
-    enabled: !!token && isAdmin,
+    queryFn: async () => apiFetch<KBsResponse>('/api/app/knowledge-bases'),
+    enabled: auth.isAuthenticated && isAdmin,
     retry: false,
   })
 
@@ -228,7 +227,7 @@ function GapsPage() {
                           void navigate({
                             to: '/app/docs/$kbSlug',
                             params: { kbSlug: gap.nearest_kb_slug! },
-                          })
+                                                      })
                         }
                         aria-label={m.gaps_action_add()}
                         className="inline-flex items-center justify-center text-gray-900 transition-opacity hover:opacity-70 ml-auto"
@@ -243,7 +242,7 @@ function GapsPage() {
                             void navigate({
                               to: '/app/docs/$kbSlug',
                               params: { kbSlug: e.target.value },
-                            })
+                                                          })
                             setActivePicker(null)
                           }
                         }}

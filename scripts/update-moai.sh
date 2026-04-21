@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_DIR=$(mktemp -d)
 
-MOAI_REPO="https://github.com/moai-adk/moai-adk.git"
+MOAI_REPO="https://github.com/modu-ai/moai-adk.git"
 
 echo "Updating MoAI-ADK..."
 echo "Current version: $(cat "$ROOT_DIR/VERSION")"

@@ -1,0 +1,29 @@
+# Gitleaks configuration for the Klai monorepo
+title = "klai gitleaks config"
+
+[allowlist]
+description = "Allowlist for known false positives and test fixtures"
+regexes = [
+    # JWT header prefix — not a secret, just {"alg":"RS256","typ":"JWT"} base64
+    '''eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9''',
+    # Fake Stripe test key from MoAI skills examples (sequential digits, placeholder)
+    '''sk_live_1234567890abcdefghij''',
+    # URL query parameter, not a token
+    '''phase=silent-renew''',
+    # Docker image tag
+    '''0\.10\.0-260419-1530-klai''',
+    # presigned_url= variable name match
+    '''presigned_url=''',
+]
+paths = [
+    # Python virtual environments — contain test fixtures from third-party packages
+    '''.venv''',
+    # Orphaned agent worktrees (cleaned up separately via git worktree prune)
+    '''.claude/worktrees''',
+]
+
+# The following committed secrets HAVE been addressed:
+# - sk-bNLQ61Qs533P7GOzfXdyxA: LiteLLM team key in docs/specs/klai-knowledge-implementation.md
+#   commit f275476f — KEY ROTATED 2026-04-19 (see runbooks/secret-rotation.md)
+# - eea93826eed5f725daa3d27383f090d116c6f6e3: test_webhook.py default — legacy test script,
+#   not production webhook secret (verify WEBHOOK_SECRET in prod SOPS)

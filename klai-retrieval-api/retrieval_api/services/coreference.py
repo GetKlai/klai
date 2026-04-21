@@ -56,7 +56,7 @@ async def resolve(query: str, history: list[dict]) -> str:
         if resolved:
             return resolved
         return query
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Coreference resolution timed out, using original query")
         return query
     except Exception as exc:

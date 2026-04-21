@@ -55,7 +55,10 @@ async def provision_gitea_repo(
 
 
 async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
-    """Return the number of published docs pages for a KB, or None on error."""
+    """Return the number of published docs pages for a KB, or None on error.
+
+    Uses the page-index endpoint (returns full page list) and counts the items.
+    """
     async with httpx.AsyncClient(
         base_url="http://docs-app:3010/docs",
         headers={
@@ -65,10 +68,10 @@ async def get_page_count(org_slug: str, kb_slug: str) -> int | None:
         },
         timeout=5.0,
     ) as client:
-        resp = await client.get(f"/api/orgs/{org_slug}/kbs/{kb_slug}/page-count")
+        resp = await client.get(f"/api/orgs/{org_slug}/kbs/{kb_slug}/page-index")
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("count")
+            return len(data) if isinstance(data, list) else None
         return None
 
 

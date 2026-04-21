@@ -1,12 +1,9 @@
 ---
 name: moai-domain-database
 description: >
-  Database specialist covering PostgreSQL, MongoDB, Redis, Oracle, and
-  advanced data patterns for modern applications.
-  Use when user asks about database schema design, query optimization, indexing strategies,
-  data modeling, migrations, ORM configuration, or database performance tuning.
-  Do NOT use for API design or server-side business logic
-  (use moai-domain-backend instead).
+  Database specialist covering PostgreSQL, MongoDB, Redis, Oracle, and advanced data
+  patterns for modern applications. Use for database schema design, query optimization,
+  indexing strategies, or data modeling.
 license: Apache-2.0
 compatibility: Designed for Claude Code
 allowed-tools: Read, Write, Edit, Bash(psql:*), Bash(mysql:*), Bash(sqlite3:*), Bash(mongosh:*), Bash(redis-cli:*), Bash(npm:*), Bash(npx:*), Bash(prisma:*), Grep, Glob, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
@@ -22,33 +19,7 @@ metadata:
 
 # MoAI Extension: Triggers
 triggers:
-  keywords:
-    - database
-    - PostgreSQL
-    - MongoDB
-    - Redis
-    - Oracle
-    - SQL
-    - NoSQL
-    - PL/SQL
-    - query
-    - schema
-    - migration
-    - indexing
-    - ORM
-    - ODM
-    - SQLAlchemy
-    - Mongoose
-    - Prisma
-    - Drizzle
-    - python-oracledb
-    - cx_Oracle
-    - connection pool
-    - transaction
-    - data modeling
-    - aggregation
-    - partitioning
-    - hierarchical query
+  keywords: ["database", "PostgreSQL", "MongoDB", "Redis", "Oracle", "SQL", "NoSQL", "PL/SQL", "query", "schema", "migration", "indexing", "ORM", "ODM", "SQLAlchemy", "Mongoose", "Prisma", "Drizzle", "python-oracledb", "cx_Oracle", "connection pool", "transaction", "data modeling", "aggregation", "partitioning", "hierarchical query"]
 ---
 
 # Database Domain Specialist
@@ -59,13 +30,13 @@ Enterprise Database Expertise - Comprehensive database patterns and implementati
 
 Core Capabilities:
 
-- PostgreSQL: Advanced relational patterns, optimization and scaling
-- MongoDB: Document modeling, aggregation and NoSQL performance tuning
-- Redis: In-memory caching, real-time analytics and distributed systems
-- Oracle: Enterprise patterns, PL/SQL, partitioning and hierarchical queries
+- PostgreSQL: Advanced relational patterns, optimization, and scaling
+- MongoDB: Document modeling, aggregation, and NoSQL performance tuning
+- Redis: In-memory caching, real-time analytics, and distributed systems
+- Oracle: Enterprise patterns, PL/SQL, partitioning, and hierarchical queries
 - Multi-Database: Hybrid architectures and data integration patterns
-- Performance: Query optimization, indexing strategies and scaling
-- Operations: Connection management, migrations and monitoring
+- Performance: Query optimization, indexing strategies, and scaling
+- Operations: Connection management, migrations, and monitoring
 
 When to Use:
 
@@ -118,7 +89,7 @@ Redis Module:
 Oracle Module:
 
 - Hierarchical and recursive query patterns (CONNECT BY)
-- PL/SQL procedures, packages and batch operations
+- PL/SQL procedures, packages, and batch operations
 - Partitioning strategies (range, list, hash, composite)
 - Enterprise features and statement caching
 - LOB handling and large data processing
@@ -131,11 +102,11 @@ Oracle Module:
 
 Polyglot Persistence Pattern:
 
-Create a DataRouter class that initializes connections to PostgreSQL, MongoDB, Redis and Oracle. Implement get_user_profile method that retrieves structured user data from PostgreSQL or Oracle, flexible profile data from MongoDB, and real-time status from Redis, then merges all data sources. Implement update_user_data method that routes structured data updates to PostgreSQL/Oracle, profile data updates to MongoDB, and real-time data updates to Redis, followed by cache invalidation.
+Create a DataRouter class that initializes connections to PostgreSQL, MongoDB, Redis, and Oracle. Implement get_user_profile method that retrieves structured user data from PostgreSQL or Oracle, flexible profile data from MongoDB, and real-time status from Redis, then merges all data sources. Implement update_user_data method that routes structured data updates to PostgreSQL/Oracle, profile data updates to MongoDB, and real-time data updates to Redis, followed by cache invalidation.
 
 Data Synchronization:
 
-Create a DataSyncManager class that synchronizes user data across databases. Implement sync_user_data method that retrieves user from PostgreSQL, creates a search document for MongoDB, upserts to the MongoDB search collection, creates cache data and updates Redis cache with TTL.
+Create a DataSyncManager class that synchronizes user data across databases. Implement sync_user_data method that retrieves user from PostgreSQL, creates a search document for MongoDB, upserts to the MongoDB search collection, creates cache data, and updates Redis cache with TTL.
 
 ### Performance Optimization
 
@@ -162,10 +133,10 @@ Complementary Skills:
 
 Technology Integration:
 
-- ORMs and ODMs including SQLAlchemy, Mongoose and TypeORM
+- ORMs and ODMs including SQLAlchemy, Mongoose, and TypeORM
 - Connection pooling with PgBouncer and connection pools
-- Migration tools including Alembic, Flyway and Data Pump
-- Monitoring with pg_stat_statements, MongoDB Atlas and Oracle AWR
+- Migration tools including Alembic, Flyway, and Data Pump
+- Monitoring with pg_stat_statements, MongoDB Atlas, and Oracle AWR
 - python-oracledb for Oracle connectivity and PL/SQL execution
 - Cache invalidation and synchronization
 
@@ -218,9 +189,9 @@ Performance Features:
 
 ## Resources
 
-For working code examples see [examples.md](examples.md).
+For working code examples, see [examples.md](examples.md).
 
-For detailed implementation patterns and database-specific optimizations see the modules directory.
+For detailed implementation patterns and database-specific optimizations, see the modules directory.
 
 Status: Production Ready
 Last Updated: 2026-01-11

@@ -194,16 +194,35 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
 # ---------------------------------------------------------------------------
 
 
-async def crawl_page(url: str, selector: str | None = None) -> CrawlResult:
+def _build_cookie_hooks(cookies: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build Crawl4AI hooks payload that injects cookies via on_page_context_created."""
+    cookies_json = json.dumps(cookies)
+    hook_code = f"""
+async def hook(page, context, **kwargs):
+    await context.add_cookies({cookies_json})
+    return page
+"""
+    return {"code": {"on_page_context_created": hook_code}, "timeout": 30}
+
+
+async def crawl_page(
+    url: str,
+    selector: str | None = None,
+    cookies: list[dict[str, Any]] | None = None,
+) -> CrawlResult:
     """Crawl a single page via the Crawl4AI REST API.
 
     Uses the same pipeline switching as klai-connector (SPEC-CRAWL-001).
+    When cookies are provided, they are injected into the browser context
+    before the page loads via the on_page_context_created hook.
     """
     config = build_crawl_config(selector)
-    payload = {
+    payload: dict[str, Any] = {
         "urls": [url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
+    if cookies:
+        payload["hooks"] = _build_cookie_hooks(cookies)
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:

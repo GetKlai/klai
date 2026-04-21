@@ -1,74 +1,137 @@
-# Intentional Version Pins
+# Explicit Version Pins
 
-This file documents every version constraint that deviates from "latest" and the reason why.
-**Before upgrading any of these, read the rationale and test the upgrade path.**
+This file documents every external image version running on core-01 and gpu-01, plus the rationale for each pin. **Every external image in `docker-compose.yml`, `docker-compose.gpu.yml`, and `docker-compose.dev.yml` is pinned to an explicit version tag.** No `:latest` on external services.
 
-Automated dependency updates are handled by Dependabot (`.github/dependabot.yml`).
-Dependabot ignores the constraints listed here via its `ignore` rules.
+Automated dependency updates are handled by Dependabot / Renovate. Upgrades follow `docs/runbooks/version-management.md`.
 
----
+**Exception — internal CI-deployed services:** images under `ghcr.io/getklai/*` (portal-api, research-api, retrieval-api, knowledge-ingest, klai-connector, klai-mailer, klai-docs, klai-knowledge-mcp, scribe-api, caddy-hetzner, whisper-server) use `:latest` because GitHub Actions rebuild and re-push on every commit to `main` in their respective repos. Each CI workflow also tags the build with `:${github.sha}` so rollbacks are possible via explicit SHA pin. These are NOT production `:latest` anti-patterns — they are continuous-deployment rolling tags owned by our own CI pipelines.
 
-## Docker images
+**Exception — local builds:** `klai/retrieval-api:local` and `ghcr.io/mendableai/firecrawl:latest` are built on-host from source and not pullable from a registry. Their "versions" are tracked by git SHAs recorded in docker-compose.yml comments.
 
-### `pgvector/pgvector:pg18` (main postgres)
-
-**Current:** pg18 (PostgreSQL 18.x with pgvector 0.8.2)
-**Latest available:** pg18 ✅ up to date
-
-**Why pinned:** PostgreSQL major version upgrades require dump/restore. pg18 is the current major version (stable since Sept 2025). Upgraded from pg17 on 2026-03-26 via dump/restore.
-
-**Next upgrade path (to pg19 when released):**
-1. `pg_dumpall -U klai` → save to /opt/klai/backups/
-2. Stop all services, change image, delete postgres-data volume
-3. Start fresh pg18→pg19, restore dump
-4. Start all services
+**Exception — Vexa stack (SPEC-VEXA-003, 2026-04-19):** `vexaai/admin-api`, `vexaai/api-gateway`, `vexaai/meeting-api`, `vexaai/runtime-api`, `vexaai/vexa-bot`, `vexaai/transcription-service` are currently on `0.10.0-260419-1129`. Built locally on core-01 and gpu-01 from `Vexa-ai/vexa` upstream main `f0756bf`. Follow upstream's `<semver>-YYMMDD-HHMM` build convention; `deploy/check-image-tags.sh` enforces this in pre-commit. Rebuild cadence: monthly or when upstream ships a material fix (see deploy-notes in `.moai/specs/SPEC-VEXA-003/`).
 
 ---
 
-### `postgres:18-alpine` (firecrawl-postgres)
+## Core stack — `deploy/docker-compose.yml`
 
-**Current:** PostgreSQL 18
-**Latest available:** PostgreSQL 18 ✅ up to date
+### Database layer
 
-**Note:** Firecrawl-internal queue database (NUQ schema). Data is transient (queue state). Upgraded from pg16 on 2026-03-26 — data volume deleted and recreated clean.
+| Service | Image | Rationale |
+|---|---|---|
+| `postgres` | `pgvector/pgvector:pg18` | PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
+| `firecrawl-postgres` | `postgres:18-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
+| `mongodb` | `mongo:8.2.7` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
+| `redis` | `redis:8-alpine` | Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. Previously on `redis:alpine` which silently rolled to 8 anyway — now explicit. |
+| `vexa-redis` | `redis:8-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
+| `qdrant` | `qdrant/qdrant:v1.17.1` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. |
+| `falkordb` | `falkordb/falkordb:v4.18.1` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
+
+### Auth + monitoring
+
+| Service | Image | Rationale |
+|---|---|---|
+| `zitadel` | `ghcr.io/zitadel/zitadel:v4.13.1` | OIDC IdP. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
+| `victoriametrics` | `victoriametrics/victoria-metrics:v1.140.0` | Metrics TSDB. |
+| `victorialogs` | `victoriametrics/victoria-logs:v1.50.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. |
+| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.55.1` | Container metrics. **Upstream is stagnant** (last release Dec 2024). Acceptable; no alternative has equivalent Docker metric granularity. |
+| `alloy` | `grafana/alloy:v1.15.1` | Log and metric collection. Config format stable on minor bumps. |
+| `grafana` | `grafana/grafana:13.0.1` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
+| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:6.1.6` | Error tracking. All three share the same image (different commands). |
+
+### Inference + AI
+
+| Service | Image | Rationale |
+|---|---|---|
+| `litellm` | `ghcr.io/berriai/litellm:v1.83.7-stable` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). v1.83.x fixes CVE-2026-35030 (OIDC userinfo cache key collision — auth bypass). Re-assess monthly; LiteLLM ships stable tags ~weekly. |
+| `ollama` | `ollama/ollama:0.21.0` | CPU fallback for LLM inference. |
+| `librechat-getklai` | `ghcr.io/danny-avila/librechat:v0.8.5-rc1` | Multi-tenant chat UI. **Currently on RC1** — rolled in from `:latest` during 2026-04-19 audit. 3 mounted CJS patches (`format.cjs`, `stream.cjs`, `search.cjs`) target internal paths in `@librechat/agents` — any LibreChat upgrade must re-verify those patches against the new bundle. Goal: move to stable v0.8.5 when released. |
+
+### Document + search
+
+| Service | Image | Rationale |
+|---|---|---|
+| `meilisearch` | `getmeili/meilisearch:v1.42.1` | Search index for LibreChat conversations. **Data migration required on minor bumps** — breaking v1.40 → v1.42 schema change. Pin explicitly to control migration timing. |
+| `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.16.1` | Document parsing (PDF, DOCX → structured). |
+| `searxng` | `searxng/searxng:2026.4.17-e8299a4c3` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
+| `gitea` | `gitea/gitea:1.26.0` | Self-hosted git for klai-docs. |
+| `crawl4ai` | `unclecode/crawl4ai:0.8.6` | Web crawler for klai-connector. |
+
+### Ops
+
+| Service | Image | Rationale |
+|---|---|---|
+| `docker-socket-proxy` | `tecnativa/docker-socket-proxy:v0.4.2` | Limits portal-api to specific Docker API verbs (CONTAINERS, NETWORKS, POST, DELETE). Stable; rare releases. |
+| `garage` | `dxflrs/garage:v2.3.0` | S3-compatible object storage. Config field names change between minor releases — re-verify `garage.toml` after each bump. See `.claude/rules/klai/platform/garage.md`. |
+
+### Pinned with known upstream gap
+
+| Service | Image | Why stuck |
+|---|---|---|
+| `firecrawl-rabbitmq` | `rabbitmq:3-alpine` | RabbitMQ 4.0 made AMQP 1.0 the default protocol (breaking change from 3.x). [Firecrawl](https://github.com/firecrawl/firecrawl) has not published confirmed RabbitMQ 4.x support. Upgrade only after Firecrawl releases a compatibility statement. Current latest is 4.2.5-alpine. |
 
 ---
 
-### `rabbitmq:3-alpine` (firecrawl-rabbitmq)
+## GPU stack — `deploy/docker-compose.gpu.yml`
 
-**Current:** RabbitMQ 3.x (latest 3.x patch)
-**Latest available:** RabbitMQ 4.2.5
-
-**Why pinned:** RabbitMQ 4.0 made AMQP 1.0 the default protocol (breaking change from 3.x's AMQP 0-9-1 default). Firecrawl has not published confirmed support for RabbitMQ 4.x.
-
-**Upgrade path:** Check [Firecrawl releases](https://github.com/firecrawl/firecrawl/releases) for RabbitMQ 4 compatibility statement, then test with `rabbitmq:4-alpine` in a staging environment before promoting.
-
----
-
-## Python packages
-
-### `procrastinate>=3.0,<4` (knowledge-ingest)
-
-**Current:** 3.7.2 ✅ up to date
-**Upgraded from:** 2.15.1 on 2026-03-26
-
-API unchanged between 2.x and 3.x (PsycopgConnector, open_async(), run_worker_async() all the same). DB schema was already 3.x-compatible (queueing_lock + full status enum were added in procrastinate 2.15). No DB migration was needed.
+| Service | Image | Rationale |
+|---|---|---|
+| `tei` | `ghcr.io/huggingface/text-embeddings-inference:1.9` | BGE-M3 dense embeddings. **Output-dimension critical** — verify bge-m3 embedding parity (same vector output for same input) before any upgrade, otherwise retrieval scores silently drift. |
+| `infinity` | `michaelf34/infinity:0.0.77` | BGE reranker-v2-m3. Upstream slowing (last release Aug 2025). |
+| `transcription-worker-1`, `transcription-worker-2` | `vexaai/transcription-service:0.10.0-260419-1129` | Vexa transcription-service (SPEC-VEXA-003 §3.4). Replaces the legacy custom `whisper-server` 146-line Python script. `faster-whisper` + Silero VAD + hallucination detection + two-tier admission (realtime/deferred) behind Nginx LB. CUDA 12.3.2 + cuDNN 9. Host port `127.0.0.1:8000` retained so `gpu-tunnel.service` and all consumer URLs stay unchanged. |
+| `transcription-api` | `nginx:1.27-alpine` | Least-connections load balancer in front of the two CUDA workers. Config at `deploy/vexa-transcription/nginx.conf`. |
+| `bge-m3-sparse` | built from `./bge-m3-sparse` | Local build. Sparse embeddings sidecar for hybrid retrieval. |
 
 ---
 
-### `graphiti-core>=0.28,<0.30` (retrieval-api)
+## Dev stack — `docker-compose.dev.yml`
 
-**Current:** 0.28.2
-**Latest available:** 0.28.2 stable (0.30.0 is pre-release/rc)
+Uses the same versions as production core-01 to catch version-related issues locally.
 
-**Why pinned:** Upper bound `<0.30` prevents accidental installation of the 0.30.x release candidate which introduced breaking API changes.
-
-**Upgrade path:** When 0.30.x reaches stable on PyPI, test retrieval-api against it and remove the `<0.30` upper bound.
+| Service | Image | Notes |
+|---|---|---|
+| `postgres` | `pgvector/pgvector:pg18` | Same as prod. |
+| `redis` | `redis:8-alpine` | Aligned with prod (was `redis:alpine`). |
+| `mongodb` | `mongo:8.2.7` | Same as prod. |
+| `meilisearch` | `getmeili/meilisearch:v1.42.1` | Aligned with prod (was v1.13 — multi-major skew). |
+| `litellm` | `ghcr.io/berriai/litellm:main-stable` | Same rolling tag as prod. |
 
 ---
 
-## What is NOT pinned (intentional)
+## Application dependencies
 
-All other Docker images use `:latest`. On `core-01`, run `docker compose pull` periodically to actually pull new versions — the image only updates on the server when explicitly pulled.
+### Python packages with version upper bounds
 
-Recommended maintenance cadence: monthly `docker compose pull && docker compose up -d` on core-01 during a low-traffic window.
+| Package | Service | Constraint | Why |
+|---|---|---|---|
+| `procrastinate>=3.0,<4` | knowledge-ingest | `<4` | Major version bump would require DB schema migration. API unchanged between 2.x and 3.x (PsycopgConnector, open_async(), run_worker_async()). |
+| `graphiti-core>=0.28,<0.30` | retrieval-api | `<0.30` | 0.30.x is pre-release with breaking API changes. When 0.30.x stabilises on PyPI, test retrieval-api against it and remove the upper bound. |
+| `icalendar>=6.1,<8.0` | portal-api | `<8.0` | Defensive — calendar parsing is brittle. Upper bound prevents surprise 8.0 breakage until we can validate. |
+| `prometheus-client>=0.21,<1.0` | portal-api | `<1.0` | 1.0 release expected to change metric registry semantics. |
+
+### Python runtime
+
+`python:3.13-slim` across all internal services. See `docs/runbooks/version-management.md` §3.5 for the upgrade procedure (5 files must change in lock-step).
+
+---
+
+## Verification
+
+To audit drift between this file and the running server, run:
+
+```bash
+ssh core-01 "docker ps --format '{{.Names}}\t{{.Image}}' | sort"
+```
+
+Every row must match an entry in this file. New services must be added here **before** they ship.
+
+---
+
+## Automated CVE scanning
+
+Every image in this file is scanned weekly for CRITICAL/HIGH CVEs by `.github/workflows/scan-pinned-images.yml`. Findings land in the [Security tab → Code scanning](https://github.com/GetKlai/klai/security/code-scanning). When a CVE-fixed version is available, Dependabot raises a PR automatically via GitHub's built-in security updates (enabled at the repo level).
+
+See `docs/runbooks/version-management.md` §9 for the full CVE detection stack.
+
+---
+
+*Last verified: 2026-04-19 — all images in core-01 `docker ps` match this file.*

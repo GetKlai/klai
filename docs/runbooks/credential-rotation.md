@@ -296,6 +296,7 @@ ssh core-01 "cd /opt/klai && docker compose up -d litellm librechat portal-api"
 | `ZITADEL_MASTERKEY` | `core-01/zitadel/.env.sops` | All auth tokens — **do not rotate unless certain** |
 | `ZITADEL_DB_PASSWORD` | `core-01/zitadel/.env.sops` | Zitadel DB connection |
 | `REDIS_PASSWORD` | `core-01/.env.sops` | LibreChat sessions, LiteLLM cache |
-| `PORTAL_API_ZITADEL_PAT` | `core-01/.env.sops` | Portal → Zitadel API calls |
+| `PORTAL_API_ZITADEL_PAT` | `core-01/.env.sops` | Portal → Zitadel API calls (tenant provisioning, login sessions) |
+| `ZITADEL_ADMIN_PAT` | `core-01/.env.sops` | Runbook/CI → Zitadel instance admin API (feature flags, OIDC apps, IAM) |
 
 **Note on ZITADEL_MASTERKEY:** rotating this invalidates all existing OIDC tokens — every user gets logged out across all tenants. Only do this if you have direct evidence Zitadel itself was compromised. See `runbooks/platform-recovery.md#zitadel-login-v2-recovery` for recovery after Zitadel issues.

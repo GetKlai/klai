@@ -10,15 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import update
 
 import app.core.database as _db
-from app.adapters.airtable import AirtableAdapter
-from app.adapters.confluence import ConfluenceAdapter
 from app.adapters.github import GitHubAdapter
-from app.adapters.gmail import GmailAdapter
 from app.adapters.google_drive import GoogleDriveAdapter
-from app.adapters.google_sheets import GoogleSheetsAdapter
 from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
-from app.adapters.slack import SlackAdapter
 from app.adapters.webcrawler import WebCrawlerAdapter
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.config import Settings
@@ -29,6 +24,7 @@ from app.core.security import AESGCMCipher
 from app.middleware.auth import AuthMiddleware
 from app.models.sync_run import SyncRun
 from app.routes.connectors import router as connectors_router
+from app.routes.fingerprint import router as fingerprint_router
 from app.routes.health import router as health_router
 from app.routes.sync import router as sync_router
 from app.services.crypto import PostgresSecretsStore
@@ -72,25 +68,26 @@ def create_app() -> FastAPI:
         secrets_store = PostgresSecretsStore(cipher)
         app.state.secrets_store = secrets_store
 
+        # Portal client (control plane) — constructed before adapters so OAuth
+        # adapters can receive it for token writeback.
+        portal_client = PortalClient(settings)
+
         # Adapter registry
         registry = AdapterRegistry()
         registry.register("github", GitHubAdapter(settings))
         registry.register("web_crawler", WebCrawlerAdapter(settings))
         registry.register("notion", NotionAdapter(settings))
-        registry.register("confluence", ConfluenceAdapter(settings))
-        registry.register("slack", SlackAdapter(settings))
-        registry.register("airtable", AirtableAdapter(settings))
-        registry.register("google_drive", GoogleDriveAdapter(settings))
-        registry.register("gmail", GmailAdapter(settings))
-        registry.register("google_sheets", GoogleSheetsAdapter(settings))
+        # Google Drive adapter — only registered when OAuth client is configured.
+        if settings.google_drive_client_id:
+            registry.register(
+                "google_drive",
+                GoogleDriveAdapter(settings=settings, portal_client=portal_client),
+            )
         app.state.registry = registry
 
         # Knowledge-ingest client
         ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url, settings.knowledge_ingest_secret)
         app.state.ingest_client = ingest_client
-
-        # Portal client (control plane)
-        portal_client = PortalClient(settings)
 
         # Image storage (Garage S3) — optional, skip if not configured.
         image_store = None
@@ -156,6 +153,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(connectors_router, prefix="/api/v1")
     app.include_router(sync_router, prefix="/api/v1")
+    app.include_router(fingerprint_router, prefix="/api/v1")
 
     return app
 
@@ -163,4 +161,4 @@ def create_app() -> FastAPI:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:create_app", factory=True, host="0.0.0.0", port=8200)
+    uvicorn.run("app.main:create_app", factory=True, host="0.0.0.0", port=8200)  # noqa: S104  # Docker container bind, internal network only

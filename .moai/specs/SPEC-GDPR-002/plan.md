@@ -1,31 +1,63 @@
 ---
 id: SPEC-GDPR-002
 document: plan
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-28
-updated: 2026-03-28
+updated: 2026-04-21
 ---
 
 # SPEC-GDPR-002: Implementatieplan -- Vexa Recording Cleanup
 
-## Technische aanpak
+> **⚠️ UPDATE 2026-04-21 (SEC-021 follow-up):** het oorspronkelijke plan
+> leunde op `container.exec_run(["rm", "-rf", ...])` via de docker socket.
+> Dat pad is **niet meer bruikbaar** — de `docker-socket-proxy` in front
+> van portal-api weigert `/exec/*/start` (403). De referentie-implementaties
+> in `provisioning.py` die naar dit patroon verwezen zijn zelf herschreven
+> naar native protocol-clients (pymongo, redis). Zie
+> `.claude/rules/klai/platform/docker-socket-proxy.md`. De onderstaande
+> aanpak moet worden vervangen vóór implementatie start — zie
+> "Alternatief ontwerp" hieronder.
 
-### Docker exec via socket-proxy patroon
+## Technische aanpak (VERVALLEN — niet implementeren)
 
-De verwijdering maakt gebruik van het bewezen Docker SDK-patroon uit `provisioning.py` (regel 150-178). Portal-api heeft al Docker socket proxy-toegang met de juiste permissies (`POST=1, CONTAINERS=1`). De `exec_run()` methode wordt gebruikt om `rm -rf` uit te voeren binnen de vexa-bot-manager container.
+~~De verwijdering maakt gebruik van het bewezen Docker SDK-patroon uit
+`provisioning.py` (regel 150-178). Portal-api heeft al Docker socket
+proxy-toegang met de juiste permissies (`POST=1, CONTAINERS=1`). De
+`exec_run()` methode wordt gebruikt om `rm -rf` uit te voeren binnen de
+vexa-bot-manager container.~~
 
-Referentie-implementatie:
-```
-# provisioning.py:150-162 (bestaand patroon)
-client = docker.from_env()
-container = client.containers.get("vexa-bot-manager")
-exit_code, output = container.exec_run(
-    ["rm", "-rf", f"/var/lib/vexa/recordings/{vexa_meeting_id}"],
-    stdout=True, stderr=True,
-)
-```
+Doorgestreept omdat `exec_run()` vanuit portal-api altijd 403 geeft onder
+de huidige proxy-config. Zelfs als we `EXEC=1` zouden toevoegen krijgen we
+daarmee feitelijk een shell op iedere container op de host — niet
+aanvaardbaar voor een `rm -rf` in een GDPR-verwijderpad.
 
-De Docker SDK-aanroepen zijn synchroon (blocking I/O). Gebruik `asyncio.to_thread()` om de event loop niet te blokkeren.
+## Alternatief ontwerp (verplicht vóór implementatie)
+
+Kies één van onderstaande routes; beide vermijden `docker exec`.
+
+### Optie A: klein HTTP-endpoint op vexa-bot-manager
+
+Voeg op de vexa-bot-manager een intern endpoint toe (bijv.
+`DELETE /internal/recordings/{vexa_meeting_id}`) dat is beschermd door
+`X-Internal-Secret`. Portal-api roept dit via httpx aan; de
+vexa-bot-manager doet de lokale `rm -rf`. Voordelen: dezelfde
+auth-boundary als andere internal-to-internal calls, geen Docker SDK
+nodig, testbaar zonder Docker.
+
+### Optie B: shared volume mount
+
+Mount `/var/lib/vexa/recordings` ook read-write in portal-api (of in een
+dedicated cleanup-worker). Portal-api doet de `shutil.rmtree()` direct.
+Voordelen: geen extra endpoint te onderhouden. Nadelen: coupling tussen
+portal-api filesystem en vexa-bot-manager volumes; extra container met
+write-access op opnames vergroot blast radius bij compromittering.
+
+**Aanbeveling:** Optie A. Matcht het patroon dat al in gebruik is voor
+knowledge-ingest, retrieval-api en mailer (internal-secret HTTP).
+Portal-api blijft stateless t.o.v. de opname-storage.
+
+Zie `.claude/rules/klai/platform/docker-socket-proxy.md` voor de
+protocol-first regel en het overzicht van toegestane docker API-verbs.
 
 ### Integratie in transcriptiepipeline
 

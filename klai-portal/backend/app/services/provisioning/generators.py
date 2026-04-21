@@ -5,18 +5,19 @@ These functions are pure generators with no side effects on external systems.
 """
 
 import copy
-import logging
 import re
 import secrets
 import unicodedata
 from pathlib import Path
+from urllib.parse import quote
 
+import structlog
 import yaml
 
 from app.core.config import settings
 from app.services.secrets import decrypt_mcp_secret, is_secret_var
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def _slugify_unique(name: str, existing_slugs: set[str]) -> str:
@@ -46,7 +47,7 @@ def _generate_librechat_yaml(
 
     Returns the YAML string.
     """
-    with open(base_path) as f:
+    with open(base_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     if not mcp_servers:
@@ -55,13 +56,10 @@ def _generate_librechat_yaml(
     # Load MCP catalog (whitelist of supported servers)
     catalog_path = base_path.parent / "mcp_catalog.yaml"
     try:
-        with open(catalog_path) as f:
+        with open(catalog_path, encoding="utf-8") as f:
             catalog = yaml.safe_load(f)
     except FileNotFoundError:
-        logger.warning(
-            "mcp_catalog.yaml niet gevonden op %s — MCP server merge overgeslagen",
-            catalog_path,
-        )
+        logger.warning("mcp_catalog_not_found", path=str(catalog_path))
         return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
     catalog_servers = catalog.get("servers", {})
@@ -74,10 +72,7 @@ def _generate_librechat_yaml(
             continue
         if server_id not in catalog_servers:
             # REQ-S-002: unknown entries are skipped, not raised as an error
-            logger.warning(
-                "MCP server '%s' niet in catalog — wordt overgeslagen",
-                server_id,
-            )
+            logger.warning("mcp_server_not_in_catalog", server_id=server_id)
             continue
         mcp_section[server_id] = catalog_servers[server_id]["config_template"]
         enabled_names.append(server_id)
@@ -122,9 +117,9 @@ def _generate_librechat_env(
                             value = decrypt_mcp_secret(encrypted_or_plain)
                         except ValueError:
                             logger.warning(  # nosemgrep: python-logger-credential-disclosure
-                                "MCP decryption failed for %s/%s — skipping var",
-                                server_id,
-                                var_name,
+                                "mcp_secret_decryption_failed",
+                                server_id=server_id,
+                                var_name=var_name,
                             )
                             continue
                     else:
@@ -186,7 +181,7 @@ MEILI_HOST=http://meilisearch:7700
 MEILI_MASTER_KEY={settings.meili_master_key}
 
 # Redis (session persistence across container restarts)
-REDIS_URI=redis://:{settings.redis_password}@redis:6379
+REDIS_URI=redis://:{quote(settings.redis_password, safe="")}@redis:6379
 
 # AI routing via LiteLLM
 LITELLM_API_KEY={litellm_api_key}

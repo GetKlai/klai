@@ -1,5 +1,104 @@
 # Changelog
 
+## [Unreleased] — 2026-04-17 — SPEC-WIDGET-002: Split API Keys and Chat Widgets
+
+### Added — SPEC-WIDGET-002: Independent API keys and Chat widgets domains
+
+- **Separate database tables:** New `widgets` + `widget_kb_access` tables with own RLS policies. Widget auth is 100% JWT-based (`WIDGET_JWT_SECRET`) — no shared secrets with API keys. Data migrated from combined `partner_api_keys` table.
+- **Separate admin endpoints:** `/api/api-keys/*` and `/api/widgets/*` replace the combined `/api/integrations/*`. Each has full CRUD with domain-specific schemas.
+- **Separate admin UI:** Two sidebar items "API keys" and "Chat widgets". Each has its own wizard (4 steps) and tabbed detail view (5 tabs matching wizard steps 1-to-1). No `if (isWidget)` branches.
+- **Widget streaming chat:** Embedded `klai-chat.js` (56KB gzip 21KB) with SSE streaming via `fetchEventSource`, grounded KB-only system prompt (refuses to guess), markdown rendering via `snarkdown` + `DOMPurify` XSS protection.
+- **Klai brand styling:** Widget defaults to amber primary (#fcaa2d), warm ivory background (#fffef2), cream cards (#f3f2e7), Parabole font. Dark text on amber (WCAG compliant).
+- **Widget i18n:** NL + EN labels auto-detected from browser locale, overridable via `data-locale` attribute.
+- **Wildcard origin matching:** `https://*.getklai.com` matches all tenant subdomains. Fail-closed (empty list blocks everything).
+- **CI pipeline:** Widget bundle built inside portal-frontend workflow. Triggers on `klai-widget/src/**` changes.
+- **Tests:** 26 tests covering smoke (12), integration (7), widget-config (5), origin matching (5).
+
+### Removed
+
+- **`/api/integrations/*` endpoints** — hard-removed, returns 404.
+- **Revoke/active concept** — no soft-delete for either domain. `DELETE` is the only way to end an API key or widget. `active` column dropped from `partner_api_keys`.
+- **`integration_type` discriminator** — column dropped. No `if (isWidget)` branches in code.
+- **`admin_integrations_*` paraglide keys** — 48 dead keys removed, 68 renamed to `admin_api_keys_*`, `admin_widgets_*`, `admin_shared_*`.
+
+### Fixed
+
+- **RLS DELETE policy** on `partner_api_keys` — was missing, caused silent 204 with 0 rows affected.
+- **RLS SELECT policies** on `widgets` and `widget_kb_access` — changed to permissive (`USING true`) for the public widget-config endpoint.
+- **`set_tenant` in admin `_get_caller_org`** — was missing, caused `InvalidTextRepresentationError` on all admin writes to RLS-scoped tables.
+- **Partner chat retrieval URL** — `/retrieve/v1/query` corrected to `/retrieve` (the actual endpoint).
+- **Embed snippet URL** — `cdn.getklai.com` (not a real CDN) corrected to `my.getklai.com` (portal Caddy).
+- **Widget JS MIME type** — self-hosted in portal `public/widget/` served as `text/javascript` by Caddy (previously returned `text/html` from Astro catch-all).
+
+## [Unreleased] — 2026-04-17 — SPEC-CRAWL-004: Automatic Auth Guard Setup
+
+### Added — SPEC-CRAWL-004: AI-first auth guard in connector wizard
+
+- **Auto-detection during preview:** when a webcrawler preview succeeds with cookies, the system automatically computes a canary fingerprint and uses AI to detect the login indicator element. Admin sees "✓ Auth protection enabled" — no technical config needed.
+- **knowledge-ingest/fingerprint.py** (NEW): stdlib-only SimHash reimplementation, compatible with klai-connector's trafilatura version. Zero external deps.
+- **knowledge-ingest/selector_ai.py:** added `detect_login_indicator_via_llm()` — identifies logout buttons, user menus, and account dropdowns via LLM DOM analysis.
+- **knowledge-ingest/routes/crawl.py:** `CrawlPreviewResponse` extended with `auth_guard` field containing canary URL, fingerprint, and login indicator.
+- **klai-connector/routes/fingerprint.py** (NEW): `POST /api/v1/compute-fingerprint` endpoint for manual canary URL changes. Uses `_post_crawl_sync()` shared helper.
+- **Portal backend:** `_auto_fill_canary_fingerprint()` on connector create/update — recomputes fingerprint when canary_url set but fingerprint missing. XOR validator relaxed for backend auto-fill flow.
+- **Portal frontend:** auth guard confirmation card in preview step with Shield icon + expandable advanced settings for manual override.
+
+### Fixed
+
+- **Semgrep CI:** excluded minified widget JS (`klai-chat.js`) from SAST scan — false positive on Shadow DOM API in pre-built SolidJS bundle.
+
+## [Unreleased] — 2026-04-17 — SPEC-CRAWL-003: Three-Layer Content Quality Guardrails
+
+### Added — SPEC-CRAWL-003: Auth-expiry detection for webcrawler connectors
+
+- **Layer A — Canary fingerprint (pre-sync fail-fast):** Re-crawls a reference page before each sync and compares its SimHash fingerprint to the stored baseline. Similarity < 0.80 aborts the sync immediately with `status=auth_error`, `quality_status=failed`. Prevents contaminated content from reaching Qdrant.
+- **Layer B — Per-page login indicator:** CSS selector (`login_indicator_selector`) embedded in Crawl4AI `wait_for` to detect auth-walled pages. Pages that fail the selector are excluded from ingest with a single summary log (no per-page log spam).
+- **Layer C — Post-sync boilerplate-ratio metric:** 64-bit SimHash fingerprint per page; greedy centroid clustering (pairwise for ≤200 pages, LSH 8×8 bands for >200). Clusters exceeding 15% of total pages flag `quality_status=degraded`. Minimum 30 pages for statistical validity.
+- **`klai-connector/app/services/content_fingerprint.py`** (NEW): Pure-function module with `compute_content_fingerprint()`, `similarity()`, `find_boilerplate_clusters()`, and `ContentFingerprint` NewType.
+- **`klai-connector/app/services/events.py`** (NEW): Fire-and-forget product event emission via direct DB write to shared `product_events` table. Resolves Zitadel org_id to `portal_orgs.id` FK.
+- **Alembic migration 005**: `quality_status VARCHAR(20)` nullable column on `connector.sync_runs`.
+- **Grafana alert**: "Knowledge sync quality degraded" (uid=bfjbxm0h95q0wf) — queries `product_events` for `knowledge.sync_quality_degraded` events.
+- **Portal validation**: `WebcrawlerConfig` Pydantic model extended with `canary_url`, `canary_fingerprint`, `login_indicator_selector` + XOR validator.
+- **165 tests** across 6 test files; `content_fingerprint.py` at 98% coverage.
+
+### Fixed — Post-deploy bugs found during E2E
+
+- Product event emission used a non-existent HTTP endpoint (`POST /internal/product-events`). Replaced with direct DB write matching portal's own pattern.
+- `from app.core.database import session_maker` captured `None` at import time. Fixed to read `database.session_maker` at call time.
+- Layer C detail logs had `sample_urls=[]` (lookup key mismatch). Fixed to use cluster URLs directly.
+- `wait_for` combined login indicator with `||` syntax (invalid Crawl4AI). Fixed to embed CSS check inside JS arrow function.
+
+### Changed — Code quality improvements
+
+- Extracted `_post_crawl_sync()` helper — single place for POST /crawl plumbing (cookie hooks, auth, payload construction).
+- `LAYER_C_MIN_PAGES = 30` as named module-level constant (was inline magic number).
+- `ContentFingerprint = NewType("ContentFingerprint", str)` for type safety across adapter and sync engine.
+- Log deduplication: event name in message string, queryable data exclusively in `extra={}`.
+- Robust `wait_for` matching via `re.match()` instead of brittle `startswith("js:() =>")`.
+
+### Ops
+
+- Cleaned 1115 login-wall boilerplate chunks from Redcactus KB in Qdrant (1124 clean chunks remaining).
+
+## [Unreleased] — 2026-04-16 — SPEC-KB-IMAGE-001: Adapter-owned image URL resolution (refactor)
+
+### Changed
+
+- **`klai-connector/app/adapters/webcrawler.py`**: `_process_results()` resolveert nu relatieve image URLs naar absoluut t.o.v. de pagina-URL, direct bij het ophalen van resultaten. Geen connector-type dispatch meer in `sync_engine` voor webcrawler URLs.
+- **`klai-connector/app/adapters/notion.py`**: Verwijderd `_image_cache` side-channel en `get_cached_images()` methode. `fetch_document()` zet `ref.images` nu direct (conform het BaseAdapter contract).
+- **`klai-connector/app/adapters/github.py`**: `source_url` is nu de GitHub blob-view URL (`https://github.com/{owner}/{repo}/blob/{branch}/{path}`) voor gebruikerszichtbare citaties. De raw URL (`raw.githubusercontent.com`) wordt alleen intern gebruikt in `fetch_document()` als basis voor het resolven van markdown image URLs. Nieuwe statische helper `_extract_markdown_images()` vult `ref.images` met absolute URLs voor `.md` en `.rst` bestanden.
+- **`klai-connector/app/services/sync_engine.py`**: `_extract_and_upload_images()` hernoemd naar `_upload_images()`. Alle connector-type dispatch verwijderd. `text` parameter verwijderd. `extract_markdown_image_urls()` en `resolve_relative_url` imports verwijderd. Parameter `ref` getypt als `DocumentRef` in plaats van `Any`.
+- **`klai-connector/app/adapters/base.py`**: Docstrings documenteren nu expliciet het contract: `ImageRef.url` MUST be absolute HTTP(S); `DocumentRef.images` is URL-based only (DOCX/PDF embeds gaan via de parser pipeline, niet via dit veld). Docstrings toegevoegd voor `source_url` en `last_edited` velden op `DocumentRef`.
+
+### Added
+
+- **18 nieuwe unit tests** verdeeld over 4 testbestanden:
+  - `tests/adapters/test_github_images.py` (NIEUW) — 9 tests voor markdown URL resolution (relatief, absoluut, dot-slash, branch handling, data URI skipping, leading-slash urljoin semantics)
+  - `tests/adapters/test_webcrawler.py::TestImageUrlResolution` — 4 tests voor `_process_results()` absolute URL conversie
+  - `tests/adapters/test_notion.py` — 3 tests voor `ref.images` populatie + afwezigheid van legacy `_image_cache`
+  - `tests/test_sync_engine_images.py::TestUploadImagesIsConnectorAgnostic` — 2 tests voor connector-agnostic upload
+
+> Dit is een refactor. Er zijn geen nieuwe gebruikerszichtbare features. Extern gedrag is ongewijzigd.
+
 ## [Unreleased] — 2026-04-06 — SPEC-KB-026: Taxonomy Integration Hardening
 
 ### Fixed — SPEC-KB-026: Taxonomy Integration Hardening (6 bugs)

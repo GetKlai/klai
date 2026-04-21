@@ -2,11 +2,8 @@
 name: moai-workflow-worktree
 description: >
   Git worktree management for parallel SPEC development with isolated workspaces,
-  automatic branch registration, and seamless MoAI-ADK integration.
-  Use when setting up parallel development environments, creating isolated SPEC
-  workspaces, managing git worktrees, or working on multiple features simultaneously.
-  Do NOT use for regular git operations like commit or merge
-  (use manager-git agent instead).
+  automatic branch registration, and seamless MoAI-ADK integration. Use when
+  setting up parallel development environments.
 license: Apache-2.0
 compatibility: Designed for Claude Code
 allowed-tools: Read Write Grep Glob mcp__context7__resolve-library-id mcp__context7__get-library-docs
@@ -87,7 +84,7 @@ The registry file stores worktree metadata in JSON format. Each worktree entry c
 
 File Structure:
 
-The worktree system creates a dedicated directory structure inside the project's .moai directory. At the worktree root ({repo}/.moai/worktrees/{ProjectName}/), you will find the central registry JSON file and individual directories for each SPEC. Each SPEC directory contains a .git file for worktree metadata and a complete copy of all project files.
+The worktree system creates a dedicated directory structure in the user's global home directory. At the worktree root (~/.moai/worktrees/{ProjectName}/), you will find the central registry JSON file and individual directories for each SPEC. Each SPEC directory contains a .git file for worktree metadata and a complete copy of all project files.
 
 Detailed Reference: Refer to Worktree Management Module at modules/worktree-management.md
 

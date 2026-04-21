@@ -51,6 +51,32 @@ Propagation: up to 24h. Check: `dig getklai.com` or dnschecker.org.
 Env vars: update SOPS + Coolify UI separately (not auto-synced).
 Always check build logs after redeploy — trigger ≠ success.
 
+## Portal URL (CRIT — never guess this)
+**`https://my.getklai.com`** — this is where ALL users log in. One URL for everyone.
+- `{tenant}.getklai.com` = per-tenant portal view (e.g. `getklai.getklai.com` = the "getklai" tenant — NOT the portal)
+- `FRONTEND_URL` in portal-api env MUST be `https://my.getklai.com`
+- OAuth redirect URIs (Google, Microsoft) MUST point to `https://my.getklai.com/api/oauth/.../callback`
+- Do NOT assume the portal URL from Caddy wildcard routing or Zitadel redirect URI config
+- `config.py` fallback (`https://portal.{domain}`) is wrong for production — FRONTEND_URL must be explicit
+- Verify: `docker exec portal-api printenv FRONTEND_URL` — must return `https://my.getklai.com`
+
+## gpu-01 services — no CI workflow (HIGH)
+
+Some gpu-01 services (`bge-m3-sparse`, possibly others) do NOT have a GitHub Actions workflow. Image rebuilds are manual via SSH.
+
+**Services without CI:** `bge-m3-sparse` (`deploy/bge-m3-sparse/`).
+
+**Manual rebuild sequence:**
+```bash
+ssh -i /opt/klai/gpu-tunnel-key root@5.9.10.215   # via core-01 jump
+cd /opt/klai
+docker compose build bge-m3-sparse
+docker compose up -d bge-m3-sparse
+docker logs --tail 20 klai-gpu-bge-m3-sparse-1
+```
+
+**Prevention:** Before assuming CI handles a gpu-01 service rebuild, check `.github/workflows/` for a matching workflow file. If none exists, plan a manual SSH deploy.
+
 ## Disaster recovery
 All secrets in git (SOPS-encrypted). Full recovery: `deploy.sh all` → scp configs → `docker compose up -d`.
 Prerequisite: `~/.config/sops/age/keys.txt` must be present.

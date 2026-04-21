@@ -1,0 +1,5 @@
+klai-knowledge-mcp\main.py:199: unused function 'save_personal_knowledge' (60% confidence)
+klai-knowledge-mcp\main.py:251: unused function 'save_org_knowledge' (60% confidence)
+klai-knowledge-mcp\main.py:302: unused function 'save_to_docs' (60% confidence)
+klai-knowledge-mcp\main.py:346: redundant if-condition (100% confidence)
+klai-knowledge-mcp\main.py:438: unused variable 'app' (60% confidence)

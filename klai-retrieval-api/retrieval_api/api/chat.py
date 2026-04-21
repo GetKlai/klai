@@ -6,10 +6,11 @@ import json
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from retrieval_api.config import settings
+from retrieval_api.middleware.auth import verify_body_identity
 from retrieval_api.models import RetrieveRequest
 from retrieval_api.services import coreference, gate, reranker, search, synthesis
 from retrieval_api.services.tei import embed_single
@@ -20,12 +21,15 @@ router = APIRouter()
 
 
 @router.post("/chat")
-async def chat(req: RetrieveRequest) -> EventSourceResponse:
+async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
     if req.scope == "notebook" and not req.notebook_id:
         raise HTTPException(status_code=400, detail="notebook_id required for scope=notebook")
+
+    # SPEC-SEC-010 REQ-3: cross-user / cross-org guard (JWT path only).
+    verify_body_identity(request, req.org_id, req.user_id)
 
     async def event_generator():
         t0 = time.perf_counter()

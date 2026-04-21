@@ -1,6 +1,6 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { AlertCircle, CheckCircle, CreditCard, ExternalLink, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -129,19 +129,18 @@ function Field({
 
 function BillingPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token ?? ''
 
   const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!token) return
-    apiFetch<BillingStatusResponse>(`/api/billing/status`, token)
+    if (!auth.isAuthenticated) return
+    apiFetch<BillingStatusResponse>(`/api/billing/status`)
       .then(setBillingStatus)
       .catch(() => setFetchError(m.admin_billing_error_fetch()))
       .finally(() => setLoadingStatus(false))
-  }, [token])
+  }, [auth.isAuthenticated])
 
   if (loadingStatus) {
     return (
@@ -171,11 +170,11 @@ function BillingPage() {
         <>
           {billingStatus.plan === 'free' && <FreeView />}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'pending' && (
-            <SetupView token={token} onComplete={setBillingStatus} />
+            <SetupView onComplete={setBillingStatus} />
           )}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'mandate_requested' && <MandateRequestedView />}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'active' && (
-            <ActiveView token={token} status={billingStatus} onCancel={setBillingStatus} />
+            <ActiveView status={billingStatus} onCancel={setBillingStatus} />
           )}
           {billingStatus.plan !== 'free' && billingStatus.billing_status === 'payment_failed' && (
             <PaymentFailedView
@@ -196,10 +195,8 @@ function BillingPage() {
 // --- State: pending ---
 
 function SetupView({
-  token,
   onComplete,
 }: {
-  token: string
   onComplete: (s: BillingStatusResponse) => void
 }) {
   const [form, setForm] = useState<MandateForm>({
@@ -241,7 +238,7 @@ function SetupView({
       if (form.billing_email) body.billing_email = form.billing_email
       if (form.internal_reference) body.internal_reference = form.internal_reference
 
-      const data = await apiFetch<{ mandate_url?: string }>(`/api/billing/mandate`, token, {
+      const data = await apiFetch<{ mandate_url?: string }>(`/api/billing/mandate`, {
         method: 'POST',
         body: JSON.stringify(body),
       })
@@ -500,11 +497,9 @@ function MandateRequestedView() {
 // --- State: active ---
 
 function ActiveView({
-  token,
   status,
   onCancel,
 }: {
-  token: string
   status: BillingStatusResponse
   onCancel: (s: BillingStatusResponse) => void
 }) {
@@ -517,7 +512,7 @@ function ActiveView({
     setLoadingInvoices(true)
     setActionError(null)
     try {
-      const data = await apiFetch<{ portal_url: string }>(`/api/billing/invoices`, token)
+      const data = await apiFetch<{ portal_url: string }>(`/api/billing/invoices`)
       window.open(data.portal_url, '_blank')
     } catch {
       setActionError(m.admin_billing_error_invoices())
@@ -530,7 +525,7 @@ function ActiveView({
     setCancelling(true)
     setActionError(null)
     try {
-      await apiFetch(`/api/billing/cancel`, token, { method: 'POST' })
+      await apiFetch(`/api/billing/cancel`, { method: 'POST' })
       onCancel({ ...status, billing_status: 'cancelled' })
     } catch {
       setActionError(m.admin_billing_error_cancel())

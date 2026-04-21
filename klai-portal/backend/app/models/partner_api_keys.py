@@ -1,13 +1,14 @@
-"""Partner API key models.
+"""Partner API key models — SPEC-API-001 + SPEC-WIDGET-002.
 
-SPEC-API-001 REQ-1.2, REQ-1.3:
-- PartnerAPIKey: org-scoped API key with SHA-256 hashed storage
-- PartnerApiKeyKbAccess: junction table for per-KB access levels
+PartnerAPIKey is the developer-facing `pk_live_...` credential for
+server-to-server integration. Widget-specific columns and the soft-delete
+`active` column were removed in SPEC-WIDGET-002 (see migration
+f0a1b2c3d4e5). Widgets now live in their own `widgets` table.
 """
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,7 +42,6 @@ class PartnerAPIKey(Base):
         server_default='{"chat": true, "feedback": true, "knowledge_append": false}',
     )
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)

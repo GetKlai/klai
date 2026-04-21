@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from 'react-oidc-context'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
@@ -8,13 +7,11 @@ function useLifecycleMutation(
   action: 'suspend' | 'reactivate' | 'offboard',
   successMessage: () => string,
 ) {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (userId: string) => {
-      await apiFetch(`/api/admin/users/${userId}/${action}`, token, {
+      await apiFetch(`/api/admin/users/${userId}/${action}`, {
         method: 'POST',
       })
     },

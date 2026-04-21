@@ -21,9 +21,10 @@ Mozilla SOPS + age encryption. Encrypted files in git, plaintext never.
 ## Env modification rules
 | Action | Allowed? | How |
 |--------|----------|-----|
-| Add NEW var | Yes | `echo 'NEW_VAR=value' >> /opt/klai/.env` (single quotes!) |
-| Change existing secret | NO | Use SOPS or ask user |
-| Delete a var | NO | Ask user |
+| Add NEW var | Yes | SOPS procedure below, then commit + push |
+| Change existing var | Yes | SOPS procedure below, then commit + push |
+| Delete a var | Ask user | Risk: may break services |
+
 After ANY change: `docker compose up -d <service>`, verify with `docker exec <ctr> printenv VAR`.
 
 ## deploy.sh = MERGE (updated March 2026)
@@ -45,12 +46,53 @@ After ANY change: `docker compose up -d <service>`, verify with `docker exec <ct
 command runs. If encryption fails, the file is 0 bytes and ALL production secrets are gone.
 Source: April 2026 incident — agent used `>` redirect, SOPS command failed, file wiped.
 
-## Non-interactive SOPS (for agents)
-The ONLY safe procedure. No shortcuts, no `>` redirects into `.env.sops`:
+## Non-interactive SOPS (for agents) — run on core-01 directly
+
+core-01 has SOPS installed and the age key at `~/.config/sops/age/keys.txt`.
+**Always run SOPS on the server itself** — no local age key required, works from any OS.
+
 ```bash
-sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
-# append/modify
-sops --encrypt --in-place --input-type dotenv --output-type dotenv core-01/.new.env
-mv core-01/.new.env core-01/.env.sops
+# 1. SSH to core-01 and set up a working directory matching the .sops.yaml path_regex
+ssh core-01 "mkdir -p /tmp/klai-sops/core-01"
+
+# 2. Copy the SOPS file + config to the server (path_regex: core-01/.*\.env)
+scp klai-infra/core-01/.env.sops core-01:/tmp/klai-sops/core-01/.env.sops
+scp klai-infra/.sops.yaml core-01:/tmp/klai-sops/.sops.yaml
+
+# 3. Decrypt, modify, encrypt — all on the server
+ssh core-01 "
+  cd /tmp/klai-sops &&
+  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env &&
+  sed -i 's|OLD_VAR=.*|NEW_VAR=new_value|' core-01/.new.env &&
+  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --in-place --input-type dotenv --output-type dotenv core-01/.new.env &&
+  mv core-01/.new.env core-01/.env.sops
+"
+
+# 4. Retrieve the updated encrypted file
+scp core-01:/tmp/klai-sops/core-01/.env.sops klai-infra/core-01/.env.sops
+
+# 5. Cleanup
+ssh core-01 "rm -rf /tmp/klai-sops"
+
+# 6. Commit and push — GitHub Action auto-syncs to /opt/klai/.env
+cd klai-infra && git add core-01/.env.sops && git commit -m "fix(infra): update X in SOPS" && git push
 ```
-Temp file path MUST match `.sops.yaml` `path_regex`. Use literal paths, not `$HOME`.
+
+After push, the GitHub Action decrypts and syncs to `/opt/klai/.env` automatically.
+Then restart the affected service: `ssh core-01 "cd /opt/klai && docker compose up -d <service>"`.
+
+## The path_regex requirement (CRIT)
+`.sops.yaml` only encrypts files matching `core-01/.*\.env(\.sops)?$`.
+The temp file on the server **must** be at `core-01/.new.env` relative to where `.sops.yaml` lives.
+That is why the working directory is `/tmp/klai-sops` with both files copied there.
+
+## Server .env — emergency-only direct edits
+
+Direct edits to `/opt/klai/.env` are overwritten on the next `deploy.sh` or GitHub Action run.
+Use ONLY as a temporary measure while the SOPS fix is in progress:
+
+```bash
+ssh core-01 "sed -i 's|OLD_VAR=.*|NEW_VAR=value|' /opt/klai/.env && docker compose up -d <service>"
+```
+
+Immediately follow up with the SOPS procedure above to make it permanent.

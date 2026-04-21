@@ -4,6 +4,7 @@ Route prefix: /api/bots
 """
 
 import asyncio
+import hmac
 import io
 from datetime import UTC, datetime
 from typing import Any
@@ -43,15 +44,17 @@ MAX_CONCURRENT_BOTS = 2
 
 
 def _require_webhook_secret(request: Request) -> None:
+    # SEC-013 F-033: fail-closed + constant-time compare. Startup validator in
+    # app.core.config guarantees vexa_webhook_secret is non-empty.
+    #
     # Internal Docker network callers (172.x, 10.x, 192.168.x) are trusted without a token.
     # This avoids embedding secrets in POST_MEETING_HOOKS URLs where they appear in container logs.
     client_host = request.client.host if request.client else ""
     if client_host.startswith(("172.", "10.", "192.168.")):
         return
-    if not settings.vexa_webhook_secret:
-        return  # No secret configured
     auth_header = request.headers.get("Authorization", "")
-    if auth_header != f"Bearer {settings.vexa_webhook_secret}":
+    expected = f"Bearer {settings.vexa_webhook_secret}"
+    if not hmac.compare_digest(auth_header.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
@@ -426,10 +429,16 @@ class SpeakerEvent(BaseModel):
 
 
 class VexaWebhookPayload(BaseModel):
-    """Vexa agentic-runtime webhook envelope.
+    """Vexa webhook envelope — accepts three wire formats.
 
-    Standard format: {event_type, meeting: {id, platform, native_meeting_id, status, ...}}
-    Completion format: {id, platform, native_meeting_id, status, ended_at, speaker_events}
+    1. Upstream v0.10 envelope (``WEBHOOK_API_VERSION = "2026-03-01"``):
+       ``{event_id, event_type, api_version, created_at, data: {meeting: {...}}}``
+    2. Legacy agentic-runtime envelope:
+       ``{event_type, meeting: {id, platform, native_meeting_id, status, ...}}``
+    3. Flat completion format (bare meeting dict):
+       ``{id, platform, native_meeting_id, status, ended_at, speaker_events}``
+
+    See SPEC-VEXA-003 research.md §3.5 for the full upstream schema.
     """
 
     platform: str | None = None
@@ -447,7 +456,22 @@ class VexaWebhookPayload(BaseModel):
     def _normalize(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        # Envelope format: {event_type, meeting: {...}}
+
+        # Shape 1: upstream v0.10 envelope — meeting nested under `data.meeting`.
+        inner = data.get("data")
+        if isinstance(inner, dict) and isinstance(inner.get("meeting"), dict):
+            meeting = inner["meeting"]
+            recording = inner.get("recording")
+            return {
+                "vexa_meeting_id": meeting.get("id"),
+                "platform": meeting.get("platform"),
+                "native_meeting_id": meeting.get("native_meeting_id"),
+                "status": meeting.get("status"),
+                "ended_at": meeting.get("end_time"),
+                "recording_id": recording.get("id") if isinstance(recording, dict) else None,
+            }
+
+        # Shape 2: legacy envelope — `meeting` at top level.
         if "meeting" in data and "platform" not in data:
             meeting = data["meeting"] or {}
             return {
@@ -460,7 +484,8 @@ class VexaWebhookPayload(BaseModel):
                 if isinstance(data.get("recording"), dict)
                 else None,
             }
-        # Flat completion format
+
+        # Shape 3: flat completion format.
         return {**data, "vexa_meeting_id": data.get("id")}
 
 
@@ -611,8 +636,14 @@ async def vexa_webhook(
 ) -> dict:
     _require_webhook_secret(request)
 
-    if not payload.platform or not payload.native_meeting_id:
-        logger.info("Vexa webhook: no platform/native_meeting_id, ignoring", payload_status=payload.status)
+    # SPEC-VEXA-003: upstream `fire_post_meeting_hooks` omits native_meeting_id from the
+    # payload (only `meeting.id` + `meeting.platform`). Fall back to vexa_meeting_id
+    # lookup when the envelope lacks the natural key.
+    if not payload.vexa_meeting_id and (not payload.platform or not payload.native_meeting_id):
+        logger.info(
+            "Vexa webhook: no correlation key (vexa_meeting_id / platform+native_meeting_id), ignoring",
+            payload_status=payload.status,
+        )
         return {"status": "ignored"}
 
     VEXA_STATUS_MAP = {
@@ -624,18 +655,30 @@ async def vexa_webhook(
     }
     portal_status = VEXA_STATUS_MAP.get(payload.status or "")
 
-    meeting = await db.scalar(
-        select(VexaMeeting)
-        .where(
-            VexaMeeting.platform == payload.platform,
-            VexaMeeting.native_meeting_id == payload.native_meeting_id,
-            VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
+    # Prefer vexa_meeting_id (unambiguous FK); fall back to (platform, native_meeting_id)
+    # pair which can correlate even during the "pending" phase before a bot is spawned.
+    if payload.vexa_meeting_id is not None:
+        meeting = await db.scalar(
+            select(VexaMeeting)
+            .where(VexaMeeting.vexa_meeting_id == payload.vexa_meeting_id)
+            .order_by(VexaMeeting.created_at.desc())
         )
-        .order_by(VexaMeeting.created_at.desc())
-    )
+    else:
+        meeting = await db.scalar(
+            select(VexaMeeting)
+            .where(
+                VexaMeeting.platform == payload.platform,
+                VexaMeeting.native_meeting_id == payload.native_meeting_id,
+                VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
+            )
+            .order_by(VexaMeeting.created_at.desc())
+        )
     if meeting is None:
         logger.warning(
-            "Vexa webhook: no matching meeting", platform=payload.platform, native_meeting_id=payload.native_meeting_id
+            "Vexa webhook: no matching meeting",
+            vexa_meeting_id=payload.vexa_meeting_id,
+            platform=payload.platform,
+            native_meeting_id=payload.native_meeting_id,
         )
         return {"status": "ignored"}
 

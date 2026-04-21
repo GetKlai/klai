@@ -101,59 +101,6 @@ def upsert_chunks(
         client.upsert(collection_name=settings.qdrant_collection, points=points)
 
 
-def search_chunks(
-    query_vector: list[float],
-    tenant_id: str,
-    notebook_id: str,
-    source_ids: list[str],
-    top_k: int = 8,
-) -> list[dict]:
-    """
-    Search klai_focus collection with mandatory tenant_id + notebook_id filter.
-    source_ids restricts to chunks from sources with status='ready'.
-    Returns list of {chunk_id, source_id, content, metadata, score}.
-    """
-    client = get_client()
-
-    must_filters = [
-        qdrant_models.FieldCondition(
-            key="tenant_id",
-            match=qdrant_models.MatchValue(value=tenant_id),
-        ),
-        qdrant_models.FieldCondition(
-            key="notebook_id",
-            match=qdrant_models.MatchValue(value=notebook_id),
-        ),
-    ]
-
-    if source_ids:
-        must_filters.append(
-            qdrant_models.FieldCondition(
-                key="source_id",
-                match=qdrant_models.MatchAny(any=source_ids),
-            )
-        )
-
-    results = client.search(
-        collection_name=settings.qdrant_collection,
-        query_vector=query_vector,
-        query_filter=qdrant_models.Filter(must=must_filters),
-        limit=top_k,
-        with_payload=True,
-    )
-
-    return [
-        {
-            "chunk_id": hit.payload.get("chunk_id", str(hit.id)),
-            "source_id": hit.payload.get("source_id", ""),
-            "content": hit.payload.get("content", ""),
-            "metadata": hit.payload.get("metadata") or {},
-            "score": hit.score,
-        }
-        for hit in results
-    ]
-
-
 def delete_by_source(source_id: str) -> None:
     """Delete all vectors for a given source_id."""
     client = get_client()

@@ -21,8 +21,6 @@ ALLOWED_MIME_PREFIXES = (
     "video/mp4",
 )
 
-ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".webm", ".mp4"}
-
 
 def _check_mime(data: bytes) -> str:
     mime = magic.from_buffer(data[:2048], mime=True)

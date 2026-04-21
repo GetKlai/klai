@@ -1,55 +1,53 @@
 [project]
 name = "klai-portal-api"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "httpx>=0.27",
-    "pydantic[email]>=2.9",
-    "pydantic-settings>=2.6",
-    "asyncpg>=0.30",
-    "sqlalchemy[asyncio]>=2.0",
-    "alembic>=1.14",
-    "python-multipart>=0.0.12",
-    "docker>=7.0",
-    "cryptography>=43.0",
+    "fastapi>=0.136",
+    "uvicorn[standard]>=0.44",
+    "httpx>=0.28",
+    "pydantic[email]>=2.13",
+    "pydantic-settings>=2.13",
+    "asyncpg>=0.31",
+    "sqlalchemy[asyncio]>=2.0.49",
+    "alembic>=1.18",
+    "python-multipart>=0.0.26",
+    "docker>=7.1",
+    "cryptography>=46.0",
     "icalendar>=6.1.0,<8.0",
-    "motor>=3.6",
-    "prometheus-client>=0.21,<1.0",
-    "pyyaml>=6.0",
-    "structlog>=25.0",
-    "redis[hiredis]>=5.0",
-    "pypdf>=5.0",
-    "python-docx>=1.1",
-    "openpyxl>=3.1",
-    "youtube-transcript-api>=0.6",
-    "feedparser>=6.0",
-    "pillow>=11.0",
-    "pytesseract>=0.3",
+    "motor>=3.7",
+    "prometheus-client>=0.25,<1.0",
+    "pyyaml>=6.0.3",
+    "structlog>=25.5",
+    "redis[hiredis]>=7.4",
+    "pyjwt>=2.12",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
-    "httpx>=0.27",
-    "ruff>=0.8",
-    "pyright>=1.1",
+    "pytest>=9",
+    "pytest-asyncio>=1",
+    "httpx>=0.28",
+    "ruff>=0.15",
+    "pyright>=1.1.408",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
-    "httpx>=0.27",
-    "ruff>=0.8",
-    "pyright>=1.1",
+    "pytest>=9",
+    "pytest-asyncio>=1",
+    "httpx>=0.28",
+    "ruff>=0.15",
+    "pyright>=1.1.408",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = [".", "tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "C90", "B", "TRY", "S", "RUF", "G", "LOG"]
@@ -69,3 +67,4 @@ max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/*" = ["UP", "I", "E501"]  # auto-generated migrations, don't enforce style
+"tests/*" = ["S106"]  # hardcoded "passwords" in test fixtures (e.g. access_token="at-1") are fake tokens

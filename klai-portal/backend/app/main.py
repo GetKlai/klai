@@ -8,6 +8,8 @@ from fastapi.responses import Response
 
 from app.api import me, signup
 from app.api.admin import router as admin_router
+from app.api.admin_api_keys import router as admin_api_keys_router
+from app.api.admin_widgets import router as admin_widgets_router
 from app.api.app_account import router as app_account_router
 from app.api.app_chat import router as app_chat_router
 from app.api.app_gaps import router as app_gaps_router
@@ -23,13 +25,17 @@ from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.mcp_servers import router as mcp_servers_router
 from app.api.meetings import router as meetings_router
+from app.api.oauth import router as oauth_router
 from app.api.partner import router as partner_router
+from app.api.proxy import aclose as proxy_aclose
+from app.api.proxy import router as proxy_router
 from app.api.taxonomy import router as taxonomy_router
 from app.api.vitals import router as vitals_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.logging_setup import setup_logging
 from app.middleware.logging_context import LoggingContextMiddleware
+from app.middleware.session import SessionMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.events import _pending as _event_tasks
 from app.services.recording_cleanup import recording_cleanup_loop
@@ -126,6 +132,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         imap_task.cancel()
     if _event_tasks:
         await asyncio.gather(*list(_event_tasks), return_exceptions=True)
+    await proxy_aclose()  # SEC-023: close shared httpx client used by BFF proxy
     await vexa.close()
     await zitadel.close()
 
@@ -159,16 +166,30 @@ async def no_cache_authenticated(request: Request, call_next: object) -> Respons
 
 
 app.add_middleware(LoggingContextMiddleware)
+# SessionMiddleware runs BEFORE LoggingContextMiddleware (Starlette executes in
+# reverse registration order), so org_id / user_id from the BFF session land in
+# every log entry.
+app.add_middleware(SessionMiddleware)
+
+from app.api.auth_bff import router as auth_bff_router  # noqa: E402
 
 app.include_router(signup.router)
 app.include_router(me.router)
 app.include_router(auth_router)
+app.include_router(auth_bff_router)
+from app.api.auth_join import router as auth_join_router  # noqa: E402
+from app.api.auth_select import router as auth_select_router  # noqa: E402
+
+app.include_router(auth_join_router)
+app.include_router(auth_select_router)
 app.include_router(admin_router)
 app.include_router(groups_router)
 app.include_router(billing_router)
 app.include_router(knowledge_router)
 app.include_router(meetings_router)
 app.include_router(webhooks_router)
+# SEC-023 / F-038 — BFF proxy for internal services (research, scribe, docs)
+app.include_router(proxy_router)
 app.include_router(internal_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
@@ -181,7 +202,10 @@ app.include_router(connectors_router)
 app.include_router(taxonomy_router)
 app.include_router(vitals_router)
 app.include_router(mcp_servers_router)
+app.include_router(admin_api_keys_router)
+app.include_router(admin_widgets_router)
 app.include_router(partner_router)
+app.include_router(oauth_router)
 
 
 @app.get("/health")

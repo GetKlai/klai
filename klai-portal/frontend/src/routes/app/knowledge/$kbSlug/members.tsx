@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { Globe, Lock, Users, Search, X } from 'lucide-react'
@@ -44,7 +44,6 @@ function deriveVisibilityMode(kb: KnowledgeBase): VisibilityMode {
 function MembersTab() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
 
   // Combobox state
@@ -61,27 +60,27 @@ function MembersTab() {
 
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
-    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: members, isLoading } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
-    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
+    enabled: auth.isAuthenticated,
   })
 
   // Fetch org groups and users for comboboxes
   const { data: groupsData } = useQuery({
     queryKey: ['app-groups'],
-    queryFn: () => apiFetch<{ groups: OrgGroup[] }>('/api/app/groups', token),
-    enabled: !!token && kb?.owner_type === 'org',
+    queryFn: () => apiFetch<{ groups: OrgGroup[] }>('/api/app/groups'),
+    enabled: auth.isAuthenticated && kb?.owner_type === 'org',
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['app-users'],
-    queryFn: () => apiFetch<{ users: OrgUser[] }>('/api/app/users', token),
-    enabled: !!token && kb?.owner_type === 'org',
+    queryFn: () => apiFetch<{ users: OrgUser[] }>('/api/app/users'),
+    enabled: auth.isAuthenticated && kb?.owner_type === 'org',
   })
 
   const myUserId = auth.user?.profile?.sub
@@ -92,7 +91,7 @@ function MembersTab() {
   // Mutations
   const updateKbMutation = useMutation({
     mutationFn: async (body: { visibility?: string; default_org_role?: string }) => {
-      return apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, token, {
+      return apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       })
@@ -104,7 +103,7 @@ function MembersTab() {
 
   const inviteUserMutation = useMutation({
     mutationFn: async ({ email, role }: { email: string; role: string }) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users`, {
         method: 'POST',
         body: JSON.stringify({ email, role }),
       })
@@ -117,7 +116,7 @@ function MembersTab() {
 
   const inviteGroupMutation = useMutation({
     mutationFn: async ({ groupId, role }: { groupId: number; role: string }) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups`, {
         method: 'POST',
         body: JSON.stringify({ group_id: groupId, role }),
       })
@@ -130,7 +129,7 @@ function MembersTab() {
 
   const removeUserMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users/${id}`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/users/${id}`, {
         method: 'DELETE',
       })
     },
@@ -139,7 +138,7 @@ function MembersTab() {
 
   const removeGroupMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups/${id}`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/members/groups/${id}`, {
         method: 'DELETE',
       })
     },

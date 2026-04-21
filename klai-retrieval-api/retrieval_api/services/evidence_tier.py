@@ -16,7 +16,6 @@ import os
 import time
 from typing import TypedDict
 
-
 # -- Configuration objects (R6) ------------------------------------------------
 
 

@@ -75,8 +75,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Best-effort: rename personal-{user_id} back to personal for the first user per org
-    # This is lossy for multi-user orgs but acceptable for a dev-phase migration
     op.execute("""
         DELETE FROM portal_knowledge_bases WHERE slug = 'org'
     """)

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft, Loader2 } from 'lucide-react'
@@ -41,7 +41,6 @@ interface OrgUser {
 
 function AddMemberPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { groupId } = Route.useParams()
@@ -51,14 +50,14 @@ function AddMemberPage() {
 
   const { data: membersData } = useQuery({
     queryKey: ['admin-group-members', groupId],
-    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ members: Member[] }>(`/api/admin/groups/${groupId}/members`),
+    enabled: auth.isAuthenticated,
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ users: OrgUser[] }>(`/api/admin/users`),
+    enabled: auth.isAuthenticated,
   })
 
   const members = membersData?.members ?? []
@@ -72,7 +71,7 @@ function AddMemberPage() {
 
   const addMemberMutation = useMutation({
     mutationFn: async (zitadel_user_id: string) => {
-      await apiFetch(`/api/admin/groups/${groupId}/members`, token, {
+      await apiFetch(`/api/admin/groups/${groupId}/members`, {
         method: 'POST',
         body: JSON.stringify({ zitadel_user_id }),
       })

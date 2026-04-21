@@ -74,7 +74,7 @@ Before prioritizing gaps, scan analyzed files for existing @MX tags:
 - @MX:WARN: Prioritize coverage for dangerous code paths (promote to P1 or P2)
 - Build critical_functions set from @MX:ANCHOR scan results
 - This scan ensures coverage priorities align with code importance marked by developers and other agents
-- See @.claude/rules/moai/workflow/mx-tag-protocol.md for tag type definitions
+- See .claude/rules/moai/workflow/mx-tag-protocol.md for tag type definitions
 
 Analysis Tasks:
 
@@ -108,6 +108,22 @@ Gap Report Structure:
 ### Low Priority Gaps (P4)
 - file_generated.go (excluded from target)
 ```
+
+### Batch Mode Decision [MANDATORY EVALUATION]
+
+After Phase 2, before generating tests, MoAI MUST evaluate whether to use Skill("batch").
+
+Condition: total_gap_count (P1 + P2 gaps) >= 10
+
+Decision:
+
+- If condition is met: Execute Skill("batch") directly. Batch mode assigns each gap file to an independent agent running in a git worktree. Each agent generates tests for its assigned file, runs them to verify, and reports results. MoAI collects all generated test files and proceeds to Phase 4.
+- If condition is not met: Continue to standard sequential Phase 3 below.
+
+Batch execution instructions when triggered:
+1. Group gaps by file (one batch unit = one file with its gaps)
+2. Each batch agent receives: its assigned file path, gap list (functions to cover), development_mode from quality.yaml, existing test patterns from nearby test files, coverage target
+3. Each agent must write tests, run them, and confirm they pass before completing
 
 ## Phase 3: Test Generation
 

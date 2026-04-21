@@ -112,7 +112,7 @@ def load_centroids(org_id: str, kb_slug: str) -> CentroidStore | None:
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         logger.warning("centroid_store_load_failed", path=path)
@@ -172,7 +172,7 @@ def save_centroids(store: CentroidStore) -> None:
             for c in store.clusters
         ],
     }
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f)
     logger.info("centroid_store_saved", path=path, clusters=len(store.clusters))
 

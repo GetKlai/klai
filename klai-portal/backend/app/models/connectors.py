@@ -36,6 +36,7 @@ class PortalConnector(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_sync_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_sync_documents_ok: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     allowed_assertion_modes: Mapped[list | None] = mapped_column(JSONB, nullable=True)

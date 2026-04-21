@@ -20,6 +20,21 @@ paths:
 - New fields on existing request models: always `Optional` with safe default. Required fields break existing callers with 422.
 - Config defaults (`pydantic-settings`): always match the real production value. Wrong defaults are masked by env vars until a fresh deploy.
 
+## Starlette middleware registration order (HIGH)
+
+`app.add_middleware()` calls register in REVERSE execution order. The last-registered middleware is the outermost (runs first on request, last on response). The first-registered middleware is the innermost (runs last on request, closest to the route handler).
+
+**Why:** Starlette wraps middlewares as a stack: each call wraps the current stack. So `add_middleware(A); add_middleware(B); add_middleware(C)` executes as C → B → A → route on request.
+
+**Correct pattern for auth + CORS (register in this order):**
+```python
+app.add_middleware(AuthGuardMiddleware)        # innermost: runs 3rd on request
+app.add_middleware(RequestContextMiddleware)   # middle: runs 2nd
+app.add_middleware(CORSMiddleware, ...)        # outermost: runs 1st — wraps all 401s with CORS headers
+```
+
+**Prevention:** AuthGuard MUST be registered before CORSMiddleware. If it is registered after (= outermost), 401 responses bypass CORS and browsers block them silently.
+
 ## Refactoring safety
 - Run `ruff check` after each refactor step, not only at the end.
 - F821 (undefined name) = always a runtime crash. Treat as blocker.

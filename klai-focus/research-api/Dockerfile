@@ -10,10 +10,11 @@ COPY . .
 
 ENV LOG_LEVEL=INFO
 
-RUN adduser --disabled-password --gecos "" klai
+RUN adduser --disabled-password --gecos "" klai && \
+    chmod +x /app/entrypoint.sh
 
 EXPOSE 8030
 
 USER klai
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8030"]
+CMD ["/app/entrypoint.sh"]

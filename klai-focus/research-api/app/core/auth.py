@@ -4,7 +4,6 @@ JWT validation for research-api.
 Validates Zitadel access tokens independently using JWKS from the Zitadel issuer.
 Extracts user_id (sub) and resolves tenant_id from the Zitadel org claim.
 """
-import logging
 
 import httpx
 from fastapi import Depends, HTTPException, status
@@ -16,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 
-logger = logging.getLogger(__name__)
 bearer = HTTPBearer()
 
 _jwks_cache: dict | None = None
@@ -60,15 +58,13 @@ async def _decode_token(token: str) -> dict:
         if key is None:
             raise JWTError("Signing key not found in JWKS")
 
+        # SPEC-SEC-012: audience is mandatory. Settings validator guarantees
+        # settings.zitadel_api_audience is non-empty; no conditional branch.
         decode_kwargs: dict = {
             "algorithms": ["RS256"],
             "issuer": settings.zitadel_issuer,
+            "audience": settings.zitadel_api_audience,
         }
-        if settings.zitadel_api_audience:
-            decode_kwargs["audience"] = settings.zitadel_api_audience
-        else:
-            logger.warning("ZITADEL_API_AUDIENCE not set — audience verification disabled")
-            decode_kwargs["options"] = {"verify_aud": False}
 
         payload = jwt.decode(token, key, **decode_kwargs)
         return payload

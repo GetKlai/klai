@@ -37,6 +37,7 @@
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
+        X-XSS-Protection "0"
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "geolocation=(), microphone=self, camera=()"
         -Server
@@ -178,8 +179,14 @@
     # Dev environment — dev.getklai.com routes to portal-api-dev + /srv/portal-dev
     # Must come BEFORE the general /api/* handler below.
     # Uses `route` to preserve directive order: reverse_proxy for /api/*, static fallback for everything else.
+    #
+    # SPEC-SEC-008 F-018 — protected by basic_auth to gate public internet access.
+    # Credentials stored in SOPS (CADDY_DEV_USERNAME / CADDY_DEV_PASSWORD_HASH).
     @dev-host host dev.{$DOMAIN}
     handle @dev-host {
+        basic_auth {
+            {$CADDY_DEV_USERNAME} {$CADDY_DEV_PASSWORD_HASH}
+        }
         route {
             @dev-api path /api/*
             reverse_proxy @dev-api portal-api-dev:8010
@@ -201,39 +208,16 @@
         reverse_proxy portal-api:8010
     }
 
-    # Research module (document Q&A)
-    handle /research/* {
-        request_body {
-            max_size 52428800
-        }
-        rate_limit {
-            zone research_per_ip {
-                key {remote_host}
-                events 30
-                window 1m
-            }
-        }
-        uri strip_prefix /research
-        reverse_proxy research-api:8030
-    }
+    # SEC-023 / F-038 — Research/Scribe/Docs are no longer publicly routed.
+    # Frontend calls /api/research/*, /api/scribe/*, /api/docs/* which hit the
+    # BFF proxy in portal-api (app/api/proxy.py). That handler pulls the Zitadel
+    # access_token from the BFF session and forwards to the internal service
+    # with Authorization: Bearer injected. The services listen only on the
+    # klai-net Docker network now — no Caddy exposure.
 
-    # Scribe transcription service
-    handle /scribe/* {
-        request_body {
-            max_size 104857600
-        }
-        rate_limit {
-            zone scribe_per_ip {
-                key {remote_host}
-                events 20
-                window 1m
-            }
-        }
-        uri strip_prefix /scribe
-        reverse_proxy scribe-api:8020
-    }
-
-    # Vexa meeting bot manager
+    # Vexa meeting bot gateway (SEC-013 F-030 — fix dead route from VEXA-003 migration)
+    # Route maps /bots/<path> → api-gateway:8000/<path>. The old `vexa-bot-manager`
+    # service was replaced by `api-gateway` during the upstream-main rebuild.
     handle /bots/* {
         rate_limit {
             zone bots_per_ip {
@@ -243,19 +227,7 @@
             }
         }
         uri strip_prefix /bots
-        reverse_proxy vexa-bot-manager:8000
-    }
-
-    # Klai Docs — KB reader + editor + API under /docs/*
-    handle /docs/* {
-        rate_limit {
-            zone docs_per_ip {
-                key {remote_host}
-                events 60
-                window 1m
-            }
-        }
-        reverse_proxy docs-app:3010
+        reverse_proxy api-gateway:8000
     }
 
     # Portal SPA — static files (fallback for all *.${DOMAIN})

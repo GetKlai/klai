@@ -27,7 +27,7 @@ SENSITIVE_FIELDS: dict[str, list[str]] = {
     "notion": ["access_token"],
     "google_drive": ["oauth_token", "refresh_token", "access_token", "service_account_json"],
     "ms_docs": ["oauth_token", "refresh_token", "access_token"],
-    "web_crawler": ["auth_headers"],
+    "web_crawler": ["auth_headers", "cookies"],
     "confluence": ["api_token"],
     "slack": ["bot_token"],
     "airtable": ["api_key"],
@@ -167,6 +167,18 @@ class ConnectorCredentialStore:
         old_cipher = AESGCMCipher(bytes.fromhex(old_kek_hex))
         new_cipher = AESGCMCipher(bytes.fromhex(new_kek_hex))
 
+        # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+        # @MX:REASON: [AUTO] KEK rotation re-encrypts every org's DEK in a single
+        #   administrative pass. This function is invoked only by operator-initiated
+        #   key rotation, never from a user request — scoping to a single org via
+        #   set_tenant() would defeat the purpose (partial rotation leaves the system
+        #   in a state where some orgs' credentials are unreadable under the new KEK).
+        #   Whether strict RLS under portal_api.bypassrls=false lets this sweep see
+        #   all rows is the unresolved F-015 "RLS paradox" tracked in
+        #   .moai/audit/04-3-prework-caddy.md PRE-A. Do not add set_tenant(db, org_id)
+        #   here without first resolving that paradox — doing so may silently make
+        #   rotation a no-op and leave orphaned DEKs permanently unreadable.
+        # @MX:SPEC: SPEC-SEC-007
         result = await db.execute(select(PortalOrg).where(PortalOrg.connector_dek_enc.isnot(None)))
         orgs = result.scalars().all()
         count = 0

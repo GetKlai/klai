@@ -40,8 +40,6 @@ class NotionAdapter(BaseAdapter):
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        # Cache of image refs extracted during fetch_document, keyed by page ID.
-        self._image_cache: dict[str, list[ImageRef]] = {}
 
     async def aclose(self) -> None:
         """No persistent resources to close."""
@@ -300,18 +298,10 @@ class NotionAdapter(BaseAdapter):
         texts = _flatten_block_texts(blocks)
         images = _extract_image_blocks(blocks)
         if images:
-            self._image_cache[ref.ref] = images
+            ref.images = images
             logger.info("Extracted %d images from Notion page %s", len(images), ref.ref)
         content = "\n".join(texts)
         return content.encode("utf-8")
-
-    def get_cached_images(self, page_id: str) -> list[ImageRef]:
-        """Return image refs extracted during the last fetch_document call."""
-        return self._image_cache.pop(page_id, [])
-
-    async def post_sync(self, connector: Any) -> None:
-        """Clear the per-page image cache after sync completes."""
-        self._image_cache.clear()
 
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return cursor state based on max(last_edited_time) of accessible pages.

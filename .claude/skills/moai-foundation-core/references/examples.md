@@ -11,7 +11,7 @@
 **Input**:
 ```python
 # 개발된 코드에 TRUST 5 검증 요청
-Task(
+Agent(
     subagent_type="core-quality",
     prompt="Validate code quality using TRUST 5 framework",
     context={
@@ -97,24 +97,24 @@ Token Usage: 35K/40K
 # 복잡한 작업: 순차 + 병렬 위임 조합
 async def develop_microservice():
     # Phase 1: 순차 실행 (의존성 있음)
-    design = await Task(
+    design = await Agent(
         subagent_type="api-designer",
         prompt="Design REST API for order management service"
     )
 
     # Phase 2: 병렬 실행 (독립적)
     backend, frontend, tests = await Promise.all([
-        Task(
+        Agent(
             subagent_type="backend-expert",
             prompt="Implement API endpoints",
             context={"design": design}
         ),
-        Task(
+        Agent(
             subagent_type="frontend-expert",
             prompt="Create admin dashboard UI",
             context={"design": design}
         ),
-        Task(
+        Agent(
             subagent_type="ddd-implementer",
             prompt="Generate integration tests",
             context={"design": design}
@@ -122,7 +122,7 @@ async def develop_microservice():
     ])
 
     # Phase 3: 최종 검증
-    validation = await Task(
+    validation = await Agent(
         subagent_type="core-quality",
         prompt="Validate complete implementation",
         context={"components": [backend, frontend, tests]}
@@ -174,15 +174,15 @@ Efficiency Gain: 41%
 
 ```python
 # SPEC Phase: 30K 예산
-Task(subagent_type="workflow-spec", prompt="Create SPEC")
+Agent(subagent_type="workflow-spec", prompt="Create SPEC")
 # → SPEC 완료 후 반드시 /clear 실행 (45-50K 절약)
 
 # DDD Phase: 180K 예산
-Task(subagent_type="ddd-implementer", prompt="Implement with DDD")
+Agent(subagent_type="ddd-implementer", prompt="Implement with DDD")
 # → 선택적 파일 로딩, 필요한 파일만 로드
 
 # Docs Phase: 40K 예산
-Task(subagent_type="workflow-docs", prompt="Generate documentation")
+Agent(subagent_type="workflow-docs", prompt="Generate documentation")
 # → 결과 캐싱 및 템플릿 재사용
 ```
 
@@ -220,20 +220,20 @@ Task(subagent_type="workflow-docs", prompt="Generate documentation")
 
 ```python
 # 먼저 문제 분석
-analysis = await Task(
+analysis = await Agent(
     subagent_type="debug-helper",
     prompt="Analyze the error and classify type"
 )
 
 # 분석 결과에 따라 위임
 if analysis.type == "security":
-    await Task(subagent_type="security-expert", prompt="Fix security issue")
+    await Agent(subagent_type="security-expert", prompt="Fix security issue")
 elif analysis.type == "performance":
-    await Task(subagent_type="performance-expert", prompt="Optimize performance")
+    await Agent(subagent_type="performance-expert", prompt="Optimize performance")
 elif analysis.type == "logic":
-    await Task(subagent_type="backend-expert", prompt="Fix business logic")
+    await Agent(subagent_type="backend-expert", prompt="Fix business logic")
 else:
-    await Task(subagent_type="debug-expert", prompt="General debugging")
+    await Agent(subagent_type="debug-expert", prompt="General debugging")
 ```
 
 ---
@@ -256,7 +256,7 @@ def moai_direct_execution():
 
 ```python
 # 올바른 예시
-await Task(
+await Agent(
     subagent_type="backend-expert",
     prompt="Modify src/app.py to add new feature",
     context={"requirements": feature_spec}
@@ -288,9 +288,9 @@ await Task(
 
 ```python
 # 잘못된 예시 - 비효율적
-backend = await Task(subagent_type="backend-expert", ...)
-frontend = await Task(subagent_type="frontend-expert", ...)  # 대기 불필요
-docs = await Task(subagent_type="docs-generator", ...)       # 대기 불필요
+backend = await Agent(subagent_type="backend-expert", ...)
+frontend = await Agent(subagent_type="frontend-expert", ...)  # 대기 불필요
+docs = await Agent(subagent_type="docs-generator", ...)       # 대기 불필요
 ```
 
 **Solution**: 독립적인 작업은 병렬 실행
@@ -298,9 +298,9 @@ docs = await Task(subagent_type="docs-generator", ...)       # 대기 불필요
 ```python
 # 올바른 예시 - 효율적
 backend, frontend, docs = await Promise.all([
-    Task(subagent_type="backend-expert", ...),
-    Task(subagent_type="frontend-expert", ...),
-    Task(subagent_type="docs-generator", ...)
+    Agent(subagent_type="backend-expert", ...),
+    Agent(subagent_type="frontend-expert", ...),
+    Agent(subagent_type="docs-generator", ...)
 ])
 ```
 
@@ -318,17 +318,17 @@ git add . && git commit -m "Add feature" && git push
 
 ```python
 # 올바른 예시
-validation = await Task(
+validation = await Agent(
     subagent_type="core-quality",
     prompt="Validate with TRUST 5 before merge"
 )
 
 if validation.passed:
     # 안전하게 머지
-    await Task(subagent_type="git-manager", prompt="Create PR and merge")
+    await Agent(subagent_type="git-manager", prompt="Create PR and merge")
 else:
     # 이슈 해결 후 재검증
-    await Task(subagent_type="debug-expert", prompt="Fix validation issues")
+    await Agent(subagent_type="debug-expert", prompt="Fix validation issues")
 ```
 
 ---

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, BookMarked, Globe, Lock, Pencil, ExternalLink } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -28,13 +28,12 @@ interface KBWithAccess {
 
 function DocsPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
 
   const { data: kbs = [], isLoading, error, refetch } = useQuery<KBWithAccess[]>({
     queryKey: ['docs-kbs-with-access'],
-    queryFn: async () => apiFetch<KBWithAccess[]>(`/api/app/knowledge-bases-with-access`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<KBWithAccess[]>(`/api/app/knowledge-bases-with-access`),
+    enabled: auth.isAuthenticated,
   })
 
   const accessibleKbs = kbs.filter((kb) => kb.is_accessible)

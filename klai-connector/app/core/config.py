@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     zitadel_introspection_url: str
     zitadel_client_id: str
     zitadel_client_secret: str
+    # Expected `aud` claim value for introspected tokens (SPEC-SEC-008 F-017).
+    # When empty, audience verification is skipped (warn-only fallback) so that
+    # existing deployments without a configured audience continue to work. SHOULD
+    # be set to the klai-connector Zitadel application audience for defense-in-depth.
+    zitadel_api_audience: str = ""
 
     # GitHub App
     github_app_id: str
@@ -39,6 +44,15 @@ class Settings(BaseSettings):
     portal_api_url: str = "http://portal-api:8100"
     portal_internal_secret: str = ""  # Secret klai-connector sends TO portal (must match portal's INTERNAL_SECRET)
     portal_caller_secret: str = ""  # Secret portal sends TO klai-connector (must match portal's KLAI_CONNECTOR_SECRET)
+
+    # Google Drive OAuth (SPEC-KB-025)
+    google_drive_client_id: str = ""  # empty = connector disabled
+    google_drive_client_secret: str = ""
+
+    # SharePoint OAuth (prep for SPEC-KB-025b)
+    sharepoint_client_id: str = ""  # empty = connector disabled
+    sharepoint_client_secret: str = ""
+    sharepoint_tenant_authority: str = "https://login.microsoftonline.com/common"
 
     # Image storage (Garage S3)
     garage_s3_endpoint: str = ""

@@ -1,5 +1,6 @@
 ---
-paths: "**/.claude/agents/**,**/.moai/worktrees/**"
+description: Worktree integration guide with path isolation rules for agents using isolation worktree
+globs: "**/.claude/agents/**,**/.claude/worktrees/**"
 ---
 
 # Worktree Integration Guide
@@ -16,8 +17,8 @@ MoAI-ADK supports two complementary worktree systems for isolated development:
 - Used for subagent isolation via `isolation: worktree` in agent definitions (v2.1.49+)
 - CLI access: `claude --worktree` or `claude -w` (user-level flag)
 
-**MoAI Worktree** (`.moai/worktrees/`):
-- Persistent, SPEC-scoped workspaces
+**MoAI Worktree** (`~/.moai/worktrees/{ProjectName}/`):
+- Persistent, SPEC-scoped workspaces in global home directory
 - Managed via `moai worktree` CLI commands
 - Used for multi-session SPEC development and team collaboration
 
@@ -25,7 +26,7 @@ MoAI-ADK supports two complementary worktree systems for isolated development:
 
 | Feature | Claude Native | MoAI |
 |---------|--------------|------|
-| **Path** | `.claude/worktrees/<name>/` | `.moai/worktrees/{Project}/{SPEC}/` |
+| **Path** | `.claude/worktrees/<name>/` | `~/.moai/worktrees/{Project}/{SPEC}/` |
 | **Lifetime** | Ephemeral (session-scoped) | Persistent (SPEC-scoped) |
 | **Purpose** | Session isolation for subagents | SPEC development, PR creation |
 | **CLI** | `claude -w` (user) or `isolation: worktree` (agent) | `moai worktree new/list/remove` |
@@ -68,19 +69,19 @@ For agents that need isolated execution (v2.1.49+):
 
 ```yaml
 ---
-name: team-backend-dev
+name: my-implementer
 isolation: worktree   # Agent runs in its own isolated worktree
 background: true      # Agent runs without blocking main conversation
 ---
 ```
 
 When to use `isolation: worktree`:
-- Implementation agents that write files (team-backend-dev, team-frontend-dev, team-tester, team-designer)
+- Implementation teammates that write files (role_profiles: implementer, tester, designer)
 - Prevents file conflicts between parallel teammates
 - Each agent gets its own clean worktree at `.claude/worktrees/<auto-name>/`
 
 When NOT to use `isolation: worktree`:
-- Read-only agents (team-researcher, team-analyst, team-architect, team-quality)
+- Read-only teammates (role_profiles: researcher, analyst, reviewer)
 - `permissionMode: plan` already prevents writes; adding isolation adds overhead without benefit
 
 ### `background: true` in Agent Frontmatter
@@ -89,14 +90,20 @@ Run agent without blocking the main conversation (v2.1.46+):
 
 ```yaml
 ---
-name: team-backend-dev
+name: team-coder
 background: true   # Returns immediately; results delivered on next turn
 ---
 ```
 
 Use with `isolation: worktree` for optimal parallel execution in team mode.
 
-Kill background agent: Press `Ctrl+F` in Claude Code interface.
+[HARD] Background agents auto-deny Write/Edit operations. Only use `background: true` for:
+- Read-only research and analysis agents
+- Agents whose write paths are pre-approved in settings.json `permissions.allow`
+
+For write-heavy agents without pre-approval, use `background: false` (foreground, sequential).
+
+Kill background agent: Press `Ctrl+X Ctrl+K` in Claude Code interface (v2.1.83+).
 
 ## Worktree Selection Rules [HARD]
 
@@ -104,7 +111,7 @@ Kill background agent: Press `Ctrl+F` in Claude Code interface.
 
 ```
 Is this a team mode implementation with parallel agents?
-  YES → Use Task(isolation: "worktree") for write agents
+  YES → Use Agent(isolation: "worktree") for write agents
         Do NOT use isolation for read-only agents
   NO ↓
 
@@ -117,15 +124,15 @@ Is this a user-initiated parallel session?
   NO ↓
 
 Is this a one-shot sub-agent task?
-  YES → Use Task(isolation: "worktree") if agent writes files
-        Use Task() without isolation if agent is read-only
+  YES → Use Agent(isolation: "worktree") if agent writes files
+        Use Agent() without isolation if agent is read-only
   NO → No worktree needed
 ```
 
 ### HARD Rules
 
-- [HARD] Implementation agents in team mode (team-backend-dev, team-frontend-dev, team-tester, team-designer) MUST use `isolation: "worktree"` when spawned via Task()
-- [HARD] Read-only agents (team-researcher, team-analyst, team-architect, team-quality) MUST NOT use `isolation: "worktree"` — their `permissionMode: plan` already prevents writes
+- [HARD] Implementation teammates in team mode (role_profiles: implementer, tester, designer) MUST use `isolation: "worktree"` when spawned via Agent()
+- [HARD] Read-only teammates (role_profiles: researcher, analyst, reviewer) MUST NOT use `isolation: "worktree"` — their `mode: "plan"` already prevents writes
 - [HARD] One-shot sub-agents that write files (expert-backend, expert-frontend, manager-ddd, manager-tdd) SHOULD use `isolation: "worktree"` when making cross-file changes
 - [HARD] GitHub workflow agents (fixer agents in /moai github issues) MUST use `isolation: "worktree"` for branch isolation
 
@@ -137,7 +144,7 @@ Is this a one-shot sub-agent task?
 - **Parallel sessions**: Running multiple independent Claude sessions on same repo
 - **Quick experiments**: Testing code changes without affecting main workspace
 
-### Use `Task(isolation: "worktree")` for:
+### Use `Agent(isolation: "worktree")` for:
 
 - **Parallel team agents**: Multiple implementation teammates working simultaneously
 - **File conflict prevention**: Agents that write to different file patterns
@@ -161,7 +168,7 @@ PLAN PHASE
 
 RUN PHASE
   MoAI Worktree: SPEC implementation, persistent state
-  Team write agents: Task(isolation: "worktree") for parallel execution
+  Team write agents: Agent(isolation: "worktree") for parallel execution
   Team read agents: No worktree (quality validation, analysis)
 
 SYNC PHASE
@@ -173,7 +180,8 @@ SYNC PHASE
 ### Implementation Agents (isolation: worktree + background: true)
 
 ```yaml
-# team-backend-dev, team-frontend-dev, team-tester, team-designer
+# Implementation teammates (role_profiles: implementer, tester, designer)
+# Spawned via: Agent(subagent_type: "general-purpose", mode: "acceptEdits", isolation: "worktree")
 isolation: worktree   # Isolated worktree per agent
 background: true      # Non-blocking parallel execution
 permissionMode: acceptEdits
@@ -182,8 +190,9 @@ permissionMode: acceptEdits
 ### Research/Analysis Agents (no isolation needed)
 
 ```yaml
-# team-researcher, team-analyst, team-architect, team-quality
-# No isolation: worktree (read-only, permissionMode: plan prevents writes)
+# Read-only teammates (role_profiles: researcher, analyst, reviewer)
+# Spawned via: Agent(subagent_type: "general-purpose", mode: "plan")
+# No isolation: worktree (read-only, mode: plan prevents writes)
 permissionMode: plan  # Read-only mode already provides safety
 ```
 
@@ -202,6 +211,69 @@ Hook scripts are located at:
 
 Currently the handlers log worktree creation and removal for session tracking.
 
+## Prompt Path Rules for Worktree-Isolated Agents
+
+When the orchestrator generates prompts for agents spawned with `isolation: "worktree"`, paths in the prompt determine where the agent operates. Incorrect paths bypass worktree isolation entirely.
+
+### HARD Rules
+
+- [HARD] Do NOT include absolute paths to the main project directory in agent prompts for write-target files
+- [HARD] Do NOT include `cd /absolute/project/path &&` in Bash commands within agent prompts
+- [HARD] Reference write-target files by project-root-relative paths (e.g., `src/domains/auth/handler.go`) and let the agent resolve from its own CWD
+- [HARD] `$CLAUDE_PROJECT_DIR` in hook commands is acceptable — Claude Code resolves this to the correct directory for the agent's context
+
+### Path Categories
+
+| Category | Example | Absolute Path OK? | Reason |
+|----------|---------|-------------------|--------|
+| Write-target files | Source code, tests | NO — use relative | Agent CWD is worktree root; relative paths resolve correctly |
+| Read-only references | Skills, configs via `${CLAUDE_SKILL_DIR}` | YES | Content is identical in main repo; read-only access is safe |
+| SPEC documents | `.moai/specs/SPEC-XXX/spec.md` | Relative preferred | SPEC files are copied to worktree during checkout |
+| Bash commands | `go test ./...` | NO `cd` prefix | Agent CWD is already set to worktree root |
+
+### How It Works
+
+When `isolation: "worktree"` is set, Claude Code:
+1. Creates a temporary worktree from the current branch
+2. Sets the agent's CWD to the worktree root
+3. The agent constructs absolute paths from its own CWD
+
+```
+Main repo:  /Users/user/project/src/auth/handler.go
+Worktree:   /Users/user/project/.claude/worktrees/abc123/src/auth/handler.go
+```
+
+Both share the same project structure. `src/auth/handler.go` resolves correctly in either context.
+
+### Anti-Pattern Examples
+
+```
+# WRONG: Absolute path in prompt bypasses worktree
+"Read /Users/user/project/src/auth/handler.go and fix the bug"
+
+# WRONG: cd to main project in Bash command
+"Run: cd /Users/user/project && go test ./..."
+
+# CORRECT: Relative path — agent resolves from its own CWD
+"The bug is in src/auth/handler.go. Read the file and fix it."
+
+# CORRECT: No cd prefix — agent CWD is already worktree root
+"Run: go test ./..."
+```
+
+## Minimum Version Requirements
+
+| Feature | Minimum Version | Notes |
+|---------|----------------|-------|
+| `isolation: worktree` in Agent frontmatter | 2.1.49 | Basic worktree isolation |
+| `background: true` in Agent frontmatter | 2.1.46 | Non-blocking agent execution |
+| `claude --worktree` user flag | 2.1.50 | User-initiated worktree sessions |
+| `Ctrl+X Ctrl+K` to kill background agent | 2.1.83 | Kill stuck background agents |
+| Worktree CWD isolation fix | **2.1.97** | Prior versions leaked agent CWD back to parent session |
+| Stop/SubagentStop hook stability | **2.1.97** | Prior versions failed on long-running sessions |
+
+**Recommended**: Claude Code **2.1.97 or later** for reliable worktree isolation and hook stability.
+
 ## Troubleshooting
 
 | Issue | Cause | Solution |
@@ -217,7 +289,7 @@ Currently the handlers log worktree creation and removal for session tracking.
 | SPEC Phase | Worktree Type | Location |
 |------------|--------------|----------|
 | Plan | Claude Native | `.claude/worktrees/` (ephemeral) |
-| Run | MoAI | `.moai/worktrees/{Project}/{SPEC}/` |
+| Run | MoAI | `~/.moai/worktrees/{Project}/{SPEC}/` |
 | Sync | MoAI | Same as Run phase |
 
 ---

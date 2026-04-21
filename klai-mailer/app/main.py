@@ -128,6 +128,93 @@ async def notify(request: Request) -> JSONResponse:
     return JSONResponse(status_code=200, content={"sent": True})
 
 
+# ---------------------------------------------------------------------------
+# Internal send endpoint (portal-api → mailer, SPEC-AUTH-006 R7)
+# ---------------------------------------------------------------------------
+
+# Simple templates for internal transactional emails
+_INTERNAL_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
+    "join_request_admin": {
+        "nl": {
+            "subject": "[Klai] Toegangsverzoek van {name} ({email})",
+            "body": (
+                "<p>Hallo,</p>"
+                "<p><strong>{name}</strong> ({email}) heeft een toegangsverzoek ingediend voor je Klai-werkruimte.</p>"
+                "<p>Je kunt het verzoek goedkeuren of afwijzen in de <a href='{brand_url}/admin/settings/join-requests'>beheeromgeving</a>.</p>"
+            ),
+        },
+        "en": {
+            "subject": "[Klai] Access request from {name} ({email})",
+            "body": (
+                "<p>Hello,</p>"
+                "<p><strong>{name}</strong> ({email}) has submitted an access request for your Klai workspace.</p>"
+                "<p>You can approve or deny the request in the <a href='{brand_url}/admin/settings/join-requests'>admin settings</a>.</p>"
+            ),
+        },
+    },
+    "join_request_approved": {
+        "nl": {
+            "subject": "[Klai] Je toegangsverzoek is goedgekeurd",
+            "body": (
+                "<p>Hallo {name},</p>"
+                "<p>Je toegangsverzoek voor Klai is goedgekeurd. Je kunt nu inloggen op je werkruimte:</p>"
+                "<p><a href='{workspace_url}'>{workspace_url}</a></p>"
+            ),
+        },
+        "en": {
+            "subject": "[Klai] Your access request has been approved",
+            "body": (
+                "<p>Hello {name},</p>"
+                "<p>Your access request for Klai has been approved. You can now log in to your workspace:</p>"
+                "<p><a href='{workspace_url}'>{workspace_url}</a></p>"
+            ),
+        },
+    },
+}
+
+
+@app.post("/internal/send")
+async def internal_send(request: Request) -> JSONResponse:
+    """Send a transactional email using a predefined template.
+
+    Authenticated via X-Internal-Secret header (same as portal-api internal endpoints).
+    """
+    if not settings.internal_secret or request.headers.get("X-Internal-Secret") != settings.internal_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    body = json.loads(await request.body())
+    template_name = body.get("template", "")
+    to_address = body.get("to", "")
+    locale = body.get("locale", "nl")
+    variables = body.get("variables", {})
+
+    template = _INTERNAL_TEMPLATES.get(template_name)
+    if not template:
+        raise HTTPException(status_code=400, detail=f"Unknown template: {template_name}")
+
+    lang_template = template.get(locale, template.get("nl", {}))
+
+    # Add branding vars
+    variables["brand_url"] = settings.brand_url
+
+    subject = lang_template["subject"].format(**variables)
+    body_html = lang_template["body"].format(**variables)
+
+    # Wrap in the Klai email template
+    html_email = renderer.wrap(
+        {"subject": subject, "body": body_html, "button_url": "", "button_text": ""},
+        _branding,
+    )
+
+    if to_address:
+        await send_email(to_address=to_address, subject=subject, html_body=html_email)
+        logger.info("Internal email sent template=%s to=%s", template_name, to_address)
+    else:
+        logger.warning("No to_address for internal email template=%s", template_name)
+
+    return JSONResponse(status_code=200, content={"sent": True})
+
+
 @app.post("/debug")
 async def debug(request: Request) -> JSONResponse:
     """

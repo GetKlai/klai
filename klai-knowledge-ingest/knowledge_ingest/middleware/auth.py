@@ -2,7 +2,11 @@
 Internal secret authentication middleware.
 
 Validates the X-Internal-Secret header on all requests except /health.
-If knowledge_ingest_secret is empty, authentication is skipped (backward compat).
+
+SPEC-SEC-011: ``knowledge_ingest_secret`` is a required configuration value —
+emptiness is rejected at settings load time, so this middleware never runs
+with an unset secret. There is no fail-open branch; the only possible
+outcomes are "valid secret → allow" or "invalid/missing secret → 401".
 """
 import hmac
 import json
@@ -16,10 +20,6 @@ from knowledge_ingest.config import settings
 
 class InternalSecretMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Skip auth if secret is not configured (gradual rollout)
-        if not settings.knowledge_ingest_secret:
-            return await call_next(request)
-
         # Exempt health endpoint
         if request.url.path == "/health":
             return await call_next(request)

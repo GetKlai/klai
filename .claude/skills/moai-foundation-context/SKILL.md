@@ -1,12 +1,9 @@
 ---
 name: moai-foundation-context
 description: >
-  Manages context window optimization, session state persistence, and token budget
-  allocation for multi-agent workflows.
-  Use when dealing with token budget management, context window limits, session handoff,
-  state persistence across agents, or /clear strategies.
-  Do NOT use for agent orchestration patterns
-  (use moai-foundation-core instead).
+  Manages context window optimization, session state persistence, and
+  token budget allocation for multi-agent workflows. Use for token
+  budget management, context limits, or session handoff across agents.
 license: Apache-2.0
 compatibility: Designed for Claude Code
 allowed-tools: Read Grep Glob mcp__context7__resolve-library-id mcp__context7__get-library-docs
@@ -29,21 +26,7 @@ progressive_disclosure:
 
 # MoAI Extension: Triggers
 triggers:
-  keywords:
-    - "token"
-    - "context"
-    - "session"
-    - "budget"
-    - "optimization"
-    - "handoff"
-    - "state"
-    - "memory"
-    - "/clear"
-    - "context window"
-    - "token limit"
-    - "session persistence"
-    - "context management"
-    - "multi-agent"
+  keywords: ["token", "context", "session", "budget", "optimization", "handoff", "state", "memory", "/clear", "context window", "token limit", "session persistence", "context management", "multi-agent"]
   agents:
     - "manager-spec"
     - "manager-ddd"

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
@@ -48,7 +48,6 @@ interface Group {
 
 function EditUserPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { userId } = Route.useParams()
@@ -65,8 +64,8 @@ function EditUserPage() {
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`),
+    enabled: auth.isAuthenticated,
   })
 
   const user = usersData?.users.find((u) => u.zitadel_user_id === userId)
@@ -83,24 +82,24 @@ function EditUserPage() {
     queryKey: ['admin-user-groups', userId],
     queryFn: async () => {
       try {
-        return await apiFetch<{ groups: Group[] }>(`/api/admin/users/${userId}/groups`, token)
+        return await apiFetch<{ groups: Group[] }>(`/api/admin/users/${userId}/groups`)
       } catch {
         return { groups: [] as Group[] }
       }
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   const { data: allGroupsData } = useQuery({
     queryKey: ['admin-groups'],
     queryFn: async () => {
       try {
-        return await apiFetch<{ groups: Group[] }>(`/api/admin/groups`, token)
+        return await apiFetch<{ groups: Group[] }>(`/api/admin/groups`)
       } catch {
         return { groups: [] as Group[] }
       }
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   const allGroups = allGroupsData?.groups ?? []
@@ -140,18 +139,18 @@ function EditUserPage() {
       const groupsToRemove = [...originalGroupIds].filter((id) => !memberGroupIds.has(id))
 
       await Promise.all([
-        apiFetch(`/api/admin/users/${userId}`, token, {
+        apiFetch(`/api/admin/users/${userId}`, {
           method: 'PATCH',
           body: JSON.stringify({ first_name: firstName, last_name: lastName, preferred_language: language }),
         }),
         ...groupsToAdd.map((id) =>
-          apiFetch(`/api/admin/groups/${id}/members`, token, {
+          apiFetch(`/api/admin/groups/${id}/members`, {
             method: 'POST',
             body: JSON.stringify({ zitadel_user_id: userId }),
           }),
         ),
         ...groupsToRemove.map((id) =>
-          apiFetch(`/api/admin/groups/${id}/members/${userId}`, token, { method: 'DELETE' }),
+          apiFetch(`/api/admin/groups/${id}/members/${userId}`, { method: 'DELETE' }),
         ),
       ])
 

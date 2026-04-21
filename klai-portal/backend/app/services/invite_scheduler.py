@@ -60,6 +60,16 @@ async def schedule_invite(invite: ParsedInvite, zitadel_user_id: str, org_id: in
         return
 
     # Check DB for existing ical_uid (dedup) and rate limit
+    # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+    # @MX:REASON: [AUTO] iCal UID dedupe must scan across all tenants because iCal UIDs
+    #   are globally unique across orgs, and an invite re-delivered to a different tenant
+    #   must still be recognised as the same meeting. This scheduled lookup is a system
+    #   reconciliation, not a user request. Whether strict RLS under
+    #   portal_api.bypassrls=false permits this query at all is the unresolved F-015
+    #   "RLS paradox" tracked in .moai/audit/04-3-prework-caddy.md PRE-A. Do not add
+    #   set_tenant(db, org_id) here without first resolving that paradox — doing so may
+    #   silently break cross-tenant dedupe. Do not copy this pattern for user-scoped work.
+    # @MX:SPEC: SPEC-SEC-007
     async with AsyncSessionLocal() as db:
         existing = await db.scalar(select(VexaMeeting.id).where(VexaMeeting.ical_uid == invite.uid))
         if existing is not None:
@@ -93,6 +103,16 @@ async def cancel_invite(uid: str) -> None:
         logger.info("Cancelled scheduled task for uid=%s", uid)
 
     # Update DB record if exists
+    # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+    # @MX:REASON: [AUTO] Cancellation lookup must scan across all tenants because iCal
+    #   UIDs are globally unique across orgs — the cancel signal does not carry the
+    #   original invite's org context. This is a scheduler reconciliation, not a user
+    #   request. Whether strict RLS under portal_api.bypassrls=false permits this query
+    #   at all is the unresolved F-015 "RLS paradox" tracked in
+    #   .moai/audit/04-3-prework-caddy.md PRE-A. Do not add set_tenant(db, org_id) here
+    #   without first resolving that paradox — doing so may silently break cancellation
+    #   propagation.
+    # @MX:SPEC: SPEC-SEC-007
     async with AsyncSessionLocal() as db:
         meeting = await db.scalar(select(VexaMeeting).where(VexaMeeting.ical_uid == uid))
         if meeting is not None:
@@ -116,6 +136,18 @@ async def _join_meeting(invite: ParsedInvite, zitadel_user_id: str, org_id: int 
         return
 
     try:
+        # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+        # @MX:REASON: [AUTO] Final dedup at join-time must scan across all tenants because
+        #   iCal UIDs are globally unique across orgs, and a competing invite may have
+        #   been accepted in a different tenant while this task was sleeping. This is a
+        #   scheduler task, not a user request — there is no single org_id to bind (the
+        #   incoming org_id is for the new row, not the dedup scan). Whether strict RLS
+        #   under portal_api.bypassrls=false permits this query at all is the unresolved
+        #   F-015 "RLS paradox" tracked in .moai/audit/04-3-prework-caddy.md PRE-A. Do
+        #   not add set_tenant(db, org_id) here without first resolving that paradox —
+        #   doing so would scope the dedup to a single tenant and re-introduce duplicate
+        #   meetings across orgs.
+        # @MX:SPEC: SPEC-SEC-007
         async with AsyncSessionLocal() as db:
             # Final dedup check
             existing = await db.scalar(select(VexaMeeting.id).where(VexaMeeting.ical_uid == invite.uid))
@@ -154,8 +186,3 @@ async def _join_meeting(invite: ParsedInvite, zitadel_user_id: str, org_id: int 
         logger.exception("Unexpected error joining meeting uid=%s", invite.uid)
     finally:
         _scheduled.pop(invite.uid, None)
-
-
-def get_scheduled() -> dict[str, asyncio.Task[None]]:
-    """Return the scheduled tasks dict (for testing)."""
-    return _scheduled

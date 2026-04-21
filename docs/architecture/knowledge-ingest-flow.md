@@ -1,7 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
 > Engineering reference for the running system on core-01.
-> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — March 2026 (updated 2026-04-05).
+> Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-04-16).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
@@ -41,9 +41,13 @@ Klai uses all three:
 | Semantic search | Qdrant | "Find relevant content for this question" |
 | Relationship traversal | FalkorDB (via Graphiti) | "What is connected to this?" |
 
-In practice, most retrieval today is Qdrant-only. The graph layer (FalkorDB) is
-implemented but gated behind a feature flag — it runs in production only when
-`settings.graphiti_enabled` is on.
+Retrieval today is Qdrant + FalkorDB: the Qdrant 3-leg RRF fusion runs in
+parallel with a Graphiti graph search against FalkorDB, and the two result
+sets are RRF-merged before reranking. `GRAPHITI_ENABLED=true` on both
+`knowledge-ingest` (write side) and `retrieval-api` (read side). Graph retrieval
+was briefly disabled in March 2026 while the LLM/reranker dependencies still
+ran on CPU; it is back online now that gpu-01 serves them. See
+`klai-knowledge-architecture.md §5.3`.
 
 ---
 
@@ -102,8 +106,10 @@ version of the document from Gitea (not the content at queue time), so the knowl
 always receives the final version.
 
 ```
-User pauses typing for 1.5s (auto-save debounce in klai-docs)
-  → serializes to HTML + YAML frontmatter
+User pauses typing for 1.5s (auto-save debounce in klai-portal)
+  → serializes to BlockNote JSON + YAML frontmatter (primary; markdown export kept)
+  → PATCH via klai-docs route.ts (client-owned SHA, promise-queued)
+       ↳ 409 Conflict if client SHA is stale → retry once with fresh SHA from body
   → commits to Gitea (one repo per KB, named org-{slug}/{kb_slug})
   → Gitea webhook → POST /ingest/v1/webhook/gitea
        ↓
@@ -112,6 +118,8 @@ User pauses typing for 1.5s (auto-save debounce in klai-docs)
        ↓ 3 minutes after the last save:
   task executes → fetch latest content from Gitea → ingest_document()
 ```
+
+**Save reliability (SPEC-DOCS-001):** concurrent saves previously produced Gitea SHA conflicts surfacing as 500s. The editor now owns the last-known SHA and sends it on every save; follow-up saves are queued (one in-flight max per page). If the server detects a stale SHA, klai-docs `route.ts` translates Gitea's 422 into a `409 Conflict` with the current SHA in the body and the portal retries once. A `beforeunload` handler flushes the pending debounced save before the browser navigates. Page URLs use the full UUID (`/docs/$kbSlug/$pageId`), not an 8-char prefix — slug redirects preserved for external links.
 
 **Content-hash dedup (safety net):** `ingest_document` computes SHA-256 of the incoming
 content and compares it to the stored hash on `knowledge.artifacts`. If the content
@@ -145,12 +153,35 @@ This means a large repo with no changes costs almost nothing. Supported files: `
 parser.py`. The parsed plain text is then forwarded to `knowledge-ingest` via
 `POST /ingest/v1/document`. Maximum file size: 50 MB.
 
-**Web crawls (live):** the crawl wizard uses the shared Crawl4AI container via REST API (`http://crawl4ai:11235`) with two endpoints:
+**Web crawls (live) — two-phase pipeline (SPEC-CRAWL-002):** the crawler splits **URL discovery** from **content extraction**, so auth failures and selector issues surface before the full crawl runs:
+
+- **Phase 1 — BFS discovery.** Traverses internal links from `base_url`, bounded by `max_pages` and `path_prefix`. The full DOM is preserved during discovery (no premature pruning) so the link graph is complete. Output: deduplicated URL list.
+- **Phase 2 — Extraction.** For each URL, applies the `css_selector` (user-provided, stored, or AI-detected) and runs the same enrichment as documents.
+
+Both phases use the shared Crawl4AI container via REST API (`http://crawl4ai:11235`).
+
+**Wizard endpoints:**
 
 - `POST /ingest/v1/crawl/preview` — crawl wizard preview; returns `fit_markdown`, `word_count`,
   and any `warnings` (e.g. `navigation_detected`, `low_word_count`) without ingesting.
-- `POST /ingest/v1/crawl` — full ingest; fetches URL via crawl4ai REST API (Playwright, JS rendering),
-  deduplicates via dual-hash, and ingests via the standard pipeline.
+- `POST /ingest/v1/crawl` — full two-phase ingest; fetches URLs via crawl4ai REST API (Playwright, JS rendering),
+  deduplicates via dual-hash + SimHash-LSH (see below), and ingests via the standard pipeline.
+
+**Cookie authentication (SPEC-CRAWL-002):** gated sites are crawled by pasting browser cookies into the connector config. Cookies are applied via Crawl4AI hooks on every request.
+
+**Auth guard (SPEC-CRAWL-004):** the webcrawler wizard sets up two checks automatically when cookies are provided — a canary URL (should always return the same content when authenticated) and a `login_indicator` string (e.g. "log in to continue"). If the crawler is redirected to an auth wall mid-run, the sync fails loudly rather than silently ingesting a login page.
+
+**Quality layers A/B/C (SPEC-CRAWL-003):** every page stores a `quality_status` derived from three independent checks:
+
+| Layer | Checks |
+|---|---|
+| A — structural | HTTP 200, expected selector matched, non-empty content |
+| B — auth guard | canary URL + login indicator still match (not redirected to login) |
+| C — content fingerprint | SimHash over page content, used for dedup (see below) |
+
+The worst layer wins; `quality_status` is queryable in PostgreSQL (`crawled_pages.quality_status`). Pages that fail Layer B cause the whole sync to fail loudly — almost always a cookie expiry.
+
+**SimHash-LSH near-duplicate detection (SPEC-CRAWL-003):** for syncs with more than 200 pages, naive pairwise comparison becomes quadratic. Each page gets a SimHash fingerprint; LSH buckets near-duplicates so the detector runs in linear time. Applied during the extraction phase.
 
 **Smart pipeline switching (SPEC-CRAWL-001):** the pipeline is chosen based on whether a
 CSS selector is available:
@@ -197,12 +228,14 @@ and `page_links` rows are cleaned up in `delete_kb()`.
 markdown; if >35% of lines are link-only and the first 25 lines are >45% link-only, a
 `navigation_detected` warning is returned so the user can add a selector.
 
+**Google Drive OAuth connector (live, SPEC-KB-025a):** first OAuth-based connector. Admin clicks "Connect Google Drive" in the source wizard; portal returns an authorize URL as JSON; user completes Google consent; callback stores encrypted refresh token + selected folder scope. The sync worker mints access tokens from the refresh token on demand. Portal-api env vars: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`.
+
+**Adapter-owned image URL resolution (SPEC-KB-IMAGE-001):** each adapter resolves its own image URLs before handing the document to `knowledge-ingest` — web crawler extracts from Crawl4AI's `media` field with the active `css_selector` scope, Google Drive resolves file IDs, PDF adapter extracts embedded images. The core pipeline receives only already-resolved URLs and never performs resolution itself.
+
 **Planned connectors:**
-- Google Drive — on the roadmap
-- Microsoft SharePoint / OneDrive — on the roadmap
+- Microsoft SharePoint / OneDrive — scoped for v2 (reuses the OAuth skeleton from Google Drive)
 - Notion — on the roadmap
-- Manual file upload (like Focus) — on the roadmap; users will be able to upload a PDF or
-  document directly into a knowledge base, without needing a connected source
+- Manual file upload — live in the portal as part of the unified Superdock-style add-source wizard
 
 Both current adapters call the same `POST /ingest/v1/document` endpoint that direct uploads
 use. A `source_ref` (`owner/repo:branch:path`) is used as a deduplication key so
@@ -352,6 +385,45 @@ This is the **Dual-Index Fusion** pattern: one chunk, two dense vectors plus one
 The result is that queries can match via meaning (dense chunk), via question-answer
 alignment (dense questions), or via keywords (sparse). All three are fused at query time.
 
+**Step D.5 — Source-label and source-aware enrichment (SPEC-KB-021).**
+
+Before proceeding to full upsert, two source-related fields are computed:
+
+**source_label:** Each chunk receives a `source_label` field in the Qdrant payload that
+identifies the content origin for retrieval diversity and routing. The value is computed
+from the ingest request as follows:
+
+- For web crawls: the domain extracted from the `source_url` (e.g., `"help.mitel.nl"`, `"voys-docs.io"`)
+- For connectors (GitHub, Notion, etc.): the `connector_type` from the portal config (e.g., `"github"`, `"notion"`)
+- For meeting transcripts: the literal string `"meetings"`
+- For KB articles: the `kb_slug` value as fallback
+
+**Bron-aware enrichment prompt:** The enrichment prompt in Step A is updated to accept
+three additional context fields: `kb_name` (friendly name of the knowledge base), `connector_type`
+(e.g., "github", "notion", or null), and `source_domain` (the domain for crawls, or null).
+These are threaded through `ingest_tasks.extra_payload` and passed to `enrich_chunk()`.
+
+The LLM is prompted to generate a context prefix that situates the chunk within its source
+context — mentioning the knowledge base name and source type. This bridges the vocabulary
+gap between different sources (e.g., Mitel's "hunt group" vs Voys's "belgroep") by
+ensuring the embedding captures that these are domain-specific terms, not universal.
+
+Additionally, the LLM generates a `content_type` classification: one of `procedural` | `conceptual` |
+`reference` | `warning` | `example`. This is recorded in the Qdrant payload for downstream
+consumption (e.g., by retrieval routers or future assertion-mode filtering).
+
+**Fail-loudly enrichment:** If the LLM call in Step A fails or returns invalid JSON, the
+system raises `EnrichmentError` and does not retry silently. The Procrastinate task queue
+handles retries according to its standard backoff policy. Unlike the previous v0.x behavior,
+a failed chunk is **not** upserted with a fallback prefix. This ensures that broken or
+incomplete enrichment is visible in logs and can be investigated, rather than silently
+degrading retrieval quality.
+
+**source_label keyword index:** The `source_label` field is registered as a Qdrant keyword
+index during `ensure_collection()`, enabling the Facet API to list unique sources per org.
+This supports retrieval-layer source selection and UI features that display available
+content sources.
+
 **Step E — Full Qdrant upsert.**
 The enriched point is upserted with up to three named vectors:
 
@@ -362,7 +434,7 @@ The enriched point is upserted with up to three named vectors:
 | `vector_sparse` | Sparse (SPLADE) embedding | Enrichment succeeded |
 
 Payload per point includes: `org_id`, `kb_slug`, `path`, `artifact_id`, `content_type`,
-`visibility`, `valid_from`, `valid_until`, `text` (original), `text_enriched`,
+`source_label`, `visibility`, `valid_from`, `valid_until`, `text` (original), `text_enriched`,
 `context_prefix`, `questions`, `chunk_index`, `user_id`.
 
 **Feedback quality fields (SPEC-KB-015):** Every newly ingested chunk also receives

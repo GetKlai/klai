@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.Column(
             "id",
             UUID(as_uuid=False),
-            server_default=sa.text("gen_random_uuid()::text"),
+            server_default=sa.text("gen_random_uuid()"),
             primary_key=True,
         ),
         sa.Column("org_id", sa.Integer, sa.ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False),
@@ -87,15 +87,17 @@ def upgrade() -> None:
     # These CREATE POLICY statements run as the migration user.
     # ALTER TABLE ... ENABLE ROW LEVEL SECURITY must be run separately
     # as the klai superuser (see docstring).
+    op.execute("DROP POLICY IF EXISTS tenant_isolation ON partner_api_keys")
     op.execute(
         """
-        CREATE POLICY IF NOT EXISTS tenant_isolation ON partner_api_keys
+        CREATE POLICY tenant_isolation ON partner_api_keys
             USING (org_id = current_setting('app.current_org_id')::int)
         """
     )
+    op.execute("DROP POLICY IF EXISTS tenant_isolation ON partner_api_key_kb_access")
     op.execute(
         """
-        CREATE POLICY IF NOT EXISTS tenant_isolation ON partner_api_key_kb_access
+        CREATE POLICY tenant_isolation ON partner_api_key_kb_access
             USING (
                 partner_api_key_id IN (
                     SELECT id FROM partner_api_keys

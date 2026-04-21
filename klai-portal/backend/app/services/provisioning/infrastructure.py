@@ -4,18 +4,62 @@ Provisioning infrastructure: Docker, MongoDB, Caddy, and Redis operations.
 All functions in this module interact with external systems (Docker containers,
 MongoDB, Caddy, Redis). They are synchronous where indicated (for use with
 run_in_executor).
+
+Protocol-first rule (SEC-021, see platform/docker-socket-proxy.md):
+we talk MongoDB and Redis over their native wire protocols, never through
+`container.exec_run([...])`. The docker-socket-proxy in front of portal-api
+denies `/exec/*/start` by design, and even if we flipped the allow-bit it
+would hand any tenant-provisioning bug a shell on the host.
 """
 
-import logging
 import time
 from pathlib import Path
 
 import docker
+import pymongo
+import redis
+import structlog
+from pymongo.errors import OperationFailure
+from redis.exceptions import RedisError
 
 from app.core.config import settings
 from app.services.provisioning.generators import _generate_librechat_yaml
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
+
+# MongoDB error code for "user not found" (raised by dropUser when the target
+# user does not exist). Non-fatal for idempotent drop.
+_MONGO_USER_NOT_FOUND = 11
+
+
+def _redis_sync_client() -> redis.Redis:
+    """Connect to the shared Redis over the klai-net Docker network.
+
+    Sync client — callers live in `run_in_executor`, so we cannot use
+    `redis.asyncio` here. Use as a context manager so the TCP connection is
+    closed even on exception.
+    """
+    return redis.Redis(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        password=settings.redis_password or None,
+        decode_responses=True,
+    )
+
+
+def _mongo_admin_client() -> pymongo.MongoClient:
+    """Connect to MongoDB as the root user for user-lifecycle operations.
+
+    Only used by provisioning flows (createUser / dropUser). Tenant runtime
+    traffic uses the per-tenant MongoDB user, never this client.
+    """
+    return pymongo.MongoClient(
+        host=settings.mongodb_container_name,
+        port=27017,
+        username=settings.mongo_root_username,
+        password=settings.mongo_root_password,
+        authSource="admin",
+    )
 
 
 def _sync_remove_container(name: str) -> None:
@@ -29,101 +73,70 @@ def _sync_remove_container(name: str) -> None:
 
 
 def _sync_drop_mongodb_tenant_user(slug: str) -> None:
-    """Drop the MongoDB user for a tenant (sync, for use with run_in_executor)."""
-    c = docker.from_env()
+    """Drop the MongoDB user for a tenant (sync, for use with run_in_executor).
+
+    Idempotent: a missing user is not an error — tenant offboarding can be
+    re-run safely if a previous attempt was interrupted.
+    """
     db_name = f"librechat-{slug}"
     user = f"librechat-{slug}"
-    script = f'db.getSiblingDB("{db_name}").dropUser("{user}")'
-    mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
-    container = c.containers.get(mongodb_container)
-    container.exec_run(
-        [
-            "mongosh",
-            "--quiet",
-            "-u",
-            "root",
-            "-p",
-            settings.mongo_root_password,
-            "--authenticationDatabase",
-            "admin",
-            "--eval",
-            script,
-        ],
-        stdout=True,
-        stderr=True,
-    )
+    with _mongo_admin_client() as client:
+        try:
+            client[db_name].command("dropUser", user)
+            logger.info("mongodb_tenant_user_dropped", slug=slug, db=db_name)
+        except OperationFailure as exc:
+            if exc.code == _MONGO_USER_NOT_FOUND:
+                logger.info("mongodb_tenant_user_already_absent", slug=slug, db=db_name)
+                return
+            raise
 
 
 def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
-    """Create a per-tenant MongoDB user with readWrite access on the tenant's database only."""
-    client = docker.from_env()
+    """Create a per-tenant MongoDB user with readWrite on the tenant's DB only."""
     db_name = f"librechat-{slug}"
     user = f"librechat-{slug}"
-    script = (
-        f'db.getSiblingDB("{db_name}").createUser({{'
-        f'"user": "{user}", '
-        f'"pwd": "{tenant_password}", '
-        f'"roles": [{{"role": "readWrite", "db": "{db_name}"}}]'
-        f"}})"
-    )
-    mongodb_container = getattr(settings, "mongodb_container_name", "mongodb")
-    container = client.containers.get(mongodb_container)
-    exit_code, output = container.exec_run(
-        [
-            "mongosh",
-            "--quiet",
-            "-u",
-            "root",
-            "-p",
-            settings.mongo_root_password,
-            "--authenticationDatabase",
-            "admin",
-            "--eval",
-            script,
-        ],
-        stdout=True,
-        stderr=True,
-    )
-    if exit_code != 0:
-        raise RuntimeError(f"MongoDB tenant user creation failed for {slug} (exit {exit_code}): {output.decode()}")
+    try:
+        with _mongo_admin_client() as client:
+            client[db_name].command(
+                "createUser",
+                user,
+                pwd=tenant_password,
+                roles=[{"role": "readWrite", "db": db_name}],
+            )
+        logger.info("mongodb_tenant_user_created", slug=slug, db=db_name)
+    except OperationFailure as exc:
+        raise RuntimeError(f"MongoDB tenant user creation failed for {slug} (code {exc.code}): {exc.details}") from exc
 
 
 def _flush_redis_and_restart_librechat(slug: str) -> None:
     """Flush Redis config cache and restart the LibreChat container for a tenant.
 
-    LibreChat caches librechat.yaml in Redis with no TTL (platform-librechat-redis-config-cache).
-    FLUSHALL must run before the restart so the container reads the updated config from disk.
+    LibreChat caches librechat.yaml in Redis with no TTL (see
+    platform/librechat.md — Redis config caching). FLUSHALL must run before
+    the restart so the container reads the updated config from disk.
 
-    R-001: FLUSHALL clears all Redis keys including active sessions. Acceptable for config
-    updates; document in UI that changes cause a brief interruption.
+    R-001: FLUSHALL clears all Redis keys including active sessions.
+    Acceptable for config updates; document in UI that changes cause a brief
+    interruption.
     """
-    client = docker.from_env()
-
-    # Flush Redis so LibreChat re-reads librechat.yaml on next startup
+    # Flush Redis over the wire. A failure here is logged but not fatal — the
+    # restart still happens, and worst case LibreChat keeps reading the stale
+    # cached yaml until the next regeneration. The CI-facing regenerate path
+    # surfaces the error to the operator via response.errors.
     try:
-        redis_container = client.containers.get(settings.redis_container_name)
-        redis_cmd = ["redis-cli"]
-        if settings.redis_password:
-            redis_cmd += ["-a", settings.redis_password]
-        redis_cmd.append("FLUSHALL")
-        exit_code, output = redis_container.exec_run(redis_cmd)
-        if exit_code != 0:
-            logger.warning(
-                "Redis FLUSHALL mislukt voor tenant %s (exit %d): %s",
-                slug,
-                exit_code,
-                output.decode(),
-            )
-        else:
-            logger.info("Redis FLUSHALL voltooid voor tenant %s", slug)
-    except docker.errors.NotFound:  # type: ignore[attr-defined]
-        logger.warning("Redis container '%s' niet gevonden, FLUSHALL overgeslagen", settings.redis_container_name)
+        with _redis_sync_client() as client:
+            client.flushall()
+        logger.info("redis_flushed", slug=slug)
+    except RedisError as exc:
+        logger.warning("redis_flushall_failed", slug=slug, error=str(exc))
 
-    # Restart the tenant's LibreChat container
+    # Restart the tenant's LibreChat container. /containers/{id}/restart is
+    # allowed by docker-socket-proxy (CONTAINERS=1 + POST=1).
+    docker_client = docker.from_env()
     container_name = f"librechat-{slug}"
-    container = client.containers.get(container_name)
+    container = docker_client.containers.get(container_name)
     container.restart(timeout=10)
-    logger.info("Container %s herstart na config update", container_name)
+    logger.info("librechat_container_restarted", container=container_name)
 
     # Health check: wait up to 30s for container to reach running state
     deadline = time.monotonic() + 30
@@ -131,13 +144,18 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
         try:
             container.reload()
             if container.status == "running":
-                logger.info("Container %s is actief na herstart", container_name)
+                logger.info("librechat_container_running", container=container_name)
                 return
         except Exception as exc:
-            logger.debug("Container reload mislukt tijdens health check: %s", exc)
-        time.sleep(3)
+            logger.debug("container_health_check_reload_failed", error=str(exc))
+        # @MX:NOTE: sync sleep intentional — this function is invoked only via
+        # loop.run_in_executor() from async callers (app/api/mcp_servers.py + this
+        # module's provisioning orchestrator). Inside the executor thread there is
+        # no running event loop, so asyncio.sleep would raise RuntimeError. F-028
+        # verified via call-site trace.
+        time.sleep(3)  # nosemgrep: arbitrary-sleep
 
-    logger.warning("Container %s niet 'running' na 30s health check", container_name)
+    logger.warning("librechat_container_not_running", container=container_name, timeout_seconds=30)
 
 
 def _write_tenant_caddyfile(slug: str) -> None:
@@ -176,20 +194,14 @@ chat-{slug}.{domain} {{
 
 
 def _reload_caddy() -> None:
-    """Reload Caddy config gracefully (no connection drops).
+    """Restart Caddy to pick up new tenant config.
 
-    Uses docker exec instead of container restart, which is safer and faster.
-    docker-socket-proxy allows exec on CONTAINERS.
+    admin off disables the Admin API so caddy reload cannot work.
+    Restart is the correct approach — ~1s TLS interruption, acceptable at current scale.
     """
     client = docker.from_env()
     caddy = client.containers.get(settings.caddy_container_name)
-    exit_code, output = caddy.exec_run(
-        ["caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-        stdout=True,
-        stderr=True,
-    )
-    if exit_code != 0:
-        raise RuntimeError(f"Caddy reload failed (exit {exit_code}): {output.decode()}")
+    caddy.restart(timeout=10)
 
 
 def _start_librechat_container(
@@ -230,10 +242,10 @@ def _start_librechat_container(
         network="klai-net",
     )
 
-    # Connect to additional networks
+    # Connect to additional networks. Fail-loud: LibreChat can't reach MongoDB /
+    # Meilisearch / Redis without these, so a silent skip leaves the tenant with
+    # a broken container. Let the exception bubble to the orchestrator's outer
+    # handler which rolls back provisioning.
     for net_name in ["klai-net-mongodb", "klai-net-meilisearch", "klai-net-redis"]:
-        try:
-            net = client.networks.get(net_name)
-            net.connect(container_name)
-        except Exception as exc:
-            logger.warning("Could not connect %s to %s: %s", container_name, net_name, exc)
+        net = client.networks.get(net_name)
+        net.connect(container_name)

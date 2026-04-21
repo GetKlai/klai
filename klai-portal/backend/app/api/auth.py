@@ -9,7 +9,7 @@ POST /api/auth/totp/setup     -- initiate TOTP registration (requires Bearer tok
 POST /api/auth/totp/confirm   -- activate TOTP after scanning QR (requires Bearer token)
 
 The authRequestId is issued by Zitadel when it redirects to the custom login UI:
-  https://getklai.getklai.com/login?authRequest=<id>
+  https://my.getklai.com/login?authRequest=<id>
 
 The service account (zitadel_pat) must have the ``IAM_LOGIN_CLIENT`` role in Zitadel
 for the finalize step to succeed.
@@ -21,7 +21,7 @@ into the ``klai_sso`` cookie using Fernet symmetric encryption.  The cookie is s
 ``.getklai.com`` so all subdomains can send it.
 
 When LibreChat later opens an OIDC flow in an iframe, Zitadel redirects to
-``getklai.getklai.com/login?authRequest=<id>``.  The login page sends the cookie to
+``my.getklai.com/login?authRequest=<id>``.  The login page sends the cookie to
 ``/api/auth/sso-complete``, which decrypts it and reuses the session to finalize the auth
 request automatically -- no second password prompt.
 
@@ -30,31 +30,35 @@ scales horizontally.  Zitadel is the sole authority on session validity -- if th
 has expired there, ``finalize_auth_request`` will fail and the user sees the login form.
 """
 
+import asyncio
 import json
 import logging
 import secrets
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
+import structlog
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bearer import bearer  # BFF Phase A4 — session-aware bearer shim
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.portal import PortalOrg, PortalUser
+from app.models.portal import PortalOrg, PortalOrgAllowedDomain, PortalUser
 from app.services import audit
 from app.services.events import emit_event
 from app.services.zitadel import zitadel
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger()
 
 router = APIRouter(prefix="/api", tags=["auth"])
-bearer = HTTPBearer()
 
 # ---------------------------------------------------------------------------
 # Generic TTL cache
@@ -273,6 +277,33 @@ class PasskeyConfirmRequest(BaseModel):
 
 class EmailOTPConfirmRequest(BaseModel):
     code: str
+
+
+class IDPIntentRequest(BaseModel):
+    idp_id: str
+    auth_request_id: str
+
+
+class IDPIntentResponse(BaseModel):
+    auth_url: str
+
+
+_SUPPORTED_LOCALES = {"nl", "en"}
+
+
+class IDPIntentSignupRequest(BaseModel):
+    idp_id: str
+    locale: str = "nl"
+
+    @field_validator("locale")
+    @classmethod
+    def valid_locale(cls, v: str) -> str:
+        return v if v in _SUPPORTED_LOCALES else "nl"
+
+
+# Pending social signup cookie name — short-lived, Fernet-encrypted
+_IDP_PENDING_COOKIE = "klai_idp_pending"
+_IDP_PENDING_MAX_AGE = 600  # 10 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -719,3 +750,362 @@ async def email_otp_confirm(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to confirm email code, please try again later",
         ) from exc
+
+
+@router.post("/auth/idp-intent", response_model=IDPIntentResponse)
+async def idp_intent(body: IDPIntentRequest) -> IDPIntentResponse:
+    """Start a social login flow. Returns the IDP auth URL to redirect the user to."""
+    known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
+    if body.idp_id not in known_idps:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
+
+    success_url = f"{settings.portal_url}/api/auth/idp-callback?auth_request_id={body.auth_request_id}"
+    failure_url = f"{settings.portal_url}/login?authRequest={body.auth_request_id}"
+
+    try:
+        result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("create_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Login failed, please try again later",
+        ) from exc
+
+    auth_url = result.get("authUrl")
+    if not auth_url:
+        logger.error("create_idp_intent returned no authUrl: %s", result)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Login failed, please try again later",
+        )
+
+    return IDPIntentResponse(auth_url=auth_url)
+
+
+@router.get("/auth/idp-callback")
+async def idp_callback(
+    id: str,
+    token: str,
+    auth_request_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Handle the redirect back from a social IDP after authentication.
+
+    Zitadel appends ?id=<intentId>&token=<intentToken> to the success_url.
+    We create a session from the intent, look up portal_users, auto-provision
+    if an allowed domain matches, finalize the auth request, set the SSO cookie,
+    and redirect to the OIDC callback URL.
+    """
+    failure_url = f"/login?authRequest={auth_request_id}"
+
+    try:
+        session = await zitadel.create_session_with_idp_intent(id, token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("create_session_with_idp_intent failed %s: %s", exc.response.status_code, exc.response.text)
+        return RedirectResponse(url=failure_url, status_code=302)
+    except Exception:
+        logger.exception("create_session_with_idp_intent failed (non-HTTP)")
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    session_id: str | None = session.get("sessionId")
+    session_token: str | None = session.get("sessionToken")
+
+    if not session_id or not session_token:
+        logger.error("create_session_with_idp_intent returned no session: %s", session)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    # Fetch user identity from the session
+    try:
+        details = await zitadel.get_session_details(session_id, session_token)
+    except Exception:
+        logger.exception("get_session_details failed — continuing without auto-provision")
+        details = {"zitadel_user_id": "", "email": ""}
+
+    zitadel_user_id = details.get("zitadel_user_id", "")
+    email = details.get("email", "")
+
+    # Look up existing portal_users rows for this zitadel_user_id
+    if zitadel_user_id:
+        user_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+        existing_users = user_result.scalars().all()
+    else:
+        existing_users = []
+
+    # C9.3: Multiple orgs → Redis pending-session, redirect to /select-workspace
+    if len(existing_users) > 1:
+        from app.services.pending_session import PendingSessionService
+
+        try:
+            svc = PendingSessionService()
+            ref = await svc.store(
+                session_id=session_id,
+                session_token=session_token,
+                zitadel_user_id=zitadel_user_id,
+                email=email,
+                auth_request_id=auth_request_id,
+                org_ids=[u.org_id for u in existing_users],
+            )
+            return RedirectResponse(url=f"/select-workspace?ref={ref}", status_code=302)
+        except Exception:
+            _slog.exception("Failed to store pending session — falling through to first org")
+
+    if not existing_users and zitadel_user_id and email:
+        # No portal_users row — check allowed domains for auto-provision
+        email_domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+        if email_domain:
+            domain_result = await db.execute(
+                select(PortalOrgAllowedDomain).where(PortalOrgAllowedDomain.domain == email_domain)
+            )
+            matched_domain = domain_result.scalar_one_or_none()
+
+            if matched_domain:
+                # C4.4: DB error → log + fall through, never 500
+                try:
+                    new_user = PortalUser(
+                        zitadel_user_id=zitadel_user_id,
+                        org_id=matched_domain.org_id,
+                        role="member",
+                        status="active",
+                        display_name=email.split("@")[0],
+                        email=email,
+                    )
+                    db.add(new_user)
+                    await db.commit()
+                    _slog.info(
+                        "Auto-provisioned SSO user",
+                        zitadel_user_id=zitadel_user_id,
+                        org_id=matched_domain.org_id,
+                        domain=email_domain,
+                    )
+                except Exception:
+                    _slog.exception(
+                        "Auto-provision failed — user will see no-account page",
+                        zitadel_user_id=zitadel_user_id,
+                    )
+                    await db.rollback()
+
+    # Finalize the auth request (always, even if no portal_users row)
+    # The callback.tsx will check org_found and redirect to /no-account if needed
+    try:
+        callback_url = await zitadel.finalize_auth_request(
+            auth_request_id=auth_request_id,
+            session_id=session_id,
+            session_token=session_token,
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.exception("idp finalize_auth_request failed %s: %s", exc.response.status_code, exc.response.text)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    redirect = RedirectResponse(url=_validate_callback_url(callback_url), status_code=302)
+    redirect.set_cookie(
+        key="klai_sso",
+        value=_encrypt_sso(session_id, session_token),
+        domain=f".{settings.domain}",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.sso_cookie_max_age,
+    )
+    emit_event("login", user_id=zitadel_user_id or None, properties={"method": "idp"})
+    return redirect
+
+
+# ---------------------------------------------------------------------------
+# Social SIGNUP endpoints (SPEC-AUTH-001)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/auth/idp-intent-signup", response_model=IDPIntentResponse)
+async def idp_intent_signup(body: IDPIntentSignupRequest) -> IDPIntentResponse:
+    """Start a social signup flow. Returns the IDP auth URL to redirect the user to.
+
+    Unlike idp-intent (login), this endpoint does not require an auth_request_id —
+    the user is not yet in an OIDC session. After IDP callback we detect new vs
+    existing users and branch accordingly.
+    """
+    known_idps = {settings.zitadel_idp_google_id, settings.zitadel_idp_microsoft_id} - {""}
+    if body.idp_id not in known_idps:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown IDP")
+
+    success_url = f"{settings.portal_url}/api/auth/idp-signup-callback?locale={body.locale}"
+    failure_url = f"{settings.portal_url}/{body.locale}/signup?error=idp_failed"
+
+    try:
+        result = await zitadel.create_idp_intent(body.idp_id, success_url, failure_url)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("create_idp_intent (signup) failed %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Signup failed, please try again later",
+        ) from exc
+
+    auth_url = result.get("authUrl")
+    if not auth_url:
+        logger.error("create_idp_intent (signup) returned no authUrl: %s", result)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Signup failed, please try again later",
+        )
+
+    return IDPIntentResponse(auth_url=auth_url)
+
+
+@router.get("/auth/idp-signup-callback")
+async def idp_signup_callback(
+    id: str,
+    token: str,
+    locale: str = Query(default="nl"),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Handle the redirect back from a social IDP during signup.
+
+    Zitadel appends ?id=<intentId>&token=<intentToken> to the success_url.
+    The ?locale=<nl|en> param is embedded in success_url by idp_intent_signup.
+
+    - New user  → store session in encrypted cookie → redirect to /signup/social form
+    - Existing user → set SSO cookie → redirect to / (auto-login via sso-complete)
+    - Failure   → redirect to /{locale}/signup?error=idp_failed
+    """
+    locale = locale if locale in _SUPPORTED_LOCALES else "nl"
+    failure_url = f"{settings.portal_url}/{locale}/signup?error=idp_failed"
+
+    # 1. Retrieve the IDP intent to get user info and optional Zitadel userId
+    try:
+        intent_data = await zitadel.retrieve_idp_intent(id, token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "idp_signup_callback retrieve_idp_intent failed %s: %s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    idp_user_id: str | None = intent_data.get("userId")
+
+    # 1b. New user — no Zitadel account yet. Create one from the IDP profile.
+    if not idp_user_id:
+        try:
+            idp_user_id = await zitadel.create_zitadel_user_from_idp(intent_data, settings.zitadel_portal_org_id)
+            logger.info("idp_signup_callback: created Zitadel user %s from IDP", idp_user_id)
+        except httpx.HTTPStatusError as exc:
+            logger.exception(
+                "idp_signup_callback create_zitadel_user failed %s: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+        except Exception:
+            logger.exception("idp_signup_callback create_zitadel_user failed")
+            return RedirectResponse(url=failure_url, status_code=302)
+
+    # 1c. Create Zitadel session with the resolved user_id + IDP intent.
+    # Zitadel uses event sourcing (CQRS): the user is written to the command side but the
+    # read side (queried by POST /v2/sessions) may lag briefly after creation. Retry on 404.
+    session = None
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        if attempt > 0:
+            await asyncio.sleep(attempt * 1.5)
+        try:
+            session = await zitadel.create_session_for_user_idp(idp_user_id, id, token)
+            break
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if exc.response.status_code == 404 and attempt < 3:
+                logger.warning(
+                    "idp_signup_callback create_session 404 on attempt %d, retrying",
+                    attempt + 1,
+                )
+                continue
+            logger.exception(
+                "idp_signup_callback create_session failed %s: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return RedirectResponse(url=failure_url, status_code=302)
+    if session is None:
+        logger.error(
+            "idp_signup_callback create_session failed after retries: %s",
+            last_exc,
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    session_id: str | None = session.get("sessionId")
+    session_token: str | None = session.get("sessionToken")
+    if not session_id or not session_token:
+        logger.error("idp_signup_callback: no session in response: %s", session)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    # 2. Fetch full session to get the Zitadel user ID and IDP profile
+    try:
+        session_detail = await zitadel.get_session(session_id, session_token)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "idp_signup_callback get_session failed %s: %s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    session_obj = session_detail.get("session", {})
+    factors = session_obj.get("factors", {})
+    user_factor = factors.get("user", {})
+    zitadel_user_id: str = user_factor.get("id", "")
+    if not zitadel_user_id:
+        logger.error("idp_signup_callback: no user.id in session factors: %s", session_detail)
+        return RedirectResponse(url=failure_url, status_code=302)
+
+    # Extract IDP display name + email for the social form pre-fill (non-sensitive)
+    human_factor = factors.get("intent", {})
+    idp_info = human_factor.get("idpInformation", {})
+    raw_info = idp_info.get("rawInformation", {})
+    first_name: str = raw_info.get("given_name") or user_factor.get("displayName", "").split(" ")[0]
+    last_name: str = raw_info.get("family_name") or (" ".join(user_factor.get("displayName", "").split(" ")[1:]) or "")
+    email: str = raw_info.get("email") or user_factor.get("loginName", "")
+
+    # 3. Check if a PortalUser already exists for this Zitadel user
+    existing_user = await db.scalar(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
+
+    if existing_user is not None:
+        # Existing user — just log them in via the SSO cookie
+        logger.info("idp_signup_callback: existing user %s, setting SSO cookie", zitadel_user_id)
+        response = RedirectResponse(url=f"{settings.portal_url}/", status_code=302)
+        response.set_cookie(
+            key="klai_sso",
+            value=_encrypt_sso(session_id, session_token),
+            domain=f".{settings.domain}",
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=settings.sso_cookie_max_age,
+        )
+        emit_event("login", user_id=zitadel_user_id, properties={"method": "idp"})
+        return response
+
+    # 4. New user — store pending session in encrypted cookie, redirect to company name form
+    pending_payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_token": session_token,
+            "zitadel_user_id": zitadel_user_id,
+        }
+    ).encode()
+    encrypted_pending = _fernet.encrypt(pending_payload).decode()
+
+    social_url = (
+        f"{settings.portal_url}/{locale}/signup/social"
+        f"?first_name={quote(first_name)}&last_name={quote(last_name)}&email={quote(email)}"
+    )
+    response = RedirectResponse(url=social_url, status_code=302)
+    cookie_domain = f".{settings.domain}" if settings.domain else None
+    response.set_cookie(
+        key=_IDP_PENDING_COOKIE,
+        value=encrypted_pending,
+        max_age=_IDP_PENDING_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        domain=cookie_domain,
+        path="/",
+    )
+    return response

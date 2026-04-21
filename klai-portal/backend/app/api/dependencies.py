@@ -2,18 +2,17 @@
 
 import structlog
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_id
+from app.api.bearer import bearer as bearer  # re-export for routes that import from here
 from app.core.database import get_db, set_tenant
 from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.portal import PortalOrg, PortalUser
 from app.services.entitlements import get_effective_products
 from app.services.zitadel import zitadel
-
-bearer = HTTPBearer()
 
 
 def require_product(product: str):

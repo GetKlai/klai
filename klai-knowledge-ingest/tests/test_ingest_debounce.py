@@ -97,10 +97,16 @@ def webhook_client(mock_pool):
         mock_settings.chunk_size = 1500
         mock_settings.chunk_overlap = 200
 
-        from knowledge_ingest.app import app
+        import os
+
         from fastapi.testclient import TestClient
+        from knowledge_ingest.app import app
 
         with TestClient(app, raise_server_exceptions=False) as c:
+            # SPEC-SEC-011: middleware now requires the header.
+            c.headers.update(
+                {"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]}
+            )
             yield c, mock_settings
 
 

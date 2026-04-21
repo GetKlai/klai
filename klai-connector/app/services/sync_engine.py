@@ -11,13 +11,15 @@ from gidgethub import BadRequest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.adapters.base import DocumentRef
 from app.adapters.registry import AdapterRegistry
-from app.adapters.webcrawler import CrawlJobPendingError
+from app.adapters.webcrawler import CanaryMismatchError, CrawlJobPendingError
 from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
-from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
+from app.services.content_fingerprint import LAYER_C_MIN_PAGES, find_boilerplate_clusters
+from app.services.events import emit_product_event
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
 from app.services.s3_storage import ImageStore
@@ -127,9 +129,7 @@ class SyncEngine:
                 )
                 sync_run.status = SyncStatus.FAILED
                 sync_run.completed_at = datetime.now(UTC)
-                sync_run.error_details = [
-                    {"error": f"Unsupported connector type: {portal_config.connector_type!r}"}
-                ]
+                sync_run.error_details = [{"error": f"Unsupported connector type: {portal_config.connector_type!r}"}]
                 await session.commit()
                 await self._portal_client.report_sync_status(
                     connector_id=connector_id,
@@ -146,7 +146,7 @@ class SyncEngine:
 
             status = SyncStatus.COMPLETED
             cursor_state: dict[str, Any] | None = None
-            refs: list = []  # all discovered refs (for cursor_state synced_refs)
+            refs: list[DocumentRef] = []  # all discovered refs (for cursor_state synced_refs)
 
             try:
                 cursor_state = await adapter.get_cursor_state(portal_config)
@@ -157,9 +157,7 @@ class SyncEngine:
                 # Resume state: refs already ingested in an interrupted run.
                 resume_ingested_refs: set[str] = set()
                 if last_pending and last_pending.cursor_state:
-                    resume_ingested_refs = set(
-                        last_pending.cursor_state.get("ingested_refs", [])
-                    )
+                    resume_ingested_refs = set(last_pending.cursor_state.get("ingested_refs", []))
                     if resume_ingested_refs:
                         logger.info(
                             "Resuming interrupted sync for connector %s: %d refs already ingested, skipping",
@@ -222,7 +220,10 @@ class SyncEngine:
                 if documents_skipped:
                     logger.info(
                         "Reconciliation for connector %s: %d to sync, %d unchanged (skipped), %d total discovered",
-                        connector_id, len(refs_to_sync), documents_skipped, len(refs),
+                        connector_id,
+                        len(refs_to_sync),
+                        documents_skipped,
+                        len(refs),
                     )
 
                 for ref in refs_to_sync:
@@ -232,31 +233,33 @@ class SyncEngine:
                         content_bytes = await adapter.fetch_document(ref, portal_config)
                         bytes_processed += len(content_bytes)
                         parse_result = parse_document_with_images(
-                            content_bytes, ref.path.split("/")[-1],
+                            content_bytes,
+                            ref.path.split("/")[-1],
                         )
                         text = parse_result.text
                         if len(text.strip()) < 50:
                             logger.info(
                                 "Skipping short document (path=%s, chars=%d)",
-                                ref.path, len(text.strip()),
+                                ref.path,
+                                len(text.strip()),
                             )
                             documents_ok += 1
                             resume_ingested_refs.add(ref_key)
                             continue
 
-                        # Image extraction and upload (when Garage is configured).
+                        # Image upload (when Garage is configured). Each adapter
+                        # populates ref.images with absolute URLs; we just upload them.
                         image_urls: list[str] | None = None
                         if self._image_store and self._image_http:
-                            image_urls = await self._extract_and_upload_images(
-                                text=text,
-                                parsed_images=parse_result.images,
-                                ref=ref,
-                                org_id=portal_config.zitadel_org_id,
-                                kb_slug=portal_config.kb_slug,
-                                connector_type=portal_config.connector_type,
-                                connector_config=portal_config.config,
-                                adapter=adapter,
-                            ) or None  # Convert empty list to None
+                            image_urls = (
+                                await self._upload_images(
+                                    parsed_images=parse_result.images,
+                                    ref=ref,
+                                    org_id=portal_config.zitadel_org_id,
+                                    kb_slug=portal_config.kb_slug,
+                                )
+                                or None
+                            )  # Convert empty list to None
 
                         await self._ingest_client.ingest_document(
                             org_id=portal_config.zitadel_org_id,
@@ -269,6 +272,7 @@ class SyncEngine:
                             content_type=ref.content_type,
                             allowed_assertion_modes=portal_config.allowed_assertion_modes,
                             image_urls=image_urls,
+                            connector_type=portal_config.connector_type,
                         )
                         documents_ok += 1
                         resume_ingested_refs.add(ref_key)
@@ -289,6 +293,112 @@ class SyncEngine:
                         )
 
                 await adapter.post_sync(portal_config)
+
+                # Layer C: post-sync boilerplate-ratio check (SPEC-CRAWL-003 REQ-13/14).
+                # Automatic on every sync with ≥ LAYER_C_MIN_PAGES pages.
+                fp_entries = [(r.source_url or r.ref, r.content_fingerprint) for r in refs if r.content_fingerprint]
+                if len(fp_entries) >= LAYER_C_MIN_PAGES:
+                    clusters = find_boilerplate_clusters(fp_entries)
+                    if clusters:
+                        # URL -> fingerprint map for sample_fingerprint lookup in detail logs.
+                        # Clusters themselves are lists of URLs (see find_boilerplate_clusters
+                        # return type), so sample_urls is cluster[:3] directly.
+                        url_to_fp = dict(fp_entries)
+
+                        total_pages = len(fp_entries)
+                        pages_in_clusters = sum(len(c) for c in clusters)
+                        largest_ratio = len(clusters[0]) / total_pages
+
+                        logger.warning(
+                            "Sync quality degraded: boilerplate clusters detected",
+                            extra={
+                                "connector_id": str(connector_id),
+                                "cluster_count": len(clusters),
+                                "pages_in_clusters": pages_in_clusters,
+                                "largest_cluster_ratio": largest_ratio,
+                                "total_pages": total_pages,
+                            },
+                        )
+                        for rank, cluster in enumerate(clusters[:3], start=1):
+                            sample_urls = cluster[:3]
+                            sample_fp = url_to_fp.get(sample_urls[0], "") if sample_urls else ""
+                            logger.warning(
+                                "Boilerplate cluster detail",
+                                extra={
+                                    "connector_id": str(connector_id),
+                                    "cluster_rank": rank,
+                                    "cluster_size": len(cluster),
+                                    "cluster_ratio": len(cluster) / total_pages,
+                                    "sample_fingerprint": sample_fp,
+                                    "sample_urls": sample_urls,
+                                },
+                            )
+
+                        status = SyncStatus.COMPLETED  # backward-compat: status stays COMPLETED
+                        sync_run.quality_status = "degraded"
+                        # SPEC-CRAWL-003 REQ-15: emit product event via direct DB
+                        # write (product_events table is on the shared klai DB).
+                        emit_product_event(
+                            "knowledge.sync_quality_degraded",
+                            zitadel_org_id=portal_config.zitadel_org_id,
+                            properties={
+                                "connector_id": str(connector_id),
+                                "sync_run_id": str(sync_run_id),
+                                "quality_status": "degraded",
+                                "reason": "boilerplate_cluster",
+                                "metric": largest_ratio,
+                            },
+                        )
+
+            except CanaryMismatchError as exc:
+                # @MX:ANCHOR: [AUTO] SPEC-CRAWL-003 REQ-5 — Layer A fail-fast abort.
+                # @MX:REASON: AUTH_ERROR status + structured error_details per REQ-3 + REQ-5.
+                logger.error(
+                    "Sync aborted: canary fingerprint mismatch",
+                    extra={
+                        "connector_id": str(connector_id),
+                        "canary_url": exc.canary_url,
+                        "similarity": exc.similarity,
+                        "expected": exc.expected,
+                        "actual": exc.actual,
+                    },
+                )
+                sync_run.status = SyncStatus.AUTH_ERROR
+                sync_run.quality_status = "failed"
+                sync_run.completed_at = datetime.now(UTC)
+                sync_run.error_details = [
+                    {
+                        "reason": "canary_mismatch",
+                        "canary_url": exc.canary_url,
+                        "expected_fingerprint": exc.expected,
+                        "actual_fingerprint": exc.actual,
+                        "similarity": exc.similarity,
+                    }
+                ]
+                await session.commit()
+                await self._portal_client.report_sync_status(
+                    connector_id=connector_id,
+                    sync_run_id=sync_run_id,
+                    sync_status=SyncStatus.AUTH_ERROR,
+                    completed_at=sync_run.completed_at,
+                    documents_total=0,
+                    documents_ok=0,
+                    documents_failed=0,
+                    bytes_processed=0,
+                    error_details=sync_run.error_details,
+                )
+                emit_product_event(
+                    "knowledge.sync_quality_degraded",
+                    zitadel_org_id=portal_config.zitadel_org_id,
+                    properties={
+                        "connector_id": str(connector_id),
+                        "sync_run_id": str(sync_run_id),
+                        "quality_status": "failed",
+                        "reason": "canary_mismatch",
+                        "metric": exc.similarity,
+                    },
+                )
+                return
 
             except CrawlJobPendingError as exc:
                 # Async crawl job not finished yet: mark as PENDING so the
@@ -342,6 +452,10 @@ class SyncEngine:
             completed_at = datetime.now(UTC)
             sync_run.status = status
             sync_run.completed_at = completed_at
+            # SPEC-CRAWL-003 REQ-2: set quality_status on every completed/failed run.
+            # Layer C (degraded) will override this after cluster analysis in a later step.
+            if sync_run.quality_status is None:
+                sync_run.quality_status = "healthy" if status == SyncStatus.COMPLETED else None
             sync_run.documents_total = documents_total
             sync_run.documents_ok = documents_ok
             sync_run.documents_failed = documents_failed
@@ -353,8 +467,7 @@ class SyncEngine:
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
                 cursor_state["synced_refs"] = sorted(
-                    (r.source_ref or r.path) for r in refs
-                    if (r.source_ref or r.path) not in failed_refs
+                    (r.source_ref or r.path) for r in refs if (r.source_ref or r.path) not in failed_refs
                 )
             sync_run.cursor_state = cursor_state
             await session.commit()
@@ -386,52 +499,29 @@ class SyncEngine:
             error_details=error_details if error_details else None,
         )
 
-    async def _extract_and_upload_images(
+    async def _upload_images(
         self,
         *,
-        text: str,
         parsed_images: list[dict[str, str]],
-        ref: Any,
+        ref: DocumentRef,
         org_id: str,
         kb_slug: str,
-        connector_type: str,
-        connector_config: dict[str, Any],
-        adapter: Any = None,
     ) -> list[str]:
-        """Extract image URLs from document content and upload to S3.
+        """Upload adapter-provided and parser-embedded images to S3.
 
-        Resolves relative URLs based on the connector type and config.
-        For Notion, also handles image block URLs cached by the adapter.
+        Each adapter is responsible for populating ``ref.images`` with
+        resolved absolute URLs during list_documents()/fetch_document().
+        The sync engine is connector-agnostic: it only iterates ref.images.
         """
         assert self._image_store is not None
         assert self._image_http is not None
 
-        # Extract markdown image URLs from text content.
-        raw_urls = extract_markdown_image_urls(text)
-
-        # For Notion: also include image block URLs from the adapter cache.
-        if connector_type == "notion" and adapter is not None:
-            from app.adapters.notion import NotionAdapter
-
-            if isinstance(adapter, NotionAdapter):
-                for img_ref in adapter.get_cached_images(ref.ref):
-                    raw_urls.append((img_ref.alt, img_ref.url))
-
-        # Resolve relative URLs based on connector type.
-        resolved: list[tuple[str, str]] = []
-        for alt, url in raw_urls:
-            if connector_type == "github":
-                owner = connector_config.get("repo_owner", "")
-                repo = connector_config.get("repo_name", "")
-                branch = connector_config.get("branch", "main")
-                base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
-                url = resolve_relative_url(url, base)
-            elif connector_type == "webcrawler":
-                url = resolve_relative_url(url, ref.source_ref or ref.source_url or "")
-            resolved.append((alt, url))
+        image_urls: list[tuple[str, str]] = []
+        if ref.images:
+            image_urls = [(img.alt, img.url) for img in ref.images]
 
         return await download_and_upload_images(
-            image_urls=resolved,
+            image_urls=image_urls,
             org_id=org_id,
             kb_slug=kb_slug,
             image_store=self._image_store,
@@ -450,9 +540,7 @@ class SyncEngine:
                 await session.commit()
 
     @staticmethod
-    async def _get_last_successful_run(
-        session: AsyncSession, connector_id: uuid.UUID
-    ) -> SyncRun | None:
+    async def _get_last_successful_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:
         """Retrieve the most recent successful sync run for a connector."""
         result = await session.execute(
             select(SyncRun)
@@ -466,9 +554,7 @@ class SyncEngine:
         return result.scalars().first()
 
     @staticmethod
-    async def _get_last_pending_run(
-        session: AsyncSession, connector_id: uuid.UUID
-    ) -> SyncRun | None:
+    async def _get_last_pending_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:
         """Retrieve the most recent PENDING sync run for a connector."""
         result = await session.execute(
             select(SyncRun)

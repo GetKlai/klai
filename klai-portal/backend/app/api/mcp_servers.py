@@ -41,7 +41,7 @@ async def _load_catalog() -> dict[str, Any]:
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

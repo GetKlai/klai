@@ -3,6 +3,7 @@ Zitadel management API client.
 All calls use the portal-api service account PAT — never exposed to the browser.
 """
 
+import asyncio
 import logging
 import time
 
@@ -40,6 +41,8 @@ class ZitadelClient:
             event_hooks={"response": [self._log_response_errors]},
         )
         self._userinfo_cache: dict[str, tuple[float, dict]] = {}
+        # Singleflight: coalesce concurrent userinfo requests for the same token
+        self._userinfo_inflight: dict[str, asyncio.Future[dict]] = {}
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -174,11 +177,15 @@ class ZitadelClient:
 
     # ── Token introspection ───────────────────────────────────────────────────
 
+    # @MX:ANCHOR fan_in=8 — called by /api/me, _get_caller_org, get_current_user_id, and others
     async def get_userinfo(self, access_token: str) -> dict:
         """Get user info from an OIDC access token (for /api/me).
 
         Results are cached for _USERINFO_TTL seconds per token to reduce
         Zitadel API load on multi-endpoint requests within a session.
+
+        Concurrent requests for the same token are coalesced (singleflight)
+        so that N parallel /api/me calls produce at most 1 Zitadel request.
 
         In auth dev mode, returns mock userinfo without calling Zitadel.
         """
@@ -193,19 +200,37 @@ class ZitadelClient:
         if cached and (now - cached[0]) < self._USERINFO_TTL:
             return cached[1]
 
-        resp = await self._http.get(
-            "/oidc/v1/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        # Singleflight: if another coroutine is already fetching for this
+        # token, await its result instead of making a duplicate request.
+        inflight = self._userinfo_inflight.get(access_token)
+        if inflight is not None:
+            return await inflight
 
-        # Evict expired entries to prevent unbounded growth
-        if len(self._userinfo_cache) > 500:
-            cutoff = now - self._USERINFO_TTL
-            self._userinfo_cache = {k: v for k, v in self._userinfo_cache.items() if v[0] > cutoff}
-        self._userinfo_cache[access_token] = (now, data)
-        return data
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict] = loop.create_future()
+        self._userinfo_inflight[access_token] = future
+
+        try:
+            resp = await self._http.get(
+                "/oidc/v1/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Evict expired entries to prevent unbounded growth
+            if len(self._userinfo_cache) > 500:
+                cutoff = now - self._USERINFO_TTL
+                self._userinfo_cache = {k: v for k, v in self._userinfo_cache.items() if v[0] > cutoff}
+            self._userinfo_cache[access_token] = (time.monotonic(), data)
+
+            future.set_result(data)
+            return data
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            self._userinfo_inflight.pop(access_token, None)
 
     # ── Custom Login UI (Session API) ─────────────────────────────────────────
 
@@ -469,30 +494,154 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
-    async def add_portal_redirect_uri(self, slug: str) -> None:
-        """Add {slug}.getklai.com/callback and /logged-out to the portal OIDC app's allowed URIs."""
-        if not settings.zitadel_portal_app_id:
-            return  # not configured yet, skip
-        # GET current config (full app endpoint includes oidcConfig)
-        get_resp = await self._http.get(
-            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}"
+    # ── IDP (social login) ────────────────────────────────────────────────────
+
+    async def create_idp_intent(self, idp_id: str, success_url: str, failure_url: str) -> dict:
+        """Start an IDP intent flow. Returns { authUrl } to redirect the user to."""
+        resp = await self._http.post(
+            "/v2/idp_intents",
+            json={"idpId": idp_id, "urls": {"successUrl": success_url, "failureUrl": failure_url}},
         )
-        get_resp.raise_for_status()
-        current = get_resp.json().get("app", {}).get("oidcConfig", {})
-        existing_redirect: list[str] = current.get("redirectUris", [])
-        existing_logout: list[str] = current.get("postLogoutRedirectUris", [])
-        new_callback = f"https://{slug}.{settings.domain}/callback"
-        new_logged_out = f"https://{slug}.{settings.domain}/logged-out"
-        if new_callback in existing_redirect and new_logged_out in existing_logout:
-            return
-        updated_redirect = existing_redirect + ([new_callback] if new_callback not in existing_redirect else [])
-        updated_logout = existing_logout + ([new_logged_out] if new_logged_out not in existing_logout else [])
-        # PUT updated config — correct path is oidc_config, not oidc
-        put_resp = await self._http.put(
-            f"/management/v1/projects/{settings.zitadel_project_id}/apps/{settings.zitadel_portal_app_id}/oidc_config",
-            json={**current, "redirectUris": updated_redirect, "postLogoutRedirectUris": updated_logout},
+        resp.raise_for_status()
+        return resp.json()
+
+    async def retrieve_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
+        """Retrieve a completed IDP intent. Returns dict with userId and idpInformation.
+
+        userId may be absent if the IDP did not link to an existing Zitadel user.
+        """
+        resp = await self._http.post(
+            f"/v2/idp_intents/{idp_intent_id}",
+            json={"idpIntentToken": idp_intent_token},
         )
-        put_resp.raise_for_status()
+        resp.raise_for_status()
+        return resp.json()
+
+    async def create_zitadel_user_from_idp(self, intent_data: dict, org_id: str) -> str:
+        """Create a Zitadel human user from IDP intent data. Returns the new Zitadel userId.
+
+        Used during social signup when no existing Zitadel user is linked to the IDP intent.
+        The email is marked verified (trusted from the IDP) and the IDP is linked immediately.
+
+        Zitadel v2 IDP intent structure (POST /v2/idp_intents/{id}):
+          idpInformation.idpId          — Zitadel IDP config ID
+          idpInformation.userId         — IDP-side user ID (e.g. Google sub)
+          idpInformation.userName       — IDP-side username / email
+          idpInformation.rawInformation.User — raw OIDC user info dict
+        """
+        idp_info = intent_data.get("idpInformation", {})
+        raw_user = idp_info.get("rawInformation", {}).get("User", {})
+
+        idp_id: str = idp_info.get("idpId", "")
+        idp_user_id: str = idp_info.get("userId", "")
+        idp_user_name: str = idp_info.get("userName", "")
+
+        # email: raw OIDC profile has it directly; fall back to IDP userName
+        email: str = raw_user.get("email", "") or idp_user_name
+        given_name: str = raw_user.get("given_name", "")
+        family_name: str = raw_user.get("family_name", "")
+        if not given_name and raw_user.get("name"):
+            parts = raw_user["name"].split(" ", 1)
+            given_name = parts[0]
+            family_name = parts[1] if len(parts) > 1 else ""
+        display_name: str = raw_user.get("name", f"{given_name} {family_name}".strip()) or email.split("@")[0]
+
+        if not email:
+            logger.error(
+                "create_zitadel_user_from_idp: no email in intent — idp_info_keys=%s raw_user_keys=%s",
+                list(idp_info.keys()),
+                list(raw_user.keys()),
+            )
+            raise ValueError("Cannot create Zitadel user: no email in IDP intent data")
+
+        resp = await self._http.post(
+            "/v2/users/human",
+            headers={"x-zitadel-orgid": org_id},
+            json={
+                "username": email,
+                "profile": {
+                    "givenName": given_name or email.split("@")[0],
+                    "familyName": family_name,
+                    "displayName": display_name,
+                },
+                "email": {
+                    "email": email,
+                    "isVerified": True,
+                },
+                "idpLinks": [
+                    {
+                        "idpId": idp_id,
+                        "userId": idp_user_id,
+                        "userName": idp_user_name or email,
+                    }
+                ],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["userId"]
+
+    async def create_session_for_user_idp(self, user_id: str, idp_intent_id: str, idp_intent_token: str) -> dict:
+        """Create a Zitadel session for a known user_id using a completed IDP intent."""
+        resp = await self._http.post(
+            "/v2/sessions",
+            json={
+                "checks": {
+                    "user": {"userId": user_id},
+                    "idpIntent": {"idpIntentId": idp_intent_id, "idpIntentToken": idp_intent_token},
+                }
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def create_session_with_idp_intent(self, idp_intent_id: str, idp_intent_token: str) -> dict:
+        """Create a Zitadel session from a completed IDP intent. Returns { sessionId, sessionToken }.
+
+        Retrieves the linked userId from the intent first — required since newer versions of the
+        Zitadel sessions API require an explicit user check alongside the IDP intent check.
+        Raises ValueError if no userId is linked (e.g. first-time social signup — caller must
+        create the Zitadel user first via create_zitadel_user_from_idp).
+        """
+        intent = await self.retrieve_idp_intent(idp_intent_id, idp_intent_token)
+        user_id: str | None = intent.get("userId")
+        if not user_id:
+            logger.error(
+                "IDP intent %s returned no userId — cannot create session",
+                idp_intent_id,
+            )
+            raise ValueError(f"No user linked to IDP intent {idp_intent_id}")
+        return await self.create_session_for_user_idp(user_id, idp_intent_id, idp_intent_token)
+
+    async def get_session(self, session_id: str, session_token: str) -> dict:
+        """Fetch full session details including factors.user.id and IDP profile data.
+
+        Used after create_session_with_idp_intent to retrieve the Zitadel user ID
+        and profile (firstName, lastName, email) from the IDP.
+        """
+        resp = await self._http.get(
+            f"/v2/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_session_details(self, session_id: str, session_token: str) -> dict:
+        """Fetch session details to extract user_id and email after IDP login.
+
+        Returns {"zitadel_user_id": ..., "email": ...}.
+        Used in idp_callback to identify the SSO user for auto-provisioning.
+        """
+        resp = await self._http.get(
+            f"/v2/sessions/{session_id}",
+            headers={"x-zitadel-session-token": session_token},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        user_info = data.get("session", {}).get("factors", {}).get("user", {})
+        return {
+            "zitadel_user_id": user_info.get("id", ""),
+            "email": user_info.get("loginName", ""),
+        }
 
 
 # Singleton — reused across requests

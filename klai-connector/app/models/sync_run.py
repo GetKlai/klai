@@ -29,6 +29,8 @@ class SyncRun(Base):
         bytes_processed: BIGINT
         error_details: JSONB -- array of per-document errors
         cursor_state: JSONB -- bookmark for incremental sync
+        quality_status: VARCHAR(20) -- 'healthy' | 'degraded' | 'failed' | NULL
+            Added by SPEC-CRAWL-003 migration 005. NULL on historical rows (no backfill).
     """
 
     __tablename__ = "sync_runs"
@@ -50,3 +52,6 @@ class SyncRun(Base):
     bytes_processed: Mapped[int] = mapped_column(BigInteger, default=0)
     error_details: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # type: ignore[type-arg]
     cursor_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # type: ignore[type-arg]
+    # SPEC-CRAWL-003 REQ-2: content quality guardrail result per sync run.
+    # Values: 'healthy' | 'degraded' | 'failed' | NULL (historical rows keep NULL).
+    quality_status: Mapped[str | None] = mapped_column(String(20), nullable=True)

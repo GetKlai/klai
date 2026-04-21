@@ -21,8 +21,23 @@ engine = create_async_engine(
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
+    """Yield an async DB session with a pinned connection.
+
+    Calling session.connection() at the start pins a single pooled connection
+    for the entire session lifetime. This guarantees that set_tenant() and all
+    subsequent queries run on the SAME connection — required for PostgreSQL
+    session-level set_config() to be visible to RLS policies.
+
+    Without pinning, AsyncSession lazily checks out connections per-statement,
+    and the async event loop can hand out different connections for sequential
+    awaits. This caused set_tenant() to set app.current_org_id on connection A
+    while the next query ran on connection B (where the setting was empty),
+    making RLS block all rows.
+    """
     async with AsyncSessionLocal() as session:
+        # Pin the connection — all queries in this session use the same one.
+        await session.connection()
         try:
             yield session
         finally:

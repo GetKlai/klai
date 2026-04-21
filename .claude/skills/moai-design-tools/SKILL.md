@@ -1,19 +1,18 @@
 ---
 name: moai-design-tools
 description: >
-  Design tool integration specialist covering Figma MCP, Pencil renderer, and Pencil-to-code export.
-  Use when fetching design context from Figma, rendering Pencil DNA codes to .pen frames, exporting .pen
-  designs to React/Tailwind code, or choosing design-to-code workflows. Supports design fetching (Figma),
-  visual rendering (Pencil MCP), and code generation (React/Tailwind).
-license: MIT
+  Design tool integration specialist covering Figma MCP, Pencil renderer, and
+  Pencil-to-code export. Use when fetching design context from Figma, rendering
+  Pencil designs, or exporting to React/Tailwind code.
+license: Apache-2.0
 compatibility: Designed for Claude Code
-allowed-tools: Read Write Edit Grep Glob Bash WebFetch WebSearch mcp__context7__resolve-library-id mcp__context7__get-library-docs mcp__pencil__batch_design mcp__pencil__batch_get mcp__pencil__get_screenshot mcp__pencil__snapshot_layout mcp__pencil__get_editor_state mcp__pencil__get_variables mcp__pencil__set_variables mcp__pencil__get_guidelines mcp__pencil__get_style_guide mcp__pencil__get_style_guide_tags mcp__pencil__open_document mcp__pencil__find_empty_space_on_canvas
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash, WebFetch, WebSearch, mcp__context7__resolve-library-id, mcp__context7__get-library-docs, mcp__pencil__batch_design, mcp__pencil__batch_get, mcp__pencil__get_screenshot, mcp__pencil__snapshot_layout, mcp__pencil__get_editor_state, mcp__pencil__get_variables, mcp__pencil__set_variables, mcp__pencil__get_guidelines, mcp__pencil__get_style_guide, mcp__pencil__get_style_guide_tags, mcp__pencil__open_document, mcp__pencil__find_empty_space_on_canvas, mcp__pencil__replace_all_matching_properties, mcp__pencil__search_all_unique_properties
 user-invocable: false
 metadata:
-  version: "3.0.0"
+  version: "5.1.0"
   category: "domain"
   status: "active"
-  updated: "2026-02-21"
+  updated: "2026-04-05"
   modularized: "false"
   tools: "Figma, Pencil MCP"
   tags: "figma, pencil, design to code, design export, render dna, pen frame, react from design, tailwind from design, design context, ui implementation"
@@ -67,56 +66,65 @@ Apply the Nova preset when:
 
 ## Quick Tool Selection
 
-### Figma MCP - Design Context Fetching
+### Figma MCP - Design Context and Generation
 
-Figma integration for fetching design context, metadata, and screenshots from Figma files.
+Official Figma MCP integration via Remote MCP server (https://mcp.figma.com/mcp). Install with: `claude plugin install figma@claude-plugins-official`
 
-Best For: Fetching design tokens, component specifications, layout information, and style guides from existing Figma files. Extracting design system values and understanding design structure.
+Best For: Fetching design context from Figma files, extracting design tokens, generating new designs with Code-to-Canvas (generate_figma_design), accessing FigJam boards, and linking components to code with Code Connect.
 
-Key Strengths: Direct access to Figma file metadata, component hierarchy extraction, style guide generation, design token retrieval, screenshot capture for visual reference.
+Key Strengths: 16 official tools including read (get_design_context, get_variable_defs, get_screenshot, get_metadata), write (use_figma, generate_figma_design, create_new_file), Code Connect (get_code_connect_map, add_code_connect_map, get_code_connect_suggestions, send_code_connect_mappings), FigJam (get_figjam, generate_diagram), design system (search_design_system, create_design_system_rules), and utility (whoami). Write-to-canvas is currently free during beta.
 
-Workflow: Connect to Figma file → Fetch file metadata → Extract component tree → Retrieve design tokens → Generate style documentation.
+Workflow: Install plugin → get_design_context → get_variable_defs → get_screenshot → Implement design → Verify against screenshot.
 
 Context7 Library: /figma/docs
 
 ### Pencil MCP - Visual Design Rendering
 
-Pencil MCP integration for creating and editing .pen design files with AI-assisted design generation.
+Pencil MCP integration for creating and editing .pen design files (schema v2.9) with AI-assisted design generation. CLI: `@pencil.dev/cli` v0.2.4.
 
 Best For: Rapid prototyping, visual design iterations, creating UI mockups from text descriptions, collaborative design discussions, visual proposals before implementation.
 
-Key Strengths: Text-to-design conversion, batch design operations, style guide integration, visual preview without implementation, collaborative design workflow.
+Key Strengths: Text-to-design conversion, batch design operations, style guide integration, visual preview without implementation, collaborative design workflow, component system with slots, design libraries (.lib.pen).
 
-**Available Pencil MCP Tools:**
+**Available Pencil MCP Tools (14 + 1 CLI-only):**
+
+**Note:** .pen files are pure JSON (Git diffable, mergeable). 13 node types: Rectangle, Ellipse, Line, Polygon, Path, Text, Frame, Group, Note, Prompt, Context, IconFont, Ref.
 
 | Tool | Purpose |
 |------|---------|
-| `batch_design` | Create, modify, and manipulate design elements in batches |
+| `batch_design` | Create, modify, and manipulate design elements in batches (Insert/Copy/Replace/Update/Delete/Move/Generate) |
 | `batch_get` | Read design components and hierarchy by patterns or node IDs |
-| `get_screenshot` | Render design previews as images |
-| `snapshot_layout` | Analyze computed layout structure |
-| `get_editor_state` | Get current editor context and active file |
-| `get_variables` | Read design tokens and theme variables |
+| `get_screenshot` | Render design previews as PNG images |
+| `snapshot_layout` | Analyze computed layout structure with bounding boxes, detect overlaps |
+| `get_editor_state` | Get current editor context, active file, and selection |
+| `get_variables` | Read design tokens and theme variables (colors, spacing, radii, sizes, fonts) |
 | `set_variables` | Update design tokens and theme variables |
-| `get_guidelines` | Get design guidelines for code, tables, Tailwind, or landing pages |
+| `search_all_unique_properties` | Recursively search for all unique properties on nodes |
+| `replace_all_matching_properties` | Recursively replace all matching properties on nodes |
+| `get_guidelines` | Get design guidelines (topics: code, table, tailwind, landing-page, design-system) |
 | `get_style_guide` | Get style guide by name or tags |
 | `get_style_guide_tags` | List all available style guide tags |
 | `open_document` | Open existing .pen file or create new one |
 | `find_empty_space_on_canvas` | Find available space for new elements |
+| `export_nodes` | **CLI only** — Export to PNG, JPEG, WEBP, PDF with scale multiplier |
 
 Workflow: Describe UI in natural language → Generate design with batch_design → Visually review with get_screenshot → Iterate on design → Export to code when ready.
+
+**CLI Authentication:** `pencil login` (interactive) or `PENCIL_CLI_KEY` env var (CI/CD). Agent mode: `pencil --out file.pen --prompt "..." --model claude-sonnet-4-6`.
 
 Context7 Library: /pencil/docs
 
 ### Pencil-to-Code Export - React/Tailwind Generation
 
-Export .pen designs to production-ready React and Tailwind CSS code.
+Export .pen designs to production-ready React and Tailwind CSS code via a prompt-based workflow.
 
 Best For: Converting approved .pen designs to implementation, generating React components with Tailwind styling, maintaining design fidelity in code, rapid frontend development from visual designs.
 
-Key Strengths: Design-to-code automation, React component generation, Tailwind CSS styling, responsive layout handling, component structure preservation, design system integration.
+Key Strengths: Prompt-based code generation (no export API), batch_get for reading .pen JSON structure, design token extraction via get_variables, React component generation with Tailwind classes, component structure preservation.
 
-Workflow: Finalize .pen design → Configure export options → Generate React components → Apply Tailwind classes → Review generated code → Integrate into project.
+Workflow: batch_get frame data → Analyze JSON structure → Map to React/Tailwind → Apply design tokens → Verify against screenshot.
+
+Note: Pencil-to-Code is a prompt-based workflow. There is no `pencil.export_to_react()` API or `pencil.config.js` configuration file.
 
 ## Quick Decision Guide
 
@@ -338,7 +346,8 @@ Access up-to-date tool documentation using Context7 MCP:
 ---
 
 Status: Active
-Version: 3.0.0 (Nova Style + Pencil MCP Tools Integration)
-Last Updated: 2026-02-21
-Tools: Figma MCP, Pencil MCP, Pencil-to-Code Export
+Version: 5.1.0 (Pencil docs sync — schema v2.9, CLI v0.2.4, slots, libraries, full node types)
+Last Updated: 2026-04-05
+Tools: Figma MCP (16 tools, Official Remote Server), Pencil MCP (14 tools + export_nodes CLI-only), Pencil-to-Code Export
 Default Style: shadcn/ui Nova (neutral, noto-sans, small radius)
+UI Kits: Shadcn UI (default), Halo (glassmorphic), Lunaris (dark-mode), Nitro (minimal)

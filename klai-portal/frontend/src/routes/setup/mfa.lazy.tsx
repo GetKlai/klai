@@ -1,6 +1,7 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
+import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
 import QRCode from 'react-qr-code'
 import { ArrowRight, Fingerprint, Mail, Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -106,11 +107,9 @@ function MethodCard({
 // ── Passkey setup step ───────────────────────────────────────────────────────
 
 function PasskeySetup({
-  token,
   onSuccess,
   onBack,
 }: {
-  token: string
   onSuccess: () => void
   onBack: () => void
 }) {
@@ -124,7 +123,7 @@ function PasskeySetup({
     setLoading(true)
     try {
       // 1. Get registration options from backend
-      const { passkey_id, options } = await apiFetch<{ passkey_id: string; options: { publicKey: PublicKeyCredentialCreationOptions & { challenge: string; user: { id: string } & PublicKeyCredentialUserEntity; excludeCredentials?: { id: string; type: string }[] } } }>(`/api/auth/passkey/setup`, token, {
+      const { passkey_id, options } = await apiFetch<{ passkey_id: string; options: { publicKey: PublicKeyCredentialCreationOptions & { challenge: string; user: { id: string } & PublicKeyCredentialUserEntity; excludeCredentials?: { id: string; type: string }[] } } }>(`/api/auth/passkey/setup`, {
         method: 'POST',
       })
       // Zitadel wraps WebAuthn options under publicKeyCredentialCreationOptions.publicKey
@@ -150,7 +149,7 @@ function PasskeySetup({
       if (!credential) throw new Error('cancelled')
 
       // 4. Send credential to backend for verification
-      await apiFetch(`/api/auth/passkey/confirm`, token, {
+      await apiFetch(`/api/auth/passkey/confirm`, {
         method: 'POST',
         body: JSON.stringify({
           passkey_id,
@@ -218,12 +217,10 @@ function PasskeySetup({
 // ── Email OTP setup step ─────────────────────────────────────────────────────
 
 function EmailOTPSetup({
-  token,
   email,
   onSuccess,
   onBack,
 }: {
-  token: string
   email: string
   onSuccess: () => void
   onBack: () => void
@@ -234,7 +231,7 @@ function EmailOTPSetup({
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [resendAt, setResendAt] = useState<number | null>(null)
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
 
   // Tick every second to update resend countdown
   useEffect(() => {
@@ -248,7 +245,7 @@ function EmailOTPSetup({
     setError(null)
     setSending(true)
     try {
-      await apiFetch(`/api/auth/email-otp/setup`, token, { method: 'POST' })
+      await apiFetch(`/api/auth/email-otp/setup`, { method: 'POST' })
       setPhase('verify')
       setResendAt(Date.now() + 30_000)
     } catch {
@@ -262,7 +259,7 @@ function EmailOTPSetup({
     setError(null)
     setSending(true)
     try {
-      await apiFetch(`/api/auth/email-otp/resend`, token, { method: 'POST' })
+      await apiFetch(`/api/auth/email-otp/resend`, { method: 'POST' })
       setResendAt(Date.now() + 30_000)
     } catch {
       setError(m.error_connection())
@@ -276,7 +273,7 @@ function EmailOTPSetup({
     setError(null)
     setVerifying(true)
     try {
-      await apiFetch(`/api/auth/email-otp/confirm`, token, {
+      await apiFetch(`/api/auth/email-otp/confirm`, {
         method: 'POST',
         body: JSON.stringify({ code }),
       })
@@ -384,11 +381,9 @@ function EmailOTPSetup({
 // ── TOTP setup step ──────────────────────────────────────────────────────────
 
 function TOTPSetup({
-  token,
   onSuccess,
   onBack,
 }: {
-  token: string
   onSuccess: () => void
   onBack: () => void
 }) {
@@ -404,20 +399,20 @@ function TOTPSetup({
     setUri(null)
     setSecret(null)
     setLoadError(null)
-    apiFetch<{ uri: string; secret: string }>(`/api/auth/totp/setup`, token, { method: 'POST' })
+    apiFetch<{ uri: string; secret: string }>(`/api/auth/totp/setup`, { method: 'POST' })
       .then((data) => {
         setUri(data.uri)
         setSecret(data.secret)
       })
       .catch((err) => { authLogger.warn('TOTP setup QR fetch failed', err); setLoadError(m.error_connection()) })
-  }, [token, retryCount])
+  }, [retryCount])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      await apiFetch(`/api/auth/totp/confirm`, token, {
+      await apiFetch(`/api/auth/totp/confirm`, {
         method: 'POST',
         body: JSON.stringify({ code }),
       })
@@ -525,6 +520,7 @@ function TOTPSetup({
 function SetupMFAPage() {
   useLocale()
   const auth = useAuth()
+  useAuthGuardRedirect()
 
   const [selectedMethod, setSelectedMethod] = useState<Method | null>(null)
   const [step, setStep] = useState<Step>('pick')
@@ -533,7 +529,6 @@ function SetupMFAPage() {
   const mfaPolicy = currentUser?.mfa_policy ?? 'optional'
   const isRequired = mfaPolicy === 'required'
 
-  const token = auth.user?.access_token ?? ''
   const email = auth.user?.profile?.email as string ?? ''
 
   function handleMethodChosen() {
@@ -662,13 +657,13 @@ function SetupMFAPage() {
 
       {/* ── Method-specific setup ── */}
       {step === 'setup' && selectedMethod === 'passkey' && (
-        <PasskeySetup token={token} onSuccess={handleSuccess} onBack={handleBack} />
+        <PasskeySetup onSuccess={handleSuccess} onBack={handleBack} />
       )}
       {step === 'setup' && selectedMethod === 'email' && (
-        <EmailOTPSetup token={token} email={email} onSuccess={handleSuccess} onBack={handleBack} />
+        <EmailOTPSetup email={email} onSuccess={handleSuccess} onBack={handleBack} />
       )}
       {step === 'setup' && selectedMethod === 'totp' && (
-        <TOTPSetup token={token} onSuccess={handleSuccess} onBack={handleBack} />
+        <TOTPSetup onSuccess={handleSuccess} onBack={handleBack} />
       )}
     </AuthPageLayout>
   )

@@ -66,6 +66,7 @@ class TestSensitiveFieldsMapping:
 
     def test_web_crawler_fields(self) -> None:
         assert "auth_headers" in SENSITIVE_FIELDS["web_crawler"]
+        assert "cookies" in SENSITIVE_FIELDS["web_crawler"]
 
     def test_all_connector_types_present(self) -> None:
         expected_types = {"github", "notion", "google_drive", "ms_docs", "web_crawler"}

@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -27,7 +28,7 @@ export const Route = createFileRoute('/app/focus/')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 interface Notebook {
   id: string
@@ -52,23 +53,13 @@ function formatDate(isoString: string): string {
   })
 }
 
-function parseJwtRoles(token: string): string[] {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-    const rolesRecord = payload['urn:zitadel:iam:org:project:roles']
-    return rolesRecord && typeof rolesRecord === 'object' ? Object.keys(rolesRecord) : []
-  } catch {
-    return []
-  }
-}
-
 function FocusPage() {
   const auth = useAuth()
-  const token = auth.user?.access_token
+  const { user: currentUser } = useCurrentUser()
   const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/app/focus/' })
 
-  const isOrgAdmin = token ? parseJwtRoles(token).includes('org_admin') : false
+  const isOrgAdmin = currentUser?.isAdmin ?? false
   const currentUserId = auth.user?.profile?.sub
 
   const { search: searchParam } = Route.useSearch()
@@ -78,13 +69,13 @@ function FocusPage() {
 
   const { data, isLoading, error, refetch } = useQuery<NotebookListResponse>({
     queryKey: ['focus-notebooks'],
-    queryFn: async () => apiFetch<NotebookListResponse>(`${FOCUS_BASE}/notebooks`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<NotebookListResponse>(`${FOCUS_BASE}/notebooks`),
+    enabled: auth.isAuthenticated,
   })
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiFetch(`${FOCUS_BASE}/notebooks/${id}`, token, { method: 'DELETE' })
+      await apiFetch(`${FOCUS_BASE}/notebooks/${id}`, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['focus-notebooks'] })

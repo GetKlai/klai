@@ -8,10 +8,12 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bearer import bearer
+from app.core.database import set_tenant
 from app.models.portal import PortalOrg, PortalUser
 from app.services.zitadel import zitadel
 
@@ -21,7 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-bearer = HTTPBearer()
 
 
 async def _get_caller_org(
@@ -49,6 +50,7 @@ async def _get_caller_org(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organisation not found")
 
     org, caller_user = row
+    await set_tenant(db, org.id)
     return zitadel_user_id, org, caller_user
 
 
@@ -60,6 +62,8 @@ def _require_admin(caller_user: "PortalUser") -> None:
 
 # --- Sub-router inclusion (no prefix on sub-routers!) ---
 from .audit import router as audit_router  # noqa: E402
+from .domains import router as domains_router  # noqa: E402
+from .join_requests import router as join_requests_router  # noqa: E402
 from .products import router as products_router  # noqa: E402
 from .settings import router as settings_router  # noqa: E402
 from .users import router as users_router  # noqa: E402
@@ -68,6 +72,8 @@ router.include_router(users_router)
 router.include_router(products_router)
 router.include_router(settings_router)
 router.include_router(audit_router)
+router.include_router(domains_router)
+router.include_router(join_requests_router)
 
 __all__ = [
     "_get_caller_org",

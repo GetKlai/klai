@@ -9,12 +9,12 @@ from typing import Any
 
 import httpx
 import jwt
-from gidgethub import BadRequest
 from gidgethub.httpx import GitHubAPI
 
-from app.adapters.base import BaseAdapter, DocumentRef
+from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
 from app.core.config import Settings
 from app.core.logging import get_logger
+from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
 
 logger = get_logger(__name__)
 
@@ -153,6 +153,10 @@ class GitHubAdapter(BaseAdapter):
                     size=item.get("size", 0),
                     content_type=self._EXT_CONTENT_TYPE.get(ext, "kb_article"),
                     source_ref=f"{repo_owner}/{repo_name}:{branch}:{path}",
+                    # Blob view URL — user-visible, clickable GitHub page for citations.
+                    # Raw URLs (raw.githubusercontent.com) are used only as base for
+                    # image URL resolution in fetch_document(), not as source_url.
+                    source_url=f"https://github.com/{repo_owner}/{repo_name}/blob/{branch}/{path}",
                 )
             )
 
@@ -164,6 +168,10 @@ class GitHubAdapter(BaseAdapter):
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
         """Download file content via the GitHub blob API.
+
+        For markdown files, also extracts inline image references and populates
+        ``ref.images`` with absolute raw.githubusercontent.com URLs so the sync
+        engine can upload them without knowing GitHub-specific URL resolution.
 
         Args:
             ref: Document reference with SHA and path.
@@ -179,6 +187,7 @@ class GitHubAdapter(BaseAdapter):
         installation_id: int = config["installation_id"]
         repo_owner: str = config["repo_owner"]
         repo_name: str = config["repo_name"]
+        branch: str = config.get("branch", "main")
 
         token = await self._get_installation_token(installation_id)
         gh = GitHubAPI(self._http_client, "klai-connector", oauth_token=token)
@@ -194,9 +203,28 @@ class GitHubAdapter(BaseAdapter):
 
         content: str = blob.get("content", "")
         encoding: str = blob.get("encoding", "base64")
-        if encoding == "base64":
-            return base64.b64decode(content)
-        return content.encode("utf-8")
+        raw = base64.b64decode(content) if encoding == "base64" else content.encode("utf-8")
+
+        if ref.path.lower().endswith((".md", ".rst")):
+            ref.images = self._extract_markdown_images(
+                raw.decode("utf-8", errors="replace"), repo_owner, repo_name, branch,
+            ) or None
+        return raw
+
+    @staticmethod
+    def _extract_markdown_images(
+        content: str, repo_owner: str, repo_name: str, branch: str,
+    ) -> list[ImageRef]:
+        """Extract markdown image references and resolve them to absolute raw URLs.
+
+        GitHub markdown images like ``![alt](./images/foo.png)`` are resolved
+        against the repo's raw content root. Already-absolute URLs pass through.
+        """
+        raw_base = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{branch}/"
+        return [
+            ImageRef(url=resolve_relative_url(url, raw_base), alt=alt, source_path="")
+            for alt, url in extract_markdown_image_urls(content)
+        ]
 
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return the current tree SHA for incremental sync.

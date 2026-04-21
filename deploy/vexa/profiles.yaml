@@ -1,14 +1,30 @@
+# Vexa bot orchestrator profile — SPEC-VEXA-003 upstream/main schema.
+# Consumed by runtime-api (mounted read-only at /app/profiles.yaml).
+#
+# Only the `meeting` profile is used by Klai. Upstream also defines
+# `browser-session` and `agent` profiles — we explicitly do not ship them
+# (see SPEC-VEXA-003 §4 Exclusions).
+
 profiles:
   meeting:
-    image: "vexaai/vexa-bot:v20260315-2220"
+    image: "${BROWSER_IMAGE}"                     # vexaai/vexa-bot:0.10.0-<tag>
+    command: ["/app/vexa-bot/entrypoint.sh"]
+    working_dir: "/app/vexa-bot"
     resources:
+      cpu_request: "1000m"
+      cpu_limit: "1500m"
+      memory_request: "1100Mi"
       memory_limit: "1536Mi"
-      memory_request: "512Mi"
-      cpu_limit: "2000m"
-      cpu_request: "500m"
-      shm_size: 1073741824  # 1GB shared memory — required for Chromium stability in Google Meet
-    idle_timeout: 7200
-    auto_remove: true
+      shm_size: 2147483648                        # 2 GiB for Chromium stability
+    idle_timeout: 0                               # meeting-api scheduler owns lifetime
+    auto_remove: false                            # meeting-api explicitly tears down
     env:
+      DISPLAY: "${DISPLAY:-:99}"
+      NODE_ENV: "production"
       LOG_LEVEL: "INFO"
+      REDIS_URL: "${REDIS_URL}"
+      TRANSCRIPTION_SERVICE_URL: "${TRANSCRIPTION_SERVICE_URL}"
+      TRANSCRIPTION_SERVICE_TOKEN: "${TRANSCRIPTION_SERVICE_TOKEN}"
+    ports:
+      "9222/tcp": {}                              # Chrome DevTools Protocol (internal only)
     network_mode: "vexa-bots"

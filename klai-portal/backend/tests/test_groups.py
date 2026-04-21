@@ -41,6 +41,18 @@ def _mock_group(
     return group
 
 
+def _make_db_mock() -> AsyncMock:
+    """Return an AsyncMock DB session with the sync ``add()`` method overridden.
+
+    SQLAlchemy's ``Session.add()`` is synchronous; ``AsyncMock`` would wrap
+    every attribute access as a coroutine and leak a ``coroutine never awaited``
+    RuntimeWarning at GC time. Keep ``add()`` as a plain ``MagicMock``.
+    """
+    db = AsyncMock()
+    db.add = MagicMock()
+    return db
+
+
 # ---------------------------------------------------------------------------
 # Group CRUD
 # ---------------------------------------------------------------------------
@@ -78,7 +90,7 @@ class TestCreateGroup:
         org = _mock_org()
         caller = _mock_caller()
 
-        mock_db = AsyncMock()
+        mock_db = _make_db_mock()
         mock_db.flush = AsyncMock()
         mock_db.commit = AsyncMock()
 
@@ -109,7 +121,7 @@ class TestCreateGroup:
         org = _mock_org()
         caller = _mock_caller()
 
-        mock_db = AsyncMock()
+        mock_db = _make_db_mock()
         mock_db.flush = AsyncMock(side_effect=IntegrityError("", {}, Exception()))
         mock_db.rollback = AsyncMock()
         mock_credentials = MagicMock()
@@ -183,7 +195,7 @@ class TestAddMember:
         target_user = MagicMock()
         target_user.org_id = 1  # same org as group
 
-        mock_db = AsyncMock()
+        mock_db = _make_db_mock()
         # First execute: group lookup
         group_result = MagicMock()
         group_result.scalar_one_or_none.return_value = group
@@ -251,7 +263,7 @@ class TestAddMember:
         target_user = MagicMock()
         target_user.org_id = 1
 
-        mock_db = AsyncMock()
+        mock_db = _make_db_mock()
         group_result = MagicMock()
         group_result.scalar_one_or_none.return_value = group
         user_result = MagicMock()

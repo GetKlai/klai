@@ -1,5 +1,9 @@
 # ============================================
-# Klai Monorepo .gitignore
+# MoAI-ADK Package Distribution .gitignore
+# ============================================
+# Version: 0.33.0
+# Updated: 2026-01-10
+# Purpose: Essential patterns for user projects
 # ============================================
 
 # ===========================================
@@ -122,11 +126,6 @@ logs/
 .env.*
 !.env.example
 
-# SOPS encrypted files (never commit unencrypted)
-*.sops
-*.sops.*
-.sops.yaml
-
 # Certificate files
 *.pem
 *.p12
@@ -134,6 +133,7 @@ logs/
 *.jks
 
 # Private keys (specific patterns to avoid false positives)
+# FIXED: Issue #237 - Replaced overly broad *key* and *secret* patterns
 *-key.*
 *_key.*
 *.key.*
@@ -183,7 +183,7 @@ secret-*.*
 .moai/worktrees/
 
 # ===========================================
-# Node.js
+# Node.js (for docs/Nextra)
 # ===========================================
 node_modules/
 *.tsbuildinfo
@@ -205,11 +205,12 @@ dist-ssr/
 .netlify/
 .firebase/
 
-
-# Playwright MCP — keep config, ignore screenshots and logs
+# User Custom Patterns (preserved by moai update)
+*.sops
+*.sops.*
+.sops.yaml
 .playwright-mcp/*
 !.playwright-mcp/config.json
-
-# private
 /stock 
 .playwright-mcp/
+klai-portal/frontend/public/widget/klai-chat.js

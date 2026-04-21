@@ -3,11 +3,7 @@ name: moai-foundation-core
 description: >
   Provides MoAI-ADK foundational principles including TRUST 5 quality framework,
   SPEC-First DDD methodology, delegation patterns, progressive disclosure,
-  and agent catalog reference.
-  Use when referencing TRUST 5 gates, SPEC workflow, EARS format, DDD methodology,
-  agent delegation patterns, or MoAI orchestration rules.
-  Do NOT use for context and token management (use moai-foundation-context instead)
-  or strategic analysis (use moai-foundation-philosopher instead).
+  and agent catalog reference. Use when referencing TRUST 5 gates or SPEC workflow.
 license: Apache-2.0
 compatibility: Designed for Claude Code
 allowed-tools: Read Grep Glob mcp__context7__resolve-library-id mcp__context7__get-library-docs
@@ -28,20 +24,7 @@ progressive_disclosure:
 
 # MoAI Extension: Triggers
 triggers:
-  keywords:
-    - "trust-5"
-    - "spec-first"
-    - "ddd"
-    - "delegation"
-    - "agent"
-    - "token"
-    - "progressive disclosure"
-    - "modular"
-    - "workflow"
-    - "orchestration"
-    - "quality gate"
-    - "spec"
-    - "ears format"
+  keywords: ["trust-5", "spec-first", "ddd", "delegation", "agent", "token", "progressive disclosure", "modular", "workflow", "orchestration", "quality gate", "spec", "ears format"]
   agents:
     - "manager-spec"
     - "manager-ddd"
@@ -147,7 +130,7 @@ Detailed Reference: modules/spec-first-ddd.md
 
 Purpose: Task delegation to specialized agents, avoiding direct execution.
 
-Core Principle: MoAI must delegate all work through Task() to specialized agents. Direct execution bypasses specialization, quality gates, and token optimization. Proper delegation improves task success rate by 40 percent and enables parallel execution.
+Core Principle: MoAI must delegate all work through Agent() to specialized agents. Direct execution bypasses specialization, quality gates, and token optimization. Proper delegation improves task success rate by 40 percent and enables parallel execution.
 
 Delegation Syntax: Call Task with subagent_type parameter for specialized agent, prompt parameter for clear specific task, and context parameter with relevant data dictionary.
 

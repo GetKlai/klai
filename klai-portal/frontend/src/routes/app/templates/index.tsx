@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Sliders } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
@@ -26,8 +25,6 @@ interface Template {
 }
 
 function TemplatesPage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -36,13 +33,12 @@ function TemplatesPage() {
 
   const { data, isLoading } = useQuery<Template[]>({
     queryKey: ['app-templates'],
-    queryFn: async () => apiFetch<Template[]>('/api/app/templates', token),
-    enabled: !!token,
-  })
+    queryFn: async () => apiFetch<Template[]>('/api/app/templates'),
+      })
 
   const createMutation = useMutation({
     mutationFn: async (body: typeof form) =>
-      apiFetch('/api/app/templates', token, { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch('/api/app/templates', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-templates'] })
       setShowCreate(false)
@@ -52,7 +48,7 @@ function TemplatesPage() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ slug, body }: { slug: string; body: Partial<typeof form> }) =>
-      apiFetch(`/api/app/templates/${slug}`, token, { method: 'PATCH', body: JSON.stringify(body) }),
+      apiFetch(`/api/app/templates/${slug}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-templates'] })
       setEditId(null)
@@ -62,7 +58,7 @@ function TemplatesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (slug: string) =>
-      apiFetch(`/api/app/templates/${slug}`, token, { method: 'DELETE' }),
+      apiFetch(`/api/app/templates/${slug}`, { method: 'DELETE' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-templates'] })
       setDeleteConfirm(null)
