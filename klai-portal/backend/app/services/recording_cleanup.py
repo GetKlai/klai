@@ -11,10 +11,10 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, tenant_scoped_session
 from app.models.meetings import VexaMeeting
 from app.services.vexa import vexa
 
@@ -58,6 +58,13 @@ async def cleanup_recording(
     The recording_id parameter is preferred (from webhook payload).
     Falls back to vexa_meeting_id if not provided.
 
+    Important: vexa_meetings has a tenant-scoped UPDATE RLS policy. The
+    cleanup LOOP runs cross-org (no tenant context), so this function opens
+    a `tenant_scoped_session` on the meeting's own org_id to perform the
+    UPDATE. Without this, the UPDATE is silently filtered to 0 rows and
+    recording_deleted never flips to True — the loop would then re-enqueue
+    the same recording forever.
+
     SPEC: SPEC-GDPR-002-R1, R4, SPEC-VEXA-001
     """
     if meeting.status != "done":
@@ -70,10 +77,38 @@ async def cleanup_recording(
         return
 
     success = await delete_recording(rid, str(meeting.id))
-    if success:
-        meeting.recording_deleted = True
-        meeting.recording_deleted_at = datetime.now(UTC)
-        await db.commit()
+    if not success:
+        return
+    if meeting.org_id is None:
+        # Legacy meetings pre-SPEC-SEC-007 may lack org_id. Surface it —
+        # otherwise the UPDATE below would be cross-org and RLS would
+        # silently filter.
+        logger.warning(
+            "recording_cleanup_skipped_missing_org_id",
+            meeting_id=str(meeting.id),
+        )
+        return
+
+    # Scope the UPDATE to the meeting's own tenant context so RLS accepts it.
+    # Using a SQL `update(...)` instead of `meeting.recording_deleted = True`
+    # lets us run it on a fresh pinned session instead of the cross-org one.
+    async with tenant_scoped_session(meeting.org_id) as scoped_db:
+        result = await scoped_db.execute(
+            update(VexaMeeting)
+            .where(VexaMeeting.id == meeting.id)
+            .values(recording_deleted=True, recording_deleted_at=datetime.now(UTC))
+        )
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            raise RuntimeError(
+                f"vexa_meetings UPDATE matched 0 rows "
+                f"(meeting_id={meeting.id}, org_id={meeting.org_id}) — "
+                f"RLS/tenant-context mismatch"
+            )
+        await scoped_db.commit()
+    # Reflect the change on the caller's stale in-memory object so subsequent
+    # guards (meeting.recording_deleted) are accurate.
+    meeting.recording_deleted = True
+    meeting.recording_deleted_at = datetime.now(UTC)
 
 
 async def recording_cleanup_loop() -> None:

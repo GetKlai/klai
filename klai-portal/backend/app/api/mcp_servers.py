@@ -202,15 +202,19 @@ async def update_mcp_server(
 
     configured_vars = list(stored_env.keys())
 
-    # Trigger async restart (fire-and-forget; R-002: brief container downtime acceptable)
+    # Trigger async restart (fire-and-forget; R-002: brief container downtime acceptable).
+    # The user has already received their 200 by the time this runs, so we log with
+    # full traceback at error level — the MCP config change IS committed in portal,
+    # but the LibreChat container may still be serving the old config if the restart
+    # silently failed. That state needs to be visible in VictoriaLogs for operators.
     async def _restart() -> None:
         loop = asyncio.get_event_loop()
         from app.services.provisioning import _flush_redis_and_restart_librechat
 
         try:
             await loop.run_in_executor(None, lambda: _flush_redis_and_restart_librechat(org.slug))
-        except Exception as exc:
-            logger.warning("Async restart mislukt voor tenant %s: %s", org.slug, exc)
+        except Exception:
+            logger.exception("mcp_server_librechat_restart_failed: slug=%s", org.slug)
 
     _task = asyncio.create_task(_restart())  # noqa: RUF006 — fire-and-forget, not awaited
 

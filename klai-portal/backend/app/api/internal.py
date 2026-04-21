@@ -874,38 +874,27 @@ async def create_gap_event(
         ) -> None:
             """Classify gap query against KB taxonomy via knowledge-ingest.
 
-            Runs in a fresh session (background task) so we must:
-              1. pin the connection — so session-level set_config is visible
-                 to the subsequent UPDATE
-              2. set app.current_org_id — otherwise RLS filters the UPDATE down
-                 to zero rows and silently no-ops (no exception raised)
-
-            Fail-loud: logs at error level with traceback so silent regressions
-            in this path surface in VictoriaLogs.
+            Background task on a fresh session: `tenant_scoped_session`
+            guarantees the connection is pinned and app.current_org_id is
+            set before the UPDATE, so RLS does not silently filter the row
+            to zero. rowcount==0 raises; the RLS guard event listener also
+            catches this as a safety net.
             """
             try:
+                from app.core.database import tenant_scoped_session
                 from app.services.knowledge_ingest_client import classify_gap_taxonomy
 
                 node_ids = await classify_gap_taxonomy(org_zitadel_id, kb_slug, query_text)
                 if not node_ids:
                     return
 
-                async with AsyncSessionLocal() as session:
-                    # Pin connection so set_config is visible to the UPDATE below.
-                    await session.connection()
-                    await session.execute(
-                        text("SELECT set_config('app.current_org_id', :oid, false)"),
-                        {"oid": str(org_int_id)},
-                    )
+                async with tenant_scoped_session(org_int_id) as session:
                     result = await session.execute(
                         update(PortalRetrievalGap)
                         .where(PortalRetrievalGap.id == gap_id)
                         .values(taxonomy_node_ids=node_ids)
                     )
                     if result.rowcount == 0:  # type: ignore[attr-defined]
-                        # Defensive: if tenant context is wrong, RLS silently filters
-                        # the row out. Surface it loudly so we never silently lose
-                        # classification work again.
                         raise RuntimeError(
                             f"gap_classification UPDATE matched 0 rows "
                             f"(gap_id={gap_id}, org_id={org_int_id}) — "

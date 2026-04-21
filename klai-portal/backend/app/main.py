@@ -107,6 +107,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         logger.info("Zitadel PAT validated successfully")
 
+    from app.core.database import engine
+    from app.core.rls_guard import install_rls_guard
+
+    install_rls_guard(engine)
+    logger.info("RLS silent-filter guard installed")
+
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")
 
