@@ -1,4 +1,4 @@
-name: Sync docker-compose.yml to core-01
+name: Sync docker-compose.yml + config + smoke-test to core-01
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
     paths:
       - 'deploy/docker-compose.yml'
       - 'deploy/docker-compose.override.yml'
+      - 'deploy/grafana/provisioning/**'          # SPEC-SEC-024 M4.2 — alert rule + dashboard
+      - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
 
@@ -23,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Sync docker-compose.yml to core-01
+      - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -35,8 +37,48 @@ jobs:
             git clone --depth=1 --filter=blob:none --sparse \
               https://github.com/GetKlai/klai.git klai-compose-sync
             cd klai-compose-sync
-            git sparse-checkout set --skip-checks deploy/docker-compose.yml deploy/docker-compose.override.yml
+            # SPEC-SEC-024 M4.2 + M4.3: also pull grafana/provisioning + scripts/
+            # so Grafana picks up the new alert rule and the smoke-test reaches
+            # core-01. Matches how deploy/caddy and deploy/alloy live in the
+            # repo — config travels with compose.
+            git sparse-checkout set --skip-checks \
+              deploy/docker-compose.yml \
+              deploy/docker-compose.override.yml \
+              deploy/grafana/provisioning \
+              scripts
             cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
-            rm -rf /tmp/klai-compose-sync
-            echo "docker-compose.yml and docker-compose.override.yml synced to /opt/klai/"
+
+            # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
+            # provisioning only at startup, so we restart the service after
+            # sync. Short downtime (~10s) is acceptable for an internal
+            # observability tool; no user-facing impact.
+            mkdir -p /opt/klai/grafana/provisioning
+            rsync -a deploy/grafana/provisioning/ /opt/klai/grafana/provisioning/
+            docker compose --project-directory /opt/klai restart grafana
+
+            # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
+            # git clone on a Linux runner usually preserves the execute bit,
+            # but this guards against core.filemode quirks.
+            mkdir -p /opt/klai/scripts
+            rsync -a scripts/smoke-docker-socket-proxy.sh /opt/klai/scripts/
+            chmod +x /opt/klai/scripts/smoke-docker-socket-proxy.sh
+
+            cd /tmp && rm -rf klai-compose-sync
+            echo "docker-compose.yml + grafana provisioning + scripts synced to /opt/klai/"
+
+            # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
+            # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT
+            # fail the workflow (initial rollout per SPEC). Flip this to
+            # blocking once we've seen it stable for 2 weeks.
+            echo "::group::SPEC-SEC-024 post-deploy smoke-test"
+            set +e
+            /opt/klai/scripts/smoke-docker-socket-proxy.sh
+            SMOKE_EXIT=$?
+            set -e
+            echo "::endgroup::"
+            if [ "$SMOKE_EXIT" -ne 0 ]; then
+              echo "::warning title=SPEC-SEC-024 smoke-test::Returned $SMOKE_EXIT (non-blocking). Check [FAIL] lines in the smoke-test group above."
+            else
+              echo "SPEC-SEC-024 smoke-test: PASS"
+            fi
