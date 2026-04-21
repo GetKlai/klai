@@ -80,12 +80,20 @@ check_keep_verb "DELETE" "DELETE /containers/$NOOP" \
   -X DELETE "$PROXY_URL/containers/$NOOP?force=true"
 
 # ─── EXEC must be blocked (403) ─────────────────────────────────────────────
+#
+# Target the endpoint tecnativa/docker-socket-proxy actually gates with EXEC:
+# POST /exec/{id}/start is the second call of docker-py's exec_run() — the
+# first call (POST /containers/{id}/exec) is gated by CONTAINERS+POST and
+# would 404 on a fake id, which would be a false positive here.
+# With EXEC=0 the proxy returns 403 regardless of whether the id is real.
+# See .claude/rules/klai/platform/docker-socket-proxy.md "/exec/*/start is
+# blocked by design".
 
-log "[*] EXEC" "POST /containers/deadbeef/exec — expecting 403"
+log "[*] EXEC" "POST /exec/deadbeef/start — expecting 403"
 EXEC_STATUS=$(probe -o /dev/null -w '%{http_code}' \
   -X POST -H 'Content-Type: application/json' \
-  -d '{"Cmd":["true"]}' \
-  "$PROXY_URL/containers/deadbeef/exec" || true)
+  -d '{"Detach":false}' \
+  "$PROXY_URL/exec/deadbeef/start" || true)
 
 if [ "$EXEC_STATUS" = "403" ]; then
   log "[OK]" "EXEC correctly blocked (403)"
