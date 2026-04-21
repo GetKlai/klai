@@ -157,14 +157,10 @@ async def cross_org_session() -> AsyncIterator[AsyncSession]:
     """
     async with AsyncSessionLocal() as session:
         await _pin_and_reset_on_exit(session)
-        await session.execute(
-            text("SELECT set_config('app.cross_org_admin', 'true', false)")
-        )
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
         try:
             yield session
         finally:
             with contextlib.suppress(Exception):
-                await session.execute(
-                    text("SELECT set_config('app.cross_org_admin', '', false)")
-                )
+                await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
             await _reset_tenant_context(session)
