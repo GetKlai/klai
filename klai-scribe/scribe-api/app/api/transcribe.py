@@ -14,7 +14,6 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -29,6 +28,12 @@ from app.core.database import get_db
 from app.models.transcription import Transcription
 from app.services import summarizer
 from app.services.audio import normalize_audio
+from app.services.audio_storage import (
+    delete_audio,
+    finalize_success,
+    read_audio,
+    save_audio,
+)
 from app.services.providers import get_provider
 
 logger = logging.getLogger(__name__)
@@ -86,33 +91,8 @@ class SummarizeResponse(BaseModel):
 
 
 # -- Audio storage helpers ----------------------------------------------------
-
-def _save_audio(user_id: str, txn_id: str, wav_bytes: bytes) -> str:
-    """Save WAV bytes to disk. Returns the relative path."""
-    rel = f"{user_id}/{txn_id}.wav"
-    path = Path(settings.audio_storage_dir) / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(wav_bytes)
-    return rel
-
-
-def _read_audio(audio_path: str) -> bytes:
-    """Read WAV bytes from disk."""
-    path = Path(settings.audio_storage_dir) / audio_path
-    if not path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail="Audio bestand niet meer beschikbaar",
-        )
-    return path.read_bytes()
-
-
-def _delete_audio(audio_path: str | None) -> None:
-    """Delete audio file from disk if it exists."""
-    if not audio_path:
-        return
-    path = Path(settings.audio_storage_dir) / audio_path
-    path.unlink(missing_ok=True)
+# save_audio / read_audio / delete_audio / finalize_success live in
+# app.services.audio_storage — see that module for the retention policy.
 
 
 def _title_from_text(text: str | None, max_words: int = 8) -> str | None:
@@ -169,7 +149,7 @@ async def transcribe(
 
     # Generate ID and save audio to disk FIRST
     txn_id = "txn_" + uuid.uuid4().hex
-    audio_path = await loop.run_in_executor(None, _save_audio, user_id, txn_id, wav_bytes)
+    audio_path = await loop.run_in_executor(None, save_audio, user_id, txn_id, wav_bytes)
 
     # Create DB record with status=processing
     record = Transcription(
@@ -194,14 +174,8 @@ async def transcribe(
         logger.warning("Transcription failed for %s, audio preserved at %s", txn_id, audio_path)
         return _to_response(record)
 
-    # Success — update record
-    record.status = "transcribed"
-    record.text = result.text
-    record.language = result.language
-    record.duration_seconds = result.duration_seconds
-    record.inference_time_seconds = result.inference_time_seconds
-    record.provider = result.provider
-    record.model = result.model
+    # Success — mutate record + purge audio from disk (retention policy).
+    finalize_success(record, result)
 
     # Auto-generate a title from transcription when name is a generic filename
     if record.name and record.name.lower().startswith("recording."):
@@ -247,7 +221,7 @@ async def retry_transcription(
 
     # Read audio from disk
     loop = asyncio.get_event_loop()
-    wav_bytes = await loop.run_in_executor(None, _read_audio, record.audio_path)
+    wav_bytes = await loop.run_in_executor(None, read_audio, record.audio_path)
 
     record.status = "processing"
     await db.commit()
@@ -262,13 +236,8 @@ async def retry_transcription(
         logger.warning("Retry failed for %s", txn_id)
         return _to_response(record)
 
-    record.status = "transcribed"
-    record.text = transcription_result.text
-    record.language = transcription_result.language
-    record.duration_seconds = transcription_result.duration_seconds
-    record.inference_time_seconds = transcription_result.inference_time_seconds
-    record.provider = transcription_result.provider
-    record.model = transcription_result.model
+    # Success — mutate record + purge audio from disk (retention policy).
+    finalize_success(record, transcription_result)
 
     # Auto-generate a title from transcription when name is a generic filename
     if record.name and record.name.lower().startswith("recording."):
@@ -387,8 +356,8 @@ async def delete_transcription(
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript niet gevonden")
 
-    # Clean up audio file
-    _delete_audio(record.audio_path)
+    # Clean up audio file (legacy records that still have audio at time of delete)
+    delete_audio(record.audio_path)
 
     await db.execute(
         delete(Transcription).where(
