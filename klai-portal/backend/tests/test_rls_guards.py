@@ -118,6 +118,82 @@ async def test_pin_session_calls_connection():
 
 
 # ---------------------------------------------------------------------------
+# cross_org_session — explicit bypass helper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cross_org_session_sets_and_resets_bypass_flag(monkeypatch):
+    """Sets app.cross_org_admin=true on entry and clears it on exit.
+
+    The SQL helper _rls_current_org_id() reads this flag and returns NULL
+    (policy IS NULL branch matches everything). Reset on exit is critical —
+    otherwise a pooled connection that next serves a tenant request would
+    carry the bypass into user code.
+    """
+    calls: list[str] = []
+
+    class FakeSession:
+        async def connection(self):
+            calls.append("pin")
+
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "set_config" in sql and "cross_org_admin" in sql:
+                calls.append("bypass_on" if "'true'" in sql else "bypass_off")
+            elif "set_config" in sql and "current_org_id" in sql:
+                calls.append("tenant_reset")
+            return SimpleNamespace(rowcount=-1)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSession())
+
+    async with db_module.cross_org_session() as session:
+        assert session is not None
+        calls.append("yield")
+
+    assert calls == ["pin", "bypass_on", "yield", "bypass_off", "tenant_reset"]
+
+
+@pytest.mark.asyncio
+async def test_cross_org_session_clears_bypass_on_exception(monkeypatch):
+    """Bypass flag MUST be cleared even if the body raises."""
+    calls: list[str] = []
+
+    class FakeSession:
+        async def connection(self):
+            calls.append("pin")
+
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "cross_org_admin" in sql and "'true'" in sql:
+                calls.append("bypass_on")
+            elif "cross_org_admin" in sql:
+                calls.append("bypass_off")
+            return SimpleNamespace(rowcount=-1)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(db_module, "AsyncSessionLocal", lambda: FakeSession())
+
+    with pytest.raises(RuntimeError, match="kaboom"):
+        async with db_module.cross_org_session():
+            raise RuntimeError("kaboom")
+
+    assert "bypass_on" in calls and "bypass_off" in calls
+    assert calls.index("bypass_on") < calls.index("bypass_off")
+
+
+# ---------------------------------------------------------------------------
 # rls_guard._extract_dml_table — statement parser
 # ---------------------------------------------------------------------------
 
