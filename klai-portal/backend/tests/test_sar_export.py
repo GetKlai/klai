@@ -50,6 +50,58 @@ def _zitadel_user_response() -> dict:
 
 
 class TestSarExport:
+    @pytest.fixture(autouse=True)
+    def _stub_set_tenant(self, monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+        """set_tenant uses db.execute internally; stub it so tests keep
+        controlling the side_effect list of canned query results.
+        The real call is covered by test_sets_tenant_before_rls_queries.
+        """
+        stub = AsyncMock()
+        monkeypatch.setattr("app.api.me.set_tenant", stub)
+        return stub
+
+    @pytest.mark.asyncio
+    async def test_sets_tenant_before_rls_queries(self, _stub_set_tenant: AsyncMock) -> None:
+        """Regression: without set_tenant the RLS-strict tables queried below
+        (portal_groups, portal_knowledge_bases, portal_user_kb_access,
+        vexa_meetings) raise InsufficientPrivilegeError on production
+        PostgreSQL. This test asserts that set_tenant(db, org.id) fires
+        once — before any RLS-protected query.
+        """
+        from app.api.me import sar_export
+
+        org = _mock_org()
+        org.id = 8
+        portal_user = _mock_portal_user()
+
+        mock_org_user = MagicMock()
+        mock_org_user.one_or_none.return_value = (org, portal_user)
+        mock_empty = MagicMock()
+        mock_empty.all.return_value = []
+        mock_meetings = MagicMock()
+        mock_meetings.scalars.return_value.all.return_value = []
+
+        db = AsyncMock()
+        db.execute.side_effect = [
+            mock_org_user,  # portal_users + portal_orgs lookup (permissive)
+            mock_empty,  # group memberships
+            mock_empty,  # KB access
+            mock_empty,  # audit events
+            mock_empty,  # usage events
+            mock_meetings,  # meetings
+        ]
+
+        with patch("app.api.me.zitadel") as mock_zitadel:
+            mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-xyz"})
+            mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
+            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+
+            await sar_export(credentials=MagicMock(), db=db)
+
+        _stub_set_tenant.assert_called_once()
+        args, _ = _stub_set_tenant.call_args
+        assert args[1] == 8, f"set_tenant must carry the real org_id; got {args[1]!r}"
+
     @pytest.mark.asyncio
     async def test_returns_expected_top_level_keys(self) -> None:
         from app.api.me import sar_export
