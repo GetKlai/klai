@@ -108,20 +108,25 @@ async def logout(
     id_token_hint: str | None = None
     refresh_token_to_revoke: str | None = None
     audit_resource_id = "unknown"
+    audit_actor = "unknown"
+    audit_org_id = 0
     if session is not None:
         audit_resource_id = session.sid
+        audit_actor = session.zitadel_user_id
         record = await session_service.load(session.sid)
         if record is not None:
             id_token_hint = record.id_token or None
             refresh_token_to_revoke = record.refresh_token or None
+            if record.org_id is not None:
+                audit_org_id = record.org_id
         await session_service.revoke(session.sid)
 
     if refresh_token_to_revoke:
         await revoke_token(refresh_token_to_revoke, token_type_hint="refresh_token")  # noqa: S106
 
     await audit.log_event(
-        org_id=0,
-        actor=session.zitadel_user_id if session is not None else "unknown",
+        org_id=audit_org_id,
+        actor=audit_actor,
         action="auth.logout",
         resource_type="session",
         resource_id=audit_resource_id,
