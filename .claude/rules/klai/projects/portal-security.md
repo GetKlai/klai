@@ -82,11 +82,62 @@ explicit and auditable.
 - Split `ALL` policies into separate `SELECT` and `INSERT` when inserting role differs from reading role.
 - Use `text()` raw SQL for audit/analytics inserts on split-policy tables.
 
-## RLS coverage
+## RLS policy categories (4-category framework, live since 2026-04-21)
 
-Strict: `portal_groups`, `portal_knowledge_bases`, `portal_group_products`, `portal_group_memberships`, `portal_group_kb_access`, `portal_kb_tombstones`, `portal_user_kb_access`, `portal_retrieval_gaps`, `portal_taxonomy_nodes`, `portal_taxonomy_proposals`, `portal_user_products`.
-Permissive: `portal_users`, `portal_connectors`.
-Split (SELECT scoped, INSERT permissive): `portal_audit_log`, `product_events`, `vexa_meetings`.
+Every RLS-enabled table falls in one of four categories. Policy shape
+derives from the category. **Do not move a table between categories
+without the pre-flight audit described in `docs/runbooks/rls-upgrade.md`.**
+
+| Cat | Policy pattern | When to use | Tables |
+|---|---|---|---|
+| A | `USING (org_id = … OR current_setting IS NULL)` — permissive on missing | Query runs BEFORE set_tenant can fire (auth lookup, pre-auth webhook) | `portal_users`, `portal_connectors` |
+| B | SELECT `USING (true)`, other cmds strict | Public/pre-auth endpoint must SELECT without tenant context | `widgets`, `widget_kb_access`, `partner_api_keys`, `partner_api_key_kb_access` |
+| C | INSERT permissive, SELECT scoped | Fire-and-forget audit/event writes survive caller rollback | `portal_audit_log`, `product_events`, `portal_feedback_events` |
+| D | `USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id())` — strict, raises on missing, supports explicit cross-org bypass | Every access path sets tenant context | `portal_knowledge_bases`, `portal_groups`, `portal_group_products`, `portal_group_kb_access`, `portal_kb_tombstones`, `portal_user_kb_access`, `portal_user_products`, `portal_retrieval_gaps`, `portal_taxonomy_nodes`, `portal_taxonomy_proposals`, `vexa_meetings` |
+
+Outside the classification: `portal_group_memberships` has no RLS
+policy — membership rows inherit their tenant via the parent group's FK.
+
+## How to set tenant context
+
+Three patterns, in order of preference:
+
+1. **`Depends(_get_caller_org)` / `get_partner_key`** in the route
+   signature — the dependency calls `set_tenant()` itself. All normal
+   request-scoped work should use this.
+2. **`await set_tenant(db, org_id)`** explicit call — use only when the
+   dependency pattern does not fit (internal endpoints that carry a
+   different auth token, callbacks that resolve the org from the
+   payload).
+3. **`tenant_scoped_session(org_id)` / `cross_org_session()`** context
+   managers — for background tasks and fire-and-forget writes that open
+   a fresh session (no request context).
+
+Never open `AsyncSessionLocal()` directly and then query a category-D
+table. The RLS guard event listener (`app.core.rls_guard`) logs any
+rowcount=0 DML on those tables at ERROR level; in tests,
+`PORTAL_RLS_GUARD_STRICT=1` upgrades that to a raise.
+
+## Adding a new RLS-enabled table
+
+1. Pick the category first (see table above). If category D, continue;
+   otherwise copy an existing policy from a same-category table.
+2. Write the policy in a new `alembic/versions/post_deploy_*.sql` file
+   using the category's pattern. Wrap in `BEGIN`/`COMMIT`.
+3. For category D: audit every callsite that touches the model or
+   tablename (grep, CodeIndex `impact()`). Each must go through one of
+   the three patterns above.
+4. Add the table to `RLS_DML_TABLES` in `app/core/rls_guard.py` so the
+   event listener covers it.
+5. Add the table to the verify-section of `scripts/rls-smoke-test.sql`.
+
+## Deploy order for RLS changes
+
+**Code first, SQL second.** The application expects the policy to be in
+its target state when it starts. Running the SQL before the Python
+deploy breaks any request still relying on the old policy behaviour.
+
+See the full runbook: `docs/runbooks/rls-upgrade.md`.
 
 ## Rules for agents
 

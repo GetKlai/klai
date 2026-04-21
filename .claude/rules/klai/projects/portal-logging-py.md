@@ -85,6 +85,36 @@ Use it for production debugging instead of `docker logs`:
 | `error` | Failures with impact: sync failed, external call failed |
 | `exception` | Unexpected errors — use instead of `error(..., exc_info=True)` |
 
+### except blocks MUST capture traceback (HARD)
+
+Every `except Exception` block that logs MUST include a traceback. Two
+acceptable forms:
+
+```python
+# Graceful degradation — upstream failure, caller continues
+try:
+    await upstream.maybe_do_thing()
+except Exception:
+    logger.warning("upstream_degraded", exc_info=True)   # traceback!
+
+# Unexpected — state likely inconsistent, re-raising would be better
+try:
+    ...
+except Exception:
+    logger.exception("unexpected_failure")               # traceback by default
+```
+
+**Why:** `logger.warning("failed", error=str(exc))` throws away the
+stack frame. When the same warning fires in production at 3am you have
+no idea where it came from. `exc_info=True` on warning preserves level
+semantics (still a warning, not an error) while keeping the traceback
+queryable in VictoriaLogs.
+
+**Prevention:** `ruff` rule `TRY401` catches
+`logger.error(..., str(exc))` and `logger.warning(..., str(exc))` —
+enabled in `pyproject.toml`'s ruff config. Prefer `exc_info=True` over
+string interpolation of the exception.
+
 ## What to include as kwargs
 
 Pass structured key/value pairs — not string concatenation:
