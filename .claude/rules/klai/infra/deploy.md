@@ -45,16 +45,33 @@ chmod 600 /opt/klai/.env.new && mv /opt/klai/.env.new /opt/klai/.env
 Alternative: build on server from public repo (sparse checkout + `docker build`).
 
 ## Alembic revision IDs — never hand-typed (CRIT)
-Hand-typed placeholder IDs (e.g. `a1b2c3d4e5f6`) collide with existing migrations. SPEC-KB-020: identical ID already existed in production → `alembic upgrade head` failed with "Revision a1b2c3d4e5f6 is present more than once".
-Local `alembic/versions/` may be missing migrations that only exist in production — local file listing is not authoritative.
-**Prevention:**
-- Always generate via `alembic revision -m "description"` or `--autogenerate` — never write a revision ID by hand.
+Hand-typed placeholder IDs (e.g. `a1b2c3d4e5f6`, `p1r2o3v4s5b1`, `z3a4b5c6d7e8`)
+collide with existing migrations. SPEC-KB-020 and SPEC-PROV-001 both got hit
+by this: `alembic upgrade head` failed with "Revision X is present more than
+once" and multiple-head errors.
+
+**Enforced in CI** via `klai-portal/backend/scripts/validate_alembic.py`,
+wired into the `quality` job in `.github/workflows/portal-api.yml`. The script
+fails the build if:
+- The alembic DAG has more than one head, OR
+- Two migration files declare the same `revision = "xxx"` id.
+
+**Local workflow:**
+- Always generate via `alembic revision -m "description"` or `--autogenerate`
+  — never write a revision id by hand. Alembic uses `uuid.uuid4().hex[:12]`
+  which is collision-safe (2^48 space).
 - Before setting `down_revision`, confirm actual DB head: `SELECT version_num FROM alembic_version;`
-- If in doubt: `docker exec portal-api alembic heads` to see what the container sees.
+- If in doubt: `docker exec klai-core-portal-api-1 alembic heads` to see what the container sees.
+- Run the integrity check locally before pushing: `cd klai-portal/backend && uv run python scripts/validate_alembic.py`
+
+Local `alembic/versions/` may be missing migrations that only exist in production
+— local file listing is not authoritative. Always cross-check against the prod
+`alembic_version` table.
 
 ## Alembic heads after merge
 Two branches with migrations → multiple heads → `alembic upgrade head` fails.
 Fix: `alembic merge heads -m "merge heads"`. Use `IF NOT EXISTS` in all DDL.
+The CI integrity check (see above) catches this before merge to main.
 
 ## CI compose-sync overwrites server config (HIGH)
 
