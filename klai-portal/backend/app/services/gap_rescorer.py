@@ -51,6 +51,13 @@ async def rescore_open_gaps(
         logger.warning("gap_rescorer: KNOWLEDGE_RETRIEVE_URL not configured -- skipping re-scoring")
         return 0
 
+    # Background task runs on a fresh session (db_factory=get_db). Pin + set
+    # tenant context so queries against portal_retrieval_gaps (RLS-scoped)
+    # see this org's rows.
+    from app.core.database import set_tenant
+
+    await set_tenant(db, org_id)
+
     cutoff = datetime.now(tz=UTC) - timedelta(days=RESCORE_WINDOW_DAYS)
 
     # Step 1: fetch distinct open gap queries within window

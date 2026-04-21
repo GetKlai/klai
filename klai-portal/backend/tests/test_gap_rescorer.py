@@ -36,8 +36,10 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
     mock_result.all.return_value = [mock_row]
 
     mock_db = AsyncMock()
-    # First execute = SELECT distinct gap queries, second = UPDATE resolved_at
-    mock_db.execute = AsyncMock(side_effect=[mock_result, MagicMock()])
+    # First execute = set_tenant set_config, second = SELECT distinct gap queries,
+    # third = UPDATE resolved_at. (set_tenant added so rescore_open_gaps is safe
+    # on a fresh session without relying on the caller having called it first.)
+    mock_db.execute = AsyncMock(side_effect=[MagicMock(), mock_result, MagicMock()])
     mock_db.commit = AsyncMock()
 
     # Mock httpx to return good chunks (reranker_score above threshold)

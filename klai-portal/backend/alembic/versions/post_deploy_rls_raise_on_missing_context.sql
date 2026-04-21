@@ -19,15 +19,43 @@
 -- New pattern: a SECURITY INVOKER function that raises when the context is
 -- missing, with an explicit opt-in bypass for cross-org admin work.
 --
+-- Scope: PURE-TENANT tables only (category D)
+-- ----------------
+-- Not every RLS-scoped table is a candidate for the strict policy.
+-- Three tables are intentionally LEFT on the old permissive-on-missing
+-- pattern because their access flows predate tenant context:
+--
+--   - portal_users:     /api/me and _get_caller_org resolve the tenant
+--                       by selecting portal_users BY zitadel_user_id,
+--                       which must succeed before set_tenant can fire.
+--   - portal_connectors: internal /connectors/* callbacks load the row
+--                       by id before they can derive org_id.
+--   - widgets.SELECT / partner_api_keys.SELECT / *_kb_access.SELECT:
+--                       public/pre-auth widget config endpoints.
+--
+-- Three tables have a permissive INSERT policy by design and this
+-- script does NOT touch their INSERT path:
+--
+--   - portal_audit_log, product_events, portal_feedback_events:
+--     fire-and-forget raw-SQL INSERTs in audit.py / events.py that
+--     intentionally run without tenant context.
+--
 -- Deployment order
 -- ----------------
--- 1. Deploy portal-api code that uses tenant_scoped_session / cross_org_session.
--- 2. Run this script.
--- 3. Verify.
--- The new code is compatible with BOTH the old and new policies (it always
--- sets app.current_org_id or app.cross_org_admin). Running the SQL before
--- the code deploy would break any request whose code path still relied on
--- the inline NULLIF trick.
+-- 1. Deploy portal-api code that uses tenant_scoped_session /
+--    cross_org_session AND has `get_effective_products` self-healing
+--    tenant context AND `rescore_open_gaps` calling set_tenant.
+-- 2. Run this script (as klai superuser).
+-- 3. Smoke-test: /api/me, /internal/knowledge-feature-check, admin UI.
+-- The new code is compatible with BOTH the old and new policies (it
+-- always sets app.current_org_id or app.cross_org_admin). Running this
+-- SQL before the code deploy breaks endpoints that still rely on the
+-- inline NULLIF fallback — get_effective_products notably.
+
+-- Atomic: wrap everything in a single transaction so any error rolls
+-- back all policy changes. Without BEGIN/COMMIT a partial failure would
+-- leave some tables on the new function and others on the old NULLIF trick.
+BEGIN;
 
 -- ----------------------------------------------------------------------
 -- 1. Helper function: resolve-or-raise.
@@ -104,17 +132,21 @@ CREATE POLICY tenant_isolation ON portal_group_products
     FOR ALL TO portal_api
     USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
 
--- portal_group_memberships
-DROP POLICY IF EXISTS tenant_isolation ON portal_group_memberships;
-CREATE POLICY tenant_isolation ON portal_group_memberships
-    FOR ALL TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+-- portal_group_memberships has NO RLS policy currently (verified 2026-04-21
+-- in pg_policies). Membership rows inherit their tenant scope from the
+-- parent group via FK; there's no org_id column to scope on. Skipped.
 
--- portal_group_kb_access
+-- portal_group_kb_access — scoped via parent KB's org_id (no direct org_id)
 DROP POLICY IF EXISTS tenant_isolation ON portal_group_kb_access;
 CREATE POLICY tenant_isolation ON portal_group_kb_access
     FOR ALL TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+    USING (
+        _rls_current_org_id() IS NULL
+        OR kb_id IN (
+            SELECT id FROM portal_knowledge_bases
+            WHERE org_id = _rls_current_org_id()
+        )
+    );
 
 -- portal_kb_tombstones
 DROP POLICY IF EXISTS tenant_isolation ON portal_kb_tombstones;
@@ -134,17 +166,29 @@ CREATE POLICY tenant_isolation ON portal_retrieval_gaps
     FOR ALL TO portal_api
     USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
 
--- portal_taxonomy_nodes
+-- portal_taxonomy_nodes — scoped via parent KB's org_id (no direct org_id column)
 DROP POLICY IF EXISTS tenant_isolation ON portal_taxonomy_nodes;
 CREATE POLICY tenant_isolation ON portal_taxonomy_nodes
     FOR ALL TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+    USING (
+        _rls_current_org_id() IS NULL
+        OR kb_id IN (
+            SELECT id FROM portal_knowledge_bases
+            WHERE org_id = _rls_current_org_id()
+        )
+    );
 
--- portal_taxonomy_proposals
+-- portal_taxonomy_proposals — same scoping pattern
 DROP POLICY IF EXISTS tenant_isolation ON portal_taxonomy_proposals;
 CREATE POLICY tenant_isolation ON portal_taxonomy_proposals
     FOR ALL TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+    USING (
+        _rls_current_org_id() IS NULL
+        OR kb_id IN (
+            SELECT id FROM portal_knowledge_bases
+            WHERE org_id = _rls_current_org_id()
+        )
+    );
 
 -- portal_user_products
 DROP POLICY IF EXISTS tenant_isolation ON portal_user_products;
@@ -152,14 +196,17 @@ CREATE POLICY tenant_isolation ON portal_user_products
     FOR ALL TO portal_api
     USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
 
--- portal_connectors
-DROP POLICY IF EXISTS tenant_isolation ON portal_connectors;
-CREATE POLICY tenant_isolation ON portal_connectors
-    FOR ALL TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+-- portal_connectors — AUTH-SEED category. Internal webhook callbacks
+-- (e.g. /internal/connectors/{id}/sync-complete) load the connector row
+-- via `db.get(PortalConnector, id)` BEFORE they can call set_tenant —
+-- there's no tenant context in the incoming request. Policy stays
+-- permissive-on-missing (existing pattern) so those lookups succeed.
+-- Any tenant-scoped code path still has set_tenant in place, so the
+-- org_id equality branch enforces isolation.
 
--- portal_users (permissive ALL — intentional: auth middleware looks up by zitadel_user_id before set_tenant)
--- Left unchanged: portal_users has special auth flow semantics.
+-- portal_users — AUTH-SEED category. /api/me and _get_caller_org must
+-- look up (org, user) by zitadel_user_id BEFORE they know which tenant
+-- to set. Policy stays permissive-on-missing (existing pattern).
 
 -- vexa_meetings — per-cmd policies
 DROP POLICY IF EXISTS tenant_read ON vexa_meetings;
@@ -269,3 +316,5 @@ CREATE POLICY widget_kb_access_delete ON widget_kb_access
 
 -- Sanity check (no-op in production, visible in psql output):
 SELECT 'RLS upgrade applied — _rls_current_org_id function and policies refreshed' AS status;
+
+COMMIT;
