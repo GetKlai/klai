@@ -127,7 +127,7 @@ async def test_pin_session_calls_connection():
     [
         ("UPDATE portal_knowledge_bases SET name='x' WHERE id = 1", ("UPDATE", "portal_knowledge_bases")),
         ("  update portal_groups SET name='y' WHERE id = 2", ("UPDATE", "portal_groups")),
-        ('UPDATE "portal_knowledge_bases" SET name=\'x\'', ("UPDATE", "portal_knowledge_bases")),
+        ("UPDATE \"portal_knowledge_bases\" SET name='x'", ("UPDATE", "portal_knowledge_bases")),
         ("DELETE FROM partner_api_keys WHERE id = 3", ("DELETE", "partner_api_keys")),
         ("DELETE FROM public.portal_groups WHERE id = 4", ("DELETE", "portal_groups")),
         ("UPDATE portal_users SET email='x' WHERE id = 5", None),  # not in RLS_DML_TABLES
@@ -156,10 +156,7 @@ def test_rls_guard_logs_error_on_zero_rowcount_dml(caplog):
     with caplog.at_level(logging.ERROR, logger="app.core.rls_guard"):
         _on_after_cursor_execute(None, cursor, statement, {}, None, False)
     messages = [r.getMessage() for r in caplog.records]
-    assert any(
-        "RLS silent-filter: UPDATE on portal_knowledge_bases matched 0 rows" in m
-        for m in messages
-    ), messages
+    assert any("RLS silent-filter: UPDATE on portal_knowledge_bases matched 0 rows" in m for m in messages), messages
 
 
 def test_rls_guard_stays_quiet_on_positive_rowcount(caplog):

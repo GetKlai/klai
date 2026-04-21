@@ -136,9 +136,7 @@ def _on_after_cursor_execute(
     # Limit traceback to application frames to keep log volume reasonable.
     stack = traceback.extract_stack(limit=25)
     app_frames = [f for f in stack if "/site-packages/" not in f.filename][-8:]
-    caller = "\n".join(
-        f"    {f.filename}:{f.lineno} in {f.name}" for f in app_frames
-    )
+    caller = "\n".join(f"    {f.filename}:{f.lineno} in {f.name}" for f in app_frames)
     statement_preview = " ".join(statement.split())[:180]
     msg = (
         f"RLS silent-filter: {op} on {table} matched 0 rows. "
