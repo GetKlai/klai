@@ -56,7 +56,14 @@ Klai is een privacy-first, EU-only AI-platform. Meeting-opnames worden door de v
 
 ### R2: `delete_recording()` methode op VexaClient
 
-Het systeem **SHALL** een `delete_recording(vexa_meeting_id: int)` methode aanbieden op `VexaClient` die via Docker SDK `container.exec_run()` de opnamebestanden verwijdert uit `/var/lib/vexa/recordings/` binnen de vexa-bot-manager container.
+Het systeem **SHALL** een `delete_recording(vexa_meeting_id: int)` methode
+aanbieden op `VexaClient` die de opnamebestanden verwijdert uit
+`/var/lib/vexa/recordings/` horend bij de vexa-bot-manager container.
+
+> **SEC-021 constraint (2026-04-21):** verwijdering **SHALL NIET** via
+> `container.exec_run(["rm", ...])` plaatsvinden — docker-socket-proxy
+> blokkeert `/exec/*/start`. Kies één van de routes in `plan.md §
+> Alternatief ontwerp` (intern HTTP-endpoint of shared volume mount).
 
 **Traceability:** SPEC-GDPR-002-R2
 
