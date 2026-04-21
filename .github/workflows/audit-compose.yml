@@ -1,0 +1,40 @@
+name: Audit compose volumes
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/docker-compose.yml'
+      - 'deploy/volume-mounts.yaml'
+      - 'scripts/audit-compose-volumes.sh'
+      - '.github/workflows/audit-compose.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker-compose.yml'
+      - 'deploy/volume-mounts.yaml'
+      - 'scripts/audit-compose-volumes.sh'
+
+jobs:
+  audit:
+    name: audit-compose-volumes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq + jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          sudo curl -fsSL \
+            https://github.com/mikefarah/yq/releases/download/v4.47.1/yq_linux_amd64 \
+            -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+          jq --version
+
+      - name: Run audit
+        run: bash scripts/audit-compose-volumes.sh
+
+      - name: Regression test — bug must be caught
+        run: bash scripts/test-audit-compose.sh

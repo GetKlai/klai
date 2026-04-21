@@ -149,7 +149,7 @@ function ChatPage() {
     // reloads and the iframe OIDC flow succeeds.
     chatKbLogger.info('Retry: forcing portal re-authentication')
     localStorage.removeItem(LC_AUTH_KEY)
-    void auth.signinRedirect({ state: { returnTo: '/app/chat' } })
+    void auth.signinRedirect({ returnTo: '/app/chat' })
   }, [auth])
 
   const showOverlay = phase === 'health_check' || phase === 'loading_iframe'

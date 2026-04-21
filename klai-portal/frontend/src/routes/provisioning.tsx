@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { useAuth, type AuthContextProps } from '@/lib/auth'
+import { useAuth, type AuthContextValue } from '@/lib/auth'
 import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
 import { CheckCircle, AlertCircle } from 'lucide-react'
 import * as Sentry from '@sentry/react'
@@ -98,7 +98,7 @@ function ProvisioningPage() {
  *   - provisioning_status=failed   → "failed"
  */
 async function pollProvisioning(
-  auth: AuthContextProps,
+  auth: AuthContextValue,
   signal: AbortSignal,
   setStatus: (s: Status) => void,
 ): Promise<void> {

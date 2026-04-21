@@ -9,10 +9,11 @@ tenant/user is safe (INSERT ... ON CONFLICT DO NOTHING pattern).
 """
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import set_tenant
 from app.models.knowledge_bases import PortalKnowledgeBase
 
 logger = structlog.get_logger()
@@ -131,16 +132,14 @@ async def ensure_default_knowledge_bases(
     treats it as fatal so a degraded tenant can never be marked 'ready'.
 
     Requires a pinned DB connection on the session (caller must have awaited
-    session.connection()); otherwise set_config below may land on a different
-    pooled connection than the subsequent INSERTs and RLS will block them.
+    pin_session() or session.connection()); otherwise set_tenant() below may
+    land on a different pooled connection than the subsequent INSERTs and RLS
+    will block them.
     """
     # Provisioning runs with the admin's org_id in the session; override it so
     # the RLS USING/WITH CHECK clause (`org_id = current_setting(...)`) accepts
     # inserts for the new tenant.
-    await db.execute(
-        text("SELECT set_config('app.current_org_id', :org_id, false)"),
-        {"org_id": str(org_id)},
-    )
+    await set_tenant(db, org_id)
     await create_default_org_kb(org_id, created_by=user_id, db=db)
     await create_default_personal_kb(user_id, org_id, db=db)
     await db.commit()

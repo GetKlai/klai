@@ -1,5 +1,5 @@
 import contextlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextvars import ContextVar
 
 from sqlalchemy import text
@@ -21,6 +21,26 @@ engine = create_async_engine(
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
+async def _pin_and_reset_on_exit(session: AsyncSession) -> None:
+    """Pin the session's pooled connection.
+
+    After this call every subsequent statement on the session uses the same
+    physical connection, so PostgreSQL session-level `set_config()` values
+    stay visible across awaits.
+    """
+    await session.connection()
+
+
+async def _reset_tenant_context(session: AsyncSession) -> None:
+    """Clear app.current_org_id on the session's connection.
+
+    Called before the connection returns to the pool so the next request /
+    task that picks it up starts with a clean RLS context.
+    """
+    with contextlib.suppress(Exception):
+        await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
+
+
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """Yield an async DB session with a pinned connection.
 
@@ -36,16 +56,11 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
     making RLS block all rows.
     """
     async with AsyncSessionLocal() as session:
-        # Pin the connection — all queries in this session use the same one.
-        await session.connection()
+        await _pin_and_reset_on_exit(session)
         try:
             yield session
         finally:
-            # Reset tenant context before connection returns to the pool.
-            # set_config(..., false) = session-level (persists across commits in the same
-            # connection checkout). Resetting here ensures the next request gets a clean slate.
-            with contextlib.suppress(Exception):
-                await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
+            await _reset_tenant_context(session)
 
 
 async def set_tenant(session: AsyncSession, org_id: int) -> None:
@@ -53,6 +68,13 @@ async def set_tenant(session: AsyncSession, org_id: int) -> None:
 
     Uses set_config with is_local=false so the setting survives commits within
     the same connection checkout. get_db() resets it on cleanup.
+
+    The caller is responsible for ensuring the session's connection is pinned
+    (via session.connection() or a pinned dependency). Otherwise the
+    SET may land on a different pooled connection than later queries and RLS
+    will silently filter rows. Use `tenant_scoped_session()` below if you
+    don't already have a pinned session.
+
     Called once per request by _get_caller_org after authentication.
     """
     await session.execute(
@@ -60,3 +82,85 @@ async def set_tenant(session: AsyncSession, org_id: int) -> None:
         {"org_id": str(org_id)},
     )
     current_org_id.set(org_id)
+
+
+@contextlib.asynccontextmanager
+async def tenant_scoped_session(org_id: int) -> AsyncIterator[AsyncSession]:
+    """Yield an RLS-aware session for background tasks and fire-and-forget writes.
+
+    Opens a fresh AsyncSession, pins its pooled connection, sets
+    app.current_org_id via set_config(), yields for use, and resets the
+    tenant context on exit before the connection returns to the pool.
+
+    Use this instead of `async with AsyncSessionLocal() as db` anywhere
+    you need to read or write an RLS-protected table outside of a request
+    scope — e.g. asyncio.create_task() callbacks, BackgroundTasks, poller
+    loops that read one tenant at a time.
+
+    Do NOT use this for cross-tenant operations (meeting dedup across all
+    orgs, tenant discovery, etc.); those must intentionally run without
+    tenant context.
+
+    Example:
+        async def record_event(org_id: int, event: str) -> None:
+            async with tenant_scoped_session(org_id) as db:
+                db.add(MyModel(...))
+                await db.commit()
+    """
+    async with AsyncSessionLocal() as session:
+        await _pin_and_reset_on_exit(session)
+        await set_tenant(session, org_id)
+        try:
+            yield session
+        finally:
+            await _reset_tenant_context(session)
+
+
+async def pin_session(session: AsyncSession) -> None:
+    """Pin an externally-provided session's pooled connection.
+
+    For code paths that accept a session as a parameter (e.g. provisioning
+    orchestrator) and need to guarantee that later set_config() calls on
+    that session remain visible. Idempotent — calling session.connection()
+    twice is safe.
+    """
+    await _pin_and_reset_on_exit(session)
+
+
+@contextlib.asynccontextmanager
+async def cross_org_session() -> AsyncIterator[AsyncSession]:
+    """Yield a session that BYPASSES tenant RLS — for cross-org admin tasks only.
+
+    Sets the PostgreSQL session variable `app.cross_org_admin=true`, which
+    the `_rls_current_org_id()` policy function reads to allow SELECT /
+    INSERT / UPDATE / DELETE across all tenants. Resets the flag on exit.
+
+    DO NOT USE for anything that processes a single tenant's data. Use
+    `tenant_scoped_session(org_id)` for that — it sets the tenant context
+    and guarantees RLS enforcement.
+
+    Legitimate use cases (as of 2026-04-21):
+
+      - `bot_poller`: poll ACTIVE / STUCK Vexa meetings across all orgs in
+        one pass so missed-webhook recovery covers every tenant.
+      - `invite_scheduler`: iCal UID dedup and cancel lookup — UIDs are
+        globally unique and we cannot derive the owning org from the
+        cancel signal.
+      - `connector_credentials` KEK rotation: operator-initiated full sweep
+        of `portal_orgs.connector_dek_enc` re-encryption.
+      - `recording_cleanup_loop`: SELECT stale meetings across all orgs
+        (but the UPDATE that flips recording_deleted MUST use
+        `tenant_scoped_session(meeting.org_id)` — already enforced).
+
+    Anything new you add here must have a written @MX:REASON justifying
+    why tenant scoping is not possible.
+    """
+    async with AsyncSessionLocal() as session:
+        await _pin_and_reset_on_exit(session)
+        await session.execute(text("SELECT set_config('app.cross_org_admin', 'true', false)"))
+        try:
+            yield session
+        finally:
+            with contextlib.suppress(Exception):
+                await session.execute(text("SELECT set_config('app.cross_org_admin', '', false)"))
+            await _reset_tenant_context(session)

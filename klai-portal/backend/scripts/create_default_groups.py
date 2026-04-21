@@ -1,5 +1,23 @@
 """
-One-time script: create default product groups for existing orgs that predate SPEC-AUTH-004.
+DEPRECATED — one-time SPEC-AUTH-004 migration, already executed on all
+environments. Kept in the repo for historical reference only.
+
+This script was written before portal_groups had RLS enabled. As-is it
+would fail against the current schema because it opens an AsyncSessionLocal
+without calling `await session.connection()` (pin) and without invoking
+`set_tenant()` — every INSERT would be silently blocked by the
+`tenant_isolation` policy on portal_groups.
+
+If you ever need to re-run the equivalent logic, use the modern helpers:
+
+    from app.core.database import tenant_scoped_session
+
+    async with tenant_scoped_session(org.id) as db:
+        ...  # add groups, db.commit()
+
+Do NOT just uncomment the body below. The RLS guard event listener in
+app/core/rls_guard.py will catch the silent 0-row INSERTs, but by that
+point you've already lost state for half the orgs.
 
 Run via:
     docker exec portal-api uv run python scripts/create_default_groups.py
@@ -7,6 +25,7 @@ Run via:
 
 import asyncio
 import logging
+import sys
 
 from sqlalchemy import select
 
@@ -75,4 +94,11 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    print(
+        "ERROR: create_default_groups.py is DEPRECATED and will fail against "
+        "the current RLS-enabled schema. See the module docstring for the "
+        "modern replacement.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+    asyncio.run(run())  # unreachable; kept so the import graph stays valid

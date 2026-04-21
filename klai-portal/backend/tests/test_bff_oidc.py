@@ -194,15 +194,43 @@ class TestOidcCallback:
         assert resp.status_code == 302
         assert "reason=invalid_request" in resp.headers["location"]
 
-    def test_unknown_state_redirects(
+    def test_unknown_state_first_failure_silently_retries(
         self,
         app: FastAPI,
         wire_redis: AsyncMock,
     ) -> None:
+        """Transient callback failures should bounce the user back to `/` so
+        LoginPage can fire a fresh signinRedirect — no user-visible error.
+        """
         client = TestClient(app, follow_redirects=False)
         resp = client.get("/api/auth/oidc/callback?code=abc&state=never-issued")
         assert resp.status_code == 302
+        assert resp.headers["location"].endswith("/")
+        assert "reason=" not in resp.headers["location"]
+        set_cookies = resp.headers.get_list("set-cookie")
+        assert any("klai_oidc_retry=1" in c and "Max-Age=30" in c for c in set_cookies), (
+            f"retry cookie not set. Set-Cookie: {set_cookies}"
+        )
+
+    def test_unknown_state_second_failure_shows_error(
+        self,
+        app: FastAPI,
+        wire_redis: AsyncMock,
+    ) -> None:
+        """When the retry cookie is already present a second invalid_state
+        falls through to the error page and clears the cookie — prevents loops.
+        """
+        client = TestClient(app, follow_redirects=False)
+        resp = client.get(
+            "/api/auth/oidc/callback?code=abc&state=never-issued",
+            cookies={"klai_oidc_retry": "1"},
+        )
+        assert resp.status_code == 302
         assert "reason=invalid_state" in resp.headers["location"]
+        set_cookies = resp.headers.get_list("set-cookie")
+        assert any("klai_oidc_retry" in c and "Max-Age=0" in c for c in set_cookies), (
+            f"retry cookie not cleared on fatal. Set-Cookie: {set_cookies}"
+        )
 
     def test_explicit_op_error_is_propagated(
         self,
@@ -235,13 +263,21 @@ class TestOidcCallback:
         monkeypatch.setattr("app.api.auth_bff.exchange_code_for_tokens", fake_exchange)
         monkeypatch.setattr("app.api.auth_bff.verify_id_token", fake_verify)
 
-        resp = client.get(f"/api/auth/oidc/callback?code=the-code&state={state}")
+        resp = client.get(
+            f"/api/auth/oidc/callback?code=the-code&state={state}",
+            # Pretend an earlier attempt set the retry cookie; a successful
+            # callback must clear it so a future failure gets its one retry.
+            cookies={"klai_oidc_retry": "1"},
+        )
         assert resp.status_code == 302
         # Callback routes through /callback frontend page so workspaceHandoff
         # can run; original return_to is preserved as a query param.
         assert resp.headers["location"] == "/callback?return_to=/app"
         set_cookies = resp.headers.get_list("set-cookie")
         assert any(SESSION_COOKIE_NAME in c and "HttpOnly" in c for c in set_cookies)
+        assert any("klai_oidc_retry" in c and "Max-Age=0" in c for c in set_cookies), (
+            f"retry cookie not cleared on success. Set-Cookie: {set_cookies}"
+        )
         assert f"klai:oidc_pending:{state}" not in wire_redis._store
         session_keys = [k for k in wire_redis._store if k.startswith("klai:session:")]
         assert len(session_keys) == 1

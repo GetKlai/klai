@@ -1,7 +1,7 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
-import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
+import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import QRCode from 'react-qr-code'
 import { ArrowRight, Fingerprint, Mail, Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,6 @@ import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { authLogger } from '@/lib/logger'
 
 export const Route = createLazyFileRoute('/setup/mfa')({
@@ -520,12 +519,11 @@ function TOTPSetup({
 function SetupMFAPage() {
   useLocale()
   const auth = useAuth()
-  useAuthGuardRedirect()
+  const { user: currentUser, canRender } = useProtectedRoute()
 
   const [selectedMethod, setSelectedMethod] = useState<Method | null>(null)
   const [step, setStep] = useState<Step>('pick')
 
-  const { user: currentUser } = useCurrentUser()
   const mfaPolicy = currentUser?.mfa_policy ?? 'optional'
   const isRequired = mfaPolicy === 'required'
 
@@ -552,7 +550,7 @@ function SetupMFAPage() {
     window.location.replace(currentUser?.isAdmin ? '/admin' : '/app')
   }
 
-  if (!auth.isAuthenticated) {
+  if (!canRender) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-900 border-t-transparent" />
