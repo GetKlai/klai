@@ -125,3 +125,46 @@ async def pin_session(session: AsyncSession) -> None:
     twice is safe.
     """
     await _pin_and_reset_on_exit(session)
+
+
+@contextlib.asynccontextmanager
+async def cross_org_session() -> AsyncIterator[AsyncSession]:
+    """Yield a session that BYPASSES tenant RLS — for cross-org admin tasks only.
+
+    Sets the PostgreSQL session variable `app.cross_org_admin=true`, which
+    the `_rls_current_org_id()` policy function reads to allow SELECT /
+    INSERT / UPDATE / DELETE across all tenants. Resets the flag on exit.
+
+    DO NOT USE for anything that processes a single tenant's data. Use
+    `tenant_scoped_session(org_id)` for that — it sets the tenant context
+    and guarantees RLS enforcement.
+
+    Legitimate use cases (as of 2026-04-21):
+
+      - `bot_poller`: poll ACTIVE / STUCK Vexa meetings across all orgs in
+        one pass so missed-webhook recovery covers every tenant.
+      - `invite_scheduler`: iCal UID dedup and cancel lookup — UIDs are
+        globally unique and we cannot derive the owning org from the
+        cancel signal.
+      - `connector_credentials` KEK rotation: operator-initiated full sweep
+        of `portal_orgs.connector_dek_enc` re-encryption.
+      - `recording_cleanup_loop`: SELECT stale meetings across all orgs
+        (but the UPDATE that flips recording_deleted MUST use
+        `tenant_scoped_session(meeting.org_id)` — already enforced).
+
+    Anything new you add here must have a written @MX:REASON justifying
+    why tenant scoping is not possible.
+    """
+    async with AsyncSessionLocal() as session:
+        await _pin_and_reset_on_exit(session)
+        await session.execute(
+            text("SELECT set_config('app.cross_org_admin', 'true', false)")
+        )
+        try:
+            yield session
+        finally:
+            with contextlib.suppress(Exception):
+                await session.execute(
+                    text("SELECT set_config('app.cross_org_admin', '', false)")
+                )
+            await _reset_tenant_context(session)

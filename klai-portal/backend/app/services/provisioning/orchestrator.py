@@ -208,38 +208,30 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         env_file_host_path = f"{settings.librechat_host_data_path}/{slug}/.env"
         logger.info("librechat_env_written", slug=slug)
 
-        # Step 6: Create personal KB via klai-docs API.
+        # Step 6: Create personal docs KB via klai-docs API.
         #
-        # docs-app is a SOFT dependency for tenant provisioning: the tenant
-        # still works (chat, scribe, portal KBs) without the docs KB. If
-        # docs-app is unreachable (container down, config issue), we:
-        #   1. log at ERROR with full context so the gap is visible,
-        #   2. mark the tenant so the docs KB can be reconciled later,
-        #   3. continue provisioning so the tenant is otherwise ready.
+        # Delegates to the shared docs_client helper so we get the correct
+        # base URL (docs-app:3010/docs — the service listens on 3010, NOT
+        # 3000 — and the Next.js basePath is /docs) plus the standard
+        # internal-secret + trace headers.
         #
-        # Non-2xx from a REACHABLE docs-app is still fatal — it signals a
-        # real contract violation (auth, schema, etc.) that must not be
-        # silently tolerated.
+        # docs-app is a SOFT dependency: tenant chat/scribe/portal KBs work
+        # without it. If the app is unreachable we log loudly and continue
+        # so the rest of provisioning can finish; missing docs KBs can be
+        # reconciled afterwards. Non-2xx from a REACHABLE docs-app is still
+        # fatal — that signals a real contract violation.
+        from app.services import docs_client as docs_api
+
         try:
-            async with httpx.AsyncClient(
-                base_url="http://docs-app:3000",
-                headers={
-                    "X-Internal-Secret": settings.docs_internal_secret,
-                    "X-User-ID": "system",
-                    "Content-Type": "application/json",
-                },
-                timeout=10.0,
-            ) as docs_client:
-                kb_resp = await docs_client.post(
-                    f"/api/orgs/{slug}/kbs",
-                    json={"name": "Personal", "slug": "personal", "visibility": "private"},
-                )
-                kb_resp.raise_for_status()
-                logger.info("personal_kb_created", slug=slug)
+            await docs_api.provision_gitea_repo(
+                org_slug=slug,
+                kb_name="Personal",
+                kb_slug="personal",
+                visibility="internal",  # docs_client translates this to "private"
+            )
+            logger.info("personal_kb_created", slug=slug)
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
             # docs-app unreachable — soft failure, log loudly and degrade.
-            # The tenant is otherwise fine; admin tooling can reconcile the
-            # missing docs KB once docs-app is back up.
             logger.exception(
                 "docs_kb_creation_degraded_docs_app_unreachable",
                 slug=slug,

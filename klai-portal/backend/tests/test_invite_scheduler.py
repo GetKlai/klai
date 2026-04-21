@@ -46,7 +46,7 @@ async def test_past_meeting_skipped() -> None:
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+    with patch("app.services.invite_scheduler.cross_org_session", return_value=mock_session):
         await schedule_invite(invite, "user-1", None)
 
     assert invite.uid not in _scheduled
@@ -62,7 +62,7 @@ async def test_future_meeting_scheduled() -> None:
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+    with patch("app.services.invite_scheduler.cross_org_session", return_value=mock_session):
         await schedule_invite(invite, "user-1", 42)
 
     assert invite.uid in _scheduled
@@ -85,7 +85,7 @@ async def test_cancellation_cancels_task() -> None:
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+    with patch("app.services.invite_scheduler.cross_org_session", return_value=mock_session):
         await schedule_invite(future_invite, "user-1", None)
         assert uid in _scheduled
 
@@ -106,7 +106,7 @@ async def test_duplicate_invite_skipped() -> None:
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+    with patch("app.services.invite_scheduler.cross_org_session", return_value=mock_session):
         await schedule_invite(invite, "user-1", None)
 
     assert invite.uid not in _scheduled
@@ -135,7 +135,7 @@ async def test_rate_limit_exceeded_blocks_invite() -> None:
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+    with patch("app.services.invite_scheduler.cross_org_session", return_value=mock_session):
         await schedule_invite(invite, "user-1", None)
 
     assert invite.uid not in _scheduled
@@ -161,7 +161,7 @@ async def test_rate_limit_not_exceeded_allows_invite() -> None:
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.invite_scheduler.AsyncSessionLocal", return_value=mock_session):
+    with patch("app.services.invite_scheduler.cross_org_session", return_value=mock_session):
         await schedule_invite(invite, "user-1", 42)
 
     assert invite.uid in _scheduled

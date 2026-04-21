@@ -17,7 +17,7 @@ import structlog
 from sqlalchemy import select
 
 from app.api.meetings import ACTIVE_STATUSES, run_transcription
-from app.core.database import AsyncSessionLocal
+from app.core.database import cross_org_session, tenant_scoped_session
 from app.models.meetings import VexaMeeting
 from app.services.recording_cleanup import cleanup_recording
 from app.services.vexa import parse_meeting_url, vexa
@@ -28,9 +28,13 @@ POLL_INTERVAL = 10  # seconds — Vexa's own documented polling interval
 PROCESSING_TIMEOUT_MINUTES = 10  # retry transcription after this many minutes stuck in "processing"
 
 
-async def _upgrade_joining_to_recording(meeting_id: object) -> None:
-    """Set meeting status joining→recording when the bot is confirmed active."""
-    async with AsyncSessionLocal() as db:
+async def _upgrade_joining_to_recording(meeting_id: object, org_id: int) -> None:
+    """Set meeting status joining→recording when the bot is confirmed active.
+
+    Runs in a tenant-scoped session so vexa_meetings' UPDATE RLS policy
+    accepts the write. Caller holds the meeting object and provides org_id.
+    """
+    async with tenant_scoped_session(org_id) as db:
         m = await db.scalar(
             select(VexaMeeting).where(
                 VexaMeeting.id == meeting_id,
@@ -44,9 +48,15 @@ async def _upgrade_joining_to_recording(meeting_id: object) -> None:
 
 
 async def _handle_meeting_ended(meeting: VexaMeeting) -> None:
-    """Bot is gone from Vexa — transition meeting to stopping and run transcription."""
+    """Bot is gone from Vexa — transition meeting to stopping and run transcription.
+
+    Tenant-scoped: uses meeting.org_id to satisfy vexa_meetings UPDATE RLS.
+    """
     logger.info("Bot poll: meeting ended, triggering transcription", meeting_id=str(meeting.id))
-    async with AsyncSessionLocal() as db:
+    if meeting.org_id is None:
+        logger.warning("bot_poll_skipped_missing_org_id", meeting_id=str(meeting.id))
+        return
+    async with tenant_scoped_session(meeting.org_id) as db:
         m = await db.scalar(
             select(VexaMeeting).where(
                 VexaMeeting.id == meeting.id,
@@ -88,7 +98,10 @@ async def _recover_stuck_meeting(meeting: VexaMeeting) -> None:
         meeting_id=str(meeting.id),
         timeout_minutes=PROCESSING_TIMEOUT_MINUTES,
     )
-    async with AsyncSessionLocal() as db:
+    if meeting.org_id is None:
+        logger.warning("stuck_meeting_skipped_missing_org_id", meeting_id=str(meeting.id))
+        return
+    async with tenant_scoped_session(meeting.org_id) as db:
         m = await db.scalar(
             select(VexaMeeting).where(
                 VexaMeeting.id == meeting.id,
@@ -108,32 +121,18 @@ async def poll_loop() -> None:
     await asyncio.sleep(15)  # let the app finish starting up
     while True:
         try:
-            async with AsyncSessionLocal() as db:
-                # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
-                # @MX:REASON: [AUTO] This poll runs without set_tenant() so it can see active
-                #   Vexa meetings across every tenant in one pass. The Vexa meeting scheduler
-                #   is a platform-level process, not a user request — there is no single org_id
-                #   to bind. Whether strict RLS under portal_api.bypassrls=false permits this
-                #   query at all is the unresolved F-015 "RLS paradox" tracked in
-                #   .moai/audit/04-3-prework-caddy.md PRE-A. Do not add set_tenant(db, org_id)
-                #   here without first resolving that paradox — doing so may silently break the
-                #   cross-org workload. Do not copy this pattern for user-scoped queries.
-                # @MX:SPEC: SPEC-SEC-007
+            # Platform-level poll: scan active and stuck meetings across every
+            # tenant. Uses `cross_org_session` which explicitly sets
+            # `app.cross_org_admin=true` — the upgraded RLS policies on
+            # vexa_meetings honour that flag as an opt-in bypass. Per-meeting
+            # WRITES below run in `tenant_scoped_session(meeting.org_id)` so
+            # RLS still enforces isolation on the mutations themselves.
+            # @MX:SPEC: SPEC-SEC-007
+            async with cross_org_session() as db:
                 result = await db.execute(select(VexaMeeting).where(VexaMeeting.status.in_(ACTIVE_STATUSES)))
                 active = list(result.scalars().all())
 
-                # Also pick up meetings stuck in "stopping" (webhook never arrived)
                 timeout_cutoff = datetime.now(UTC) - timedelta(minutes=PROCESSING_TIMEOUT_MINUTES)
-                # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
-                # @MX:REASON: [AUTO] Stuck-meeting recovery must scan every tenant because any
-                #   org's meeting can get stuck in "stopping" when the Vexa webhook fails to
-                #   arrive. This is a platform-level recovery sweep, not a user request — there
-                #   is no single org_id to bind. Whether strict RLS under
-                #   portal_api.bypassrls=false permits this query at all is the unresolved
-                #   F-015 "RLS paradox" tracked in .moai/audit/04-3-prework-caddy.md PRE-A.
-                #   Do not add set_tenant(db, org_id) here without first resolving that paradox
-                #   — doing so may silently break the cross-org workload.
-                # @MX:SPEC: SPEC-SEC-007
                 stuck_result = await db.execute(
                     select(VexaMeeting).where(
                         VexaMeeting.status == "stopping",
@@ -156,8 +155,8 @@ async def poll_loop() -> None:
                     continue
 
                 if (ref.platform, ref.native_meeting_id) in running_keys:
-                    if meeting.status == "joining":
-                        await _upgrade_joining_to_recording(meeting.id)
+                    if meeting.status == "joining" and meeting.org_id is not None:
+                        await _upgrade_joining_to_recording(meeting.id, meeting.org_id)
                     continue  # bot is still running
 
                 await _handle_meeting_ended(meeting)
