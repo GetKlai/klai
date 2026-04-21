@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth, type AuthContextProps } from '@/lib/auth'
+import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
 import { CheckCircle, AlertCircle } from 'lucide-react'
 import * as Sentry from '@sentry/react'
 import * as m from '@/paraglide/messages'
@@ -39,6 +40,7 @@ function ProvisioningPage() {
   useLocale()
   const auth = useAuth()
   const { isLoading, isAuthenticated } = auth
+  useAuthGuardRedirect()
 
   const [status, setStatus] = useState<Status>('polling')
   const [dots, setDots] = useState('')
