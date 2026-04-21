@@ -1,0 +1,95 @@
+# SPEC-SEC-024-R12 — permanent zero-tolerance alert on docker-socket-proxy 403's.
+#
+# Fires whenever portal-api OR runtime-api emits a log line containing both
+# "Forbidden" and "docker-socket-proxy" — that pair only occurs when a call
+# hits a verb the proxy whitelist doesn't allow.
+#
+# Design (SPEC-SEC-024 v0.2.0):
+#   - interval: 1m  → evaluation cadence
+#   - relative time range: last 5m
+#   - for: 0s       → zero-tolerance (one hit = fire)
+#   - keepFiringFor: 30m → auto-resolve after 30m of silence
+#   - routing:  policy routes label {spec=SPEC-SEC-024} to the klai-dev-alerts
+#     contact point; repeat_interval 24h prevents spam from a broken call-path
+#     that a deploy hasn't fixed yet.
+#
+# Query is LogsQL against the `victorialogs` datasource — matches klai's
+# existing dashboards (see deploy/grafana/provisioning/dashboards/logs.json).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: security-proxy-denials
+    folder: Security
+    interval: 1m
+    rules:
+      - uid: spec-sec-024-proxy-denials
+        title: docker-socket-proxy denied a request (SPEC-SEC-024)
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:~"portal-api|runtime-api" AND "Forbidden" AND "docker-socket-proxy"'
+              queryType: instant
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator:
+                    params: [0]
+                    type: gt
+                  operator:
+                    type: and
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-SEC-024
+          service_group: docker-socket-proxy
+        annotations:
+          summary: "docker-socket-proxy denied a request from {{ $labels.service }}"
+          description: |
+            SPEC-SEC-024 alert. A portal-api or runtime-api call returned a
+            403 Forbidden from docker-socket-proxy in the last 5 minutes.
+
+            Triage:
+              1. Explore → VictoriaLogs, paste this query:
+                   service:~"portal-api|runtime-api" AND "Forbidden" AND "docker-socket-proxy"
+              2. Copy the request_id field from the first hit.
+              3. Query request_id:<uuid> to see the full upstream call path.
+              4. Decide: fix caller (preferred — use native protocol) or add
+                 the missing verb to docker-socket-proxy environment.
+
+            See .claude/rules/klai/platform/docker-socket-proxy.md.

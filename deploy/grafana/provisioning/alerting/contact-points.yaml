@@ -1,0 +1,34 @@
+# SPEC-SEC-024-R13 — dev-alerts email contact point.
+#
+# ⚠️ PRE-REQUISITE: Grafana's SMTP relay must be configured before this
+# contact point actually sends mail. Current compose (deploy/docker-compose.yml
+# `grafana:` service) does NOT set GF_SMTP_* env vars — see the alerting/
+# README.md for the setup steps. Until SMTP is configured, this contact
+# point is provisioned but delivers nothing.
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: klai-dev-alerts-email
+    receivers:
+      - uid: klai-dev-alerts-email-primary
+        type: email
+        settings:
+          addresses: mark.vletter@voys.nl
+          singleEmail: true
+          subject: "[Klai alert] {{ .GroupLabels.alertname }} — {{ .GroupLabels.service }}"
+          message: |
+            {{ range .Alerts -}}
+            [{{ .Status | toUpper }}] {{ .Labels.alertname }}
+            Service: {{ .Labels.service }}
+            Severity: {{ .Labels.severity }}
+
+            {{ .Annotations.summary }}
+
+            {{ .Annotations.description }}
+
+            Started: {{ .StartsAt }}
+            Dashboard: {{ .GeneratorURL }}
+            {{- end }}
+        disableResolveMessage: false
