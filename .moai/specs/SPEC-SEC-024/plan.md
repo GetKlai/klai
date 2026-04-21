@@ -99,7 +99,7 @@ Doelen R7, R8.
   tussen `ruff check` en `pytest`:
   ```yaml
   - name: Guard — no exec_run in production code (SPEC-SEC-024)
-    uses: ast-grep/action@v0.16.0   # pin, niet @latest
+    uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0 (SHA-pin)
     with:
       config: sgconfig.yml
       paths: klai-portal/backend/app

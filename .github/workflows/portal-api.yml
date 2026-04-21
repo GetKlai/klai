@@ -46,14 +46,14 @@ jobs:
 
       # SPEC-SEC-024-R7 — block reintroduction of docker exec_run in portal-api
       # production code. Rule lives at rules/no-exec-run.yml, configured by
-      # sgconfig.yml at repo root. Runs from repo root (override default
-      # working-directory) so ast-grep finds the project config.
+      # sgconfig.yml at repo root. `uses:` steps ignore the job's
+      # defaults.run.working-directory and run from $GITHUB_WORKSPACE, so the
+      # relative paths resolve correctly.
       - name: Guard — no exec_run in production code (SPEC-SEC-024)
-        uses: ast-grep/action@v0.16.0
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
         with:
           config: sgconfig.yml
           paths: klai-portal/backend/app
-        working-directory: ${{ github.workspace }}
 
       - name: Type check (pyright)
         run: uv run --with pyright pyright
