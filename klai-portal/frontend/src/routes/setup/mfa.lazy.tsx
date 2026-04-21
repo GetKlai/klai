@@ -1,6 +1,7 @@
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
+import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
 import QRCode from 'react-qr-code'
 import { ArrowRight, Fingerprint, Mail, Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -519,6 +520,7 @@ function TOTPSetup({
 function SetupMFAPage() {
   useLocale()
   const auth = useAuth()
+  useAuthGuardRedirect()
 
   const [selectedMethod, setSelectedMethod] = useState<Method | null>(null)
   const [step, setStep] = useState<Step>('pick')

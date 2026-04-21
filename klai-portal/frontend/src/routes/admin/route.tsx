@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
@@ -17,6 +18,7 @@ function AdminLayout() {
   const { user, isPending: userLoading } = useCurrentUser()
   const isAdmin = user?.isAdmin === true
   const isGroupAdmin = user?.isGroupAdmin === true
+  useAuthGuardRedirect()
 
   const adminNav = [
     { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },
@@ -30,16 +32,7 @@ function AdminLayout() {
   ]
 
   useEffect(() => {
-    if (auth.isLoading) return
-    // Redirect unauthenticated visitors BEFORE waiting on useCurrentUser —
-    // it is gated by `enabled: auth.isAuthenticated`, so its isPending
-    // stays true forever for logged-out visitors, leaving them stuck on a
-    // spinner instead of being bounced to login.
-    if (!auth.isAuthenticated) {
-      void navigate({ to: '/' })
-      return
-    }
-    if (userLoading) return
+    if (auth.isLoading || !auth.isAuthenticated || userLoading) return
     if (!isAdmin && !isGroupAdmin) {
       void navigate({ to: '/app' })
       return
