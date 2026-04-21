@@ -1,5 +1,4 @@
 import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth, readCsrfCookie } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -33,7 +32,7 @@ export const Route = createLazyFileRoute('/app/focus/$notebookId')({
   ),
 })
 
-const FOCUS_BASE = '/api/research/v1'
+const FOCUS_BASE = '/research/v1'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -97,7 +96,6 @@ function StatusBadge({ status }: { status: SourceStatus }) {
 
 function NotebookDetailPage() {
   const { notebookId } = Route.useParams()
-  const auth = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -123,7 +121,6 @@ function NotebookDetailPage() {
   const { data: notebook } = useQuery<Notebook>({
     queryKey: ['focus-notebook', notebookId],
     queryFn: async () => apiFetch<Notebook>(`${FOCUS_BASE}/notebooks/${notebookId}`),
-    enabled: auth.isAuthenticated,
   })
 
   // ── Sources ─────────────────────────────────────────────────────────────────
@@ -134,7 +131,6 @@ function NotebookDetailPage() {
       const data = await apiFetch<{ items?: Source[] } | Source[]>(`${FOCUS_BASE}/notebooks/${notebookId}/sources`)
       return (data as { items?: Source[] }).items ?? (data as Source[])
     },
-    enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
       const data = query.state.data
       return Array.isArray(data) && data.some((s) => s.status === 'processing') ? 3000 : false
@@ -159,7 +155,7 @@ function NotebookDetailPage() {
   const { data: historyData } = useQuery<{ items: HistoryMessage[] }>({
     queryKey: ['focus-history', notebookId],
     queryFn: async () => apiFetch<{ items: HistoryMessage[] }>(`${FOCUS_BASE}/notebooks/${notebookId}/history`),
-    enabled: auth.isAuthenticated && notebook?.save_history === true,
+    enabled: notebook?.save_history === true,
   })
 
   const toggleHistoryMutation = useMutation({
@@ -225,13 +221,12 @@ function NotebookDetailPage() {
     let citations: Citation[] = []
 
     try {
-      const csrf = readCsrfCookie()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (csrf) headers['X-CSRF-Token'] = csrf
       const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/chat`, {
         method: 'POST',
         credentials: 'include',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           question: question,
           mode: chatMode,

@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft } from 'lucide-react'
@@ -20,7 +19,7 @@ export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
   ),
 })
 
-const DOCS_BASE = '/api/docs/api'
+const DOCS_BASE = '/docs/api'
 
 function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]
@@ -35,7 +34,6 @@ interface KnowledgeBase {
 
 function EditKBPage() {
   const { kbSlug } = Route.useParams()
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const orgSlug = getOrgSlug()
@@ -51,7 +49,6 @@ function EditKBPage() {
       if (!found) throw new Error('Kennisbank niet gevonden')
       return found
     },
-    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {

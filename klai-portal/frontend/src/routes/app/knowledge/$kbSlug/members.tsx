@@ -61,26 +61,24 @@ function MembersTab() {
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
-    enabled: auth.isAuthenticated,
   })
 
   const { data: members, isLoading } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
-    enabled: auth.isAuthenticated,
   })
 
   // Fetch org groups and users for comboboxes
   const { data: groupsData } = useQuery({
     queryKey: ['app-groups'],
     queryFn: () => apiFetch<{ groups: OrgGroup[] }>('/api/app/groups'),
-    enabled: auth.isAuthenticated && kb?.owner_type === 'org',
+    enabled: kb?.owner_type === 'org',
   })
 
   const { data: usersData } = useQuery({
     queryKey: ['app-users'],
     queryFn: () => apiFetch<{ users: OrgUser[] }>('/api/app/users'),
-    enabled: auth.isAuthenticated && kb?.owner_type === 'org',
+    enabled: kb?.owner_type === 'org',
   })
 
   const myUserId = auth.user?.profile?.sub

@@ -332,13 +332,12 @@ function TaxonomyTab() {
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
-    enabled: auth.isAuthenticated,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
-    enabled: auth.isAuthenticated && !!kb,
+    enabled: !!kb,
   })
 
   const myUserId = auth.user?.profile?.sub
@@ -362,7 +361,6 @@ function TaxonomyTab() {
         throw err
       }
     },
-    enabled: auth.isAuthenticated,
   })
 
   const proposalsQuery = useQuery<{ proposals: TaxonomyProposal[] }>({
@@ -375,7 +373,6 @@ function TaxonomyTab() {
         throw err
       }
     },
-    enabled: auth.isAuthenticated,
   })
 
   const coverageQuery = useQuery<TaxonomyCoverage>({
@@ -388,7 +385,7 @@ function TaxonomyTab() {
         throw err
       }
     },
-    enabled: auth.isAuthenticated && isAdmin,
+    enabled: isAdmin,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -399,7 +396,6 @@ function TaxonomyTab() {
       if (activeNodeId !== null) params.set('taxonomy_node_id', String(activeNodeId))
       return apiFetch<TopTagsResponse>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/top-tags?${params.toString()}`)
     },
-    enabled: auth.isAuthenticated,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -489,7 +485,10 @@ function TaxonomyTab() {
 
   const bootstrapMutation = useMutation({
     mutationFn: async () => {
-      return await apiFetch<{ documents_scanned: number; proposals_submitted: number }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/bootstrap`, { method: 'POST' }, )
+      return await apiFetch<{ documents_scanned: number; proposals_submitted: number }>(
+        `/api/app/knowledge-bases/${kbSlug}/taxonomy/bootstrap`,
+        { method: 'POST' },
+      )
     },
     onMutate: () => setSuggestState('generating'),
     onSuccess: (data) => {
@@ -509,14 +508,19 @@ function TaxonomyTab() {
   const backfillMutation = useMutation({
     mutationFn: async () => {
       // 1. Enqueue the job
-      const enqueue = await apiFetch<{ job_id: number; status: string }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`, { method: 'POST' }, )
+      const enqueue = await apiFetch<{ job_id: number; status: string }>(
+        `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill-trigger`,
+        { method: 'POST' },
+      )
       const jobId = enqueue.job_id
 
       // 2. Poll until done (max 10 min, every 5 s)
       const MAX_POLLS = 120
       for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise((r) => setTimeout(r, 5000))
-        const s = await apiFetch<{ job_id: number; status: string }>(`/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill/${jobId}`, )
+        const s = await apiFetch<{ job_id: number; status: string }>(
+          `/api/app/knowledge-bases/${kbSlug}/taxonomy/backfill/${jobId}`,
+        )
         if (s.status === 'succeeded') return s
         if (s.status === 'failed') throw new Error('Backfill job failed')
       }
@@ -548,7 +552,10 @@ function TaxonomyTab() {
     // Approve all pending proposals sequentially
     for (const proposal of pendingProposals) {
       try {
-        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposal.id}/approve`, { method: 'POST' }, )
+        await apiFetch(
+          `/api/app/knowledge-bases/${kbSlug}/taxonomy/proposals/${proposal.id}/approve`,
+          { method: 'POST' },
+        )
       } catch (err) {
         taxonomyLogger.warn('Failed to approve proposal during apply-all', { proposalId: proposal.id, error: err })
       }

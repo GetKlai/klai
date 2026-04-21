@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Mic, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -29,7 +28,7 @@ export const Route = createFileRoute('/app/transcribe/')({
   ),
 })
 
-const SCRIBE_BASE = '/api/scribe/v1'
+const SCRIBE_BASE = '/scribe/v1'
 const BOTS_BASE = '/api/bots'
 const ACTIVE_MEETING_STATUSES = ['pending', 'joining', 'recording', 'stopping', 'processing']
 
@@ -66,7 +65,6 @@ function meetingToUnified(item: MeetingListItem): UnifiedItem {
 }
 
 function TranscribePage() {
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/app/transcribe/' })
 
@@ -84,13 +82,11 @@ function TranscribePage() {
   const { data: transcriptionsData, isLoading: transcriptionsLoading, error: transcriptionsError, refetch: refetchTranscriptions } = useQuery<TranscriptionListResponse>({
     queryKey: ['transcriptions'],
     queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`),
-    enabled: auth.isAuthenticated,
   })
 
   const { data: meetingsData, isLoading: meetingsLoading, error: meetingsError, refetch: refetchMeetings } = useQuery<MeetingListResponse>({
     queryKey: ['meetings'],
     queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`),
-    enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
       const data = query.state.data
       if (!data) return false

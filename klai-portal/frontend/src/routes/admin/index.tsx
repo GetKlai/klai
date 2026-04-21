@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Users, FolderKanban, CreditCard, Settings, Key, MessageSquare } from 'lucide-react'
+import { Users, FolderKanban, CreditCard, Settings } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 
 export const Route = createFileRoute('/admin/')({
@@ -19,18 +19,6 @@ function AdminHome() {
       description: m.admin_section_groups_description(),
       icon: FolderKanban,
       href: '/admin/groups',
-    },
-    {
-      title: m.admin_section_api_keys_title(),
-      description: m.admin_section_api_keys_description(),
-      icon: Key,
-      href: '/admin/api-keys',
-    },
-    {
-      title: m.admin_section_widgets_title(),
-      description: m.admin_section_widgets_description(),
-      icon: MessageSquare,
-      href: '/admin/widgets',
     },
     {
       title: m.admin_section_billing_title(),

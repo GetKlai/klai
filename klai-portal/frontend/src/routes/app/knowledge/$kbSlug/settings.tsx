@@ -25,13 +25,12 @@ function SettingsTab() {
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['app-knowledge-base', kbSlug],
     queryFn: async () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
-    enabled: auth.isAuthenticated,
   })
 
   const { data: members } = useQuery<MembersResponse>({
     queryKey: ['kb-members', kbSlug],
     queryFn: async () => apiFetch<MembersResponse>(`/api/app/knowledge-bases/${kbSlug}/members`),
-    enabled: auth.isAuthenticated && !!kb,
+    enabled: !!kb,
   })
 
   const myUserId = auth.user?.profile?.sub

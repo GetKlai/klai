@@ -1,6 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -28,7 +26,7 @@ export const Route = createFileRoute('/app/focus/')({
   ),
 })
 
-const FOCUS_BASE = '/api/research/v1'
+const FOCUS_BASE = '/research/v1'
 
 interface Notebook {
   id: string
@@ -54,13 +52,12 @@ function formatDate(isoString: string): string {
 }
 
 function FocusPage() {
-  const auth = useAuth()
-  const { user: currentUser } = useCurrentUser()
   const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/app/focus/' })
 
-  const isOrgAdmin = currentUser?.isAdmin ?? false
-  const currentUserId = auth.user?.profile?.sub
+  // Admin-detection verhuist via /api/me — Mark's BFF geeft geen client-side JWT meer.
+  const isOrgAdmin = false
+  const currentUserId = undefined
 
   const { search: searchParam } = Route.useSearch()
   const search = searchParam ?? ''
@@ -70,7 +67,6 @@ function FocusPage() {
   const { data, isLoading, error, refetch } = useQuery<NotebookListResponse>({
     queryKey: ['focus-notebooks'],
     queryFn: async () => apiFetch<NotebookListResponse>(`${FOCUS_BASE}/notebooks`),
-    enabled: auth.isAuthenticated,
   })
 
   const deleteMutation = useMutation({

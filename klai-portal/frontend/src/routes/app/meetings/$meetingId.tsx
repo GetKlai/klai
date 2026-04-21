@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -122,7 +121,6 @@ function stripMarkdown(md: string): string {
 
 function MeetingDetailPage() {
   const { meetingId } = Route.useParams()
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
@@ -132,7 +130,6 @@ function MeetingDetailPage() {
   const { data: meeting, isLoading } = useQuery<MeetingDetail>({
     queryKey: ['meeting', meetingId],
     queryFn: async () => apiFetch<MeetingDetail>(`${BOTS_BASE}/meetings/${meetingId}`),
-    enabled: auth.isAuthenticated,
     refetchInterval: (query) =>
       query.state.data && ACTIVE_STATUSES.includes(query.state.data.status) ? 3000 : false,
   })

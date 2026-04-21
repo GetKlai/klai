@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Loader2, Trash2 } from 'lucide-react'
@@ -47,7 +46,6 @@ interface Group {
 }
 
 function EditUserPage() {
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { userId } = Route.useParams()
@@ -65,7 +63,6 @@ function EditUserPage() {
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
     queryFn: async () => apiFetch<{ users: User[] }>(`/api/admin/users`),
-    enabled: auth.isAuthenticated,
   })
 
   const user = usersData?.users.find((u) => u.zitadel_user_id === userId)
@@ -87,7 +84,6 @@ function EditUserPage() {
         return { groups: [] as Group[] }
       }
     },
-    enabled: auth.isAuthenticated,
   })
 
   const { data: allGroupsData } = useQuery({
@@ -99,7 +95,6 @@ function EditUserPage() {
         return { groups: [] as Group[] }
       }
     },
-    enabled: auth.isAuthenticated,
   })
 
   const allGroups = allGroupsData?.groups ?? []

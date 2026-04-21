@@ -29,7 +29,7 @@ interface TestResult {
 // form re-renders.
 // ---------------------------------------------------------------------------
 
-function McpTestButton({ serverId }: { serverId: string }) {
+function McpTestButton({ serverId }: { serverId: string; }) {
   const [result, setResult] = useState<TestResult | null>(null)
   const [testing, setTesting] = useState(false)
 
@@ -116,6 +116,7 @@ function McpEditPage() {
   const { serverId } = Route.useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+
   const { data, isLoading, isError } = useMcpServers()
   const server = data?.servers.find((s) => s.id === serverId)
 

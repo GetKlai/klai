@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,7 +13,7 @@ export const Route = createFileRoute('/app/transcribe/$transcriptionId')({
   component: TranscriptionDetailPage,
 })
 
-const SCRIBE_BASE = '/api/scribe/v1'
+const SCRIBE_BASE = '/scribe/v1'
 
 interface TranscriptionDetail {
   id: string
@@ -43,7 +42,6 @@ function stripMarkdown(md: string): string {
 
 function TranscriptionDetailPage() {
   const { transcriptionId } = Route.useParams()
-  const auth = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -54,7 +52,6 @@ function TranscriptionDetailPage() {
   const { data: transcription, isLoading } = useQuery<TranscriptionDetail>({
     queryKey: ['transcription', transcriptionId],
     queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`),
-    enabled: auth.isAuthenticated,
   })
 
   const summarizeMutation = useMutation({
