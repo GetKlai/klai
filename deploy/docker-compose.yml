@@ -1000,6 +1000,14 @@ services:
       - /opt/klai/falkordb-data:/var/lib/falkordb/data
     networks:
       - klai-net
+    healthcheck:
+      # Redis-protocol ping — proves the server responds, including the graph
+      # module load. No auth (falkordb is klai-net-only).
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   # ─── Knowledge Ingest (RAG ingestion + retrieval for LiteLLM hook) ──────────
   knowledge-ingest:

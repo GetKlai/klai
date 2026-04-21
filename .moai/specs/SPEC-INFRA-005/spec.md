@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-005
-version: 0.3.0
+version: 0.4.0
 status: in_progress
 created: 2026-04-19
 updated: 2026-04-21
@@ -11,6 +11,13 @@ priority: high
 # SPEC-INFRA-005: Stateful service persistence, backup, and observability hardening
 
 ## HISTORY
+
+### v0.4.0 (2026-04-21)
+- Phase 3 complete. `deploy/scripts/backup.sh` extended from 6 to 13 data-producing steps. Seven new archives: vexa-redis, Qdrant (per-collection snapshots via API), FalkorDB, Garage meta + data, Firecrawl Postgres, scribe-audio, research-uploads. Live-verified on core-01. Storage Box upload continues to run from the nightly cron as the `klai` user (SSH key is on klai's account, not root — documented in header).
+- Phase 5 complete. `deploy/scripts/persistence-smoke.sh` proves that each stateful service's writes actually cross the container boundary to the host volume. Five services covered (falkordb, redis, postgres, qdrant, garage); each runs its own canary (GRAPH.QUERY / SET / INSERT+CHECKPOINT / PUT collection / meta snapshot), forces persistence, and asserts that the host-side data file's mtime is within MTIME_WINDOW seconds. First run: 5/5 OK in < 60s. This is the post-deploy proof that `docker ps (healthy)` alone could not provide.
+- Phase 7 complete. `docs/runbooks/version-management.md` updated: §3.3 and §3.4 carry an explicit stateful-services pre-flight + post-deploy-smoke step; new §11 is a 7-item "Stateful service change checklist"; §7.10 is a new named pitfall capturing the 2026-04-19 bind-mount lesson.
+- Phase 4 partial. falkordb now declares a Docker healthcheck (redis-cli ping). Qdrant skipped: distroless image has no shell/curl for a native CMD healthcheck; Uptime Kuma's push_exec already covers it via portal-api. The remaining data services (gitea, grafana, victoriametrics, victorialogs, ollama) have no Docker-native healthcheck — follow-up ticket since it does not re-enable the 2026-04-19 bug class.
+- Phase 6 still open. VictoriaLogs absence alerting + Prometheus mtime gauges require dashboard work and alert rule tuning; best as a separate SPEC-INFRA-006 or a /moai run against the remaining requirements.
 
 ### v0.3.0 (2026-04-21)
 - Phase 1 complete. `deploy/volume-mounts.yaml` catalogues 27 persistent mounts across 23 services — every RW bind or named volume declared in `deploy/docker-compose.yml`. Entries classified data/config/ephemeral with image, container_path, backup_method, retention, pii.
