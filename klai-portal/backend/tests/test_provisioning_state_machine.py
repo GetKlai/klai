@@ -196,8 +196,7 @@ async def test_for_update_is_used() -> None:
 
     assert captured_stmts, "Expected at least one db.execute call"
     assert any("FOR UPDATE" in s.upper() for s in captured_stmts), (
-        f"SPEC-PROV-001 R2/R14: transition_state must use SELECT ... FOR UPDATE. "
-        f"Got: {captured_stmts}"
+        f"SPEC-PROV-001 R2/R14: transition_state must use SELECT ... FOR UPDATE. Got: {captured_stmts}"
     )
 
 

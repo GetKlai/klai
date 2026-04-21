@@ -93,9 +93,7 @@ def upgrade() -> None:
         "AND provisioning_status IN ('active', 'ready')"
     )
     op.execute(
-        "UPDATE portal_orgs "
-        "SET provisioning_status = 'failed_rollback_pending' "
-        "WHERE provisioning_status = 'failed'"
+        "UPDATE portal_orgs SET provisioning_status = 'failed_rollback_pending' WHERE provisioning_status = 'failed'"
     )
 
     # 4. CHECK constraint enforcing the new state machine values.

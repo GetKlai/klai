@@ -105,11 +105,15 @@ async def test_transition_conflict_is_skipped_not_raised() -> None:
     from app.services.provisioning.stuck_detector import reconcile_stuck_provisionings
 
     r1 = _row(
-        org_id=1, slug="a", state="creating_mongo_user",
+        org_id=1,
+        slug="a",
+        state="creating_mongo_user",
         updated_at=datetime.now(UTC) - timedelta(hours=1),
     )
     r2 = _row(
-        org_id=2, slug="b", state="creating_zitadel_app",
+        org_id=2,
+        slug="b",
+        state="creating_zitadel_app",
         updated_at=datetime.now(UTC) - timedelta(hours=1),
     )
     db = _mock_db_with_rows([r1, r2])
@@ -144,7 +148,9 @@ async def test_custom_threshold_parameter_respected() -> None:
     from app.services.provisioning.stuck_detector import reconcile_stuck_provisionings
 
     stuck = _row(
-        org_id=1, slug="a", state="creating_mongo_user",
+        org_id=1,
+        slug="a",
+        state="creating_mongo_user",
         updated_at=datetime.now(UTC) - timedelta(minutes=3),
     )
     db = _mock_db_with_rows([stuck])
@@ -154,7 +160,8 @@ async def test_custom_threshold_parameter_respected() -> None:
         patch("app.services.provisioning.stuck_detector.emit_event"),
     ):
         result = await reconcile_stuck_provisionings(
-            db, threshold=timedelta(minutes=2),
+            db,
+            threshold=timedelta(minutes=2),
         )
 
     assert result == 1
@@ -168,7 +175,9 @@ async def test_detector_never_calls_compensators() -> None:
     from app.services.provisioning.stuck_detector import reconcile_stuck_provisionings
 
     stuck = _row(
-        org_id=1, slug="a", state="creating_mongo_user",
+        org_id=1,
+        slug="a",
+        state="creating_mongo_user",
         updated_at=datetime.now(UTC) - timedelta(hours=1),
     )
     db = _mock_db_with_rows([stuck])
@@ -176,12 +185,8 @@ async def test_detector_never_calls_compensators() -> None:
     with (
         patch("app.services.provisioning.stuck_detector.transition_state", new=AsyncMock()),
         patch("app.services.provisioning.stuck_detector.emit_event"),
-        patch.object(
-            orchestrator, "_compensate_mongo_user", new=AsyncMock()
-        ) as mock_mongo_comp,
-        patch.object(
-            orchestrator, "_compensate_zitadel_app", new=AsyncMock()
-        ) as mock_zitadel_comp,
+        patch.object(orchestrator, "_compensate_mongo_user", new=AsyncMock()) as mock_mongo_comp,
+        patch.object(orchestrator, "_compensate_zitadel_app", new=AsyncMock()) as mock_zitadel_comp,
     ):
         await reconcile_stuck_provisionings(db)
 

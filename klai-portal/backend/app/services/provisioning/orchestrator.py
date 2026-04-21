@@ -211,9 +211,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
     # Generate a slug, filtering out soft-deleted orgs so a retry after
     # `failed_rollback_complete` can reclaim the original slug (SPEC-PROV-001
     # M1 partial unique index `ix_portal_orgs_slug_active`).
-    slugs_result = await db.execute(
-        select(PortalOrg.slug).where(PortalOrg.deleted_at.is_(None))
-    )
+    slugs_result = await db.execute(select(PortalOrg.slug).where(PortalOrg.deleted_at.is_(None)))
     existing_slugs = {row[0] for row in slugs_result.fetchall() if row[0]}
     slug = _slugify_unique(org.name, existing_slugs)
 
@@ -232,9 +230,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
         async with AsyncExitStack() as stack:
             # --- queued: initial checkpoint. Accepts pending OR queued. -----
             mark_step_start(org_id, "begin")
-            await transition_state(
-                db, org_id, from_state=None, to_state="queued", step="begin"
-            )
+            await transition_state(db, org_id, from_state=None, to_state="queued", step="begin")
             last_state = "queued"
 
             # --- step 1: Zitadel OIDC app ---------------------------------
@@ -408,9 +404,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             last_state = "starting_container"
 
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None, _start_librechat_container, slug, env_file_host_path, mcp_servers
-            )
+            await loop.run_in_executor(None, _start_librechat_container, slug, env_file_host_path, mcp_servers)
             state.container_started = True
             stack.push_async_callback(_compensate_container, state)
             logger.info("librechat_container_started", slug=slug)
@@ -469,9 +463,7 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             org.librechat_container = f"librechat-{slug}"
             org.zitadel_librechat_client_id = client_id
             org.zitadel_librechat_client_secret = portal_secrets.encrypt(client_secret)
-            org.litellm_team_key = (
-                portal_secrets.encrypt(litellm_team_key) if litellm_team_key else None
-            )
+            org.litellm_team_key = portal_secrets.encrypt(litellm_team_key) if litellm_team_key else None
             await transition_state(
                 db,
                 org_id,
@@ -528,9 +520,7 @@ async def _finalize_failure(
 
     # Second checkpoint: compensators ran (best-effort), mark complete and
     # soft-delete.
-    result = await db.execute(
-        select(PortalOrg).where(PortalOrg.id == org_id).with_for_update()
-    )
+    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id).with_for_update())
     org = result.scalar_one_or_none()
     if org is None:
         return

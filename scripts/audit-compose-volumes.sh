@@ -113,21 +113,35 @@ fi
 #
 # Produces TSV rows: service<TAB>kind<TAB>host_or_volume<TAB>container_path
 extract_persistent_mounts() {
+  # File-extension regex: if the last segment of the container path matches one
+  # of these known file-type suffixes, we treat the bind as a single-file mount
+  # (config, cert, script) rather than a data volume.
+  #
+  # Conservative list — unknown extensions (e.g. `conf.d` — a directory with a
+  # dot in the name) default to "not a file" so they are treated as a volume
+  # and surface in the inventory. Better to over-include than under-include.
   YQ -o=json deploy/docker-compose.yml | JQ -r '
+    def is_single_file_path:
+      split("/") | last |
+      test("\\.(yaml|yml|json|toml|ini|conf|cfg|env|py|sh|rb|lua|pem|key|crt|pub|sql|txt|md|Caddyfile|service|socket|rules)$"; "");
+
+    def normalize_path:
+      tostring | sub("/+$"; "");
+
     .services // {} | to_entries[] |
     .key as $svc |
     (.value.volumes // []) | map(
       if type == "string" then
         (split(":")) as $parts |
         {
-          host: ($parts[0] // ""),
-          container: ($parts[1] // ""),
+          host: ($parts[0] // "" | normalize_path),
+          container: ($parts[1] // "" | normalize_path),
           mode: ($parts[2] // "rw")
         }
       elif type == "object" then
         {
-          host: (.source // ""),
-          container: (.target // ""),
+          host: (.source // "" | normalize_path),
+          container: (.target // "" | normalize_path),
           mode: (if (.read_only // false) then "ro" else "rw" end)
         }
       else empty end
@@ -136,11 +150,11 @@ extract_persistent_mounts() {
       select((.host // "") != "") |
       # Drop read-only mounts — those are configs/static assets, not data.
       select(.mode != "ro") |
-      # Drop bind mounts to a single file (anything with a file extension
-      # in the last segment of the container path).
+      # Drop single-file bind mounts. Only applies to bind-style mounts
+      # (host begins with / or .); named volumes are always kept.
       select(
         ((.host | tostring) | test("^[/.]") | not) or
-        ((.container | tostring) | split("/") | last | contains(".") | not)
+        ((.container | is_single_file_path) | not)
       ) |
       # Classify as bind or named.
       if ((.host | tostring) | test("^[/.]")) then
@@ -211,14 +225,17 @@ trap 'rm -f "${INVENTORY_CACHE}"' EXIT
 
 build_inventory_cache() {
   if [[ -f "${INVENTORY_FILE}" ]]; then
+    # Normalize host + container paths the same way extract_persistent_mounts
+    # does, so string-equality lookups are immune to trailing slashes.
     YQ -o=json deploy/volume-mounts.yaml | JQ -r '
+      def normalize_path: tostring | sub("/+$"; "");
       (.mounts // {}) | to_entries[] |
       [
         .key,
         (.value.service // ""),
         (.value.kind // ""),
-        (.value.host // ""),
-        (.value.container_path // ""),
+        (.value.host // "" | normalize_path),
+        (.value.container_path // "" | normalize_path),
         (.value.category // ""),
         (.value.image // ""),
         ((.value.verified // false) | tostring)
@@ -230,6 +247,10 @@ build_inventory_cache() {
 # True if any row in the cache matches service + host + container.
 inventory_has_mount() {
   local svc="$1" host="$2" container="$3"
+  # Strip trailing slashes on the lookup side too (defence in depth — the cache
+  # is normalized, but callers might pass raw values from other sources).
+  host="${host%/}"
+  container="${container%/}"
   awk -F '\t' -v s="${svc}" -v h="${host}" -v c="${container}" '
     $2==s && $4==h && $5==c { found=1; exit 0 }
     END { exit found ? 0 : 1 }
