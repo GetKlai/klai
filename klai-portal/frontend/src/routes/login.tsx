@@ -196,21 +196,27 @@ function LoginPage() {
 
   const leftContent = (
     <>
-      <h1 className="text-2xl font-semibold leading-tight">
+      <h1 className="text-3xl lg:text-4xl font-semibold leading-[1.15] tracking-tight">
         {m.login_hero_heading()}
         <br />
-        <span className="text-[var(--color-rl-accent)]">{m.login_hero_highlight()}</span>
+        <span className="font-accent not-italic text-[var(--color-rl-accent)]">
+          {m.login_hero_highlight()}
+        </span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]/90 max-w-md">
         {m.login_hero_body()}
       </p>
-      <div className="flex flex-col gap-3 pt-4">
-        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
-          <Shield size={16} className="shrink-0 text-[var(--color-rl-accent)]" />
+      <div className="flex flex-col gap-3.5 pt-2">
+        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]/90">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/15 ring-1 ring-[var(--color-rl-accent)]/30">
+            <Shield size={14} className="text-[var(--color-rl-accent)]" />
+          </span>
           {m.login_hero_bullet_eu()}
         </div>
-        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
-          <Lock size={16} className="shrink-0 text-[var(--color-rl-accent)]" />
+        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]/90">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/15 ring-1 ring-[var(--color-rl-accent)]/30">
+            <Lock size={14} className="text-[var(--color-rl-accent)]" />
+          </span>
           {m.login_hero_bullet_open()}
         </div>
       </div>
@@ -222,8 +228,8 @@ function LoginPage() {
       {totpStep ? (
         /* TOTP challenge step */
         <>
-          <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+          <div className="space-y-1.5">
+            <h2 className="text-2xl font-semibold tracking-tight text-[var(--color-foreground)]">
               {m.totp_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -273,8 +279,8 @@ function LoginPage() {
       ) : (
         /* Password login step */
         <>
-          <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
+          <div className="space-y-1.5">
+            <h2 className="text-2xl font-semibold tracking-tight text-[var(--color-foreground)]">
               {m.login_heading()}
             </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -325,9 +331,11 @@ function LoginPage() {
           </form>
 
           {/* Social login */}
-          <div className="relative flex items-center gap-3">
+          <div className="relative flex items-center gap-3 pt-1">
             <div className="h-px flex-1 bg-[var(--color-border)]" />
-            <span className="text-xs text-[var(--color-muted-foreground)]">{m.login_or_continue_with()}</span>
+            <span className="text-xs uppercase tracking-[0.12em] text-[var(--color-muted-foreground)]">
+              {m.login_or_continue_with()}
+            </span>
             <div className="h-px flex-1 bg-[var(--color-border)]" />
           </div>
 
