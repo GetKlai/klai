@@ -21,7 +21,7 @@ This migration does four things in one revision, in this order:
    the fail-safe UPDATE in step 3 migrates any existing rows; after deploy the
    orchestrator writes `failed_rollback_pending` / `failed_rollback_complete` instead.
 
-Revision ID: p1r2o3v4s5b1
+Revision ID: 32fc0ed3581b
 Revises: f0a1b2c3d4e5
 Create Date: 2026-04-21
 """
@@ -29,7 +29,7 @@ Create Date: 2026-04-21
 from alembic import op
 import sqlalchemy as sa
 
-revision = "p1r2o3v4s5b1"
+revision = "32fc0ed3581b"
 down_revision = "f0a1b2c3d4e5"
 branch_labels = None
 depends_on = None
@@ -86,10 +86,12 @@ def upgrade() -> None:
     # 3. Inline data migration for the two known test-orgs + fail-safe for 'failed' rows.
     #    Operator must verify with `SELECT id, slug, provisioning_status FROM portal_orgs`
     #    before deploying that these UPDATEs cover the actual state of the database.
+    # Test-orgs on production are 'voys' and 'getklai' (NOT 'klai' — verified
+    # against production DB during SPEC-PROV-001 deploy 2026-04-21).
     op.execute(
         "UPDATE portal_orgs "
         "SET provisioning_status = 'ready' "
-        "WHERE slug IN ('voys', 'klai') "
+        "WHERE slug IN ('voys', 'getklai') "
         "AND provisioning_status IN ('active', 'ready')"
     )
     op.execute(

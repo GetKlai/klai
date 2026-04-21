@@ -402,7 +402,7 @@ script — handmatig gecontroleerde UPDATE-statements in de Alembic migratie:
 -- worden hier expliciet naar de nieuwe state machine gemapt.
 UPDATE portal_orgs
 SET provisioning_status = 'ready'
-WHERE slug IN ('voys', 'klai') AND provisioning_status IN ('active', 'ready');
+WHERE slug IN ('voys', 'getklai') AND provisioning_status IN ('active', 'ready');
 
 -- Fail-safe: als er onverwacht nog een 'failed' rij blijkt te staan, markeer die
 -- als failed_rollback_pending zodat ops hem ziet in Grafana.
