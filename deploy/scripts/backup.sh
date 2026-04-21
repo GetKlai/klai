@@ -151,33 +151,78 @@ echo "${LOG_PREFIX}       Response: $SNAPSHOT_RESPONSE"
 # ─── Qdrant ───────────────────────────────────────────────────────────────────
 # Zero-downtime snapshot via API. One snapshot file per collection, written
 # inside the qdrant-data volume (/qdrant/storage/snapshots/<collection>/).
-# We enumerate collections first, then snapshot each. Consistent per-collection;
-# a full-storage snapshot is not exposed in v1.x.
+#
+# The qdrant image itself is distroless — no wget/curl/python inside — so we
+# use an alpine sidecar on the klai-net network to speak the HTTP API.
 echo ""
 echo "${LOG_PREFIX} [7/13] Qdrant: snapshotting collections via API..."
 QDRANT_CONTAINER="$(_ctr qdrant)"
+_qdrant_api() {
+  # Usage: _qdrant_api <method> <path>
+  # Emits raw JSON on stdout, "" on failure.
+  local method="$1" path="$2"
+  local flags=()
+  case "${method}" in
+    GET)    : ;;
+    POST)   flags=(-X POST -d "") ;;
+    DELETE) flags=(-X DELETE) ;;
+    *)      echo "unknown method: ${method}" >&2; return 1 ;;
+  esac
+  docker run --rm --network klai-net curlimages/curl:8.11.1 \
+    -sSf --max-time 30 \
+    "${flags[@]}" \
+    -H "api-key: ${QDRANT_API_KEY}" \
+    "http://${QDRANT_CONTAINER}:6333${path}" 2>/dev/null || echo ""
+}
 if docker ps --format '{{.Names}}' | grep -q "^${QDRANT_CONTAINER}$"; then
-  COLLECTIONS=$(docker exec "${QDRANT_CONTAINER}" \
-    wget -qO- --header="api-key: ${QDRANT_API_KEY}" \
-    "http://127.0.0.1:6333/collections" 2>/dev/null \
-    | python3 -c "import json,sys; print('\n'.join(c['name'] for c in json.load(sys.stdin).get('result',{}).get('collections',[])))" \
-    || echo "")
+  COLLECTIONS_JSON=$(_qdrant_api GET /collections)
+  COLLECTIONS=$(echo "${COLLECTIONS_JSON}" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print('\n'.join(c['name'] for c in data.get('result', {}).get('collections', [])))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
   if [ -z "${COLLECTIONS}" ]; then
-    echo "${LOG_PREFIX}       No collections found (or API unreachable) — skipping"
+    echo "${LOG_PREFIX}       No collections found (or API unreachable)" >&2
   else
     for col in ${COLLECTIONS}; do
-      RESP=$(docker exec "${QDRANT_CONTAINER}" \
-        wget -qO- --post-data="" --header="api-key: ${QDRANT_API_KEY}" \
-        "http://127.0.0.1:6333/collections/${col}/snapshots" 2>/dev/null \
-        || echo '{"error":"snapshot failed"}')
-      SNAP_NAME=$(echo "${RESP}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',{}).get('name',''))" 2>/dev/null || echo "")
-      if [ -n "${SNAP_NAME}" ]; then
-        docker cp "${QDRANT_CONTAINER}:/qdrant/storage/snapshots/${col}/${SNAP_NAME}" \
-          "$BACKUP_DIR/qdrant-${col}.snapshot" 2>/dev/null || true
-        echo "${LOG_PREFIX}       ${col} → $(du -sh "$BACKUP_DIR/qdrant-${col}.snapshot" 2>/dev/null | cut -f1 || echo '?')"
-      else
+      # 1. Trigger snapshot creation. Qdrant writes it to an internal location
+      #    and returns the snapshot's name.
+      RESP=$(_qdrant_api POST "/collections/${col}/snapshots")
+      SNAP_NAME=$(echo "${RESP}" | python3 -c "
+import json, sys
+try:
+    print(json.load(sys.stdin).get('result', {}).get('name', ''))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+      if [ -z "${SNAP_NAME}" ]; then
         echo "${LOG_PREFIX}       ${col} — snapshot API returned no name: ${RESP}" >&2
+        continue
       fi
+      # 2. Download the snapshot via the same URL path (Qdrant v1 serves it on
+      #    GET). Writing to BACKUP_DIR via a mounted volume so the bytes land
+      #    on the host, not inside the sidecar container.
+      # --user 0:0: curl image's default 1001 can't write to the host-owned
+      # backup dir. We're already running as root in cron context.
+      if docker run --rm --network klai-net \
+           --user 0:0 \
+           -v "$BACKUP_DIR:/out" \
+           curlimages/curl:8.11.1 \
+           -sSfL --max-time 300 \
+           -H "api-key: ${QDRANT_API_KEY}" \
+           "http://${QDRANT_CONTAINER}:6333/collections/${col}/snapshots/${SNAP_NAME}" \
+           -o "/out/qdrant-${col}.snapshot" 2>/dev/null
+      then
+        echo "${LOG_PREFIX}       ${col} → $(du -sh "$BACKUP_DIR/qdrant-${col}.snapshot" | cut -f1)"
+      else
+        echo "${LOG_PREFIX}       ${col} — snapshot download failed" >&2
+        rm -f "$BACKUP_DIR/qdrant-${col}.snapshot"
+      fi
+      # 3. Clean up the snapshot on Qdrant's side (don't let them pile up).
+      _qdrant_api DELETE "/collections/${col}/snapshots/${SNAP_NAME}" >/dev/null || true
     done
   fi
 else
@@ -245,14 +290,16 @@ else
 fi
 
 # ─── Firecrawl PostgreSQL ─────────────────────────────────────────────────────
+# Firecrawl's Postgres uses POSTGRES_USER=firecrawl as the superuser.
 echo ""
 echo "${LOG_PREFIX} [11/13] Firecrawl Postgres: pg_dumpall..."
 if docker ps --format '{{.Names}}' | grep -q "^$(_ctr firecrawl-postgres)$"; then
-  docker exec -u postgres "$(_ctr firecrawl-postgres)" pg_dumpall \
-    > "$BACKUP_DIR/firecrawl-postgres-all.sql" 2>/dev/null \
-    || echo "${LOG_PREFIX}       pg_dumpall failed (likely no super user) — skipping"
-  if [ -s "$BACKUP_DIR/firecrawl-postgres-all.sql" ]; then
+  if docker exec "$(_ctr firecrawl-postgres)" pg_dumpall -U firecrawl \
+       > "$BACKUP_DIR/firecrawl-postgres-all.sql" 2>/dev/null; then
     echo "${LOG_PREFIX}       Size: $(du -sh "$BACKUP_DIR/firecrawl-postgres-all.sql" | cut -f1)"
+  else
+    rm -f "$BACKUP_DIR/firecrawl-postgres-all.sql"
+    echo "${LOG_PREFIX}       pg_dumpall failed — skipping"
   fi
 else
   echo "${LOG_PREFIX}       Skipped (container not running)"
