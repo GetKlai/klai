@@ -44,6 +44,17 @@ jobs:
       - name: Format check (ruff)
         run: uv run ruff format --check .
 
+      # SPEC-SEC-024-R7 — block reintroduction of docker exec_run in portal-api
+      # production code. Rule lives at rules/no-exec-run.yml, configured by
+      # sgconfig.yml at repo root. Runs from repo root (override default
+      # working-directory) so ast-grep finds the project config.
+      - name: Guard — no exec_run in production code (SPEC-SEC-024)
+        uses: ast-grep/action@v0.16.0
+        with:
+          config: sgconfig.yml
+          paths: klai-portal/backend/app
+        working-directory: ${{ github.workspace }}
+
       - name: Type check (pyright)
         run: uv run --with pyright pyright
 
