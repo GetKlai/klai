@@ -7,9 +7,53 @@ Pencil MCP integration for creating and editing .pen design files with AI-assist
 Pencil MCP provides a comprehensive set of tools for creating, editing, and managing .pen design files. The editor is specifically designed for web and mobile applications with AI-assisted design generation capabilities.
 
 **Important Notes:**
-- .pen file contents are encrypted and can ONLY be accessed via Pencil MCP tools
-- NEVER use Read or Grep tools to read .pen file contents
-- ALWAYS use Pencil MCP tools (batch_get, batch_design) for .pen file operations
+- .pen files are pure JSON (Git diffable, mergeable) — schema version **2.9**
+- ALWAYS use Pencil MCP tools (batch_get, batch_design) for .pen file operations — they provide structured access to the design graph
+- Pencil MCP auto-configures — no manual `mcpServers` configuration required
+- Pencil is a local-first tool — design files stay on your machine, MCP server runs locally
+
+### Supported Node Types
+
+| Type | Description |
+|------|-------------|
+| `Rectangle` | Basic rectangle shape |
+| `Ellipse` | Elliptical/circular shape |
+| `Line` | Single line |
+| `Polygon` | Multi-sided polygon |
+| `Path` | Bezier path (SVG-like) |
+| `Text` | Text content with typography |
+| `Frame` | Container with layout (flexbox) |
+| `Group` | Visual grouping without layout |
+| `Note` | Annotation/comment node |
+| `Prompt` | AI prompt node |
+| `Context` | Context information node |
+| `IconFont` | Icon font glyph |
+| `Ref` | Component instance (references a `reusable: true` component) |
+
+### .pen Format Key Properties
+
+| Property | Description |
+|----------|-------------|
+| `layout` | none / vertical / horizontal (flexbox) |
+| `gap`, `padding` | Spacing values |
+| `justifyContent`, `alignItems` | Flex alignment |
+| `SizingBehavior` | Fixed or dynamic sizing |
+| `textGrowth` | auto / fixed-width / fixed-width-height |
+| `layoutPosition` | auto / absolute |
+| `clip` | Boolean — clip content overflow |
+| `opacity`, `flipX`, `flipY`, `rotation` | Transform properties |
+| `enabled` | Boolean — visibility toggle |
+| `metadata` | Custom context key-value pairs |
+| `reusable` | Boolean — marks node as component origin |
+| `cornerRadius` | Single value or 4-value array |
+
+### Graphics Capabilities
+
+**Fill types:** Solid color, linear gradient, radial gradient, angular gradient, image, mesh_gradient
+
+**Stroke:** Single stroke with multiple fills; configurable thickness, alignment (inside/center/outside), join style (miter/round/bevel), dash pattern
+
+**Effects:** Blur, background blur (frosted glass), inner shadow, outer shadow
 
 ## Pencil MCP Tools Reference
 
@@ -39,26 +83,29 @@ Open or create .pen files:
 Retrieve nodes by searching patterns or reading specific node IDs:
 - Use for discovering and understanding .pen file structure
 - Supports pattern matching for efficient searching
+- Returns JSON with component type, style, layout, children hierarchy
 
 #### get_screenshot()
 
 Render a visual preview of a node in a .pen file:
 - Use periodically to validate designs visually
-- Returns image data for review
+- Returns PNG image data for review
 
 #### snapshot_layout()
 
 Check the current layout structure of a .pen file:
-- Examine computed layout rectangles
+- Examine computed layout rectangles with bounding boxes
 - Decide where to insert new nodes
+- Detect overlapping elements
 - Understand spatial relationships
 
 #### get_variables()
 
 Extract current state of variables and themes:
-- Design tokens
-- Color definitions
-- Theme configuration
+- Design tokens (colors, spacing, border radii, sizes, fonts)
+- Theme configuration (light/dark mode variables)
+- Variable types: boolean, color, number, string
+- Variables reference syntax: `$variable-name`
 
 ### Design Creation and Modification
 
@@ -96,6 +143,32 @@ Add or update variables in the .pen file:
 - Set theme values
 - Configure design system variables
 
+### Variable Creation Methods
+
+Variables can be created through three methods:
+
+1. **Manual Definition**: Define directly via `set_variables` or the variables panel
+2. **From CSS**: AI agent extracts variables from `globals.css` (colors, spacing, fonts)
+3. **From Figma**: Paste screenshots of variable tables or copy token values
+
+**Bidirectional Sync**: Pencil supports two-way sync between .pen variables and CSS custom properties. AI assistant can update CSS based on .pen files, and CSS changes can be imported back.
+
+### Property Search and Replace
+
+#### search_all_unique_properties(nodeIds)
+
+Recursively search for all unique properties on nodes:
+- Discover unique property values across design elements
+- Useful for auditing design consistency
+- Find all colors, fonts, spacing values used in a design
+
+#### replace_all_matching_properties(match, replace)
+
+Recursively replace all matching properties on nodes:
+- Bulk update design properties across the entire design
+- Useful for theme changes, color updates, font replacements
+- Maintains consistency when updating design tokens
+
 ### Layout and Space Management
 
 #### find_empty_space_on_canvas()
@@ -116,6 +189,7 @@ Returns design guidelines and rules for working with .pen files.
 - `table` - Table design patterns
 - `tailwind` - Tailwind CSS integration
 - `landing-page` - Landing page design patterns
+- `design-system` - Design system guidelines and patterns
 
 #### get_style_guide_tags()
 
@@ -128,6 +202,60 @@ Returns all available style guide tags for filtering:
 Returns a style guide based on tags or specific name:
 - Use when designing screens, websites, apps, or dashboards
 - Apply consistent styling across designs
+
+## Component System
+
+### Creating Components
+
+Convert any design element (frame, shape, text) into a reusable component:
+- Keyboard shortcut: **Cmd/Ctrl + Option/Alt + K**
+- Component origins display with **magenta** bounding box
+- Component instances display with **violet** bounding box
+- "Go to component" button in properties panel navigates to origin
+
+### Component Instances (Ref Type)
+
+Copy a component origin to create an instance (`type: "ref"`):
+- Instances reference the origin by ID
+- Property overrides via `descendants` object using ID paths
+- Full object replacement when `type` is specified in descendant
+- Children replacement via `children` array in descendant
+- Nested components are supported
+
+### Slots
+
+Slots are designated drop zones within components for flexible customization:
+- Create: Select an **empty frame** in a component origin → "Make a slot" button
+- Visual indicator: Diagonal lines on canvas mark slot areas
+- Only empty frames in component origins can become slots
+
+**Suggested Slot Components**: Mark other components as recommended content for specific slots. Provides guidance for both human designers and AI agents about intended content.
+
+### Design Libraries (.lib.pen)
+
+Reusable component collections shared across multiple .pen files:
+- Create: Layers panel → Libraries icon → "Turn this file into a library"
+- File extension: `.lib.pen` (irreversible designation)
+- Import: Layers panel → Libraries icon → Select library
+- Browse: Assets icon in layers panel (grid view + search by name)
+- Default libraries are available out of the box
+- Changes to library components auto-propagate to all instances
+
+## UI Kit Options
+
+Pencil MCP supports multiple UI kits for different design aesthetics. Choose the kit that best matches your project requirements:
+
+| UI Kit | Description | Best For |
+|--------|-------------|----------|
+| **Shadcn UI** | Modern, accessible components with Radix UI primitives | Default for Nova preset; dashboards, admin panels |
+| **Halo** | Glassmorphic design language with blur and transparency effects | Marketing sites, premium products |
+| **Lunaris** | Dark-mode focused with high contrast and deep colors | Developer tools, creative applications |
+| **Nitro** | Performance-optimized minimal design with minimal DOM footprint | High-traffic apps, performance-critical UIs |
+
+Apply via style guide:
+```
+guide = get_style_guide(name: "shadcn-nova")  // or "halo", "lunaris", "nitro"
+```
 
 ## Default Style: shadcn/ui Nova
 
@@ -308,6 +436,85 @@ body=I(card, {
    vars = get_variables()
    ```
 
+## Pencil CLI
+
+**Install:** `npm install -g @pencil.dev/cli` (requires Node.js 18+)
+**Latest Version:** 0.2.4
+
+### Authentication
+
+```
+pencil login         # Interactive email/OTP login (stores in ~/.pencil/session-cli.json)
+pencil status        # Verify session and account info
+pencil version       # Show CLI version
+```
+
+For CI/CD, set `PENCIL_CLI_KEY` environment variable instead.
+
+### Agent Mode
+
+Run AI-assisted design generation from command line:
+
+```
+pencil --out login.pen --prompt "Create modern login page"
+pencil --in dashboard.pen --out dashboard-v2.pen --prompt "Add sidebar"
+pencil --out simple.pen --model claude-haiku-4-5 --prompt "404 page"
+pencil --in design.pen --export hero.png --export-scale 2
+```
+
+| Flag | Description |
+|------|-------------|
+| `--in, -i <path>` | Input .pen file (optional) |
+| `--out, -o <path>` | Output .pen file (required unless exporting) |
+| `--prompt, -p <text>` | AI agent prompt |
+| `--model, -m <id>` | Model: claude-opus-4-6 (default), claude-sonnet-4-6, claude-haiku-4-5 |
+| `--export, -e <path>` | Export to PNG/JPEG/WEBP/PDF |
+| `--export-scale <n>` | Scale multiplier for export |
+| `--export-type <type>` | Image format |
+| `--tasks, -t <path>` | Batch JSON file for multiple designs |
+| `--custom, -c` | Custom Claude config |
+| `--list-models` | List available models |
+| `--verbose-mcp` | Full MCP error logging |
+
+### Interactive Mode
+
+```
+pencil interactive              # Headless mode (local editor without GUI)
+pencil interactive --app vscode # App mode (live WebSocket to running Pencil)
+```
+
+**Shell commands:**
+- `tool_name({ key: value })` — Call MCP tool with parameters
+- `save()` — Write changes to disk
+- `exit()` — Exit shell
+
+### Batch Processing
+
+JSON task file format:
+```json
+{
+  "tasks": [
+    { "out": "page.pen", "prompt": "Create landing page", "model": "claude-haiku-4-5" }
+  ]
+}
+```
+Required: `out`, `prompt`. Optional: `in`, `model`.
+
+### Export (CLI Only)
+
+The `export_nodes` tool is available only through the CLI (not via MCP):
+- Formats: PNG, JPEG, WEBP, PDF
+- Scaling support via `--export-scale`
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `PENCIL_CLI_KEY` | Organization API key for CI/CD |
+| `ANTHROPIC_API_KEY` | Anthropic authentication |
+| `PENCIL_API_BASE` | Backend URL (default: https://api.pencil.dev) |
+| `DEBUG` | Enable debug logging |
+
 ## Best Practices
 
 ### batch_design Operations
@@ -361,6 +568,8 @@ screenshot = get_screenshot()
 
 ---
 
-Last Updated: 2026-02-21
-Tool Version: Pencil MCP (Latest)
+Last Updated: 2026-04-05
+Tool Version: Pencil MCP (14 tools + export_nodes CLI-only)
+CLI Version: @pencil.dev/cli 0.2.4
+.pen Schema: 2.9
 Default Style: shadcn/ui Nova (neutral, noto-sans, small radius)

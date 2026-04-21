@@ -1,9 +1,3 @@
----
-paths:
-  - "**/.claude/**"
-  - "**/.moai/**"
-  - "**/CLAUDE.md"
----
 # File Reading Optimization
 
 Guidelines for efficient file reading to minimize token consumption.

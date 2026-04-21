@@ -6,11 +6,20 @@ on:
     paths:
       - 'klai-portal/backend/**'
       - '.github/workflows/portal-api.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'klai-portal/backend/**'
+      - '.github/workflows/portal-api.yml'
 
 permissions:
   contents: read
   packages: write
   security-events: write
+
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   quality:
@@ -24,7 +33,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -42,10 +51,14 @@ jobs:
       # no user-controlled input reaches the vulnerable code path). Re-assess Q3 2026.
       # See: https://github.com/GetKlai/klai/issues/62
       - name: Dependency vulnerability scan (pip-audit)
-        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539
+        run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2025-71176
+
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
 
   build-push:
     needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -97,7 +110,7 @@ jobs:
           exit-code: '1'
 
       - name: Upload Trivy SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'

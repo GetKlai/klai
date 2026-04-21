@@ -1,20 +1,32 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        # Tolerate keys that exist in the server .env but no longer have a
+        # matching Settings field (e.g. ZITADEL_PORTAL_APP_ID after SPEC-AUTH-008
+        # decommissioned the old SPA portal app). Without this the container
+        # refuses to start whenever operational env and code drift briefly.
+        extra="ignore",
+    )
 
     # Zitadel
     zitadel_base_url: str = "https://auth.getklai.com"
     zitadel_pat: str = ""  # PORTAL_API_ZITADEL_PAT — never exposed to frontend
     zitadel_project_id: str = "362771533686374406"
     zitadel_org_id: str = ""
-    zitadel_portal_app_id: str = "362901948573155339"  # "Klai Portal" OIDC app
     zitadel_portal_org_id: str = "362757920133283846"  # Org where all portal users live
+    zitadel_portal_client_id: str = "369262708920483857"  # OIDC client_id for BFF code exchange (confidential WEB app)
+    zitadel_portal_client_secret: str = ""  # PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET (SPEC-AUTH-008)
+    zitadel_idp_google_id: str = ""  # ZITADEL_IDP_GOOGLE_ID — instance-level Google IDP
+    zitadel_idp_microsoft_id: str = ""  # ZITADEL_IDP_MICROSOFT_ID — instance-level Microsoft IDP
 
     # Database
     database_url: str = ""  # asyncpg DSN: postgresql+asyncpg://...
@@ -61,7 +73,18 @@ class Settings(BaseSettings):
     sso_cookie_key: str = ""  # PORTAL_API_SSO_COOKIE_KEY
     sso_cookie_max_age: int = 7776000  # 90 days; Zitadel session lifetime is the real authority
 
+    # BFF — Backend-for-Frontend session auth (SPEC-AUTH-008)
+    # Fernet key for encrypting BFF session records at rest in Redis.
+    # Falls back to sso_cookie_key when unset — single key during the rollout.
+    bff_session_key: str = ""  # PORTAL_API_BFF_SESSION_KEY
+    bff_session_ttl_seconds: int = 30 * 24 * 3600  # 30 days, matches Zitadel refresh-token lifetime
+    bff_access_token_skew_seconds: int = 60  # refresh this many seconds before expiry
+
+    # Container name for the MongoDB instance (varies per docker-compose project name)
+    mongodb_container_name: str = "mongodb"
+
     # Secrets passed to new LibreChat containers (read from /opt/klai/.env)
+    mongo_root_username: str = "root"
     mongo_root_password: str = ""
     meili_master_key: str = ""
     litellm_master_key: str = ""
@@ -82,8 +105,22 @@ class Settings(BaseSettings):
     # Generate with: openssl rand -hex 32
     internal_secret: str = ""
 
+    # SPEC-SEC-005 REQ-1.7: per-caller-IP rate limit ceiling for /internal/* endpoints.
+    # Sliding-window (60s) over Redis; fails open when Redis is unavailable.
+    # Tune via INTERNAL_RATE_LIMIT_RPM env var without code change.
+    internal_rate_limit_rpm: int = 100
+
+    # klai-mailer service URL (for sending transactional emails)
+    mailer_url: str = ""  # e.g. http://klai-mailer:8300
+
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""
+
+    # SPEC-SEC-010 REQ-6.1: shared secret for X-Internal-Secret header sent to
+    # retrieval-api. Must match retrieval-api's RETRIEVAL_API_INTERNAL_SECRET.
+    # Kept separate from ``internal_secret`` (mailer → portal) so the two
+    # cross-service trust boundaries can be rotated independently.
+    retrieval_api_internal_secret: str = ""
 
     # MongoDB root URI for lazy LibreChat user ID mapping (KB-010).
     # Needs read access to all tenant databases (root user or klai_readonly role).
@@ -93,6 +130,10 @@ class Settings(BaseSettings):
     # klai-connector integration (used by portal → klai-connector for sync orchestration)
     klai_connector_url: str = "http://klai-connector:8200"
     klai_connector_secret: str = ""  # Shared internal secret; generate with: openssl rand -hex 32
+
+    # Google Drive OAuth (SPEC-KB-025) — empty client_id disables the provider
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
 
     # Mock mode — disables real Moneybird calls for pre-launch testing
     mock_billing: bool = False
@@ -112,6 +153,8 @@ class Settings(BaseSettings):
 
     # Vexa meeting API (agentic-runtime)
     vexa_meeting_api_url: str = "http://vexa-meeting-api:8080"
+    # @MX:NOTE: reserved for Vexa admin API calls (tenant provisioning, quota inspection).
+    # Stored in SOPS + compose; no runtime reader yet. Keep until admin surface lands.
     vexa_admin_token: str = ""
     vexa_api_key: str = ""
     vexa_webhook_secret: str = ""
@@ -156,12 +199,25 @@ class Settings(BaseSettings):
     # Docker container names (provisioning uses these to manage tenants)
     mongodb_container_name: str = "mongodb"
 
+    # Widget JWT secret (SPEC-WIDGET-001)
+    # Generate with: openssl rand -hex 32
+    # When empty, widget endpoints return 503.
+    widget_jwt_secret: str = ""  # PORTAL_API_WIDGET_JWT_SECRET
+
     # CORS — static origins + wildcard regex for tenant subdomains
     # SECURITY-CRITICAL: This regex controls which origins can make credentialed
     # cross-origin requests. A permissive pattern (e.g. .*) would allow any site
     # to call the API with the user's cookies. Review carefully before modifying.
     cors_origins: str = "http://localhost:5174"
-    cors_allow_origin_regex: str = r"https://[a-z0-9-]+\.getklai\.com"
+    # Allow any origin so public widget endpoints (SPEC-WIDGET-001) pass CORS preflight.
+    # Actual security is enforced server-side: portal routes require JWT auth;
+    # widget routes enforce origin via origin_allowed() in the handler.
+    cors_allow_origin_regex: str = r".*"
+
+    @property
+    def portal_url(self) -> str:
+        """Base URL of the portal (SPA + API proxy). Used for OAuth callback URLs."""
+        return self.frontend_url or f"https://portal.{self.domain}"
 
     @property
     def is_auth_dev_mode(self) -> bool:
@@ -171,6 +227,21 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]
+
+    @model_validator(mode="after")
+    def _require_vexa_webhook_secret(self) -> "Settings":
+        """SEC-013 F-033: fail-closed on missing vexa_webhook_secret.
+
+        Vexa integration is active (SPEC-VEXA-003 rolled out). An empty/
+        whitespace-only secret silently disabled auth on /api/bots/internal/webhook
+        before this validator — same class of bug as F-003/F-012. Fail fast at
+        startup rather than accept un-authenticated webhooks.
+        """
+        if not self.vexa_webhook_secret or not self.vexa_webhook_secret.strip():
+            raise ValueError(
+                "Missing required: VEXA_WEBHOOK_SECRET (SEC-013 F-033). Set it in SOPS before starting portal-api."
+            )
+        return self
 
 
 settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads required fields from env

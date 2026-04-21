@@ -1,5 +1,5 @@
 import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth, readCsrfCookie } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -33,7 +33,7 @@ export const Route = createLazyFileRoute('/app/focus/$notebookId')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +98,6 @@ function StatusBadge({ status }: { status: SourceStatus }) {
 function NotebookDetailPage() {
   const { notebookId } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -123,8 +122,8 @@ function NotebookDetailPage() {
 
   const { data: notebook } = useQuery<Notebook>({
     queryKey: ['focus-notebook', notebookId],
-    queryFn: async () => apiFetch<Notebook>(`${FOCUS_BASE}/notebooks/${notebookId}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<Notebook>(`${FOCUS_BASE}/notebooks/${notebookId}`),
+    enabled: auth.isAuthenticated,
   })
 
   // ── Sources ─────────────────────────────────────────────────────────────────
@@ -132,10 +131,10 @@ function NotebookDetailPage() {
   const { data: sources = [] } = useQuery<Source[]>({
     queryKey: ['focus-sources', notebookId],
     queryFn: async () => {
-      const data = await apiFetch<{ items?: Source[] } | Source[]>(`${FOCUS_BASE}/notebooks/${notebookId}/sources`, token)
+      const data = await apiFetch<{ items?: Source[] } | Source[]>(`${FOCUS_BASE}/notebooks/${notebookId}/sources`)
       return (data as { items?: Source[] }).items ?? (data as Source[])
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
     refetchInterval: (query) => {
       const data = query.state.data
       return Array.isArray(data) && data.some((s) => s.status === 'processing') ? 3000 : false
@@ -148,7 +147,7 @@ function NotebookDetailPage() {
 
   const deleteSrcMutation = useMutation({
     mutationFn: async (srcId: string) => {
-      await apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/${srcId}`, token, { method: 'DELETE' })
+      await apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/sources/${srcId}`, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['focus-sources', notebookId] })
@@ -159,13 +158,13 @@ function NotebookDetailPage() {
 
   const { data: historyData } = useQuery<{ items: HistoryMessage[] }>({
     queryKey: ['focus-history', notebookId],
-    queryFn: async () => apiFetch<{ items: HistoryMessage[] }>(`${FOCUS_BASE}/notebooks/${notebookId}/history`, token),
-    enabled: !!token && notebook?.save_history === true,
+    queryFn: async () => apiFetch<{ items: HistoryMessage[] }>(`${FOCUS_BASE}/notebooks/${notebookId}/history`),
+    enabled: auth.isAuthenticated && notebook?.save_history === true,
   })
 
   const toggleHistoryMutation = useMutation({
     mutationFn: async (saveHistory: boolean) => {
-      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}`, token, {
+      return apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}`, {
         method: 'PATCH',
         body: JSON.stringify({ save_history: saveHistory }),
       })
@@ -178,7 +177,7 @@ function NotebookDetailPage() {
 
   const clearHistoryMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, token, { method: 'DELETE' })
+      await apiFetch(`${FOCUS_BASE}/notebooks/${notebookId}/history`, { method: 'DELETE' })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['focus-history', notebookId] })
@@ -226,12 +225,13 @@ function NotebookDetailPage() {
     let citations: Citation[] = []
 
     try {
+      const csrf = readCsrfCookie()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (csrf) headers['X-CSRF-Token'] = csrf
       const res = await fetch(`${FOCUS_BASE}/notebooks/${notebookId}/chat`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({
           question: question,
           mode: chatMode,

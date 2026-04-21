@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { ArrowLeft } from 'lucide-react'
@@ -20,7 +20,7 @@ export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
   ),
 })
 
-const DOCS_BASE = '/docs/api'
+const DOCS_BASE = '/api/docs/api'
 
 function getOrgSlug(): string {
   return window.location.hostname.split('.')[0]
@@ -36,7 +36,6 @@ interface KnowledgeBase {
 function EditKBPage() {
   const { kbSlug } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const orgSlug = getOrgSlug()
@@ -47,12 +46,12 @@ function EditKBPage() {
   const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: ['docs-kb', orgSlug, kbSlug],
     queryFn: async () => {
-      const kbs = await apiFetch<KnowledgeBase[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`, token)
+      const kbs = await apiFetch<KnowledgeBase[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs`)
       const found = kbs.find((k) => k.slug === kbSlug)
       if (!found) throw new Error('Kennisbank niet gevonden')
       return found
     },
-    enabled: !!token,
+    enabled: auth.isAuthenticated,
   })
 
   useEffect(() => {
@@ -64,7 +63,7 @@ function EditKBPage() {
 
   const editMutation = useMutation({
     mutationFn: async () => {
-      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}`, token, {
+      return apiFetch(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}`, {
         method: 'PATCH',
         body: JSON.stringify({ name, visibility }),
       })

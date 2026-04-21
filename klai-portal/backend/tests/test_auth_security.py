@@ -7,8 +7,6 @@ Fix 2: MFA policy enforcement (org mfa_policy="required" blocks login without MF
 Pure unit tests -- all async sessions, Zitadel calls, and audit service are mocked.
 """
 
-# ruff: noqa: S106  -- test passwords are intentional fixtures, not real credentials
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx

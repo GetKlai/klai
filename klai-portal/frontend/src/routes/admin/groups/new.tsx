@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useState } from 'react'
@@ -23,8 +22,6 @@ interface Group {
 }
 
 function NewGroupPage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -34,7 +31,7 @@ function NewGroupPage() {
 
   const createMutation = useMutation({
     mutationFn: async (body: { name: string; description: string }) => {
-      return apiFetch<Group>(`/api/admin/groups`, token, {
+      return apiFetch<Group>(`/api/admin/groups`, {
         method: 'POST',
         body: JSON.stringify(body),
       })

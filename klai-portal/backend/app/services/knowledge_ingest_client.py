@@ -96,6 +96,7 @@ async def preview_crawl(
     content_selector: str | None = None,
     org_id: str = "",
     try_ai: bool = False,
+    cookies: list[dict] | None = None,
 ) -> dict:
     """Call knowledge-ingest preview endpoint and return fit_markdown + word_count.
 
@@ -108,15 +109,15 @@ async def preview_crawl(
             headers={"X-Internal-Secret": settings.knowledge_ingest_secret, **get_trace_headers()},
             timeout=20.0,
         ) as client:
-            resp = await client.post(
-                "/ingest/v1/crawl/preview",
-                json={
-                    "url": url,
-                    "content_selector": content_selector,
-                    "org_id": org_id,
-                    "try_ai": try_ai,
-                },
-            )
+            payload: dict = {
+                "url": url,
+                "content_selector": content_selector,
+                "org_id": org_id,
+                "try_ai": try_ai,
+            }
+            if cookies:
+                payload["cookies"] = cookies
+            resp = await client.post("/ingest/v1/crawl/preview", json=payload)
             resp.raise_for_status()
             return resp.json()  # type: ignore[no-any-return]
     except Exception:

@@ -8,35 +8,56 @@ Claude Code hooks for extending functionality with custom scripts.
 
 ## Hook Events
 
-All 15 available hook event types:
+27 hook event types (+ 1 special event, 28 total):
 
 | Event | Matcher | Can Block | Description |
 |-------|---------|-----------|-------------|
-| UserPromptSubmit | No | Yes | Runs when user submits a prompt, before processing |
-| SessionStart | No | No | Runs when a new session begins |
-| PreCompact | No | No | Runs before context compaction |
+| SessionStart | Source | No | Runs when a new session begins. Matchers: startup, resume, clear, compact |
+| SessionEnd | Reason | No | Runs when session terminates. Matchers: clear, resume, logout, prompt_input_exit |
 | PreToolUse | Tool name | Yes | Runs before a tool executes |
 | PostToolUse | Tool name | No | Runs after a tool completes successfully |
 | PostToolUseFailure | Tool name | No | Runs after a tool execution fails |
-| PermissionRequest | Tool name | Yes | Runs when permission dialog appears |
-| Notification | Type | No | Runs when Claude Code sends notifications |
+| PreCompact | Trigger | No | Runs before context compaction. Matchers: manual, auto |
+| PostCompact | Trigger | No | Runs after context compaction completes (v2.1.76+). Matchers: manual, auto |
+| Stop | No | Yes | Runs when Claude finishes responding |
+| StopFailure | Error type | No | Runs when a turn ends due to API error (v2.1.78+). Matchers: rate_limit, authentication_failed, billing_error, max_output_tokens |
 | SubagentStart | Agent type | No | Runs when a subagent spawns |
-| SubagentStop | No | No | Runs when a subagent terminates |
-| Stop | No | No | Runs when conversation stops |
+| SubagentStop | Agent type | Yes | Runs when a subagent terminates |
+| Notification | Type | No | Runs when notifications sent. Matchers: permission_prompt, idle_prompt, auth_success, elicitation_dialog |
+| UserPromptSubmit | No | Yes | Runs when user submits a prompt, before processing |
+| PermissionRequest | Tool name | Yes | Runs when permission dialog appears |
+| PermissionDenied | Tool name | No | Runs after auto mode denies a tool call. Return {retry: true} to retry (v2.1.89+) |
 | TeammateIdle | No | Yes | Runs when agent team teammate is about to go idle |
 | TaskCompleted | No | Yes | Runs when a task is being marked complete |
-| SessionEnd | Reason | No | Runs when session terminates |
-| ConfigChange | No | No | Runs when settings.json is modified (v2.1.49+) |
+| TaskCreated | No | Yes | Runs when a task is created via TaskCreate (v2.1.84+) |
+| WorktreeCreate | No | Yes | Runs when a worktree is created for agent isolation (v2.1.49+) |
+| WorktreeRemove | No | No | Runs when a worktree is removed after agent terminates (v2.1.49+) |
+| ConfigChange | Config source | Yes | Runs when config files change (v2.1.49+). Matchers: user_settings, project_settings, local_settings, policy_settings, skills |
+| CwdChanged | No | No | Runs when working directory changes (v2.1.83+). Receives CLAUDE_ENV_FILE |
+| FileChanged | Filename | No | Runs when a file is changed externally (v2.1.83+). Receives CLAUDE_ENV_FILE |
+| InstructionsLoaded | Load reason | No | Runs when CLAUDE.md or rules loaded (v2.1.69+). Matchers: session_start, nested_traversal, path_glob_match, include, compact |
+| Elicitation | MCP server | Yes | Runs when MCP server requests user input (v2.1.76+) |
+| ElicitationResult | MCP server | Yes | Runs after user responds to MCP elicitation (v2.1.76+) |
+
+**Special Event:**
+
+| Event | Matcher | Can Block | Description |
+|-------|---------|-----------|-------------|
+| Setup | No | No | Runs via --init, --init-only, or --maintenance flags (v2.1.10+) |
 
 ### Event Categories
 
-**Lifecycle Events**: SessionStart, SessionEnd, Stop, PreCompact, ConfigChange
+**Lifecycle Events**: SessionStart, Setup, SessionEnd, ConfigChange, InstructionsLoaded
 
-**Prompt Events**: UserPromptSubmit, PermissionRequest, Notification
+**Context Events**: PreCompact, PostCompact, FileChanged, CwdChanged, WorktreeCreate, WorktreeRemove
+
+**Prompt and Notification Events**: UserPromptSubmit, PermissionRequest, PermissionDenied, Notification, Elicitation, ElicitationResult
 
 **Tool Events**: PreToolUse, PostToolUse, PostToolUseFailure
 
-**Agent Events**: SubagentStart, SubagentStop, TeammateIdle, TaskCompleted
+**Agent and Task Events**: SubagentStart, SubagentStop, TeammateIdle, TaskCompleted, TaskCreated
+
+**Conversation State Events**: Stop, StopFailure
 
 ## Hook Event stdin/stdout Reference
 
@@ -44,15 +65,25 @@ All 15 available hook event types:
 |-------|-------|--------|-------|
 | UserPromptSubmit | `prompt` | `additionalContext`, `reason` | Exit 2 blocks prompt |
 | PermissionRequest | `toolName`, `toolInput` | `reason` | Exit 0 = allow, exit 2 = deny |
+| PermissionDenied | `toolName`, `toolInput` | `{retry: true}` | Return retry to allow model to retry (v2.1.89+) |
 | PostToolUseFailure | `toolName`, `toolInput`, `error`, `is_interrupt` | `systemMessage` | Non-blocking |
 | Notification | `type`, `message` | - | Types: permission_prompt, idle_prompt, auth_success, elicitation_dialog |
-| SubagentStart | `agentType`, `agentName` | `additionalContext` | Inject context into subagent |
-| TeammateIdle | `agentType`, `agentName`, `tasksSummary` | `systemMessage` | Exit 2 = keep working. Critical for team quality |
-| TaskCompleted | `taskId`, `taskSummary`, `agentName` | `reason` | Exit 2 = reject completion. Critical for team quality |
+| Setup | `trigger` | `systemMessage` | trigger: init, init-only, or maintenance (v2.1.10+) |
+| InstructionsLoaded | `files`, `source` | - | Lists loaded instruction files (v2.1.69+) |
+| SubagentStart | `agentType`, `agentName`, `agent_id` | `additionalContext` | Inject context into subagent. `agent_id` added in v2.1.69 |
+| TeammateIdle | `agentType`, `agentName`, `tasksSummary`, `agent_id` | `systemMessage` or JSON | Exit 2 = keep working. Also accepts JSON: `{"continue": false, "stopReason": "..."}` to stop teammate (v2.1.69+) |
+| TaskCompleted | `taskId`, `taskSummary`, `agentName`, `agent_id` | `reason` or JSON | Exit 2 = reject completion. Also accepts JSON: `{"continue": false, "stopReason": "..."}` to reject (v2.1.69+) |
 | SessionEnd | `reason`, `sessionId` | - | Reasons: clear, logout, prompt_input_exit, bypass_permissions_disabled, other |
 | Stop | `last_assistant_message` | `systemMessage` | Includes last assistant message (v2.1.49+) |
-| SubagentStop | `agentType`, `agentName`, `last_assistant_message` | `systemMessage` | Includes last assistant message (v2.1.49+) |
+| SubagentStop | `agentType`, `agentName`, `last_assistant_message`, `agent_id`, `agent_transcript_path` | `systemMessage` | `agent_id` and `agent_transcript_path` added in v2.1.42/v2.1.69 |
 | ConfigChange | `configPath`, `changes` | - | Triggered on settings.json modification (v2.1.49+) |
+| StopFailure | `error_type`, `error_message` | `systemMessage` | Error types: rate_limit, authentication_failed, billing_error, max_output_tokens (v2.1.78+) |
+| CwdChanged | `old_cwd`, `new_cwd` | - | Receives CLAUDE_ENV_FILE env var for environment persistence |
+| FileChanged | `file_path`, `change_type` | - | change_type: modified, created, deleted. Receives CLAUDE_ENV_FILE |
+| Elicitation | `mcp_server_name`, `mcp_tool_name`, `elicitation_request` | `action`, `content` | action: accept, decline, cancel |
+| ElicitationResult | `mcp_server_name`, `mcp_tool_name` | `action`, `content` | Overrides user response |
+
+All hook events include `agent_id` and `agent_type` fields when triggered from a subagent context (v2.1.69+).
 
 Standard events (SessionStart, PreCompact, PreToolUse, PostToolUse) use common stdin/stdout patterns: stdin receives event-specific fields, stdout accepts optional `systemMessage`.
 
@@ -66,6 +97,8 @@ Default hook type. Executes a shell command, communicates via stdin/stdout JSON.
 - stdin: JSON with event data
 - stdout: JSON with response (optional `systemMessage`, `additionalContext`, `reason`)
 - Exit codes: 0 = success, 1 = error (shown to user), 2 = block/reject (for blocking events)
+- PreToolUse permission decisions: `allow`, `deny`, `ask`, `defer` (defer pauses headless sessions for --resume, v2.1.89+)
+- Hook stdout over 50K characters is saved to disk; only a file path + preview is injected into context (v2.1.89+)
 
 ### Prompt Hooks (type: "prompt")
 
@@ -85,6 +118,17 @@ Spawn a subagent with tool access to verify conditions. The agent can read files
 - Returns JSON: `ok` (boolean), `reason` (string explanation)
 - Same blocking behavior as prompt hooks
 
+### HTTP Hooks (type: "http")
+
+Send hook input as JSON POST to a URL and receive JSON response. Useful for remote CI/CD integration and webhook-based workflows.
+
+- Configuration: `type`, `url`, `timeout`
+- The `url` field specifies the endpoint to POST event data to
+- Request: JSON body containing hook event data (same as stdin for command hooks)
+- Response: JSON with optional `systemMessage`, `additionalContext`, `reason`
+- Same blocking behavior as command hooks (HTTP status codes map to exit codes)
+- Available since v2.1.63
+
 ### Async Command Hooks (async: true)
 
 Run command hooks in the background without blocking the conversation.
@@ -93,6 +137,28 @@ Run command hooks in the background without blocking the conversation.
 - Configuration: Add `async: true` to any command hook definition
 - Results are delivered on the next conversation turn via `systemMessage`
 - Useful for long-running validations (linting, test execution, deployments)
+
+### Single-Fire Hooks (once: true)
+
+Execute a hook only once per session, then automatically skip subsequent triggers.
+
+- Configuration: Add `once: true` to any hook definition
+- Useful for one-time session initialization, first-write validation, or setup tasks
+- Available since v2.1.0
+
+### Conditional Hook Execution (if field)
+
+Filter when hooks run using permission rule syntax (v2.1.84+).
+
+The `if` field accepts permission rule patterns to prevent unnecessary hook execution and reduce process spawning overhead. Use tool patterns like `Bash(git *)` for git commands, `Write|Edit` for write operations, or `Bash(npm *)` for npm commands.
+
+Example configurations:
+- `"if": "Bash(git *)"` - Only run for git bash commands
+- `"if": "Write|Edit"` - Only run for write/edit operations
+- `"if": "Bash(npm *)"` - Only run for npm commands
+- `"if": "Bash(pytest *)"` - Only run for pytest commands
+
+This field significantly reduces performance overhead by skipping hook evaluation for non-matching operations.
 
 ## Agent-Specific Hooks
 
@@ -187,6 +253,17 @@ Wrapper scripts are located at:
 - `.claude/hooks/moai/handle-post-tool.sh`
 - `.claude/hooks/moai/handle-stop.sh`
 - `.claude/hooks/moai/handle-agent-hook.sh`: TeammateIdle, TaskCompleted events (team mode)
+
+## Smart Hook Behaviors (v2.10.1)
+
+MoAI-ADK implements intelligent handler logic beyond simple logging:
+
+- **PermissionDenied auto-retry**: Read-only tools (Read, Grep, Glob, WebFetch, WebSearch, Skill) automatically return `{retry: true}` when denied by auto mode
+- **StopFailure error-type responses**: Returns targeted `systemMessage` based on `error_type` (rate_limit, authentication_failed, billing_error, max_output_tokens)
+- **PostCompact memo restoration**: Reads session-memo.md saved by PreCompact and injects it as `systemMessage` for context recovery
+- **SubagentStart context injection**: Injects project metadata (name, type, language, active SPEC) via `additionalContext` into spawned subagents
+- **CwdChanged environment persistence**: Writes project-specific env vars to `CLAUDE_ENV_FILE` when directory changes to a MoAI project
+- **UserPromptSubmit session title**: Sets Claude Code session title via `sessionTitle` field with SPEC ID or project/branch info
 
 ## Rules
 

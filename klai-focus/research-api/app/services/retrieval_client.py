@@ -1,6 +1,12 @@
 """
 HTTP client for retrieval-api service.
 Replaces direct Qdrant queries (narrow) and knowledge_client.py (broad).
+
+SPEC-SEC-010: every outbound call attaches ``X-Internal-Secret``. The secret is
+read from ``settings.retrieval_api_internal_secret`` (sourced from SOPS → Docker
+Compose env). An empty secret logs a warning and skips the call — we do NOT fall
+back to calling retrieval-api without the header (that would pollute logs with
+401s and mask config errors).
 """
 import logging
 
@@ -11,6 +17,18 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
+
+
+def _auth_headers() -> dict[str, str]:
+    """Build the internal-auth headers for a retrieval-api call.
+
+    Returns an empty dict if the secret is not configured; the caller is expected
+    to log-and-skip in that case. We never send an empty X-Internal-Secret value.
+    """
+    secret = settings.retrieval_api_internal_secret
+    if not secret:
+        return {}
+    return {"X-Internal-Secret": secret}
 
 
 async def retrieve_narrow(
@@ -26,6 +44,12 @@ async def retrieve_narrow(
     if not settings.retrieval_api_url:
         logger.warning("RETRIEVAL_API_URL not set, narrow retrieval returns empty")
         return []
+    headers = _auth_headers()
+    if not headers:
+        logger.warning(
+            "RETRIEVAL_API_INTERNAL_SECRET not set, narrow retrieval returns empty",
+        )
+        return []
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -38,6 +62,7 @@ async def retrieve_narrow(
                     "notebook_id": notebook_id,
                     "top_k": top_k,
                 },
+                headers=headers,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -60,6 +85,12 @@ async def retrieve_broad(
     if not settings.retrieval_api_url:
         logger.warning("RETRIEVAL_API_URL not set, broad retrieval returns empty")
         return []
+    headers = _auth_headers()
+    if not headers:
+        logger.warning(
+            "RETRIEVAL_API_INTERNAL_SECRET not set, broad retrieval returns empty",
+        )
+        return []
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -72,6 +103,7 @@ async def retrieve_broad(
                     "notebook_id": notebook_id,
                     "top_k": top_k,
                 },
+                headers=headers,
             )
             resp.raise_for_status()
             data = resp.json()

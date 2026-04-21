@@ -12,9 +12,9 @@ DOCUMENT = " ".join([f"word{i}" for i in range(500)])  # ~500 words, long enough
 def _fake_enrich_chunk_factory(captured: list) -> AsyncMock:
     """Return an AsyncMock that records the context_window argument each call receives."""
 
-    async def _fake(document_text, chunk_text, title, path, *, question_focus="", participant_context="", context_window=None):
+    async def _fake(document_text, chunk_text, title, path, *, question_focus="", participant_context="", context_window=None, **kwargs):
         captured.append(context_window)
-        return MagicMock(context_prefix="prefix", questions=["q?"])
+        return MagicMock(context_prefix="prefix", content_type="conceptual", questions=["q?"])
 
     return _fake
 

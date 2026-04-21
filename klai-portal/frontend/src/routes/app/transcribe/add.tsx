@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useRef, useState, useEffect, useCallback } from 'react'
-import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,7 +10,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 
-const SCRIBE_BASE = '/scribe/v1'
+const SCRIBE_BASE = '/api/scribe/v1'
 const ACCEPTED_TYPES = '.wav,.mp3,.m4a,.ogg,.webm'
 const MAX_MB = 100
 
@@ -51,8 +50,6 @@ function formatDuration(seconds: number): string {
 }
 
 function AddTranscribePage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/app/transcribe/add' })
 
@@ -87,7 +84,7 @@ function AddTranscribePage() {
       const form = new FormData()
       form.append('file', file)
       if (language) form.append('language', language)
-      return apiFetch<TranscriptionResponse>(`${SCRIBE_BASE}/transcribe`, token, {
+      return apiFetch<TranscriptionResponse>(`${SCRIBE_BASE}/transcribe`, {
         method: 'POST',
         body: form,
       })
@@ -110,7 +107,7 @@ function AddTranscribePage() {
     mutationFn: async (txnId: string) => {
       setError(null)
       const params = language ? `?language=${encodeURIComponent(language)}` : ''
-      return apiFetch<TranscriptionResponse>(`${SCRIBE_BASE}/transcriptions/${txnId}/retry${params}`, token, {
+      return apiFetch<TranscriptionResponse>(`${SCRIBE_BASE}/transcriptions/${txnId}/retry${params}`, {
         method: 'POST',
       })
     },

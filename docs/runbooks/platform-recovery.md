@@ -26,24 +26,45 @@ docker exec $POSTGRES psql -U zitadel -d zitadel -c \
 
 Fix whatever caused portal login to break (missing env var, crashed container, etc.).
 
-### Step 3 — Re-enable Login V2
+### Step 3 — Re-enable Login V2 via the Zitadel Feature API
 
-Write to a file to avoid shell quoting problems:
+**Do NOT directly UPDATE the projection table.** Projections are derived from
+events in `eventstore.events2`; a direct UPDATE works temporarily but is
+overwritten on the next projection rebuild (upgrade, `projection truncate`,
+etc). Use the v2 Feature API — it writes a new event AND updates the
+projection in one atomic step.
 
 ```bash
-cat > /tmp/fix_login_v2.sql << 'EOF'
-UPDATE projections.instance_features5
-SET value = '{"base_uri": {"Host": "getklai.getklai.com", "Path": "", "User": null, "Opaque": "", "Scheme": "https", "RawPath": "", "Fragment": "", "OmitHost": false, "RawQuery": "", "ForceQuery": false, "RawFragment": ""}, "required": true}'::jsonb,
-    change_date = NOW(),
-    sequence = 5
-WHERE instance_id = '362757920133218310' AND key = 'login_v2';
-EOF
-POSTGRES=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
-docker cp /tmp/fix_login_v2.sql $POSTGRES:/tmp/fix_login_v2.sql
-docker exec $POSTGRES psql -U zitadel -d zitadel -f /tmp/fix_login_v2.sql
+# Pull the dedicated admin PAT (klai-admin-sa, IAM_OWNER only — scope-limited).
+# Never use PORTAL_API_ZITADEL_PAT for instance-level ops; that PAT is for
+# tenant provisioning and should not carry admin authority at runtime.
+PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+
+# PUT — idempotent, writes event feature.instance.login_v2.set + updates projection
+curl -sf -X PUT "https://auth.getklai.com/v2/features/instance" \
+  -H "Authorization: Bearer $PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"loginV2": {"required": true, "baseUri": "https://my.getklai.com"}}'
+
+# Verify event landed (expect a new feature.instance.login_v2.set row with my.getklai.com)
+ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d zitadel -c \
+  \"SELECT created_at, payload FROM eventstore.events2 \
+    WHERE event_type = 'feature.instance.login_v2.set' \
+    ORDER BY created_at DESC LIMIT 1;\""
+
+# Verify live OIDC flow hits my.getklai.com (not getklai.getklai.com)
+curl -s -o /dev/null -w '%{redirect_url}\n' \
+  "https://auth.getklai.com/oauth/v2/authorize?response_type=code&client_id=369262708920483857&redirect_uri=https%3A%2F%2Fmy.getklai.com%2Fapi%2Fauth%2Foidc%2Fcallback&scope=openid&state=x&code_challenge=x&code_challenge_method=S256"
+# Expected: https://my.getklai.com/login?authRequest=V2_...
 ```
 
-**Critical:** The value uses Go's `url.URL` struct serialization — do not abbreviate or change the structure. If you get this wrong, the projection row is written with `value = null` and Login V2 has no redirect target.
+**Why PUT, not PATCH:** Zitadel v2 API rejects PATCH on this endpoint (`Method
+Not Allowed`). PUT is idempotent — re-running it returns `No changes` if the
+state already matches.
+
+**Never** use `baseURI: "https://getklai.getklai.com"` or any `{tenant}.getklai.com`.
+See `.claude/rules/klai/platform/zitadel.md` § "Login V2 base_uri must be
+my.getklai.com".
 
 **Zitadel instance constants (core-01, do not guess):**
 
@@ -57,36 +78,85 @@ docker exec $POSTGRES psql -U zitadel -d zitadel -f /tmp/fix_login_v2.sql
 
 ## zitadel-pat-rotation
 
-**Situation:** `create_session failed 401: Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs. All users get login errors.
+**Situation:** `Errors.Token.Invalid (AUTH-7fs1e)` in portal-api logs (PAT
+expired or revoked), or scheduled quarterly rotation per
+`runbooks/credential-rotation.md`.
 
-### Step 1 — Generate a new PAT
+Applies to both Zitadel PATs (identical procedure, different SA IDs):
 
-Go to `https://auth.getklai.com/ui/console` (if Login V2 blocks you, see [#zitadel-login-v2-recovery](#zitadel-login-v2-recovery) above).
+| PAT | SA ID | SOPS key | Container to recreate |
+|---|---|---|---|
+| `PORTAL_API_ZITADEL_PAT` | `362780577813757958` | same | `portal-api` (recreate) |
+| `ZITADEL_ADMIN_PAT` | `369320953139691537` | same | none (consumed by runbooks/CI only) |
 
-Navigate to **Users** → **Service Accounts** tab → **Portal API** → **Personal Access Tokens** → **+ New** — copy the token value (shown once only).
+### Step 1 — Generate new PAT via API
 
-### Step 2 — Apply to running container
-
-```bash
-# Use sed to update the var in /opt/klai/.env
-sed -i 's|^PORTAL_API_ZITADEL_PAT=.*|PORTAL_API_ZITADEL_PAT=<new-token>|' /opt/klai/.env
-cd /opt/klai && docker compose up -d portal-api   # must be up -d, not restart
-docker exec klai-core-portal-api-1 env | grep PORTAL_API_ZITADEL_PAT  # verify
-```
-
-### Step 3 — Verify the new PAT works
+Use `klai-admin-sa`'s PAT to mint a new one. If that PAT is itself
+expired, fall back to the Zitadel console (Users → Service Accounts →
+`klai-admin-sa` → Personal Access Tokens → + New).
 
 ```bash
-ssh core-01 "curl -s https://auth.getklai.com/v2/sessions \
-  -H 'Authorization: Bearer <new-token>' \
-  -H 'Content-Type: application/json' \
-  -d '{\"checks\":{\"user\":{\"loginName\":\"test\"},\"password\":{\"password\":\"test\"}}}'"
-# Expected: {"code":5, "message":"User could not be found"} — not 401
+ADMIN_PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+SA_ID="362780577813757958"   # change for whichever PAT you rotate
+EXPIRY=$(date -u -d "+1 year" +"%Y-%m-%dT%H:%M:%SZ")
+
+curl -sf -X POST "https://auth.getklai.com/management/v1/users/$SA_ID/pats" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846" \
+  -H "Content-Type: application/json" \
+  -d "{\"expirationDate\": \"$EXPIRY\"}"
+# Returns: {"tokenId": "<new-id>", "token": "<new-pat>", ...}
+# Save both — tokenId is needed for revocation in Step 5.
 ```
 
-### Step 4 — Update .env.sops
+### Step 2 — Update SOPS (server-side, no local age key needed)
 
-Run from `/tmp` to avoid `.sops.yaml` path mismatch:
+Use the server-side SOPS procedure. See
+`.claude/rules/klai/infra/sops-env.md` § "Non-interactive SOPS (for agents)".
+Replace the old value with the new token:
+
+```bash
+# In short: scp SOPS file + .sops.yaml to core-01:/tmp/klai-sops/core-01/,
+# decrypt, sed-replace the var, encrypt in-place, scp back, commit, push.
+# The sync-env GitHub Action then updates /opt/klai/.env automatically.
+```
+
+### Step 3 — Recreate portal-api (only for PORTAL_API_ZITADEL_PAT)
+
+```bash
+ssh core-01 "cd /opt/klai && docker compose up -d portal-api"
+ssh core-01 "docker logs --tail 10 klai-core-portal-api-1 | grep 'Zitadel PAT validated'"
+# Expected: "Zitadel PAT validated successfully"
+```
+
+`ZITADEL_ADMIN_PAT` needs no container restart — it is only read ad-hoc.
+
+### Step 4 — Verify the new PAT works
+
+```bash
+NEW_PAT=$(ssh core-01 "sudo grep '^PORTAL_API_ZITADEL_PAT=' /opt/klai/.env | cut -d= -f2-")
+curl -sf "https://auth.getklai.com/auth/v1/users/me" \
+  -H "Authorization: Bearer $NEW_PAT" | head -c 200
+# Expected: {"user":{"id":"362780577813757958",...}} — not 401
+```
+
+### Step 5 — Revoke the old PAT
+
+```bash
+ADMIN_PAT=$(ssh core-01 "sudo grep '^ZITADEL_ADMIN_PAT=' /opt/klai/.env | cut -d= -f2-")
+curl -sf -X DELETE "https://auth.getklai.com/management/v1/users/$SA_ID/pats/<OLD_TOKEN_ID>" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846"
+# Verify: list should show only the new PAT
+curl -sf -X POST "https://auth.getklai.com/management/v1/users/$SA_ID/pats/_search" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H "X-Zitadel-Orgid: 362757920133283846" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+### Legacy fallback (macOS SOPS with local age key)
+
+Only if the server is unreachable. Run from `/tmp`:
 
 ```bash
 cd /tmp
@@ -150,3 +220,67 @@ Run the UPDATE SQL from [#zitadel-login-v2-recovery](#zitadel-login-v2-recovery)
 ### Step 6 — Update .env.sops
 
 Follow the SOPS steps from [#zitadel-pat-rotation](#zitadel-pat-rotation) step 4 — add all three new vars.
+
+---
+
+## librechat-stale-config-recovery
+
+**Situation:** A tenant reports that a recent config change (MCP server toggle, interface update, endpoint change) is not active — the chat iframe behaves as if the old settings are still in place even after a page reload.
+
+**Root cause (most common):** portal-api's Redis FLUSHALL failed during provisioning, so the tenant's LibreChat container restarted against stale yaml cached in Redis (no TTL — see `platform/librechat.md`). The `/regenerate` API path surfaces this in its `errors` response but the `mcp_servers` path only logs a warning, so the failure can go unnoticed.
+
+**Signal to look for:** structured log line in VictoriaLogs:
+
+```
+service:portal-api AND event:redis_flushall_failed
+```
+
+Returned fields: `slug`, `error`, `request_id` (propagated from Caddy).
+
+### Step 1 — Confirm staleness
+
+Get the failing event's `request_id` from the log line above, then trace the full chain to see which tenant and what triggered it:
+
+```
+request_id:<uuid>
+```
+
+If the trigger was an MCP toggle from the portal UI, the user-visible impact is "my MCP change didn't take effect." If the trigger was `/internal/librechat/regenerate`, the CI run already surfaced it in its response body.
+
+### Step 2 — Manually re-run the regenerate workflow
+
+The cleanest recovery is to re-trigger the global regenerate workflow. It re-reads the base yaml, writes per-tenant yaml, re-attempts FLUSHALL, and restarts every tenant container:
+
+```bash
+gh workflow run deploy-librechat-config.yml
+gh run watch --exit-status $(gh run list --workflow=deploy-librechat-config.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+```
+
+Alternative for a single tenant (faster, less impact on other tenants):
+
+```bash
+ssh core-01 "docker exec klai-core-redis-1 redis-cli -a \$(sudo grep ^REDIS_PASSWORD= /opt/klai/.env | cut -d= -f2-) FLUSHALL"
+ssh core-01 "docker restart librechat-<slug>"
+```
+
+> Note: the `docker exec` above runs **on the server**, not from portal-api — so it bypasses the docker-socket-proxy. This is why the runbook is the correct recovery surface, not portal-api code.
+
+### Step 3 — Verify
+
+- Reload the tenant's chat page; confirm the config change is now active.
+- Check VictoriaLogs: no new `redis_flushall_failed` events should appear.
+
+### Step 4 — If FLUSHALL keeps failing
+
+Something is wrong with the Redis container itself. Check:
+
+```bash
+ssh core-01 "docker ps --filter name=redis --format '{{.Names}}\t{{.Status}}'"
+ssh core-01 "docker logs --tail 50 klai-core-redis-1"
+```
+
+Common causes: container OOM, port conflict, auth mismatch between `/opt/klai/.env` and the running container. See `docker-socket-proxy.md` for the allowed proxy verbs — if you're debugging from portal-api, remember `/exec/*/start` is blocked and you need to run redis-cli on the host.
+
+### Follow-up
+
+A dedicated SPEC for alerting infra (alertmanager + Grafana alert-provisioning + notification channels) is the right long-term fix so this runbook doesn't have to be triggered by end-user reports. Until then: a weekly manual query of `service:portal-api AND event:redis_flushall_failed` in VictoriaLogs catches stragglers.

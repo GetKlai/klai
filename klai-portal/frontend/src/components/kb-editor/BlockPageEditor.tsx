@@ -7,7 +7,7 @@ import { WikiLink } from '@/components/kb-editor/WikiLink'
 import { editorLogger } from '@/lib/logger'
 
 export type BlockPageEditorHandle = {
-  getMarkdown: () => string
+  getContent: () => string
   insertWikilink: (pageId: string, title: string, icon?: string) => void
 }
 
@@ -54,20 +54,52 @@ export const BlockPageEditor = forwardRef<
       editorLogger.debug('initialContent empty on mount')
       return
     }
-    // HTML content (saved after wikilink support): parse as HTML so custom
-    // inline specs (wikilink) are restored via their parse() method.
-    // Legacy markdown content (no leading '<'): fall back to markdown parser.
-    const format = initialContent.trimStart().startsWith('<') ? 'html' : 'markdown'
+    // Format detection (newest-first for fast path):
+    //   JSON  — saved by current code, lossless native BlockNote format
+    //   HTML  — saved by previous code (after wikilink support was added)
+    //   Markdown — saved by very first version of the editor
+    const trimmed = initialContent.trimStart()
+    const format = trimmed.startsWith('[') ? 'json'
+                 : trimmed.startsWith('<') ? 'html'
+                 : 'markdown'
     editorLogger.debug('Loading content', { format, length: initialContent.length })
-    const blocks = format === 'html'
-      ? editor.tryParseHTMLToBlocks(initialContent)
-      : editor.tryParseMarkdownToBlocks(initialContent)
-    editor.replaceBlocks(editor.document, blocks)
+
+    // JSON is fast — parse synchronously for instant LCP.
+    // HTML/Markdown parsing is expensive — defer to let the editor shell paint first.
+    if (format === 'json') {
+      try {
+        const blocks = JSON.parse(initialContent) as Parameters<typeof editor.replaceBlocks>[1]
+        editor.replaceBlocks(editor.document, blocks)
+      } catch (err) {
+        editorLogger.error('Failed to parse stored JSON content, falling back to empty', { err })
+      }
+      return
+    }
+
+    const applyLegacyContent = () => {
+      const blocks = format === 'html'
+        ? editor.tryParseHTMLToBlocks(initialContent)
+        : editor.tryParseMarkdownToBlocks(initialContent)
+      editor.replaceBlocks(editor.document, blocks)
+    }
+
+    // Defer expensive parsing so the editor shell paints immediately.
+    // requestIdleCallback lets the browser finish layout first;
+    // setTimeout(0) is the fallback for Safari / older browsers.
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(applyLegacyContent, { timeout: 150 })
+      return () => cancelIdleCallback(id)
+    }
+    const id = setTimeout(applyLegacyContent, 0)
+    return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useImperativeHandle(ref, () => ({
-    getMarkdown: () => editor.blocksToHTMLLossy(editor.document),
+    // Serialize as native BlockNote JSON — lossless (empty paragraphs, custom
+    // inline specs like WikiLink with all props) and round-trips without data loss.
+    // HTML and Markdown exports are for display/RSS only, not for persistence.
+    getContent: () => JSON.stringify(editor.document),
     insertWikilink: (pageId: string, title: string, icon?: string) => {
       editorLogger.debug('Inserting wikilink', { pageId, title, icon })
       editor.focus()
@@ -81,7 +113,7 @@ export const BlockPageEditor = forwardRef<
 
   return (
     <div
-      className="min-h-full"
+      className="min-h-full mx-auto max-w-[760px] px-12 pt-4 pb-16"
       onClickCapture={(e) => {
         const target = e.target as Element
         const anchor = target.closest('[data-wikilink-page-id]')

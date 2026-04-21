@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -115,8 +114,6 @@ export const Route = createFileRoute('/app/knowledge/$kbSlug_/add-source')({
 function AddSourcePage() {
   const { kbSlug } = Route.useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
-  const token = user?.access_token
   const queryClient = useQueryClient()
 
   const [sourceType, setSourceType] = useState<SourceType | null>(null)
@@ -202,9 +199,8 @@ function AddSourcePage() {
   // Fetch all KBs for collection switcher
   const { data: allKbsData } = useQuery({
     queryKey: ['app-knowledge-bases'],
-    queryFn: () => apiFetch<{ knowledge_bases: { id: number; name: string; slug: string }[] }>('/api/app/knowledge-bases', token),
-    enabled: !!token,
-  })
+    queryFn: () => apiFetch<{ knowledge_bases: { id: number; name: string; slug: string }[] }>('/api/app/knowledge-bases'),
+      })
   const allKbs = allKbsData?.knowledge_bases ?? []
 
   function goBack() {
@@ -316,7 +312,7 @@ function AddSourcePage() {
         if (ids.length > 0) config.spreadsheet_ids = ids
       }
 
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
         body: JSON.stringify({
           name,
@@ -340,7 +336,7 @@ function AddSourcePage() {
       apiFetch<{
         fit_markdown: string; word_count: number; warnings: string[]; url: string
         content_selector: string | null; selector_source: string | null
-      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, token, {
+      }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
         method: 'POST',
         body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false }),
       }),
@@ -371,7 +367,7 @@ function AddSourcePage() {
   // -- Text ingest mutation ---
   const textIngestMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/text`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/text`, {
         method: 'POST',
         body: JSON.stringify({ title: name, content: textContent, content_type: 'text/plain' }),
       })
@@ -388,7 +384,7 @@ function AddSourcePage() {
       for (const file of selectedFiles) {
         const formData = new FormData()
         formData.append('file', file)
-        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/upload`, token, {
+        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/upload`, {
           method: 'POST',
           body: formData,
         })
@@ -403,7 +399,7 @@ function AddSourcePage() {
   // -- YouTube ingest mutation ---
   const youtubeIngestMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/youtube`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/youtube`, {
         method: 'POST',
         body: JSON.stringify({ url: youtubeUrl, title: name || undefined }),
       })
@@ -417,7 +413,7 @@ function AddSourcePage() {
   // -- RSS ingest mutation ---
   const rssIngestMutation = useMutation({
     mutationFn: async () => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/rss`, token, {
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/rss`, {
         method: 'POST',
         body: JSON.stringify({ url: rssUrl, title: name || undefined, max_items: Number(rssMaxItems) }),
       })
@@ -434,7 +430,7 @@ function AddSourcePage() {
       for (const file of selectedImages) {
         const formData = new FormData()
         formData.append('file', file)
-        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/upload-image`, token, {
+        await apiFetch(`/api/app/knowledge-bases/${kbSlug}/documents/upload-image`, {
           method: 'POST',
           body: formData,
         })

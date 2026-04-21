@@ -13,6 +13,7 @@ from retrieval_api.api.chat import router as chat_router
 from retrieval_api.api.retrieve import router as retrieve_router
 from retrieval_api.config import settings
 from retrieval_api.logging_setup import RequestContextMiddleware, setup_logging
+from retrieval_api.middleware.auth import AuthMiddleware
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -56,6 +57,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="retrieval-api", version="1.0.0", lifespan=lifespan)
+# SPEC-SEC-010 REQ-1.4: Starlette middleware runs in LIFO order — the last-added
+# middleware is the OUTERMOST and runs FIRST. We want RequestContextMiddleware to
+# bind `request_id` on the structlog context BEFORE AuthMiddleware emits its first
+# log line, so add AuthMiddleware first (inner) then RequestContextMiddleware (outer).
+app.add_middleware(AuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.include_router(retrieve_router, prefix="")
 app.include_router(chat_router, prefix="")
@@ -109,7 +115,7 @@ async def health():
     # FalkorDB — only checked when Graphiti is enabled (AC-12)
     if settings.graphiti_enabled:
         try:
-            from falkordb import FalkorDB  # noqa: PLC0415
+            from falkordb import FalkorDB
 
             db = FalkorDB(host=settings.falkordb_host, port=settings.falkordb_port)
             db.connection.ping()

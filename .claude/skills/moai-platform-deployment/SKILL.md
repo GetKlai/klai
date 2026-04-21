@@ -2,11 +2,9 @@
 name: moai-platform-deployment
 description: >
   Deployment and hosting platform specialist covering Vercel, Railway, and Convex.
-  Use when deploying applications, configuring edge functions, setting up continuous deployment,
-  managing serverless infrastructure, containerized deployments, real-time backends, or choosing
-  deployment platforms. Covers edge computing (Vercel), container orchestration (Railway), and
-  reactive backends (Convex).
-license: MIT
+  Use when deploying applications, configuring edge functions, setting up continuous
+  deployment, or managing serverless infrastructure.
+license: Apache-2.0
 metadata:
   version: "2.0.0"
   category: "platform"
@@ -28,6 +26,7 @@ triggers:
   phases: ["run", "sync"]
 
 user-invocable: false
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(npm:*), Bash(npx:*), Bash(docker:*), Bash(git:*), WebFetch, mcp__context7__resolve-library-id, mcp__context7__get-library-docs
 ---
 
 # Deployment Platform Specialist

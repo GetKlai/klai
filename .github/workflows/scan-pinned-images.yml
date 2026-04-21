@@ -1,0 +1,117 @@
+name: Scan pinned external images
+
+# Weekly CVE scan of every external Docker image pinned in our compose files.
+# Complements Trivy scans during our own image builds by covering the 25+
+# external images (redis, mongo, grafana, zitadel, …) that we don't build
+# ourselves. Results go to the Security tab; no PR gate — this is a
+# notification surface, not a blocker.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'  # Monday 07:00 CET — runs AFTER Renovate (05:00)
+  workflow_dispatch:      # Manual trigger for ad-hoc scans
+  push:
+    branches: [main]
+    paths:
+      # Re-scan on any compose change so new pins get scanned immediately
+      - 'deploy/docker-compose.yml'
+      - 'deploy/docker-compose.gpu.yml'
+      - 'docker-compose.dev.yml'
+      - '.github/workflows/scan-pinned-images.yml'
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  enumerate:
+    name: Enumerate external images
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.parse.outputs.images }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Extract external images
+        id: parse
+        run: |
+          # Extract every image tag from every compose file, then filter out
+          # internal + local builds we scan via per-service workflows.
+          #
+          # Excluded patterns (with rationale):
+          #   ghcr.io/getklai/*     — our own CI-built images; scanned per service
+          #   */klai                — on-server local builds (vexa-*:klai)
+          #   */local               — on-server local builds (retrieval-api:local)
+          #   mendableai/firecrawl  — built locally from source on the server
+          IMAGES=$(yq eval-all '.services[].image' \
+            deploy/docker-compose.yml \
+            deploy/docker-compose.gpu.yml \
+            docker-compose.dev.yml \
+            2>/dev/null \
+            | sort -u \
+            | grep -vE '^(ghcr\.io/getklai/|ghcr\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|---)' \
+            | grep -vE '^(null|~)$' \
+            | jq -R . | jq -sc .)
+
+          echo "Found images:"
+          echo "$IMAGES" | jq -r '.[]'
+          echo "images=$IMAGES" >> "$GITHUB_OUTPUT"
+
+  scan:
+    name: Scan ${{ matrix.image }}
+    needs: enumerate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ${{ fromJSON(needs.enumerate.outputs.images) }}
+      fail-fast: false  # One bad image shouldn't skip the rest
+    steps:
+      - name: Sanitize image name for artefact
+        id: safe
+        run: |
+          # SARIF uploads need a unique category per image and a filename
+          # that doesn't contain slashes or colons.
+          SAFE=$(echo '${{ matrix.image }}' | tr '/:' '__')
+          echo "name=$SAFE" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: 'sarif'
+          output: 'trivy-${{ steps.safe.outputs.name }}.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '0'  # Don't fail the job — Security tab is the alert surface
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles(format('trivy-{0}.sarif', steps.safe.outputs.name)) != ''
+        with:
+          sarif_file: 'trivy-${{ steps.safe.outputs.name }}.sarif'
+          category: 'pinned-image-${{ steps.safe.outputs.name }}'
+
+  report:
+    name: Report
+    needs: [enumerate, scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarise
+        run: |
+          echo "## Scan summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Scanned $(echo '${{ needs.enumerate.outputs.images }}' | jq 'length') pinned external images." >> "$GITHUB_STEP_SUMMARY"
+          echo "Individual findings are in the [Security tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning)." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Images scanned" >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ needs.enumerate.outputs.images }}' | jq -r '.[] | "- `\(.)`"' >> "$GITHUB_STEP_SUMMARY"

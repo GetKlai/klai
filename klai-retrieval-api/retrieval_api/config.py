@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +48,20 @@ class Settings(BaseSettings):
     link_expand_candidates: int = 20
     link_authority_boost: float = 0.05
 
+    # Source-aware selection (SPEC-KB-021)
+    source_quota_enabled: bool = True
+    source_quota_max_per_source: int = 2
+
+    # Query router (SPEC-KB-021)
+    # Pre-search: identifies relevant sources, passes decision to source_aware_select.
+    # Centroids computed from actual chunk vectors (not label strings).
+    router_enabled: bool = True
+    router_min_source_label_count: int = 4
+    router_margin_single: float = 0.15
+    router_margin_dual: float = 0.08
+    router_llm_fallback: bool = False
+    router_centroid_ttl_seconds: int = 600
+
     # Portal events — set to emit product_events to the portal database.
     # Separate fields avoid URL-encoding issues with special chars in passwords.
     portal_events_host: str = ""
@@ -52,6 +69,57 @@ class Settings(BaseSettings):
     portal_events_user: str = "klai"
     portal_events_password: str = ""
     portal_events_db: str = "klai"
+
+    # SPEC-SEC-010 — Authentication and request hardening
+    # Shared secret for internal service-to-service calls (portal-api, research-api, LiteLLM hook).
+    # REQ-1.1 + REQ-5.2: empty / whitespace-only value MUST cause startup failure.
+    internal_secret: str = ""
+    # Zitadel issuer + audience for JWT validation (REQ-1.2, REQ-5.1).
+    zitadel_issuer: str = ""
+    zitadel_api_audience: str = ""
+    # Sliding-window rate limit per caller identity (REQ-4.3).
+    rate_limit_rpm: int = 600
+    # Redis URL for the rate limiter (REQ-4.1). Fail-open when unreachable (REQ-4.5).
+    redis_url: str = ""
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self) -> Settings:
+        """REQ-1.1 / REQ-5.2: fail-closed on missing required security config.
+
+        Required (fail-closed): INTERNAL_SECRET — without it, auth is bypassed.
+        Required (fail-closed): REDIS_URL — rate limiter fails open to identity
+            check only, but Redis config is still expected.
+
+        Optional (graceful degrade):
+          ZITADEL_ISSUER + ZITADEL_API_AUDIENCE — if either is empty, the JWT
+          auth path is disabled entirely. All requests MUST then come with a
+          valid X-Internal-Secret. Bearer JWTs are rejected with 401.
+
+          This is the correct state until SEC-012 lands: retrieval-api is only
+          called by trusted services (portal-api, focus, LiteLLM hook) using
+          the internal-secret path; no end-user JWT flows through it yet.
+        """
+        missing: list[str] = []
+        if not self.internal_secret or not self.internal_secret.strip():
+            missing.append("INTERNAL_SECRET")
+        if not self.redis_url or not self.redis_url.strip():
+            missing.append("REDIS_URL")
+        if missing:
+            raise ValueError(
+                "Missing required security configuration (SPEC-SEC-010 REQ-5.2): "
+                + ", ".join(missing)
+            )
+        return self
+
+    @property
+    def jwt_auth_enabled(self) -> bool:
+        """True when both Zitadel issuer and audience are configured."""
+        return bool(
+            self.zitadel_issuer
+            and self.zitadel_issuer.strip()
+            and self.zitadel_api_audience
+            and self.zitadel_api_audience.strip()
+        )
 
 
 settings = Settings()

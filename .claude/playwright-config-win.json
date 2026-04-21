@@ -1,0 +1,6 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "C:\\Users\\markv\\.claude\\mcp-brave-profile"
+  }
+}

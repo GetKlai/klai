@@ -7,7 +7,7 @@ networks:
   socket-proxy:
     driver: bridge
     name: klai-socket-proxy
-    internal: true   # only portal-api <-> docker-socket-proxy
+    internal: true   # portal-api and runtime-api <-> docker-socket-proxy
   inference:
     driver: bridge
     name: klai-inference
@@ -53,6 +53,7 @@ volumes:
   gitea-data:
   qdrant-data:
   vexa-recordings-data:
+  vexa-redis-data:
   scribe-audio-data:
 
 # Default log rotation — prevents unbounded disk growth on json-file driver.
@@ -86,13 +87,16 @@ services:
       GRAFANA_CADDY_HASH: ${GRAFANA_CADDY_HASH}
       VICTORIALOGS_INGEST_TOKEN: ${VICTORIALOGS_INGEST_TOKEN}
       VICTORIALOGS_BASIC_AUTH_B64: ${VICTORIALOGS_BASIC_AUTH_B64}
+      # SPEC-SEC-008 F-018 — dev.getklai.com basic-auth credentials
+      CADDY_DEV_USERNAME: ${CADDY_DEV_USERNAME:-}
+      CADDY_DEV_PASSWORD_HASH: ${CADDY_DEV_PASSWORD_HASH:-}
     networks:
       - klai-net
       - monitoring
 
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
-    image: mongo:latest
+    image: mongo:8.2.7
     restart: unless-stopped
     volumes:
       - mongodb-data:/data/db
@@ -128,7 +132,7 @@ services:
 
   # ─── Redis ────────────────────────────────────────────────────────────────
   redis:
-    image: redis:alpine
+    image: redis:8-alpine
     restart: unless-stopped
     volumes:
       - redis-data:/data
@@ -145,7 +149,7 @@ services:
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
-    image: getmeili/meilisearch:latest
+    image: getmeili/meilisearch:v1.42.1
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -163,7 +167,7 @@ services:
 
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
-    image: ghcr.io/zitadel/zitadel:latest
+    image: ghcr.io/zitadel/zitadel:v4.13.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -199,7 +203,7 @@ services:
 
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:v1.83.7-stable
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
@@ -233,7 +237,7 @@ services:
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
   librechat-getklai:
-    image: ghcr.io/danny-avila/librechat:latest
+    image: ghcr.io/danny-avila/librechat:v0.8.5-rc1
     container_name: librechat-getklai
     restart: unless-stopped
     env_file:
@@ -261,7 +265,7 @@ services:
 
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.21.0
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -275,7 +279,7 @@ services:
 
   # ─── Docker socket proxy (limits portal-api to required Docker API calls only)
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:v0.4.2
     restart: unless-stopped
     environment:
       CONTAINERS: 1
@@ -312,6 +316,10 @@ services:
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
       SSO_COOKIE_KEY: ${PORTAL_API_SSO_COOKIE_KEY}
+      # SPEC-AUTH-008 BFF — server-side session store
+      BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
+      ZITADEL_PORTAL_CLIENT_ID: ${ZITADEL_PORTAL_CLIENT_ID:-369262708920483857}
+      ZITADEL_PORTAL_CLIENT_SECRET: ${PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET:-}
       VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
       VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
       PORTAL_SECRETS_KEY: ${PORTAL_API_PORTAL_SECRETS_KEY}
@@ -328,6 +336,13 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
+      ZITADEL_IDP_GOOGLE_ID: ${ZITADEL_IDP_GOOGLE_ID}
+      ZITADEL_IDP_MICROSOFT_ID: ${ZITADEL_IDP_MICROSOFT_ID}
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
+      MONGODB_CONTAINER_NAME: ${MONGODB_CONTAINER_NAME}
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
     networks:
       - klai-net
       - net-postgres
@@ -337,7 +352,7 @@ services:
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
   glitchtip-web:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:6.1.6
     restart: unless-stopped
     depends_on:
       postgres:
@@ -370,7 +385,7 @@ services:
       start_period: 60s
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:6.1.6
     restart: unless-stopped
     command: ./bin/run-celery-with-beat.sh
     depends_on:
@@ -394,7 +409,7 @@ services:
       - net-redis
 
   glitchtip-migrate:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip:6.1.6
     command: "./manage.py migrate"
     restart: "no"
     depends_on:
@@ -411,7 +426,7 @@ services:
   # To migrate: update Alloy endpoint URLs to point to monitor-01.
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:latest
+    image: victoriametrics/victoria-metrics:v1.140.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -428,7 +443,7 @@ services:
           memory: 4G
 
   victorialogs:
-    image: victoriametrics/victoria-logs:latest
+    image: victoriametrics/victoria-logs:v1.50.0
     restart: unless-stopped
     volumes:
       - victorialogs-data:/vlogs-data
@@ -448,7 +463,7 @@ services:
           memory: 2G
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     restart: unless-stopped
     privileged: false
     cap_add:
@@ -470,7 +485,7 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.15.1
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -493,7 +508,7 @@ services:
       - monitoring
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.0.1
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
@@ -528,14 +543,14 @@ services:
   # ─── Research: document Q&A service ─────────────────────────────────────
 
   docling-serve:
-    image: ghcr.io/docling-project/docling-serve:latest
+    image: ghcr.io/docling-project/docling-serve:v1.16.1
     restart: unless-stopped
     networks:
       - klai-net
     # NOT exposed via Caddy — internal Docker network only
 
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.4.17-e8299a4c3
     restart: unless-stopped
     environment:
       SEARXNG_SECRET: "${SEARXNG_SECRET}"
@@ -552,6 +567,7 @@ services:
     environment:
       POSTGRES_DSN: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_ISSUER: https://auth.${DOMAIN}
+      ZITADEL_API_AUDIENCE: ${RESEARCH_API_ZITADEL_AUDIENCE}
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       VECTOR_BACKEND: qdrant
       QDRANT_URL: http://qdrant:6333
@@ -586,7 +602,7 @@ services:
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
-      GRAPHITI_ENABLED: "false"
+      GRAPHITI_ENABLED: "true"
       GRAPH_SEARCH_TIMEOUT: "60.0"
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
@@ -594,17 +610,25 @@ services:
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
       PORTAL_EVENTS_HOST: postgres
       PORTAL_EVENTS_PASSWORD: ${POSTGRES_PASSWORD}
+      # SEC-010 — authentication + rate limiting (SPEC-SEC-010)
+      INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      ZITADEL_ISSUER: https://auth.${DOMAIN}
+      ZITADEL_API_AUDIENCE: ${RETRIEVAL_API_ZITADEL_AUDIENCE:-}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      RATE_LIMIT_RPM: ${RETRIEVAL_API_RATE_LIMIT_RPM:-600}
     networks:
       - klai-net
       - net-postgres
+      - net-redis
     depends_on:
       - qdrant
       - falkordb
+      - redis
 
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
-    image: gitea/gitea:latest
+    image: gitea/gitea:1.26.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -698,11 +722,87 @@ services:
     depends_on:
       - postgres
 
-  # ─── Vexa meeting API (bot lifecycle, transcription collector) ──────────
-  # Built from feature/agentic-runtime @ 600cba04b9575c44cb74ee384c63b3fd7df98fe7
-  # Build: docker build -t vexa-meeting-api:klai -f services/meeting-api/Dockerfile .
-  vexa-meeting-api:
-    image: vexa-meeting-api:klai
+  # ─── Vexa stack (SPEC-VEXA-003 — upstream main v0.10.x, commit f0756bf) ──
+  # Source: https://github.com/Vexa-ai/vexa branch klai/main-260419
+  # Build pattern (Phase 6): on core-01 clone fork, run `make build` from
+  # deploy/compose/Makefile; images land as vexaai/<svc>:<version>-YYMMDD-HHMM.
+  # Tags below are placeholders — Phase 6 rewrites them to real build timestamps.
+  # The placeholder form is intentionally rejected by deploy/check-image-tags.sh
+  # so this compose file is NOT deploy-ready until Phase 6 completes.
+
+  # ─── Vexa admin-api (management) ────────────────────────────────────────
+  admin-api:
+    image: vexaai/admin-api:0.10.0-260419-1129
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: vexa
+      DB_USER: vexa
+      DB_PASSWORD: ${VEXA_DB_PASSWORD}
+      DB_SSL_MODE: disable
+      ADMIN_API_TOKEN: ${VEXA_ADMIN_TOKEN}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      LOG_LEVEL: INFO
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - klai-net
+      - net-postgres
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─── Vexa api-gateway (public entry, rate-limited, CORS) ────────────────
+  api-gateway:
+    image: vexaai/api-gateway:0.10.0-260419-1129
+    restart: unless-stopped
+    environment:
+      ADMIN_API_URL: http://admin-api:8001
+      MEETING_API_URL: http://meeting-api:8080
+      TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
+      MCP_URL: http://mcp:18888                     # harmless when mcp not deployed
+      CALENDAR_SERVICE_URL: http://calendar-service:8050   # unused in v1
+      AGENT_API_URL: http://agent-api:8100          # unused in v1
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      RATE_LIMIT_RPM: "120"
+      LOG_LEVEL: INFO
+      CORS_ORIGINS: "https://my.${DOMAIN},https://widget.${DOMAIN}"  # SEC-013 F-032 — explicit allowlist (was *)
+    init: true
+    depends_on:
+      admin-api:
+        condition: service_healthy
+      meeting-api:
+        condition: service_started
+    networks:
+      - klai-net
+      - vexa-bots   # needed to reach vexa-redis
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ─── Vexa meeting-api (bot lifecycle, transcription collector) ──────────
+  # Network alias `vexa-meeting-api` retained for portal-api backwards compat
+  # (REQ-E-001, REQ-U-001 — no config churn in portal-api during this migration).
+  meeting-api:
+    image: vexaai/meeting-api:0.10.0-260419-1129
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -712,33 +812,51 @@ services:
       DB_PASSWORD: ${VEXA_DB_PASSWORD}
       DB_SSL_MODE: disable
       REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
-      API_KEYS: ${VEXA_API_KEY}
+      REDIS_HOST: vexa-redis
+      REDIS_PORT: "6379"
       ADMIN_TOKEN: ${VEXA_ADMIN_TOKEN}
-      RUNTIME_API_URL: http://vexa-runtime-api:8090
-      MEETING_API_URL: http://vexa-meeting-api:8080
-      BOT_IMAGE_NAME: vexaai/vexa-bot:v20260315-2220
-      TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
-      TRANSCRIPTION_SERVICE_TOKEN: internal
-      STORAGE_BACKEND: local
+      # Defense-in-depth: if someone bypasses api-gateway and hits meeting-api:8080
+      # directly on klai-net, require VEXA_API_KEY. Empty API_KEYS = dev mode = anyone can create bots.
+      API_KEYS: ${VEXA_API_KEY}
+      RUNTIME_API_URL: http://runtime-api:8090
+      RUNTIME_API_TOKEN: ${BOT_API_TOKEN}
+      MEETING_API_URL: http://meeting-api:8080
+      BOT_IMAGE_NAME: vexaai/vexa-bot:0.10.0-260419-1129
+      DOCKER_NETWORK: vexa-bots
+      TRANSCRIPTION_COLLECTOR_URL: http://meeting-api:8080
+      # Storage backend: Garage speaks S3, so minio-* vars point at Garage.
+      # RECORDING_ENABLED=false (REQ-U-001 GDPR) — S3 path is unused but config
+      # is required so the service can boot. See SPEC-VEXA-003 research.md §5.1.
+      STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      MINIO_BUCKET: vexa-recordings
+      MINIO_SECURE: "false"
       RECORDING_ENABLED: "false"
+      CAPTURE_MODES: "audio"
+      TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
+      TRANSCRIPTION_SERVICE_TOKEN: ${WHISPER_SERVICE_TOKEN:-internal}  # SEC-013 F-035 — prefer SOPS secret, fallback to legacy placeholder
       POST_MEETING_HOOKS: http://portal-api:8010/api/bots/internal/webhook
-      TRANSCRIPTION_COLLECTOR_URL: http://vexa-meeting-api:8080
+      LOG_LEVEL: INFO
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
       vexa-redis:
         condition: service_healthy
-      vexa-runtime-api:
+      runtime-api:
         condition: service_started
+    networks:
+      klai-net:
+        aliases:
+          - vexa-meeting-api   # backwards-compat alias — portal-api config unchanged
+      net-postgres: {}
+      vexa-bots: {}
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 512M
-    networks:
-      - klai-net
-      - net-postgres
-      - vexa-bots   # bots call back to meeting-api via this network; vexa-redis also on this network
+          memory: 1G
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
@@ -746,35 +864,49 @@ services:
       retries: 3
       start_period: 60s
 
-  # ─── Vexa runtime API (container orchestration via Docker socket) ───────
-  # Built from feature/agentic-runtime @ 600cba04b9575c44cb74ee384c63b3fd7df98fe7
-  # Build: docker build -t vexa-runtime-api:klai -f services/runtime-api/Dockerfile services/runtime-api/
-  vexa-runtime-api:
-    image: vexa-runtime-api:klai
+  # ─── Vexa runtime-api (Docker-socket bot orchestrator) ──────────────────
+  runtime-api:
+    image: vexaai/runtime-api:0.10.0-260419-1129
     restart: unless-stopped
     environment:
-      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
-      ORCHESTRATOR_BACKEND: docker
-      DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: vexa-bots
-      ALLOW_PRIVATE_CALLBACKS: "true"
+      BROWSER_IMAGE: vexaai/vexa-bot:0.10.0-260419-1129
+      AGENT_IMAGE: ""                              # agent profile not shipped in v1
+      REDIS_URL: redis://:${VEXA_REDIS_PASSWORD}@vexa-redis:6379/0
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      MINIO_BUCKET: vexa-recordings
+      BOT_API_TOKEN: ${BOT_API_TOKEN}
+      API_KEYS: ${BOT_API_TOKEN}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: vexa
+      DB_USER: vexa
+      DB_PASSWORD: ${VEXA_DB_PASSWORD}
+      DB_SSL_MODE: disable
       PROFILES_PATH: /app/profiles.yaml
+      ALLOW_PRIVATE_CALLBACKS: "1"
       LOG_LEVEL: INFO
-    group_add:
-      - "988"   # docker GID on core-01 — required for socket access
+      DOCKER_HOST: tcp://docker-socket-proxy:2375  # SEC-021: no direct socket mount
     volumes:
       - ./vexa/profiles.yaml:/app/profiles.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+    init: true
     depends_on:
       vexa-redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - vexa-bots
+      - net-postgres
+      - socket-proxy
     deploy:
       resources:
         limits:
-          cpus: '0.5'
           memory: 256M
-    networks:
-      - vexa-bots
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
       interval: 30s
@@ -782,17 +914,25 @@ services:
       retries: 3
       start_period: 30s
 
-  # ─── Vexa Redis (bot state, pub/sub, transcription streams) ─────────────
+  # ─── Vexa Redis (bot state, pub/sub, streams) ───────────────────────────
+  # REQ-U-006: redis:8-alpine (same major as klai main redis). Upstream vexa
+  # pins redis:7.0-alpine but we do NOT downgrade if the new version works.
+  # Phase 7.7 runs the forward-compat battery (pub/sub, streams, consumer
+  # groups); if any fails, rollback to `redis:7.0-alpine` is a single image
+  # line change. See research.md §5.3 and acceptance.md §N.
   vexa-redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}", "--appendfsync", "everysec"]
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
     networks:
       - vexa-bots   # isolated from klai-net-redis; bot containers resolve vexa-redis via this network
+      - net-redis   # api-gateway reads the shared broker from klai net-redis
+    volumes:
+      - vexa-redis-data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a $VEXA_REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
       interval: 10s
@@ -801,7 +941,7 @@ services:
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.1
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -817,13 +957,17 @@ services:
           memory: 4G
 
   # ─── FalkorDB (knowledge graph for Graphiti) ─────────────────────────────
+  # Persistence: FALKORDB_DATA_PATH=/var/lib/falkordb/data in the image (NOT /data).
+  # Mount MUST bind to /var/lib/falkordb/data or RDB is ephemeral and wiped on recreate.
+  # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
+  # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
-    image: falkordb/falkordb:latest
+    image: falkordb/falkordb:v4.18.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379"
     volumes:
-      - /opt/klai/falkordb-data:/data
+      - /opt/klai/falkordb-data:/var/lib/falkordb/data
     networks:
       - klai-net
 
@@ -864,7 +1008,7 @@ services:
   #   - S3 API on :3900 (authenticated uploads from klai-connector)
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
-    image: dxflrs/garage:v2.2.0
+    image: dxflrs/garage:v2.3.0
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
@@ -895,6 +1039,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://klai:${POSTGRES_PASSWORD}@postgres:5432/klai
       ZITADEL_INTROSPECTION_URL: https://auth.${DOMAIN}/oauth/v2/introspect
+      # SPEC-SEC-008 F-017: defense-in-depth audience check against Zitadel API app
+      ZITADEL_API_AUDIENCE: ${KLAI_CONNECTOR_ZITADEL_AUDIENCE:-}
       KNOWLEDGE_INGEST_URL: http://knowledge-ingest:8000
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       CRAWL4AI_API_URL: http://crawl4ai:11235
@@ -921,10 +1067,11 @@ services:
 
   # ─── Crawl4AI (internal web crawler for klai-connector) ─────────────────────
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    image: unclecode/crawl4ai:0.8.6
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
+      CRAWL4AI_HOOKS_ENABLED: "true"
     networks:
       - klai-net
     deploy:

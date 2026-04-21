@@ -1,0 +1,1 @@
+klai-scribe\whisper-server\main.py:138: unused function 'health' (60% confidence)

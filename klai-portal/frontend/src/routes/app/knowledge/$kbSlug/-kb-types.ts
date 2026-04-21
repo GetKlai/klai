@@ -24,6 +24,7 @@ export interface ConnectorSummary {
   is_enabled: boolean
   last_sync_status: string | null
   last_sync_at: string | null
+  last_sync_documents_ok: number | null
   allowed_assertion_modes: string[] | null
 }
 

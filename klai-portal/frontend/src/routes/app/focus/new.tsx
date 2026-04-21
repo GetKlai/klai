@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
@@ -19,7 +18,7 @@ export const Route = createFileRoute('/app/focus/new')({
   ),
 })
 
-const FOCUS_BASE = '/research/v1'
+const FOCUS_BASE = '/api/research/v1'
 
 type Scope = 'personal' | 'org'
 type Mode = 'narrow' | 'broad' | 'web'
@@ -36,8 +35,6 @@ interface NotebookResponse {
 }
 
 function NewFocusPage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -50,7 +47,7 @@ function NewFocusPage() {
 
   const createMutation = useMutation({
     mutationFn: async (data: NotebookForm) => {
-      return apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks`, token, {
+      return apiFetch<NotebookResponse>(`${FOCUS_BASE}/notebooks`, {
         method: 'POST',
         body: JSON.stringify({
           name: data.name,

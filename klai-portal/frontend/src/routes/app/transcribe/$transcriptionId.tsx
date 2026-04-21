@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from 'react-oidc-context'
+import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,7 +14,7 @@ export const Route = createFileRoute('/app/transcribe/$transcriptionId')({
   component: TranscriptionDetailPage,
 })
 
-const SCRIBE_BASE = '/scribe/v1'
+const SCRIBE_BASE = '/api/scribe/v1'
 
 interface TranscriptionDetail {
   id: string
@@ -44,7 +44,6 @@ function stripMarkdown(md: string): string {
 function TranscriptionDetailPage() {
   const { transcriptionId } = Route.useParams()
   const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -54,14 +53,14 @@ function TranscriptionDetailPage() {
 
   const { data: transcription, isLoading } = useQuery<TranscriptionDetail>({
     queryKey: ['transcription', transcriptionId],
-    queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`, token),
-    enabled: !!token,
+    queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`),
+    enabled: auth.isAuthenticated,
   })
 
   const summarizeMutation = useMutation({
     mutationFn: async (force: boolean) => {
       const url = `${SCRIBE_BASE}/transcriptions/${transcriptionId}/summarize${force ? '?force=true' : ''}`
-      return apiFetch(url, token, {
+      return apiFetch(url, {
         method: 'POST',
         body: JSON.stringify({
           recording_type: recordingType,

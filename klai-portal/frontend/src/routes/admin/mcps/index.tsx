@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from 'react-oidc-context'
 import { useState } from 'react'
 import { Pencil, Trash2, Plus, Puzzle } from 'lucide-react'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
@@ -15,18 +14,15 @@ export const Route = createFileRoute('/admin/mcps/')({
 })
 
 function McpsListPage() {
-  const auth = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const token = auth.user?.access_token ?? ''
-
-  const { data, isLoading, isError } = useMcpServers(token)
+  const { data, isLoading, isError } = useMcpServers()
 
   const [confirmingDeactivateId, setConfirmingDeactivateId] = useState<string | null>(null)
 
   const deactivateMutation = useMutation({
     mutationFn: async (server: McpServer) => {
-      return apiFetch(`/api/mcp-servers/${server.id}`, token, {
+      return apiFetch(`/api/mcp-servers/${server.id}`, {
         method: 'PUT',
         body: JSON.stringify({ enabled: false, env: {} }),
       })

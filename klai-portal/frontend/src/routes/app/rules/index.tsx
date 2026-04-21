@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from 'react-oidc-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Shield } from 'lucide-react'
 import { apiFetch } from '@/lib/apiFetch'
@@ -90,8 +89,6 @@ function isKeywordType(type: RuleType): boolean {
 }
 
 function RulesPage() {
-  const auth = useAuth()
-  const token = auth.user?.access_token
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -100,13 +97,12 @@ function RulesPage() {
 
   const { data, isLoading } = useQuery<Rule[]>({
     queryKey: ['app-rules'],
-    queryFn: async () => apiFetch<Rule[]>('/api/app/rules', token),
-    enabled: !!token,
-  })
+    queryFn: async () => apiFetch<Rule[]>('/api/app/rules'),
+      })
 
   const createMutation = useMutation({
     mutationFn: async (body: RuleFormState) =>
-      apiFetch('/api/app/rules', token, { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch('/api/app/rules', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-rules'] })
       setShowCreate(false)
@@ -116,7 +112,7 @@ function RulesPage() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ slug, body }: { slug: string; body: Partial<RuleFormState> }) =>
-      apiFetch(`/api/app/rules/${slug}`, token, { method: 'PATCH', body: JSON.stringify(body) }),
+      apiFetch(`/api/app/rules/${slug}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-rules'] })
       setEditId(null)
@@ -126,7 +122,7 @@ function RulesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (slug: string) =>
-      apiFetch(`/api/app/rules/${slug}`, token, { method: 'DELETE' }),
+      apiFetch(`/api/app/rules/${slug}`, { method: 'DELETE' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['app-rules'] })
       setDeleteConfirm(null)

@@ -1,0 +1,48 @@
+[93m[4mUnused files[24m[39m (15)
+src/components/ui/accordion.tsx: src/components/ui/accordion.tsx
+src/components/ui/scroll-area.tsx: src/components/ui/scroll-area.tsx
+src/components/ui/separator.tsx: src/components/ui/separator.tsx
+src/components/ui/sheet.tsx: src/components/ui/sheet.tsx
+src/components/ui/switch.tsx: src/components/ui/switch.tsx
+src/components/ui/tabs.tsx: src/components/ui/tabs.tsx
+src/paraglide.d.ts: src/paraglide.d.ts
+src/routes/admin/_billing-types.ts: src/routes/admin/_billing-types.ts
+src/routes/admin/_components/BillingActiveView.tsx: src/routes/admin/_components/BillingActiveView.tsx
+src/routes/admin/_components/BillingSetupView.tsx: src/routes/admin/_components/BillingSetupView.tsx
+src/routes/admin/_components/BillingStatusViews.tsx: src/routes/admin/_components/BillingStatusViews.tsx
+src/routes/setup/_components/EmailOTPSetup.tsx: src/routes/setup/_components/EmailOTPSetup.tsx
+src/routes/setup/_components/MethodCard.tsx: src/routes/setup/_components/MethodCard.tsx
+src/routes/setup/_components/PasskeySetup.tsx: src/routes/setup/_components/PasskeySetup.tsx
+src/routes/setup/_components/TOTPSetup.tsx: src/routes/setup/_components/TOTPSetup.tsx
+[93m[4mUnused dependencies[24m[39m (1)
+package.json: @radix-ui/react-accordion, @radix-ui/react-scroll-area, @radix-ui/react-separator, @radix-ui/react-switch, @radix-ui/react-tabs
+[93m[4mUnused exports[24m[39m (9)
+src/components/ui/alert-dialog.tsx: AlertDialogPortal, AlertDialogOverlay
+src/components/ui/badge.tsx: badgeVariants
+src/components/ui/command.tsx: CommandDialog, CommandShortcut, CommandSeparator
+src/components/ui/dialog.tsx: DialogPortal, DialogOverlay, DialogClose, DialogTrigger, DialogHeader, DialogFooter, DialogTitle, DialogDescription
+src/components/ui/dropdown-menu.tsx: DropdownMenuCheckboxItem, DropdownMenuRadioItem, DropdownMenuLabel, DropdownMenuShortcut, DropdownMenuGroup, DropdownMenuPortal, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuRadioGroup
+src/lib/apiFetch.ts: UnauthorizedError
+src/lib/auth-context.ts: useSession, CSRF_COOKIE_NAME
+src/lib/auth.tsx: useSession
+src/routes/app/knowledge/$kbSlug/-kb-helpers.tsx: roleBadge
+[93m[4mUnused exported types[24m[39m (19)
+src/components/kb-editor/AccessControlPanel.tsx: AccessControlPanelProps
+src/components/kb-editor/BlockPageEditor.tsx: PageIndexEntry
+src/components/kb-editor/EditorHeader.tsx: EditorHeaderProps
+src/components/kb-editor/NavTree.tsx: NavTreeProps
+src/components/kb-editor/SidebarFooter.tsx: SidebarFooterProps
+src/components/kb-editor/SidebarPanel.tsx: SidebarPanelProps
+src/components/kb-editor/TreeItem.tsx: TreeItemProps
+src/components/layout/Sidebar.tsx: NavItem
+src/components/ui/badge.tsx: BadgeProps
+src/components/ui/button.tsx: ButtonProps
+src/components/ui/input.tsx: InputProps
+src/components/ui/label.tsx: LabelProps
+src/components/ui/select.tsx: SelectProps
+src/hooks/useCurrentUser.ts: CurrentUser
+src/lib/auth-context.ts: User
+src/lib/auth.tsx: AuthContextValue, AuthUser, User, UserProfile
+src/lib/kb-editor/KBEditorContext.ts: KBEditorCtxValue
+src/lib/kb-editor/tree-utils.ts: SidebarEntry
+src/routes/admin/widgets/-types.ts: AccessLevel

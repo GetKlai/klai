@@ -1,0 +1,9 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "/Users/markv/.claude/mcp-brave-profile",
+    "launchOptions": {
+      "executablePath": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+    }
+  }
+}

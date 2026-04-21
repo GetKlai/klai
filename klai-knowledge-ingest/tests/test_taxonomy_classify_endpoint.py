@@ -24,10 +24,10 @@ class TestTaxonomyClassifyEndpoint:
 
         with patch("knowledge_ingest.routes.taxonomy.classify_document", mock_classify), \
              patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch):
+            # SPEC-SEC-011: ``client`` fixture provides the default header.
             resp = client.post(
                 "/ingest/v1/taxonomy/classify",
                 json={"org_id": "org1", "kb_slug": "kb1", "text": "How do I pay my invoice?"},
-                headers={"X-Internal-Secret": ""},
             )
 
         assert resp.status_code == 200
@@ -40,10 +40,10 @@ class TestTaxonomyClassifyEndpoint:
         mock_fetch = AsyncMock(return_value=[])
 
         with patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch):
+            # SPEC-SEC-011: ``client`` fixture provides the default header.
             resp = client.post(
                 "/ingest/v1/taxonomy/classify",
                 json={"org_id": "org1", "kb_slug": "kb1", "text": "Some query"},
-                headers={"X-Internal-Secret": ""},
             )
 
         assert resp.status_code == 200
@@ -61,10 +61,10 @@ class TestTaxonomyClassifyEndpoint:
 
         with patch("knowledge_ingest.routes.taxonomy.classify_document", mock_classify), \
              patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch):
+            # SPEC-SEC-011: ``client`` fixture provides the default header.
             resp = client.post(
                 "/ingest/v1/taxonomy/classify",
                 json={"org_id": "org1", "kb_slug": "kb1", "text": "unrelated query"},
-                headers={"X-Internal-Secret": ""},
             )
 
         assert resp.status_code == 200

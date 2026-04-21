@@ -1,0 +1,47 @@
+[93m[4mUnused files[24m[39m (42)
+keystatic.config.ts: keystatic.config.ts
+public/widget/klai-chat-inline.js: public/widget/klai-chat-inline.js
+public/widget/klai-chat.js: public/widget/klai-chat.js
+scripts/capture-baseline.mjs: scripts/capture-baseline.mjs
+scripts/compare-screenshots.mjs: scripts/compare-screenshots.mjs
+src/components/sections/BuiltFor.astro: src/components/sections/BuiltFor.astro
+src/components/sections/BusinessMemory.astro: src/components/sections/BusinessMemory.astro
+src/components/sections/CompanyMission.astro: src/components/sections/CompanyMission.astro
+src/components/sections/CompanyTeam.astro: src/components/sections/CompanyTeam.astro
+src/components/sections/Comparison.astro: src/components/sections/Comparison.astro
+src/components/sections/FAQ.astro: src/components/sections/FAQ.astro
+src/components/sections/Features.astro: src/components/sections/Features.astro
+src/components/sections/Hero.astro: src/components/sections/Hero.astro
+src/components/sections/HomeKnowledgeEngine.astro: src/components/sections/HomeKnowledgeEngine.astro
+src/components/sections/KnowledgeEngine.astro: src/components/sections/KnowledgeEngine.astro
+src/components/sections/Ownership.astro: src/components/sections/Ownership.astro
+src/components/sections/Pricing.astro: src/components/sections/Pricing.astro
+src/components/sections/PricingCards.astro: src/components/sections/PricingCards.astro
+src/components/sections/ProductPage.astro: src/components/sections/ProductPage.astro
+src/components/sections/Products.astro: src/components/sections/Products.astro
+src/components/sections/SocialProof.astro: src/components/sections/SocialProof.astro
+src/components/sections/UseCases.astro: src/components/sections/UseCases.astro
+src/components/sections/ValueProps.astro: src/components/sections/ValueProps.astro
+src/components/sections/WhyKlai.astro: src/components/sections/WhyKlai.astro
+src/components/ui/BlurFade.astro: src/components/ui/BlurFade.astro
+src/components/ui/BrowserMockup.astro: src/components/ui/BrowserMockup.astro
+src/components/ui/Meteors.astro: src/components/ui/Meteors.astro
+src/components/ui/NetworkDots.astro: src/components/ui/NetworkDots.astro
+src/components/ui/NumberTicker.astro: src/components/ui/NumberTicker.astro
+src/components/ui/OrbitingTerms.astro: src/components/ui/OrbitingTerms.astro
+src/components/ui/ShimmerButton.astro: src/components/ui/ShimmerButton.astro
+src/components/ui/TopoDivider.astro: src/components/ui/TopoDivider.astro
+src/pages/nl/product/_docs.astro: src/pages/nl/product/_docs.astro
+src/pages/nl/product/_focus.astro: src/pages/nl/product/_focus.astro
+src/pages/nl/product/_index.astro: src/pages/nl/product/_index.astro
+src/pages/nl/product/_scribe.astro: src/pages/nl/product/_scribe.astro
+src/pages/product/_docs.astro: src/pages/product/_docs.astro
+src/pages/product/_focus.astro: src/pages/product/_focus.astro
+src/pages/product/_index.astro: src/pages/product/_index.astro
+src/pages/product/_scribe.astro: src/pages/product/_scribe.astro
+src/styles/global.css: src/styles/global.css
+update-copy.cjs: update-copy.cjs
+[93m[4mUnused dependencies[24m[39m (1)
+package.json: tailwindcss
+[93m[4mUnused exported types[24m[39m (1)
+src/data/contrib.ts: ContribSection

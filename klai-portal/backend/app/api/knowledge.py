@@ -12,10 +12,11 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bearer import bearer
 from app.api.dependencies import _get_caller_org, require_product
 from app.core.config import settings
 from app.core.database import get_db
@@ -25,7 +26,6 @@ from app.services.zitadel import zitadel
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
-bearer = HTTPBearer()
 
 # The single shared Qdrant collection used by knowledge-ingest
 QDRANT_COLLECTION = "klai_knowledge"

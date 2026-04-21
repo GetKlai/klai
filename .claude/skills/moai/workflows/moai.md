@@ -31,7 +31,7 @@ Purpose: Full autonomous workflow. User provides a goal, MoAI autonomously execu
 
 Flow: Explore -> Plan -> Run -> Sync -> Done
 
-For phase overview, token budgets, and phase transitions, see: @.claude/rules/moai/workflow/spec-workflow.md
+For phase overview, token budgets, and phase transitions, see: .claude/rules/moai/workflow/spec-workflow.md
 
 ## Supported Flags
 
@@ -42,6 +42,7 @@ For phase overview, token budgets, and phase transitions, see: @.claude/rules/mo
 - --resume SPEC-XXX: Resume previous work from existing SPEC
 - --team: Force Agent Teams mode for plan and run phases
 - --solo: Force sub-agent mode (single agent per phase)
+- --no-issue: Skip GitHub Issue creation after SPEC generation (plan phase)
 
 **Default Behavior (no flag)**: System auto-selects based on complexity:
 - Team mode: Multi-domain tasks (>=3 domains), many files (>=10), or high complexity (>=7)
@@ -76,7 +77,7 @@ constitution:
 - **TDD cycle**: `manager-tdd` subagent (RED-GREEN-REFACTOR)
 - **DDD cycle**: `manager-ddd` subagent (ANALYZE-PRESERVE-IMPROVE)
 
-For methodology details, see: @.claude/rules/moai/workflow/workflow-modes.md
+For methodology details, see: .claude/rules/moai/workflow/workflow-modes.md
 
 ## Phase 0: Parallel Exploration
 
@@ -180,9 +181,9 @@ When --team flag is provided or auto-selected (based on complexity thresholds in
 - Phase 3 sync: Always sub-agent mode (manager-docs)
 
 For team orchestration details:
-- Plan phase: See team/plan.md
-- Run phase: See team/run.md
-- Sync rationale: See team/sync.md
+- Plan phase: See ${CLAUDE_SKILL_DIR}/team/plan.md
+- Run phase: See ${CLAUDE_SKILL_DIR}/team/run.md
+- Sync rationale: See ${CLAUDE_SKILL_DIR}/team/sync.md
 
 Mode selection:
 - --team: Force team mode for all applicable phases
@@ -191,7 +192,7 @@ Mode selection:
 
 ## Execution Summary
 
-1. Parse arguments (extract flags: --loop, --max, --sequential, --branch, --pr, --resume, --team, --solo)
+1. Parse arguments (extract flags: --loop, --max, --sequential, --branch, --pr, --resume, --team, --solo, --no-issue)
 2. If --resume with SPEC ID: Load existing SPEC and continue from last state
 3. Detect development_mode from quality.yaml (ddd/tdd)
 4. **Team mode decision**: Read workflow.yaml team settings and determine execution mode
@@ -204,13 +205,42 @@ Mode selection:
 7. TaskCreate for discovered tasks
 8. User confirmation via AskUserQuestion
 9. **Phase 0.5 (Research)**: Save research.md from Phase 0 Explore findings to SPEC directory
-10. **Phase 1 (Plan)**: If team mode -> Read team/plan.md and follow team orchestration. Else -> manager-spec sub-agent
+10. **Phase 1 (Plan)**: If team mode -> Read ${CLAUDE_SKILL_DIR}/team/plan.md and follow team orchestration. Else -> manager-spec sub-agent
+10.5. **Phase 1.2 (Issue)**: Create GitHub Issue linked to SPEC (unless --no-issue). See plan.md Phase 2.5.
 11. **Phase 1.5 (Annotate)**: Run annotation cycle (1-6 iterations) until user approves plan
-12. **Phase 2 (Run)**: If team mode -> Read team/run.md and follow team orchestration. Else -> manager-tdd or manager-ddd sub-agent (per quality.yaml development_mode)
-13. **Phase 3 (Sync)**: Always manager-docs sub-agent (sync phase never uses team mode)
-14. Terminate with completion marker
+11.5. **Execution Mode Selection Gate**: After Phase 1.5 approval, before Phase 2
+   - If `--team` flag: Skip Gate, auto-select execution_mode="team" (no user prompt needed)
+   - If `--solo` flag: Skip Gate, auto-select execution_mode="sub-agent"
+   - Otherwise (no flag):
+     - Read .moai/config/sections/llm.yaml → team_mode ("" = cc, "glm" = glm, "cg" = cg)
+     - Bash: test -n "$TMUX" && echo "tmux" || echo "no-tmux"
+     - AskUserQuestion: worktree+{mode} (Recommended if tmux available) | team | sub-agent
+   - Worktree selected: Launch new tmux session in worktree dir, terminate current pipeline
+   - Team/Sub-agent selected: Pass execution_mode + active_mode to Phase 2
+   - See plan.md Decision Point 3.5 for full option details
+12. **Phase 1.9 (Harness Level Auto-Detection)**: Determine pipeline depth before Run
+   - Load `.moai/config/sections/harness.yaml` (if not found, default to standard)
+   - CG mode: Always thorough (natural Generator-Evaluator split)
+   - Solo/Team: Run Complexity Estimator:
+     - Count distinct domains in SPEC requirements
+     - Count total files to modify (from plan.md)
+     - Check for security/payment/critical keywords
+   - Apply auto_detection rules:
+     - file_count <= 3 AND single_domain AND no security keywords → minimal
+     - file_count > 3 OR multi_domain → standard
+     - security/payment keywords OR priority critical → thorough
+   - Record detected harness level in progress.md
+   - Pass harness level to Run phase
+13. **Phase 2 (Run)**: Route based on Gate result (execution_mode parameter)
+   - worktree: Already running in isolated tmux+worktree session (Gate handled transition)
+   - team: Read ${CLAUDE_SKILL_DIR}/team/run.md and follow team orchestration
+   - sub-agent: manager-tdd or manager-ddd (per quality.yaml development_mode)
+   - Harness level determines phase skipping and evaluator involvement
+14. **Phase 3 (Sync)**: Always manager-docs sub-agent (sync phase never uses team mode)
+15. Terminate with completion marker
 
 ---
 
-Version: 2.6.0
-Source: SPEC-MOAI-001. Integrated research pattern with deep codebase analysis, reference implementations, and annotation cycle for plan refinement.
+Version: 2.9.0
+Updated: 2026-04-09
+Source: SPEC-MOAI-001. Fix --team/--solo flag Gate auto-skip (v2.9.0). Previous: Harness auto-detection (v2.8.0).

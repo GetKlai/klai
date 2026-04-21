@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Shared secret — must match INTERNAL_SECRET in the portal .env
     portal_internal_secret: str = ""
 
+    # Internal service-to-service secret for /internal/send (portal-api → mailer)
+    internal_secret: str = ""
+
     # Set DEBUG=true to enable /debug endpoint (logs raw Zitadel payloads)
     debug: bool = False
 

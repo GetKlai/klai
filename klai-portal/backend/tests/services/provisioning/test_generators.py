@@ -95,9 +95,9 @@ class TestCharacterizeGenerateLibrechatEnvSnapshot:
             result = _generate_librechat_env(
                 slug="snapshot-org",
                 client_id="cid-snap",
-                client_secret="csec-snap",  # noqa: S106
+                client_secret="csec-snap",
                 litellm_api_key="key-snap",
-                mongo_password="pw-snap",  # noqa: S106
+                mongo_password="pw-snap",
                 zitadel_org_id="org-snap-123",
             )
 

@@ -48,27 +48,73 @@ Flow: Parallel Scan -> Classify -> Fix -> Verify -> Report
 Launch three diagnostic tools simultaneously using Bash with run_in_background for 3-4x speedup (8s vs 30s).
 
 Scanner 1 - LSP Diagnostics:
-- Language-specific type checking and error detection
-- Python: mypy --output json
-- TypeScript: tsc --noEmit
-- Go: go vet ./...
+Language-specific type checking via auto-detection. Indicator file determines language, then the corresponding LSP tool is executed:
+
+| Language | Indicator File | LSP Command |
+|----------|---------------|-------------|
+| Go | go.mod | `go vet ./...` |
+| Python | pyproject.toml / setup.py | `mypy --output json` |
+| TypeScript | package.json (tsconfig.json present) | `tsc --noEmit` |
+| JavaScript | package.json (no tsconfig.json) | `node --check` or skip |
+| Rust | Cargo.toml | `cargo check --message-format json` |
+| Java (Maven) | pom.xml | `mvn compile -q` |
+| Java (Gradle) | build.gradle | `gradle compileJava -q` |
+| Kotlin | build.gradle.kts | `gradle compileKotlin -q` |
+| C# | *.csproj / *.sln | `dotnet build --no-restore -q` |
+| Ruby | Gemfile | `bundle exec rubocop --format json` |
+| PHP | composer.json | `php -l` on changed files |
+| Scala | build.sbt | `sbt compile` |
+| Elixir | mix.exs | `mix compile` |
+| Swift | Package.swift | `swift build` |
+| Flutter/Dart | pubspec.yaml | `dart analyze` |
+| R | DESCRIPTION | `R CMD check --no-manual` |
+| C++ | CMakeLists.txt | `cmake --build build --target all` |
+
+Output: Parsed error list with file, line, column, severity, message for each diagnostic.
 
 Scanner 2 - AST-grep Scan:
 - Structural pattern matching with sgconfig.yml rules
 - Security patterns and code quality rules
 
 Scanner 3 - Linter:
-- Language-specific linting
-- Python: ruff check --output-format json
-- TypeScript: eslint --format json
-- Go: golangci-lint run --out-format json
-- Rust: cargo clippy --message-format json
+Language-specific linting via auto-detection:
+
+| Language | Linter Command |
+|----------|---------------|
+| Go | `golangci-lint run --out-format json` |
+| Python | `ruff check --output-format json` |
+| TypeScript/JavaScript | `eslint --format json` |
+| Rust | `cargo clippy --message-format json` |
+| Java | `checkstyle` (if configured) or skip |
+| Kotlin | `detekt --output-format xml` (if configured) |
+| C# | `dotnet format --verify-no-changes` |
+| Ruby | `bundle exec rubocop --format json` |
+| PHP | `composer exec phpcs -- --report=json` (if configured) |
+| Swift | `swiftlint lint --reporter json` (if configured) |
+| Elixir | `mix credo --format json` |
+| Flutter/Dart | `dart analyze` (covers linting) |
+| Scala / R / C++ | Language-specific tool if configured, else skip |
+
+If linter not installed or configured: Skip Scanner 3 and note absence in report.
 
 After all scanners complete:
 - Parse output from each tool into structured issue list
 - Remove duplicate issues appearing in multiple scanners
 - Sort by severity: Critical, High, Medium, Low
 - Group by file path for efficient fixing
+
+**Structured Error Output (Language-Agnostic):**
+Normalize all scanner output into a unified issue record format regardless of language:
+- `file`: relative path from project root
+- `line`: integer line number
+- `column`: integer column number (0 if not available)
+- `severity`: "error" | "warning" | "info"
+- `code`: diagnostic code or rule name (if available)
+- `message`: human-readable description
+- `source`: "lsp" | "lint" | "ast-grep"
+- `language`: detected project language
+
+This normalization enables language-agnostic fix agents to work without language-specific logic.
 
 Language auto-detection uses indicator files: pyproject.toml (Python), package.json (TypeScript/JavaScript), go.mod (Go), Cargo.toml (Rust). Supports 16 languages.
 
@@ -104,7 +150,7 @@ Before applying fixes, scan target files for existing @MX tags to understand con
 
 **Skip Condition:** If no @MX tags found in target files, proceed directly to Phase 3.
 
-See @.claude/rules/moai/workflow/mx-tag-protocol.md for tag type definitions.
+See .claude/rules/moai/workflow/mx-tag-protocol.md for tag type definitions.
 
 ## Phase 3: Auto-Fix
 
@@ -166,7 +212,7 @@ Generate MX_TAG_REPORT section in fix report:
 - Files with new @MX:WARN requiring review
 ```
 
-See @.claude/rules/moai/workflow/mx-tag-protocol.md for complete tag rules.
+See .claude/rules/moai/workflow/mx-tag-protocol.md for complete tag rules.
 
 ## Phase 4.6: Dead Code Cleanup (Optional)
 
@@ -213,7 +259,7 @@ When --team flag is provided, fix delegates to a team-based debugging workflow u
 
 Team composition: 3 hypothesis agents (haiku) exploring different root causes in parallel.
 
-For detailed team orchestration steps, see team/debug.md.
+For detailed team orchestration steps, see ${CLAUDE_SKILL_DIR}/team/debug.md.
 
 Fallback: If team mode is unavailable, standard single-agent fix workflow continues.
 
@@ -242,5 +288,5 @@ Team Prerequisites:
 
 ---
 
-Version: 2.1.0
-Source: fix.md command v2.3.0. Added Phase 2.5 Pre-Fix MX Context Scan for context-aware fixing.
+Version: 2.2.0
+Updated: 2026-03-02. Added 16-language LSP/linter tables and structured error output normalization for language-agnostic fix agents.

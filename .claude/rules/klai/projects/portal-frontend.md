@@ -325,6 +325,45 @@ browsers emit a warning and autofill/password managers behave incorrectly.
 
 ---
 
+## ID format change breaks length-guard redirect (HIGH)
+
+When a URL scheme changes ID length or format (e.g. 8-char prefix → full 36-char UUID),
+any existing `pid.length === 8` guard in redirect logic will silently stop firing.
+The auto-redirect that upgrades old-format URLs to new-format URLs never triggers,
+leaving users on broken or stale URLs with no visible error.
+
+**Why:** The guard was written for the old format and was never updated when the ID scheme changed.
+
+**Prevention:** When changing an ID length or format, search the entire codebase for all
+`length === N`, `length < N`, or `startsWith(id)` checks that reference the old length or
+prefix logic. Update or remove every guard before shipping.
+
+---
+
+## Verify exported handle interface before calling methods (MED)
+
+When calling methods on a React `forwardRef` handle (e.g. `BlockPageEditorHandle`),
+verify the exported interface in the source file before use. TypeScript will catch
+mismatches in CI, but only if `tsc` is run — the dev server does not run type-checking.
+
+**Why:** A handle ref exposes `getContent()`, but a caller written `getMarkdown()` — a method
+that does not exist. The dev server hot-reloaded fine; CI's `tsc` caught it.
+
+**Prevention:** Before pushing code that calls methods on a custom ref handle type, open the
+source file and confirm the exact exported method names.
+
+---
+
+## TanStack Router routeTree.gen.ts must be committed (HIGH)
+
+Adding a new file-based route (e.g. `src/routes/$locale/signup/social.tsx`) without regenerating and committing `routeTree.gen.ts` causes TypeScript errors in CI. CI uses the committed version — the local dev server auto-regenerates on save, so the problem is invisible locally.
+
+**Why:** TanStack Router's file-based routing generates `routeTree.gen.ts` from the file tree. Devs see a working app; CI sees the old generated file and fails type-checking.
+
+**Prevention:** After adding any new route file, run `npx @tanstack/router-cli generate` and commit `routeTree.gen.ts` before pushing.
+
+---
+
 ## See Also
 
 - Shared brand DNA: `design/styleguide.md` (auto-loads for portal files)

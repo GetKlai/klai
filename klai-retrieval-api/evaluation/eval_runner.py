@@ -349,33 +349,6 @@ def compare_results(
     return report
 
 
-# -- Per-dimension isolation --------------------------------------------------
-
-
-async def run_dimension_isolation(
-    queries: list[dict],
-    config: dict,
-) -> dict[str, dict]:
-    """Run evidence-tier with each dimension individually enabled.
-
-    Returns a dict mapping dimension name to comparison report.
-    """
-    dim_config = config.get("dimensions", {})
-    reports: dict[str, dict] = {}
-
-    # First run baseline (all dimensions off)
-    baseline = await run_baseline(queries, config)
-
-    for dim_name in dim_config:
-        logger.info("Running isolated dimension: %s", dim_name)
-        # Enable only this dimension
-        dimensions = {d: (d == dim_name) for d in dim_config}
-        treatment = await run_evidence_tier(queries, config, dimensions=dimensions)
-        reports[dim_name] = compare_results(baseline, treatment, config)
-
-    return reports
-
-
 # -- Main entry point ---------------------------------------------------------
 
 

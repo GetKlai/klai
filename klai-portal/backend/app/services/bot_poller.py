@@ -109,11 +109,31 @@ async def poll_loop() -> None:
     while True:
         try:
             async with AsyncSessionLocal() as db:
+                # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+                # @MX:REASON: [AUTO] This poll runs without set_tenant() so it can see active
+                #   Vexa meetings across every tenant in one pass. The Vexa meeting scheduler
+                #   is a platform-level process, not a user request — there is no single org_id
+                #   to bind. Whether strict RLS under portal_api.bypassrls=false permits this
+                #   query at all is the unresolved F-015 "RLS paradox" tracked in
+                #   .moai/audit/04-3-prework-caddy.md PRE-A. Do not add set_tenant(db, org_id)
+                #   here without first resolving that paradox — doing so may silently break the
+                #   cross-org workload. Do not copy this pattern for user-scoped queries.
+                # @MX:SPEC: SPEC-SEC-007
                 result = await db.execute(select(VexaMeeting).where(VexaMeeting.status.in_(ACTIVE_STATUSES)))
                 active = list(result.scalars().all())
 
                 # Also pick up meetings stuck in "stopping" (webhook never arrived)
                 timeout_cutoff = datetime.now(UTC) - timedelta(minutes=PROCESSING_TIMEOUT_MINUTES)
+                # @MX:NOTE: [AUTO] Cross-org system task — intentionally bypasses set_tenant().
+                # @MX:REASON: [AUTO] Stuck-meeting recovery must scan every tenant because any
+                #   org's meeting can get stuck in "stopping" when the Vexa webhook fails to
+                #   arrive. This is a platform-level recovery sweep, not a user request — there
+                #   is no single org_id to bind. Whether strict RLS under
+                #   portal_api.bypassrls=false permits this query at all is the unresolved
+                #   F-015 "RLS paradox" tracked in .moai/audit/04-3-prework-caddy.md PRE-A.
+                #   Do not add set_tenant(db, org_id) here without first resolving that paradox
+                #   — doing so may silently break the cross-org workload.
+                # @MX:SPEC: SPEC-SEC-007
                 stuck_result = await db.execute(
                     select(VexaMeeting).where(
                         VexaMeeting.status == "stopping",

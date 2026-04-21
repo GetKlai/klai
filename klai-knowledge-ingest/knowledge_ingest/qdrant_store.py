@@ -81,7 +81,7 @@ async def ensure_collection() -> None:
     for field in (
         "org_id", "kb_slug", "artifact_id", "content_type",
         "user_id", "entity_uuids", "taxonomy_node_id", "source_connector_id",
-        "taxonomy_node_ids", "tags", "content_label",
+        "taxonomy_node_ids", "tags", "content_label", "source_label",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
@@ -355,7 +355,7 @@ async def search(
     user_id: str | None = None,
     sparse_vector: SparseVector | None = None,
     content_type_filter: str | None = None,
-    sparse_weight: float | None = None,  # AC-7: reserved for weighted convex combination; no behavioral effect yet  # noqa: E501
+    sparse_weight: float | None = None,
 ) -> list[dict]:
     """Search for chunks matching the query vector.
 
@@ -363,6 +363,15 @@ async def search(
     when a sparse query vector is provided. Falls back to 2-leg RRF otherwise.
 
     user_id filter is applied when any kb_slug starts with "personal-".
+
+    # @MX:TODO: sparse_weight is parked — parameter is plumbed through but has
+    #   no behavioral effect until weighted RRF is activated (AC-7 / D4).
+    # @MX:SPEC: SPEC-KB-007 AC-7
+    # @MX:REASON: SPEC explicitly defers weighted-RRF activation until ≥200
+    #   labeled queries / feedback signals are collected (gate D4). Removing
+    #   this parameter would break the SPEC contract; wiring it in now would
+    #   ship unvalidated behavior. Keep as-is, Fase 6 dead-code audit
+    #   confirmed this is a deferred feature, not a regression.
     """
     client = get_client()
 

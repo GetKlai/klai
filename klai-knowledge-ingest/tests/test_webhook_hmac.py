@@ -53,10 +53,16 @@ def hmac_client():
                 "knowledge_ingest.config.settings.enrichment_enabled",
                 False,
             ):
+                import os
+
                 from knowledge_ingest.app import app
                 from fastapi.testclient import TestClient
 
                 with TestClient(app, raise_server_exceptions=False) as c:
+                    # SPEC-SEC-011: middleware now requires the header.
+                    c.headers.update(
+                        {"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]}
+                    )
                     yield c
 
 

@@ -1,6 +1,6 @@
 """System group definitions and creation helper."""
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.groups import PortalGroup, PortalGroupProduct
@@ -18,6 +18,12 @@ SYSTEM_GROUPS = [
 
 async def create_system_groups(org_id: int, db: AsyncSession) -> None:
     """Create all 5 system groups for an org. Idempotent — skips existing ones."""
+    # Provisioning runs with the admin's org_id in the session; override it so
+    # RLS WITH CHECK (derived from USING) accepts inserts for the new tenant.
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, false)"),
+        {"org_id": str(org_id)},
+    )
     # Find which system_keys already exist for this org
     existing = await db.execute(
         select(PortalGroup.system_key).where(

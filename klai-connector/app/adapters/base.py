@@ -10,9 +10,12 @@ class ImageRef:
     """Reference to an image discovered in a document.
 
     Attributes:
-        url: Original image URL or path in the source.
+        url: Absolute HTTP(S) URL to the image. Adapters MUST resolve any
+            relative URLs to absolute before constructing an ImageRef so that
+            the sync engine can download without connector-specific context.
         alt: Alt text from the image reference (empty string if absent).
-        source_path: Path of the image relative to the source root.
+        source_path: Path or block-id of the image relative to the source
+            (empty string when not meaningful, e.g. for crawled web pages).
     """
 
     url: str
@@ -31,7 +34,14 @@ class DocumentRef:
         content_type: MIME type or file extension.
         source_ref: Adapter-specific source reference string
             (e.g., "owner/repo:branch:path" for GitHub, full URL for web crawler).
-        images: Images discovered in or alongside this document.
+        source_url: User-visible, clickable URL for this document used in
+            citations (e.g. GitHub blob view, Notion page URL, Drive webViewLink).
+        last_edited: ISO 8601 timestamp of the last edit in the source,
+            used by the sync engine for reconciliation.
+        images: URL-based images associated with this document, populated by
+            the adapter during list_documents() or fetch_document(). Each
+            ImageRef.url MUST be absolute. Embedded images from binary formats
+            (DOCX/PDF) are handled separately via the parser pipeline, not here.
     """
 
     path: str
@@ -42,6 +52,9 @@ class DocumentRef:
     source_url: str = ""
     last_edited: str = ""  # ISO 8601 from source (used by sync engine for reconciliation)
     images: list[ImageRef] | None = None
+    # @MX:NOTE: [AUTO] SPEC-CRAWL-003 REQ-12 — 16-char lowercase hex SimHash fingerprint,
+    # empty string when page has <20 words. Populated by WebCrawlerAdapter._process_results.
+    content_fingerprint: str = ""
 
 
 class BaseAdapter(ABC):

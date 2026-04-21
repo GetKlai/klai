@@ -1,0 +1,371 @@
+/* All styles are scoped to the Shadow DOM — no leakage to host page */
+
+:host {
+  /* CSS custom properties — Klai brand defaults (styleguide.md).
+     Override via css_variables from widget config. */
+  --klai-primary-color: #fcaa2d;          /* rl-accent (amber) */
+  --klai-primary-hover: #e89a1f;          /* rl-accent-hover */
+  --klai-text-color: #191918;             /* rl-dark */
+  --klai-text-muted: #19191899;           /* rl-dark-60 */
+  --klai-background-color: #fffef2;       /* rl-bg (warm ivory) */
+  --klai-card-color: #f3f2e7;             /* rl-cream */
+  --klai-border-color: #e3e2d8;           /* rl-border */
+  --klai-border-radius: 12px;
+  --klai-font-family: "Parabole Trial Regular Text", "Parabole Regular", system-ui, -apple-system, sans-serif;
+  --klai-bubble-size: 56px;
+  --klai-window-width: 380px;
+  --klai-window-height: 560px;
+  --klai-z-index: 2147483647;
+}
+
+:host *,
+:host *::before,
+:host *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.klai-inline-root *,
+.klai-inline-root *::before,
+.klai-inline-root *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Chat bubble (floating action button) */
+.klai-bubble {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: var(--klai-bubble-size);
+  height: var(--klai-bubble-size);
+  border-radius: 50%;
+  background-color: var(--klai-primary-color);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: var(--klai-z-index);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.klai-bubble:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.klai-bubble:focus-visible {
+  outline: 3px solid var(--klai-primary-color);
+  outline-offset: 3px;
+}
+
+.klai-bubble svg {
+  width: 24px;
+  height: 24px;
+  fill: var(--klai-text-color);  /* dark icon on amber bubble */
+}
+
+/* Chat window */
+.klai-window {
+  position: fixed;
+  bottom: 88px;
+  right: 20px;
+  width: var(--klai-window-width);
+  height: var(--klai-window-height);
+  background-color: var(--klai-background-color);
+  border-radius: var(--klai-border-radius);
+  border: 1px solid var(--klai-border-color);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: var(--klai-z-index);
+  overflow: hidden;
+  font-family: var(--klai-font-family);
+  color: var(--klai-text-color);
+}
+
+/* Window header */
+.klai-header {
+  padding: 16px;
+  background-color: var(--klai-primary-color);
+  color: var(--klai-text-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.klai-header-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.klai-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--klai-text-color);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.klai-close-btn:hover {
+  opacity: 1;
+}
+
+.klai-close-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.klai-close-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--klai-text-color);
+  stroke-width: 2;
+  fill: none;
+}
+
+/* Message list */
+.klai-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-behavior: smooth;
+}
+
+.klai-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.klai-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.klai-messages::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+/* Individual messages */
+.klai-message {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.klai-message--user {
+  align-self: flex-end;
+  background-color: var(--klai-primary-color);
+  color: var(--klai-text-color);  /* dark text on amber — per styleguide WCAG */
+  border-bottom-right-radius: 4px;
+}
+
+.klai-message--assistant {
+  align-self: flex-start;
+  background-color: var(--klai-card-color);
+  color: var(--klai-text-color);
+  border-bottom-left-radius: 4px;
+}
+
+/* Markdown in assistant messages */
+.klai-markdown p { margin: 0 0 8px; }
+.klai-markdown p:last-child { margin-bottom: 0; }
+.klai-markdown strong { font-weight: 600; }
+.klai-markdown em { font-style: italic; }
+.klai-markdown a { color: var(--klai-primary-color); text-decoration: underline; }
+.klai-markdown ul, .klai-markdown ol { margin: 4px 0 8px 16px; padding: 0; }
+.klai-markdown li { margin-bottom: 2px; }
+.klai-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+.klai-markdown h1, .klai-markdown h2, .klai-markdown h3 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
+
+/* Error message */
+.klai-error {
+  align-self: center;
+  text-align: center;
+  font-size: 13px;
+  color: #dc2626;
+  padding: 8px 12px;
+  background-color: #fef2f2;
+  border-radius: 8px;
+  max-width: 90%;
+}
+
+/* Typing indicator */
+.klai-typing {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 14px;
+  background-color: var(--klai-card-color);
+  border-radius: 14px;
+  border-bottom-left-radius: 4px;
+}
+
+.klai-typing-dot {
+  width: 7px;
+  height: 7px;
+  background-color: #9ca3af;
+  border-radius: 50%;
+  animation: klai-bounce 1.2s ease-in-out infinite;
+}
+
+.klai-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.klai-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes klai-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+/* Input area */
+.klai-input-area {
+  padding: 12px;
+  border-top: 1px solid var(--klai-border-color);
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+  background-color: var(--klai-background-color);
+}
+
+.klai-textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--klai-font-family);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--klai-text-color);
+  background-color: var(--klai-background-color);
+  min-height: 42px;
+  max-height: 120px;
+  overflow-y: auto;
+  transition: border-color 0.15s;
+}
+
+.klai-textarea:focus {
+  outline: none;
+  border-color: var(--klai-primary-color);
+}
+
+.klai-textarea::placeholder {
+  color: var(--klai-text-muted);
+}
+
+.klai-textarea:disabled {
+  background-color: #f9fafb;
+  cursor: not-allowed;
+}
+
+.klai-send-btn,
+.klai-stop-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+
+.klai-send-btn {
+  background-color: var(--klai-primary-color);
+  color: var(--klai-text-color);
+}
+
+.klai-send-btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.klai-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.klai-send-btn:focus-visible,
+.klai-stop-btn:focus-visible {
+  outline: 2px solid var(--klai-primary-color);
+  outline-offset: 2px;
+}
+
+.klai-send-btn svg,
+.klai-stop-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.klai-stop-btn {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+.klai-stop-btn:hover {
+  background-color: #fee2e2;
+}
+
+/* Inline mode: embedded in the page, not floating */
+.klai-window--inline {
+  position: relative;
+  bottom: auto;
+  right: auto;
+  width: 100%;
+  height: 100%;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  z-index: auto;
+}
+
+.klai-window--inline .klai-messages {
+  min-height: 200px;
+}
+
+.klai-window--inline .klai-input-area {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.klai-window--inline .klai-textarea {
+  font-family: inherit;
+}
+
+.klai-window--inline .klai-message--assistant {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+.klai-window--inline .klai-message--user {
+  background-color: var(--klai-primary-color);
+}

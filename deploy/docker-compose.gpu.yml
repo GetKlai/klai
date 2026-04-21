@@ -9,7 +9,7 @@ services:
   # Gebruikt lokaal gecachede model uit infinity-models volume (snapshot met safetensors)
   # VRAM: ~4-5GB
   tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    image: ghcr.io/huggingface/text-embeddings-inference:1.9
     restart: unless-stopped
     command: --model-id /data/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181 --port 7997 --max-client-batch-size 256
     volumes:
@@ -35,7 +35,7 @@ services:
   # Infinity alleen voor reranking — dense embeddings verhuisd naar TEI
   # VRAM: ~3-4GB
   infinity:
-    image: michaelf34/infinity:latest
+    image: michaelf34/infinity:0.0.77
     restart: unless-stopped
     command: >
       v2
@@ -90,20 +90,37 @@ services:
       retries: 3
       start_period: 120s
 
-  # ─── faster-whisper: speech-to-text transcriptie ───────────────────────
-  # Vervangt: whisper-server:8000 op core-01 (nu GPU — float16 ipv int8/cpu)
-  whisper-server:
-    image: ghcr.io/getklai/whisper-server:latest
+  # ─── Vexa transcription workers (SPEC-VEXA-003 — replaces whisper-server) ────
+  # Nginx LB + 2 faster-whisper CUDA workers (least-connections) with two-tier
+  # admission (realtime/deferred), hallucination detection, VAD, temperature
+  # fallback. API is OpenAI-compatible (POST /v1/audio/transcriptions) on the
+  # SAME host port 8000 as the legacy whisper-server so gpu-tunnel.service
+  # and all consumer URLs (meeting-api TRANSCRIPTION_SERVICE_URL, scribe-api
+  # WhisperHttpProvider) stay unchanged. See SPEC-VEXA-003 plan.md §3.4.
+  #
+  # VRAM budget (RTX 4000 Ada 20GB):
+  #   TEI bge-m3       ~4-5 GB
+  #   Infinity rerank  ~3-4 GB
+  #   bge-m3-sparse    ~3 GB
+  #   2x worker int8   ~4 GB (~2 GB each, large-v3-turbo int8)
+  #   headroom         ~4-6 GB
+  # If Phase 7.7 OOMs or latency spikes, drop to 1 worker and/or tune
+  # MAX_ACTIVE_REQUESTS / REALTIME_RESERVED_SLOTS. See plan.md R8.
+
+  transcription-worker-1:
+    image: vexaai/transcription-service:0.10.0-pending
     restart: unless-stopped
     environment:
-      WHISPER_MODEL: large-v3-turbo
-      WHISPER_DEVICE: cuda
-      WHISPER_COMPUTE_TYPE: float16
-      WHISPER_DOWNLOAD_ROOT: /models
+      WORKER_ID: "1"
+      MODEL_SIZE: large-v3-turbo
+      DEVICE: cuda
+      COMPUTE_TYPE: int8
+      MAX_ACTIVE_REQUESTS: "20"
+      REALTIME_RESERVED_SLOTS: "1"
+      FAIL_FAST_WHEN_BUSY: "true"
+      BUSY_RETRY_AFTER_S: "1"
     volumes:
-      - whisper-models:/models
-    ports:
-      - "127.0.0.1:8000:8000"
+      - vexa-transcription-models:/app/models
     deploy:
       resources:
         reservations:
@@ -111,14 +128,75 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    networks:
+      - transcription-net
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 180s
+
+  transcription-worker-2:
+    image: vexaai/transcription-service:0.10.0-pending
+    restart: unless-stopped
+    environment:
+      WORKER_ID: "2"
+      MODEL_SIZE: large-v3-turbo
+      DEVICE: cuda
+      COMPUTE_TYPE: int8
+      MAX_ACTIVE_REQUESTS: "20"
+      REALTIME_RESERVED_SLOTS: "1"
+      FAIL_FAST_WHEN_BUSY: "true"
+      BUSY_RETRY_AFTER_S: "1"
+    volumes:
+      - vexa-transcription-models:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - transcription-net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  # Nginx least-connections load balancer. Listens on host :8000 to retain
+  # the legacy gpu-tunnel.service + consumer URLs. Config lives on-server at
+  # /opt/klai/vexa-transcription/nginx.conf (not in git — rendered during
+  # Phase 6 deploy). Template is at deploy/vexa-transcription/nginx.conf.
+  transcription-api:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:80"
+    volumes:
+      - /opt/klai/vexa-transcription/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      transcription-worker-1:
+        condition: service_healthy
+      transcription-worker-2:
+        condition: service_healthy
+    networks:
+      - transcription-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  transcription-net:
+    driver: bridge
 
 volumes:
   infinity-models:
   bge-models:
-  whisper-models:
+  vexa-transcription-models:

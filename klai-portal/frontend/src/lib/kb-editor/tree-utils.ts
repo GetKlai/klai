@@ -2,7 +2,7 @@
 // Pure functions and shared interfaces for the knowledge-base editor sidebar.
 // Nothing here imports React — all functions are independently testable.
 
-export const DOCS_BASE = '/docs/api'
+export const DOCS_BASE = '/api/docs/api'
 export const DEFAULT_ICON = '📄'
 export const INDENT_WIDTH = 24
 
