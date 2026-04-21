@@ -105,10 +105,7 @@ def _create_mongodb_tenant_user(slug: str, tenant_password: str) -> None:
             )
         logger.info("mongodb_tenant_user_created", slug=slug, db=db_name)
     except OperationFailure as exc:
-        raise RuntimeError(
-            f"MongoDB tenant user creation failed for {slug} "
-            f"(code {exc.code}): {exc.details}"
-        ) from exc
+        raise RuntimeError(f"MongoDB tenant user creation failed for {slug} (code {exc.code}): {exc.details}") from exc
 
 
 def _flush_redis_and_restart_librechat(slug: str) -> None:

@@ -135,7 +135,9 @@ class TestCharacterizeCreateMongodbTenantUser:
 
         factory, _client, db = _mock_mongo_client()
         db.command.side_effect = OperationFailure(
-            "User already exists", code=51003, details={"codeName": "Location51003"},
+            "User already exists",
+            code=51003,
+            details={"codeName": "Location51003"},
         )
         with (
             patch("app.services.provisioning.infrastructure._mongo_admin_client", factory),
