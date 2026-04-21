@@ -219,11 +219,11 @@ terugzet. De alert (AC-9) wijst aan welke verb.
 
 ## Edge cases
 
-- **Vendored runtime-api doet iets onverwachts**: AC-9 runtime-api check
-  dekt dit. Als runtime-api 403's genereert, rollback via AC-10.
+- **Vendored runtime-api doet iets onverwachts**: AC-9 permanente alert vuurt
+  bij de eerste 403. Fix-forward: één compose-commit die de verb terugzet.
 - **`images.build`/`pull` blijkt tóch gebruikt**: AC-2 vangt dit tijdens
-  audit; `plan.md` "Verb rationale" zou dan `IMAGES` op `keep` zetten
-  voor de deploy.
+  audit. Agressieve strategie (v0.2): we starten zonder `IMAGES`; als een
+  pull-path vuurt, zet de alert 'm aan via fix-forward compose-commit.
 - **Iemand hernoemt `exec_run` naar een wrapper**: ast-grep pattern is
   `$OBJ.exec_run($$$)` — directe match. Voor `getattr(obj, "exec_run")(...)`
   moet de pattern aangescherpt worden — opgenomen als M1.3 scan-query.

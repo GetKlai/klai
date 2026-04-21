@@ -78,17 +78,31 @@ worden.
 
 Doelen R7, R8.
 
-- **M3.1**: voeg `.ast-grep/no-exec-run.yml` toe. Regel matched op
-  `exec_run($$$)` in files onder `klai-portal/backend/app/`. Allow-list:
-  `klai-portal/backend/tests/**` (daar *moeten* regressie-guards blijven).
+- **M3.1**: voeg `sgconfig.yml` (repo root) + `rules/no-exec-run.yml` toe.
+  Dit is de industry-standard ast-grep project layout die door de officiële
+  `ast-grep/action@latest` GitHub Action verwacht wordt. Het eerdere schetsje
+  met `.ast-grep/no-exec-run.yml` + `pipx install` is niet-standaard en wordt
+  vervangen door deze variant. Rule matched op `$OBJ.exec_run($$$)` in files
+  onder `klai-portal/backend/app/`. Allow-list via `ignores:` op
+  `klai-portal/backend/tests/**`.
+
+  Minimale `sgconfig.yml`:
+  ```yaml
+  ruleDirs:
+    - rules
+  ```
+
+  `rules/no-exec-run.yml` (zie definitieve vorm in "Technische aanpak"):
+  `severity: error` → ast-grep action exit-code ≠ 0 → CI rood.
+
 - **M3.2**: integreer in `.github/workflows/portal-api.yml` — nieuwe step
   tussen `ruff check` en `pytest`:
   ```yaml
-  - name: Guard — no exec_run in production code
-    run: |
-      pipx install ast-grep-cli
-      ast-grep scan --config ../../.ast-grep/no-exec-run.yml \
-        --error-on-findings app/
+  - name: Guard — no exec_run in production code (SPEC-SEC-024)
+    uses: ast-grep/action@v0.16.0   # pin, niet @latest
+    with:
+      config: sgconfig.yml
+      paths: klai-portal/backend/app
   ```
   **Alternatief overwogen**: semgrep is al in CI (`.github/workflows/semgrep.yml`).
   We kunnen deze guard ook als semgrep-regel onder `.semgrep/no-exec-run.yml`
@@ -159,31 +173,89 @@ end-to-end alert-dry-run.
 
 ---
 
-## Audit-output (in te vullen in M1)
+## Audit-output (M1 afgerond — 2026-04-21)
 
-### `exec_run` callsites — portal-api + runtime-api
+**Scan-queries die gedraaid zijn:**
 
-> In te vullen tijdens M1. Voorbeeld-rij hieronder illustreert het format.
+```bash
+# 1. Tekst-scan — vangt ook comments en docstrings
+grep -rn "exec_run(" klai-portal/backend/
+
+# 2. Non-whitelist Docker API calls in app/
+grep -rn "\.top(\|\.attach(\|\.commit(\|\.export(\|\.diff(\|\.stats(\|images\.build\|images\.pull\|volumes\." klai-portal/backend/app/
+
+# 3. Dynamic dispatch (R-3 mitigatie)
+grep -rn "getattr.*exec\|/exec/\|/containers/.*/exec" klai-portal/backend/
+
+# 4. Bredere Docker-client usage in app/ (voor verb rationale)
+grep -rn "containers\.(get\|run\|list\|create)\|networks\.(get\|list\|create\|connect)\|client\.from_env" klai-portal/backend/app/
+
+# 5. Overige callsites op dezelfde containers-objecten in infrastructure.py
+grep -n "\.remove(\|\.restart(\|\.run(\|\.connect(\|\.disconnect(" klai-portal/backend/app/services/provisioning/infrastructure.py
+```
+
+> `ast-grep run -p '$OBJ.exec_run($$$)' --lang py klai-portal/backend/` niet lokaal
+> uitgevoerd (CLI niet geïnstalleerd op dev-machine); de CI-step uit M3 dekt dit
+> mechanisch vanaf merge. Tekst-grep (query 1) is in de tussentijd strikter — die
+> vangt óók docstring-mentions. AST-grep zou _minder_ hits produceren dan grep; als
+> grep schoon is op `app/`, is ast-grep het per definitie ook.
+
+### Tabel A — `exec_run` callsites
 
 | File:regel | Symbol | Verdict | Actie | Rationale |
 |---|---|---|---|---|
-| `klai-portal/backend/app/services/provisioning/infrastructure.py:113` (pre-SEC-024) | `_flush_redis_and_restart_librechat` | fixed (2026-04-21) | none | Vervangen door `redis.Redis(...).flushall()` in commit `c5653159` |
-| `klai-portal/backend/tests/services/provisioning/test_infrastructure.py:150,300` | `test_never_calls_docker_exec`, `test_never_calls_container_exec_run` | acceptable | add-to-allowlist | Regressie-guard; mag niet weg, staat expliciet om `exec_run` te mocken |
-| `klai-portal/backend/tests/test_librechat_regenerate.py:~` | `test_*` | acceptable | add-to-allowlist | Idem regressie-guard |
-| `klai-portal/backend/scripts/**` | (initieel scan-resultaat leeg verwacht) | TBD | TBD | Bevestigen tijdens M1 |
+| `klai-portal/backend/app/services/provisioning/infrastructure.py:10-11` | module docstring | acceptable | none | Rule-reference in docstring ("never through `container.exec_run([...])`"). Géén call — AST-scan matcht dit niet. |
+| `klai-portal/backend/tests/services/provisioning/test_infrastructure.py:151,255,329,344,345` | `test_never_calls_docker_exec`, `test_never_calls_container_exec_run` + comments | acceptable | add-to-allowlist | Regressie-guards; ze _moeten_ `exec_run` noemen en mocken om te asserteren dat productiecode het niet aanroept. |
+| `klai-portal/backend/tests/test_librechat_regenerate.py:7` | module docstring | acceptable | add-to-allowlist | Rule-reference comment in regressie-test. |
+| `klai-portal/backend/scripts/**` | — | n.v.t. | none | Scan leverde 0 hits op. |
+| `klai-portal/backend/app/**` (productie) | — | **clean** | none | **0 echte `exec_run` calls.** Historische hits (`infrastructure.py` Redis FLUSHALL, MongoDB user mgmt, chat-health probe) zijn gefixt in `c5653159`, `a3920a75`, `9dc03c67`. |
 
-> **Noot**: de pre-SEC-024 bronregels zijn inmiddels gerefactord; de eerste
-> rij is hier puur historisch/traceability. De definitieve tabel bevat
-> **huidige** hits op `main` na de fixes van 2026-04-21.
-
-### Docker API calls buiten de whitelist — portal-api
-
-> In te vullen tijdens M1. Scan-query:
-> `grep -rn "\.top(\|\.attach(\|\.commit(\|\.export(\|\.diff(\|\.stats(\|images\.build\|images\.pull\|volumes\." klai-portal/backend/app/`
+### Tabel B — Docker API calls buiten de whitelist in `klai-portal/backend/app/`
 
 | File:regel | Call | Geraakte endpoint | Verdict |
 |---|---|---|---|
-| _(in te vullen)_ | _(in te vullen)_ | _(in te vullen)_ | _(in te vullen)_ |
+| `klai-portal/backend/app/api/internal.py:991` | tekst-match op `/exec/*/start` in comment | n.v.t. (comment) | acceptable |
+| — | `.top()`, `.attach()`, `.export()`, `.diff()`, `.stats(stream=True)` | — | **0 hits** |
+| — | `images.build()`, `images.pull()` | — | **0 hits** |
+| — | `volumes.create()`, `volumes.get()`, `volumes.list()`, `volumes.prune()` | — | **0 hits** |
+| — | `networks.create()`, `networks.prune()` | — | **0 hits** (alleen `networks.get()` + `net.connect()` — zie Tabel C) |
+| — | dynamic dispatch (`getattr(*, "exec*")`, `/containers/*/exec`) | — | **0 hits** in `app/` |
+
+Alle `.commit()` en `.run()` hits die initieel als "verdachte" hits verschenen bleken SQLAlchemy `db.commit()` / `session.commit()` en niet-Docker `run()` methoden — uitgefilterd.
+
+### Tabel C — Bewezen Docker-API gebruik in `app/` (input voor M2 verb rationale)
+
+| Callsite | Docker endpoint | Verb gebruikt |
+|---|---|---|
+| `infrastructure.py:68` `client.containers.get(name)` | `GET /containers/{id}/json` | CONTAINERS |
+| `infrastructure.py:69` `c.remove(force=True)` | `DELETE /containers/{id}?force=true` | CONTAINERS + DELETE |
+| `infrastructure.py:135` `docker_client.containers.get(name)` | `GET /containers/{id}/json` | CONTAINERS |
+| `infrastructure.py:136` `container.restart(timeout=10)` | `POST /containers/{id}/restart` | CONTAINERS + POST |
+| `infrastructure.py:207` `client.containers.get(settings.caddy_container_name)` | `GET /containers/{id}/json` | CONTAINERS |
+| `infrastructure.py:208` `caddy.restart(timeout=10)` | `POST /containers/{id}/restart` | CONTAINERS + POST |
+| `infrastructure.py:222` `client.containers.get(container_name)` | `GET /containers/{id}/json` | CONTAINERS |
+| `infrastructure.py:223` `old.remove(force=True)` | `DELETE /containers/{id}?force=true` | CONTAINERS + DELETE |
+| `infrastructure.py:236` `client.containers.run(image=..., ...)` | `POST /containers/create` + `POST /containers/{id}/start` | CONTAINERS + POST |
+| `infrastructure.py:254` `client.networks.get(net_name)` | `GET /networks/{id}` | NETWORKS |
+| `infrastructure.py:255` `net.connect(container_name)` | `POST /networks/{id}/connect` | NETWORKS + POST |
+| `api/internal.py:1020` `client.containers.get(container_name)` | `GET /containers/{id}/json` | CONTAINERS |
+
+### Tabel D — Andere services met Docker socket access (buiten SEC-024 scope)
+
+| Service | Compose-regel | Mount / host | Scope? | Reden |
+|---|---|---|---|---|
+| `alloy` | `compose:492` | `/var/run/docker.sock:/var/run/docker.sock:ro` (direct, read-only) | **out** | Observability sidecar, read-only, niet via proxy. Route via proxy zou log-collectie breken (Alloy moet _alle_ containers kunnen enumereren). |
+| `cadvisor` | `compose:477` | `/var/run:/var/run:ro` (direct, read-only) | **out** | Container-metrics collector, read-only. Zelfde argument als Alloy. |
+| `klai-scribe-*` | — | geen socket mount, geen docker client | **out** | Geen Docker API gebruik. |
+
+Conclusie: SEC-024 scope blijft exact **portal-api + runtime-api** — de twee services die SEC-021 bewust achter de proxy heeft gezet. Monitoring-sidecars zijn out of scope; hun socket-access is read-only en een architecturale keuze. Als we die ook willen hardenen is dat een losse SPEC (bijv. een aparte socket-proxy instantie met alleen `CONTAINERS=1 INFO=1 EVENTS=1` voor monitoring).
+
+### M1-conclusie
+
+- Productie-code (`klai-portal/backend/app/**`) bevat **0 `exec_run` calls** en **0 non-whitelist Docker API calls**.
+- De enige API's die portal-api feitelijk gebruikt: `containers.get/run/remove/restart` en `networks.get/connect`.
+- Dit ondersteunt de agressieve reductie in M2 volledig: `CONTAINERS + NETWORKS + POST + DELETE` is minimaal en compleet voor portal-api. Alles anders mag weg.
+- runtime-api blijft black-box; de permanente alert (M4.2) dekt onverwachte 403's daar.
 
 ---
 
@@ -213,10 +285,26 @@ we gericht die ene verb toe — niet preventief.
 
 ## Technische aanpak per deliverable
 
-### ast-grep rule (M3.1)
+### ast-grep project layout (M3.1)
+
+Industry-standaard indeling voor `ast-grep/action@latest`:
+
+```
+sgconfig.yml              # repo root — tells ast-grep where to find rules
+rules/
+  no-exec-run.yml         # the actual guard
+```
+
+**`sgconfig.yml`** (repo root):
 
 ```yaml
-# .ast-grep/no-exec-run.yml
+ruleDirs:
+  - rules
+```
+
+**`rules/no-exec-run.yml`**:
+
+```yaml
 id: no-exec-run-in-production
 language: python
 severity: error
