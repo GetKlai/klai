@@ -552,6 +552,17 @@ services:
       # which breaks all log dashboards and the SPEC-SEC-024 alert rule.
       VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
       VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
+      # SMTP — reuses the same Cloud86 outbound mailbox as klai-mailer (see
+      # klai-infra/core-01/klai-mailer/.env.sops). GRAFANA_SMTP_PASSWORD was
+      # added to core-01/.env.sops for this purpose; host/port/user/from are
+      # non-secret and stay inline. Needed for SPEC-SEC-024-R13 (AC-9).
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: shared199.cloud86-host.io:587
+      GF_SMTP_USER: hello@getklai.com
+      GF_SMTP_PASSWORD: ${GRAFANA_SMTP_PASSWORD}
+      GF_SMTP_FROM_ADDRESS: hello@getklai.com
+      GF_SMTP_FROM_NAME: Klai
+      GF_SMTP_STARTTLS_POLICY: MandatoryStartTLS
     depends_on:
       - victoriametrics
       - victorialogs
