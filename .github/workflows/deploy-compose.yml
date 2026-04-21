@@ -50,12 +50,17 @@ jobs:
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
-            # provisioning only at startup, so we restart the service after
-            # sync. Short downtime (~10s) is acceptable for an internal
+            # provisioning only at startup, so we need to restart. Use
+            # `up -d` instead of `restart`: `restart` keeps the existing
+            # container env (docker-compose.yml + .env changes are ignored),
+            # while `up -d` recreates the container with fresh env if the
+            # compose file or .env drifted. Required for env-var changes
+            # to grafana (e.g. VICTORIALOGS_AUTH_*, future GF_SMTP_*).
+            # Short downtime (~10s) is acceptable for an internal
             # observability tool; no user-facing impact.
             mkdir -p /opt/klai/grafana/provisioning
             rsync -a deploy/grafana/provisioning/ /opt/klai/grafana/provisioning/
-            docker compose --project-directory /opt/klai restart grafana
+            docker compose --project-directory /opt/klai up -d grafana
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,
