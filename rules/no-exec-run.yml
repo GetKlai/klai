@@ -1,0 +1,29 @@
+# SPEC-SEC-024-R7 — block reintroduction of docker exec_run in portal-api production code.
+#
+# Why: docker-socket-proxy denies POST /exec/*/start by design (SEC-021). Any
+# container.exec_run([...]) call from portal-api returns 403 at runtime. See
+# .claude/rules/klai/platform/docker-socket-proxy.md for the native-protocol
+# alternatives (redis, motor, asyncpg, HTTP sidecar).
+#
+# Regression guards in klai-portal/backend/tests/ intentionally *mention*
+# exec_run to mock it — they stay on the allow-list below.
+
+id: no-exec-run-in-production
+language: python
+severity: error
+message: |
+  exec_run() is forbidden in production code (SPEC-SEC-024).
+  docker-socket-proxy blocks POST /exec/*/start by design.
+  Use the service's native wire protocol instead — see
+  .claude/rules/klai/platform/docker-socket-proxy.md.
+
+rule:
+  pattern: $OBJ.exec_run($$$)
+
+files:
+  - klai-portal/backend/app/**/*.py
+
+# Regression-guard tests are explicitly allowed to reference exec_run — they
+# assert productioncode does NOT call it. Keep this list narrow.
+ignores:
+  - klai-portal/backend/tests/**/*.py

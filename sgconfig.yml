@@ -1,0 +1,5 @@
+# ast-grep project configuration.
+# See https://ast-grep.github.io/reference/sgconfig.html
+# Invoked by the `ast-grep/action` GitHub Action — see .github/workflows/portal-api.yml.
+ruleDirs:
+  - rules
