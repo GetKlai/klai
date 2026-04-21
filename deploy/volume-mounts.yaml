@@ -1,0 +1,509 @@
+# Stateful service volume inventory — SPEC-INFRA-005 Phase 1.
+#
+# Purpose: be the single source of truth for every RW bind or named-volume
+# mount declared in deploy/docker-compose.yml. Every such mount must have an
+# entry here. Entries are classified by `category`:
+#
+#   data        — persistent application state. Requires a matching image
+#                 data path, a backup method, and a retention rule.
+#   config      — source-controlled code or configuration bind-mounted RW
+#                 for hot-reload or dynamic provisioning. No backup, no
+#                 retention — state lives in git.
+#   ephemeral   — logs, caches, or buffers that are safe to lose on recreate.
+#                 No backup, no retention.
+#
+# The audit script at scripts/audit-compose-volumes.sh enforces:
+#   A. Every RW mount in docker-compose.yml has an entry here.
+#   B. Every `data` entry's container_path matches the image's declared data
+#      path (env var or curated conventional path).
+#   C. Every `data` entry has backup + retention fields filled.
+#
+# Fields per entry:
+#   service             — compose service name (one of the consumers)
+#   kind                — bind | named
+#   host                — host path or named-volume name (as in compose)
+#   container_path      — mount target inside the container
+#   image               — image tag in use (informational)
+#   category            — data | config | ephemeral
+#   data_path_source    — how the container_path was verified (env <VAR> | upstream docs | fixed)
+#   pii                 — true if user-provided content can land here
+#   backup              — artifact kind produced by backup.sh (sql, rdb, tar, snapshot, skip)
+#   backup_method       — concrete command family (pg_dumpall, mongodump, docker-run-tar, snapshot-api, rsync)
+#   retention           — manual | delete_on_success | max_age_days:<N> | source_controlled
+#   retention_enforced_by — file path to the code that enforces retention (where applicable)
+#   notes               — free-form remarks, mandatory for overrides
+
+version: 1
+last_reviewed: 2026-04-21
+
+mounts:
+
+  # ─── DATA VOLUMES ────────────────────────────────────────────────────────
+
+  postgres:
+    service: postgres
+    kind: named
+    host: postgres-data
+    container_path: /var/lib/postgresql
+    image: pgvector/pgvector:pg18
+    category: data
+    data_path_source: upstream docs (PGDATA defaults under this dir)
+    pii: true
+    backup: sql
+    backup_method: pg_dumpall
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Core application database. Mounted at /var/lib/postgresql (parent of
+      /var/lib/postgresql/data) so both PGDATA and wal/archive directories
+      land on the volume.
+
+  mongodb:
+    service: mongodb
+    kind: named
+    host: mongodb-data
+    container_path: /data/db
+    image: mongo:8.2.7
+    category: data
+    data_path_source: upstream docs (MongoDB default dbpath)
+    pii: true
+    backup: archive
+    backup_method: mongodump
+    retention: manual
+    retention_enforced_by: n/a
+    notes: LibreChat conversation history.
+
+  redis:
+    service: redis
+    kind: named
+    host: redis-data
+    container_path: /data
+    image: redis:8-alpine
+    category: data
+    data_path_source: upstream docs (Redis `dir` default)
+    pii: false
+    backup: rdb
+    backup_method: bgsave-copy
+    retention: manual
+    retention_enforced_by: n/a
+    notes: LiteLLM + GlitchTip cache. Loss is recoverable (cache regenerates).
+
+  vexa-redis:
+    service: vexa-redis
+    kind: named
+    host: vexa-redis-data
+    container_path: /data
+    image: redis:8-alpine
+    category: data
+    data_path_source: upstream docs (Redis `dir` default)
+    pii: false
+    backup: rdb
+    backup_method: bgsave-copy
+    retention: manual
+    retention_enforced_by: n/a
+    notes: Vexa transcription pipeline state.
+
+  meilisearch:
+    service: meilisearch
+    kind: named
+    host: meilisearch-data
+    container_path: /meili_data
+    image: getmeili/meilisearch:v1.42.1
+    category: data
+    data_path_source: upstream docs (default data dir)
+    pii: true
+    backup: snapshot
+    backup_method: snapshot-api
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      LibreChat full-text search index. Meilisearch `snapshots` HTTP endpoint
+      produces a consistent snapshot file inside the volume without stopping
+      the service.
+
+  qdrant:
+    service: qdrant
+    kind: named
+    host: qdrant-data
+    container_path: /qdrant/storage
+    image: qdrant/qdrant:v1.17.1
+    category: data
+    data_path_source: upstream docs (QDRANT__STORAGE__STORAGE_PATH default)
+    pii: true
+    backup: snapshot
+    backup_method: snapshot-api
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Vector embeddings for the knowledge base. Qdrant Snapshot API
+      (`POST /collections/{name}/snapshots`) produces a consistent snapshot
+      on the running volume — zero downtime.
+
+  falkordb:
+    service: falkordb
+    kind: bind
+    host: /opt/klai/falkordb-data
+    container_path: /var/lib/falkordb/data
+    image: falkordb/falkordb:v4.18.1
+    category: data
+    data_path_source: env FALKORDB_DATA_PATH (verified on image 2026-04-19)
+    pii: true
+    backup: rdb
+    backup_method: bgsave-copy
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Graphiti knowledge graph. Mount was previously /data (cosmetic) — bug
+      caused total graph loss during image pinning on 2026-04-19; fixed in
+      commit 3c5673ea. See docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md.
+
+  garage-meta:
+    service: garage
+    kind: bind
+    host: /opt/klai/garage-meta
+    container_path: /var/lib/garage/meta
+    image: dxflrs/garage:v2.3.0
+    category: data
+    data_path_source: upstream docs (Garage metadata_dir default)
+    pii: false
+    backup: snapshot
+    backup_method: garage-meta-snapshot
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      LMDB metadata for the S3-compatible object store. `garage meta snapshot`
+      (Garage v0.9.4+) produces a consistent snapshot while the service
+      keeps running — zero downtime.
+
+  garage-data:
+    service: garage
+    kind: bind
+    host: /opt/klai/garage-data
+    container_path: /var/lib/garage/data
+    image: dxflrs/garage:v2.3.0
+    category: data
+    data_path_source: upstream docs (Garage data_dir default)
+    pii: true
+    backup: tar
+    backup_method: rsync
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      S3 blobs (KB images, user uploads). Objects are immutable once written,
+      so rsync-while-live is consistent. Separate from garage-meta to bound
+      backup duration.
+
+  gitea:
+    service: gitea
+    kind: named
+    host: gitea-data
+    container_path: /data
+    image: gitea/gitea:1.26.0
+    category: data
+    data_path_source: upstream docs (gitea GITEA_WORK_DIR default)
+    pii: false
+    backup: tar
+    backup_method: docker-run-tar
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Knowledge base git repositories — PRIMARY source of truth for KB content.
+      Already in backup.sh (2026-04-21); kept here for completeness.
+
+  victoriametrics:
+    service: victoriametrics
+    kind: named
+    host: victoriametrics-data
+    container_path: /storage
+    image: victoriametrics/victoria-metrics:v1.140.0
+    category: data
+    data_path_source: image CMD (-storageDataPath=/storage)
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: max_age_days:365
+    retention_enforced_by: '-retentionPeriod flag on service cmd'
+    notes: |
+      Time-series metrics. Retention enforced natively by VictoriaMetrics
+      via -retentionPeriod. Backups skipped — metrics regenerate from live
+      scraping; historical loss is acceptable.
+
+  victorialogs:
+    service: victorialogs
+    kind: named
+    host: victorialogs-data
+    container_path: /vlogs-data
+    image: victoriametrics/victoria-logs:v1.50.0
+    category: data
+    data_path_source: image CMD (-storageDataPath=/vlogs-data)
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: max_age_days:30
+    retention_enforced_by: '-retentionPeriod=30d flag on service cmd'
+    notes: |
+      Application logs. Retention enforced natively via -retentionPeriod=30d.
+      Backups skipped — logs are diagnostic, not source-of-truth data.
+
+  grafana:
+    service: grafana
+    kind: named
+    host: grafana-data
+    container_path: /var/lib/grafana
+    image: grafana/grafana:13.0.1
+    category: data
+    data_path_source: upstream docs (GF_PATHS_DATA default)
+    pii: false
+    backup: tar
+    backup_method: docker-run-tar
+    retention: manual
+    retention_enforced_by: n/a
+    notes: Dashboards + alert rules + user prefs. Small, worth backing up.
+
+  glitchtip-web:
+    service: glitchtip-web
+    kind: named
+    host: glitchtip-data
+    container_path: /code/uploads
+    image: glitchtip/glitchtip:6.1.6
+    category: data
+    data_path_source: upstream docs (app MEDIA_ROOT)
+    pii: true
+    backup: tar
+    backup_method: docker-run-tar
+    retention: max_age_days:90
+    retention_enforced_by: TBD (not yet implemented)
+    notes: |
+      User-uploaded attachments on error reports. Also mounted by
+      glitchtip-worker (shared volume). PII possible (stack traces contain
+      user data). TODO: implement 90-day sweep of old attachments.
+
+  glitchtip-worker:
+    service: glitchtip-worker
+    kind: named
+    host: glitchtip-data
+    container_path: /code/uploads
+    image: glitchtip/glitchtip:6.1.6
+    category: data
+    data_path_source: shared named volume with glitchtip-web
+    pii: true
+    backup: skip
+    backup_method: skip
+    retention: max_age_days:90
+    retention_enforced_by: TBD (shared with glitchtip-web entry)
+    notes: Same volume as glitchtip-web; skipped in backup to avoid double-archive.
+
+  firecrawl-postgres:
+    service: firecrawl-postgres
+    kind: named
+    host: firecrawl-postgres-data
+    container_path: /var/lib/postgresql/data
+    image: postgres:18-alpine
+    category: data
+    data_path_source: upstream docs (PGDATA default)
+    pii: false
+    backup: sql
+    backup_method: pg_dumpall
+    retention: manual
+    retention_enforced_by: n/a
+    notes: Firecrawl crawl queue state. Small. Worth including in backup.
+
+  scribe-audio:
+    service: scribe-api
+    kind: named
+    host: scribe-audio-data
+    container_path: /data/audio
+    image: ghcr.io/getklai/scribe-api:latest
+    category: data
+    data_path_source: env AUDIO_STORAGE_DIR (scribe-api app config)
+    pii: true
+    backup: tar
+    backup_method: docker-run-tar
+    retention: delete_on_success
+    retention_enforced_by: klai-scribe/scribe-api/app/services/audio_storage.py::finalize_success
+    notes: |
+      Voice recordings (WAV). Retention is event-driven: audio is unlinked
+      as soon as transcription succeeds. Audio persists only for `failed`
+      records so the retry endpoint can replay. Regression test:
+      klai-scribe/scribe-api/tests/test_audio_retention.py.
+      Reference implementation of SPEC-INFRA-005 REQ-R2.
+
+  research-uploads:
+    service: research-api
+    kind: bind
+    host: /opt/klai/research-uploads
+    container_path: /opt/klai/research-uploads
+    image: ghcr.io/getklai/research-api:latest
+    data_path_source: literal (_UPLOAD_BASE in klai-focus/research-api/app/api/sources.py)
+    verified: true
+    category: data
+    pii: true
+    backup: tar
+    backup_method: rsync
+    retention: TBD
+    retention_enforced_by: NOT YET IMPLEMENTED — open question in SPEC-INFRA-005 §Open questions
+    notes: |
+      User-uploaded source documents in Research notebooks. PII-rich.
+      Retention policy is an open question — candidate rules:
+        - delete_when_source_removed (tie to source record lifecycle)
+        - max_age_days:90 after notebook inactivity
+        - manual (current behaviour, weakest option)
+      Product owner decision required before Phase 3 backup is wired up.
+
+  # ─── CONFIG MOUNTS (source-controlled, no backup) ────────────────────────
+
+  caddy-Caddyfile:
+    service: caddy
+    kind: bind
+    host: ./caddy/Caddyfile
+    container_path: /etc/caddy/Caddyfile
+    image: ghcr.io/getklai/caddy-hetzner:latest
+    category: config
+    data_path_source: single-file bind, source-controlled
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: source_controlled
+    retention_enforced_by: git
+    notes: |
+      Caddy static config. Note: bind is declared without :ro but Caddy only
+      reads it. Recommend hardening to :ro in a separate PR.
+
+  portal-api-librechat-mounts:
+    service: portal-api
+    kind: bind
+    host: ./librechat
+    container_path: /librechat
+    image: ghcr.io/getklai/portal-api:latest
+    category: config
+    data_path_source: source-controlled librechat config tree
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: source_controlled
+    retention_enforced_by: git
+    notes: |
+      Portal-api reads tenant librechat templates from here when provisioning
+      new tenants. Writes do happen for new-tenant yaml files but those are
+      immediately committed back to git by the portal workflow — no unique
+      state lives only on the volume.
+
+  librechat-getklai-images:
+    service: librechat-getklai
+    kind: bind
+    host: ./librechat/getklai/images
+    container_path: /app/client/public/images
+    image: ghcr.io/danny-avila/librechat:v0.8.5-rc1
+    category: config
+    data_path_source: brand asset directory, source-controlled
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: source_controlled
+    retention_enforced_by: git
+    notes: Klai-branded logos and icons. Static.
+
+  caddy-data:
+    service: caddy
+    kind: named
+    host: caddy-data
+    container_path: /data
+    image: ghcr.io/getklai/caddy-hetzner:latest
+    category: data
+    data_path_source: upstream docs (Caddy XDG_DATA_HOME default)
+    pii: false
+    backup: tar
+    backup_method: docker-run-tar
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Let's Encrypt TLS certificates. Technically regenerable via ACME but
+      cert issuance has rate limits — a restore saves a rate-limit window.
+
+  caddy-config:
+    service: caddy
+    kind: named
+    host: caddy-config
+    container_path: /config
+    image: ghcr.io/getklai/caddy-hetzner:latest
+    category: ephemeral
+    data_path_source: upstream docs (Caddy runtime autosave location)
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: ephemeral
+    retention_enforced_by: n/a
+    notes: |
+      Caddy's last-applied config autosave. Regenerates on restart from
+      Caddyfile. No reason to back up.
+
+  caddy-tenants-caddy:
+    service: caddy
+    kind: named
+    host: caddy-tenants
+    container_path: /etc/caddy/tenants
+    image: ghcr.io/getklai/caddy-hetzner:latest
+    category: data
+    data_path_source: app-specific (portal-api writes dynamic tenant Caddy snippets here)
+    verified: true
+    pii: false
+    backup: tar
+    backup_method: docker-run-tar
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Dynamically-provisioned per-tenant Caddy configs. Portal-api writes,
+      Caddy reads. Also mounted by docs-app and portal-api.
+
+  caddy-tenants-portal:
+    service: portal-api
+    kind: named
+    host: caddy-tenants
+    container_path: /caddy/tenants
+    image: ghcr.io/getklai/portal-api:latest
+    category: data
+    data_path_source: shared with caddy service (same named volume)
+    verified: true
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Same named volume as caddy-tenants-caddy — portal-api is the writer
+      and writes source-of-truth snippets. Backed up via the caddy entry;
+      skipped here to avoid double-archive.
+
+  caddy-tenants-docs:
+    service: docs-app
+    kind: named
+    host: caddy-tenants
+    container_path: /caddy/tenants
+    image: ghcr.io/getklai/klai-docs:latest
+    category: data
+    data_path_source: shared with caddy service (same named volume)
+    verified: true
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: manual
+    retention_enforced_by: n/a
+    notes: Docs-app reads tenants metadata. Read-only usage in practice.
+
+  caddy-logs:
+    service: caddy
+    kind: bind
+    host: /opt/klai/caddy-logs
+    container_path: /var/log/caddy
+    image: ghcr.io/getklai/caddy-hetzner:latest
+    category: ephemeral
+    data_path_source: fixed (Caddy log output path)
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: max_age_days:7
+    retention_enforced_by: Docker logrotate policy (50m x 3 files per container)
+    notes: |
+      Caddy access/error logs. All logs are ALSO shipped to VictoriaLogs via
+      Alloy — the local file is a ringbuffer for fast tailing, not
+      authoritative storage.
