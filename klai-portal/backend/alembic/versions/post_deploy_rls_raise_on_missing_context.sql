@@ -250,7 +250,7 @@ CREATE POLICY partner_delete ON partner_api_keys
     FOR DELETE TO portal_api
     USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
 
--- partner_api_key_kb_access — per-cmd
+-- partner_api_key_kb_access — no org_id column; scoped via parent partner_api_keys
 DROP POLICY IF EXISTS kb_access_select ON partner_api_key_kb_access;
 CREATE POLICY kb_access_select ON partner_api_key_kb_access
     FOR SELECT TO portal_api
@@ -259,17 +259,29 @@ CREATE POLICY kb_access_select ON partner_api_key_kb_access
 DROP POLICY IF EXISTS kb_access_insert ON partner_api_key_kb_access;
 CREATE POLICY kb_access_insert ON partner_api_key_kb_access
     FOR INSERT TO portal_api
-    WITH CHECK (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+    WITH CHECK (EXISTS (
+        SELECT 1 FROM partner_api_keys p
+        WHERE p.id = partner_api_key_id
+          AND (_rls_current_org_id() IS NULL OR p.org_id = _rls_current_org_id())
+    ));
 
 DROP POLICY IF EXISTS kb_access_update ON partner_api_key_kb_access;
 CREATE POLICY kb_access_update ON partner_api_key_kb_access
     FOR UPDATE TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+    USING (EXISTS (
+        SELECT 1 FROM partner_api_keys p
+        WHERE p.id = partner_api_key_id
+          AND (_rls_current_org_id() IS NULL OR p.org_id = _rls_current_org_id())
+    ));
 
 DROP POLICY IF EXISTS kb_access_delete ON partner_api_key_kb_access;
 CREATE POLICY kb_access_delete ON partner_api_key_kb_access
     FOR DELETE TO portal_api
-    USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id());
+    USING (EXISTS (
+        SELECT 1 FROM partner_api_keys p
+        WHERE p.id = partner_api_key_id
+          AND (_rls_current_org_id() IS NULL OR p.org_id = _rls_current_org_id())
+    ));
 
 -- widgets — per-cmd (widgets_select stays permissive for public config endpoint)
 DROP POLICY IF EXISTS widgets_insert ON widgets;
@@ -293,7 +305,7 @@ CREATE POLICY widget_kb_access_insert ON widget_kb_access
     FOR INSERT TO portal_api
     WITH CHECK (EXISTS (
         SELECT 1 FROM widgets w
-        WHERE w.id = widget_id
+        WHERE w.id = widget_kb_access.widget_id
           AND (_rls_current_org_id() IS NULL OR w.org_id = _rls_current_org_id())
     ));
 
@@ -302,7 +314,7 @@ CREATE POLICY widget_kb_access_delete ON widget_kb_access
     FOR DELETE TO portal_api
     USING (EXISTS (
         SELECT 1 FROM widgets w
-        WHERE w.id = widget_id
+        WHERE w.id = widget_kb_access.widget_id
           AND (_rls_current_org_id() IS NULL OR w.org_id = _rls_current_org_id())
     ));
 

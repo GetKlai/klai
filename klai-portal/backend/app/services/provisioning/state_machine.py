@@ -57,17 +57,13 @@ FORWARD_SEQUENCE: Final[list[tuple[str, str]]] = [
 
 # Terminal states that indicate the provisioning run is finished (successfully or
 # otherwise). Callers can use this set to gate retry/observability logic.
-TERMINAL_STATES: Final[frozenset[str]] = frozenset(
-    {"ready", "failed_rollback_complete", "failed_rollback_pending"}
-)
+TERMINAL_STATES: Final[frozenset[str]] = frozenset({"ready", "failed_rollback_complete", "failed_rollback_pending"})
 
 # States that the startup stuck-detector (M7) should actively reconcile when they
 # persist past the detector's `updated_at` grace period. These are all states
 # except the terminal ones, `pending` (signup transient), and `queued` (awaiting
 # BackgroundTask start). Changing this set requires updating M7 tests.
-STUCK_CANDIDATE_STATES: Final[frozenset[str]] = frozenset(
-    {next_state for _, next_state in FORWARD_SEQUENCE}
-)
+STUCK_CANDIDATE_STATES: Final[frozenset[str]] = frozenset({next_state for _, next_state in FORWARD_SEQUENCE})
 
 # Start timestamps per (org_id, step) for duration_ms measurement. Scoped to a
 # single provisioning run; the orchestrator resets this per run.
@@ -125,9 +121,7 @@ async def transition_state(
     """
     # @MX:NOTE: SPEC-PROV-001 R2/R14 — FOR UPDATE is the concurrency guarantee.
     # Do not remove the with_for_update() call without an alternative lock.
-    result = await db.execute(
-        select(PortalOrg).where(PortalOrg.id == org_id).with_for_update()
-    )
+    result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id).with_for_update())
     org = result.scalar_one_or_none()
     if org is None:
         raise LookupError(f"portal_orgs row not found for org_id={org_id}")
@@ -140,8 +134,7 @@ async def transition_state(
         # that first step; for every subsequent step we expect an exact match.
         if current_state != from_state:
             raise StateTransitionConflict(
-                f"org_id={org_id} expected from_state={from_state!r} "
-                f"but found {current_state!r}"
+                f"org_id={org_id} expected from_state={from_state!r} but found {current_state!r}"
             )
 
     org.provisioning_status = to_state

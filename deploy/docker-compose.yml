@@ -546,6 +546,12 @@ services:
       GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "\"urn:zitadel:iam:org:project:roles\".grafana_admin && 'Admin' || ''"
       GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "true"
       GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "false"
+      # VictoriaLogs basic-auth credentials — referenced by
+      # grafana/provisioning/datasources/datasources.yaml via $VAR expansion.
+      # Without this forward the datasource returns 401 on every query,
+      # which breaks all log dashboards and the SPEC-SEC-024 alert rule.
+      VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
+      VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
     depends_on:
       - victoriametrics
       - victorialogs

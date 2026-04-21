@@ -75,9 +75,7 @@ async def retry_provisioning(
     if failed_org is None:
         # No failed row with this slug → maybe the slug exists in a different
         # state, but that's not retryable via this endpoint.
-        existing_result = await db.execute(
-            select(PortalOrg).where(PortalOrg.slug == slug).limit(1)
-        )
+        existing_result = await db.execute(select(PortalOrg).where(PortalOrg.slug == slug).limit(1))
         existing = existing_result.scalar_one_or_none()
         if existing is None:
             raise HTTPException(

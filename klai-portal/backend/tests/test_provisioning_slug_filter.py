@@ -7,7 +7,6 @@ retry after `failed_rollback_complete` must be able to reclaim the original slug
 """
 
 
-
 def test_slug_query_source_filters_soft_deleted() -> None:
     """The slug lookup in _provision must filter out soft-deleted rows.
 

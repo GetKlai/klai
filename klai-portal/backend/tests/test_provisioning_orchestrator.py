@@ -137,7 +137,6 @@ def _make_db_and_org(org_id: int = 1, slug: str = "") -> tuple:
     mutate a single object — simulates the real DB for assertion purposes.
     """
 
-
     org = MagicMock()
     org.id = org_id
     org.name = "Acme BV"
@@ -231,8 +230,8 @@ async def test_failure_on_mongo_step_runs_earlier_compensators(mock_orchestrator
 
     call_order: list[str] = []
 
-    mock_orchestrator_env["zitadel"].delete_librechat_oidc_app.side_effect = (
-        lambda app_id: call_order.append("zitadel") or None
+    mock_orchestrator_env["zitadel"].delete_librechat_oidc_app.side_effect = lambda app_id: (
+        call_order.append("zitadel") or None
     )
 
     # LiteLLM delete is done via httpx — track when it is called.
@@ -267,9 +266,7 @@ async def test_failure_on_mongo_step_runs_earlier_compensators(mock_orchestrator
             await orchestrator._provision(1, db)
 
     # LIFO: litellm (step 2) compensator runs BEFORE zitadel (step 1)
-    assert call_order == ["litellm", "zitadel"], (
-        f"Expected LIFO compensator order [litellm, zitadel], got {call_order}"
-    )
+    assert call_order == ["litellm", "zitadel"], f"Expected LIFO compensator order [litellm, zitadel], got {call_order}"
 
     # Mongo compensator must NOT have run — mongo creation itself failed, so
     # state.mongo_user_created is still False.
@@ -308,9 +305,7 @@ async def test_compensator_exception_is_swallowed(mock_orchestrator_env) -> None
     db, _org = _make_db_and_org()
 
     mock_orchestrator_env["create_mongo"].side_effect = RuntimeError("mongo down")
-    mock_orchestrator_env["zitadel"].delete_librechat_oidc_app.side_effect = RuntimeError(
-        "zitadel also broken"
-    )
+    mock_orchestrator_env["zitadel"].delete_librechat_oidc_app.side_effect = RuntimeError("zitadel also broken")
 
     litellm_called = []
 

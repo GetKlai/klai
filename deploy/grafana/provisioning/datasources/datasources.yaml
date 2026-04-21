@@ -12,8 +12,17 @@ datasources:
       timeInterval: "30s"
 
   # Logs — VictoriaLogs (via official Grafana plugin)
+  # VictoriaLogs is started with -httpAuth.username / -httpAuth.password, so
+  # every query must include Basic auth. Credentials come from the grafana
+  # container's env vars (VICTORIALOGS_AUTH_USER + _PASSWORD) which compose
+  # forwards from /opt/klai/.env. See .claude/rules/klai/infra/observability.md.
   - name: VictoriaLogs
     type: victoriametrics-logs-datasource
     uid: victorialogs
     url: http://victorialogs:9428
     access: proxy
+    basicAuth: true
+    basicAuthUser: $VICTORIALOGS_AUTH_USER
+    secureJsonData:
+      basicAuthPassword: $VICTORIALOGS_AUTH_PASSWORD
+    editable: false
