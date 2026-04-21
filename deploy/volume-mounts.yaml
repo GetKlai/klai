@@ -308,6 +308,26 @@ mounts:
     retention_enforced_by: n/a
     notes: Firecrawl crawl queue state. Small. Worth including in backup.
 
+  ollama:
+    service: ollama
+    kind: bind
+    host: /opt/klai/ollama/models
+    container_path: /root/.ollama
+    image: ollama/ollama:0.21.0
+    category: data
+    data_path_source: upstream docs (OLLAMA_MODELS default root/.ollama)
+    verified: true
+    pii: false
+    backup: skip
+    backup_method: skip
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      LLM model weights cached locally. Large (~tens of GB), deterministically
+      re-downloadable from upstream. Backing up is wasteful — a restore is
+      `ollama pull` on each model in settings.yaml. Entry exists so Part A
+      registers the mount; backup deliberately skipped.
+
   scribe-audio:
     service: scribe-api
     kind: named
