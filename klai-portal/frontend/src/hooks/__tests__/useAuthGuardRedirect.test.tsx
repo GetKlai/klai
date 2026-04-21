@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { useAuthGuardRedirect } from '../useAuthGuardRedirect'
-import { AuthContext, type AuthContextValue, makeNoopEvents } from '@/lib/auth-context'
+import { AuthContext, type AuthContextValue } from '@/lib/auth-context'
 
 // Capture every navigate() call from inside the hook.
 const navigate = vi.fn()
@@ -23,13 +23,9 @@ function makeAuth({ isLoading = false, isAuthenticated = true }: AuthOverrides =
       ? { profile: { sub: 'u1' }, csrf_token: 'x', access_token_expires_at: 0 }
       : null,
     error: null,
-    events: makeNoopEvents(),
     signinRedirect: () => Promise.resolve(),
     removeUser: () => Promise.resolve(),
     signoutRedirect: () => Promise.resolve(),
-    signinSilent: () => Promise.resolve(null),
-    clearStaleState: () => Promise.resolve(),
-    activeNavigator: undefined,
     refetch: () => Promise.resolve(),
   }
 }

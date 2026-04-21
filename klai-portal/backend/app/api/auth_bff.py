@@ -31,6 +31,7 @@ from app.core.session import (
     SessionContext,
 )
 from app.models.portal import PortalUser
+from app.services import audit
 from app.services.bff_oidc import (
     OidcFlowError,
     build_authorize_url,
@@ -83,7 +84,9 @@ async def logout(
 ) -> Response:
     id_token_hint: str | None = None
     refresh_token_to_revoke: str | None = None
+    audit_resource_id = "unknown"
     if session is not None:
+        audit_resource_id = session.sid
         record = await session_service.load(session.sid)
         if record is not None:
             id_token_hint = record.id_token or None
@@ -92,6 +95,14 @@ async def logout(
 
     if refresh_token_to_revoke:
         await revoke_token(refresh_token_to_revoke, token_type_hint="refresh_token")  # noqa: S106
+
+    await audit.log_event(
+        org_id=0,
+        actor=session.zitadel_user_id if session is not None else "unknown",
+        action="auth.logout",
+        resource_type="session",
+        resource_id=audit_resource_id,
+    )
 
     response = Response(status_code=204)
     _clear_cookies(response)
@@ -256,6 +267,17 @@ def set_session_cookies(
     )
 
 
+# @MX:ANCHOR: canonical logout-cookie clearing.
+# @MX:REASON: Two cookie systems coexist:
+#   1. __Secure-klai_session + __Secure-klai_csrf — the SPEC-AUTH-008 BFF pair.
+#   2. klai_sso — the SPEC-AUTH-006 Login V2 "remember Zitadel session" cookie,
+#      still consumed by /api/auth/sso-complete in auth.py for silent login
+#      when the user lands on /login?authRequest=X.
+# Logout MUST wipe both. Without klai_sso clearing, any post-logout reauth
+# attempt (e.g. a stale tab, or LoginPage auto-signinRedirect firing during
+# navigation) re-authenticates the user silently. Product consequence: after
+# explicit logout the user enters credentials again — this is desired
+# behaviour, not a regression.
 def _clear_cookies(response: Response) -> None:
     domain = _cookie_domain()
     for name, httponly in ((SESSION_COOKIE_NAME, True), (CSRF_COOKIE_NAME, False)):
@@ -269,11 +291,6 @@ def _clear_cookies(response: Response) -> None:
             secure=True,
             samesite="lax",
         )
-    # Also invalidate the legacy SPEC-AUTH-006 klai_sso cookie. Without this
-    # the /api/auth/sso-complete endpoint remains usable, so any post-logout
-    # reauth attempt (e.g. LoginPage auto-signinRedirect racing with the
-    # Zitadel end_session navigation) silently re-authenticates the user.
-    # Uses response.delete_cookie so the attrs match auth.py's set path.
     response.delete_cookie(key="klai_sso", domain=domain or None, path="/")
 
 

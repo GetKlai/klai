@@ -153,8 +153,9 @@ class TestReadSession:
 # ---------------------------------------------------------------------------
 # POST /api/auth/bff/logout
 #
-# Namespaced under /bff/ during the migration soak so it doesn't collide
-# with the existing SPEC-AUTH-006 /api/auth/logout. Phase E will merge them.
+# Kept under /bff/ for historical reasons. The former SPEC-AUTH-006
+# /api/auth/logout endpoint has been removed; bff/logout now clears the
+# BFF session, CSRF, and legacy klai_sso cookies in a single call.
 # ---------------------------------------------------------------------------
 
 

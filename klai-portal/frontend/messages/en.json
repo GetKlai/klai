@@ -1403,7 +1403,6 @@
   "admin_billing_placeholder_zipcode": "1234 AB",
   "admin_billing_placeholder_city": "Amsterdam",
   "admin_billing_placeholder_tax_number": "NL123456789B01",
-  "session_token_expiring": "Session is being renewed...",
 
   "admin_nav_integrations": "Integrations",
   "admin_section_integrations_title": "Integrations",
