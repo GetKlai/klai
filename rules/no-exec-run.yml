@@ -27,3 +27,7 @@ files:
 # assert productioncode does NOT call it. Keep this list narrow.
 ignores:
   - klai-portal/backend/tests/**/*.py
+  # SPEC-SEC-024 M4.5 — deliberate regression to validate the Grafana alert
+  # chain end-to-end. DELETE this entry and the file it targets together in
+  # the revert commit immediately after AC-9 verification.
+  - klai-portal/backend/app/api/_sec_024_dryrun.py
