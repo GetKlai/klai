@@ -1,24 +1,19 @@
-import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
-import { useAuth } from '@/lib/auth'
+import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { LayoutDashboard, Users, FolderKanban, Settings, CreditCard, Puzzle, Key, MessageSquare } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { HelpButton } from '@/components/help/HelpButton'
 import * as m from '@/paraglide/messages'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
-import { useAuthGuardRedirect } from '@/hooks/useAuthGuardRedirect'
+import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 
 export const Route = createFileRoute('/admin')({
   component: AdminLayout,
 })
 
 function AdminLayout() {
-  const auth = useAuth()
-  const navigate = useNavigate()
-  const { user, isPending: userLoading } = useCurrentUser()
-  const isAdmin = user?.isAdmin === true
-  const isGroupAdmin = user?.isGroupAdmin === true
-  useAuthGuardRedirect()
+  const { canRender } = useProtectedRoute({
+    requireAdmin: true,
+    noRoleFallback: '/app',
+  })
 
   const adminNav = [
     { to: '/admin', label: m.admin_nav_overview(), icon: LayoutDashboard, end: true },
@@ -31,18 +26,7 @@ function AdminLayout() {
     { to: '/admin/settings', label: m.admin_nav_settings(), icon: Settings },
   ]
 
-  useEffect(() => {
-    if (auth.isLoading || !auth.isAuthenticated || userLoading) return
-    if (!isAdmin && !isGroupAdmin) {
-      void navigate({ to: '/app' })
-      return
-    }
-    if (user?.requires_2fa_setup) {
-      window.location.replace('/setup/2fa')
-    }
-  }, [auth.isLoading, auth.isAuthenticated, isAdmin, isGroupAdmin, user, userLoading, navigate])
-
-  if (auth.isLoading || !auth.isAuthenticated || userLoading || (!isAdmin && !isGroupAdmin)) {
+  if (!canRender) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />

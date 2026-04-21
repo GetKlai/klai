@@ -9,15 +9,15 @@ export const Route = createFileRoute('/')({
 
 function LoginPage() {
   const auth = useAuth()
-  const { isLoading, isAuthenticated, activeNavigator } = auth
+  const { isLoading, isAuthenticated } = auth
   const { locale } = useLocale()
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated && activeNavigator !== 'signoutRedirect') {
+    if (!isLoading && !isAuthenticated) {
       void auth.signinRedirect({ extraQueryParams: { ui_locales: locale } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- auth.signinRedirect is stable; adding auth would re-run on every render
-  }, [isLoading, isAuthenticated, activeNavigator, locale])
+  }, [isLoading, isAuthenticated, locale])
 
   if (isAuthenticated) {
     window.location.replace('/app')

@@ -4,9 +4,13 @@ Auth endpoints for the custom login UI.
 POST /api/auth/login          -- email+password -> Zitadel session -> OIDC callback URL
 POST /api/auth/totp-login     -- complete login with TOTP code (when user has 2FA)
 POST /api/auth/sso-complete   -- reuse portal session to silently complete LibreChat OIDC
-POST /api/auth/logout         -- clear the SSO cookie
 POST /api/auth/totp/setup     -- initiate TOTP registration (requires Bearer token)
 POST /api/auth/totp/confirm   -- activate TOTP after scanning QR (requires Bearer token)
+
+Logout of the `klai_sso` cookie is handled by `POST /api/auth/bff/logout` in
+`auth_bff.py`, which clears the BFF session + CSRF cookies alongside the SSO
+cookie in a single call. The former `POST /api/auth/logout` endpoint has been
+removed — its behaviour lives on as `_clear_cookies()` inside auth_bff.
 
 The authRequestId is issued by Zitadel when it redirects to the custom login UI:
   https://my.getklai.com/login?authRequest=<id>
@@ -562,25 +566,6 @@ async def sso_complete(
         ) from exc
 
     return LoginResponse(callback_url=_validate_callback_url(callback_url))
-
-
-@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    response: Response,
-    klai_sso: str | None = Cookie(default=None),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """Clear the SSO cookie on logout."""
-    session_data = _decrypt_sso(klai_sso) if klai_sso else None
-    session_id = session_data["sid"] if session_data else "unknown"
-    await audit.log_event(
-        org_id=0,
-        actor="unknown",
-        action="auth.logout",
-        resource_type="session",
-        resource_id=session_id,
-    )
-    response.delete_cookie(key="klai_sso", domain=f".{settings.domain}")
 
 
 @router.post("/auth/totp/setup", response_model=TOTPSetupResponse)
