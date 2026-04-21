@@ -21,7 +21,6 @@ import {
   type AuthContextValue,
   type AuthUser,
   type SessionResponse,
-  makeNoopEvents,
   readCsrfCookie,
   redirectToStart,
 } from '@/lib/auth-context'
@@ -29,12 +28,9 @@ import {
 // Re-export non-component surface so consumers import everything from `@/lib/auth`.
 export {
   useAuth,
-  useSession,
   readCsrfCookie,
   type AuthContextValue,
-  type AuthContextProps,
   type AuthUser,
-  type User,
   type UserProfile,
 } from '@/lib/auth-context'
 
@@ -59,13 +55,9 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
         csrf_token: 'dev-csrf',
         access_token_expires_at: Number.MAX_SAFE_INTEGER,
       },
-      events: makeNoopEvents(),
       signinRedirect: () => Promise.resolve(),
       removeUser: () => Promise.resolve(),
       signoutRedirect: () => Promise.resolve(),
-      signinSilent: () => Promise.resolve(null),
-      clearStaleState: () => Promise.resolve(),
-      activeNavigator: undefined,
       refetch: () => Promise.resolve(),
     }),
     [],
@@ -165,7 +157,7 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signoutRedirect = useCallback(
-    async (_opts: { post_logout_redirect_uri?: string } = {}): Promise<void> => {
+    async (): Promise<void> => {
       await removeUser()
     },
     [removeUser],
@@ -177,14 +169,9 @@ function BffAuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       user,
       error,
-      events: makeNoopEvents(),
       signinRedirect,
       removeUser,
       signoutRedirect,
-      // Silent renew is server-side in BFF — the client never holds tokens.
-      signinSilent: () => Promise.resolve(null),
-      clearStaleState: () => Promise.resolve(),
-      activeNavigator: undefined,
       refetch: load,
     }),
     [isLoading, user, error, signinRedirect, removeUser, signoutRedirect, load],

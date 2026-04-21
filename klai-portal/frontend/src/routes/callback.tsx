@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import { useAuth, type AuthContextProps } from '@/lib/auth'
+import { useAuth, type AuthContextValue } from '@/lib/auth'
 import * as Sentry from '@sentry/react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
@@ -199,7 +199,7 @@ function sanitizeReturnTo(value: string | undefined): string {
  * events, and reports the error back to the React tree for the UI.
  */
 async function applyDecision(
-  auth: AuthContextProps,
+  auth: AuthContextValue,
   returnTo: string,
   signal: AbortSignal,
   onError: (err: unknown) => void,

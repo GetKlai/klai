@@ -6,7 +6,9 @@ DELETE /recordings/{recording_id}.
 """
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +18,36 @@ from app.services.recording_cleanup import (
     delete_recording,
 )
 
+
+def _scoped_session_stub():
+    """Build a fake tenant_scoped_session that records the scoped commit.
+
+    `cleanup_recording` now performs the RLS-scoped UPDATE via
+    `tenant_scoped_session(meeting.org_id)` so the UPDATE is not silently
+    filtered by vexa_meetings' UPDATE policy. Tests need to stub it with
+    something that (a) behaves like an async context manager, (b) returns
+    a session whose `.execute()` reports rowcount=1, (c) lets us assert the
+    org_id that was scoped.
+    """
+    calls = SimpleNamespace(org_id=None, committed=False)
+
+    @asynccontextmanager
+    async def _fake(org_id: int):
+        calls.org_id = org_id
+        session = AsyncMock()
+        result = MagicMock()
+        result.rowcount = 1
+        session.execute = AsyncMock(return_value=result)
+
+        async def _commit():
+            calls.committed = True
+
+        session.commit = _commit
+        yield session
+
+    return _fake, calls
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -23,6 +55,7 @@ from app.services.recording_cleanup import (
 
 def _make_meeting(
     *,
+    org_id: int = 1,
     status: str = "done",
     vexa_meeting_id: int | None = 42,
     recording_deleted: bool = False,
@@ -31,6 +64,7 @@ def _make_meeting(
 ) -> MagicMock:
     m = MagicMock()
     m.id = uuid.uuid4()
+    m.org_id = org_id
     m.status = status
     m.vexa_meeting_id = vexa_meeting_id
     m.recording_deleted = recording_deleted
@@ -80,29 +114,40 @@ class TestCleanupRecording:
     @patch("app.services.recording_cleanup.delete_recording", new_callable=AsyncMock)
     @pytest.mark.anyio
     async def test_happy_path_vexa_meeting_id(self, mock_delete: AsyncMock) -> None:
-        """Successful cleanup using vexa_meeting_id as fallback."""
-        mock_delete.return_value = True
-        meeting = _make_meeting()
-        db = AsyncMock()
+        """Successful cleanup using vexa_meeting_id as fallback.
 
-        await cleanup_recording(meeting, db)
+        Verifies also that the UPDATE is scoped to the meeting's own org_id
+        via tenant_scoped_session — the loop runs cross-org, so the UPDATE
+        needs its own per-meeting tenant context to satisfy RLS.
+        """
+        mock_delete.return_value = True
+        meeting = _make_meeting(org_id=7)
+        db = AsyncMock()
+        scoped_factory, scoped_calls = _scoped_session_stub()
+
+        with patch("app.services.recording_cleanup.tenant_scoped_session", scoped_factory):
+            await cleanup_recording(meeting, db)
 
         mock_delete.assert_awaited_once_with(meeting.vexa_meeting_id, str(meeting.id))
+        assert scoped_calls.org_id == 7  # tenant was scoped to the meeting's org
+        assert scoped_calls.committed is True
         assert meeting.recording_deleted is True
         assert meeting.recording_deleted_at is not None
-        db.commit.assert_awaited_once()
 
     @patch("app.services.recording_cleanup.delete_recording", new_callable=AsyncMock)
     @pytest.mark.anyio
     async def test_happy_path_recording_id_kwarg(self, mock_delete: AsyncMock) -> None:
         """recording_id kwarg takes precedence over vexa_meeting_id."""
         mock_delete.return_value = True
-        meeting = _make_meeting(vexa_meeting_id=42)
+        meeting = _make_meeting(vexa_meeting_id=42, org_id=3)
         db = AsyncMock()
+        scoped_factory, scoped_calls = _scoped_session_stub()
 
-        await cleanup_recording(meeting, db, recording_id=99)
+        with patch("app.services.recording_cleanup.tenant_scoped_session", scoped_factory):
+            await cleanup_recording(meeting, db, recording_id=99)
 
         mock_delete.assert_awaited_once_with(99, str(meeting.id))
+        assert scoped_calls.org_id == 3
         assert meeting.recording_deleted is True
 
     @patch("app.services.recording_cleanup.delete_recording", new_callable=AsyncMock)
@@ -112,18 +157,53 @@ class TestCleanupRecording:
         mock_delete.return_value = False
         meeting = _make_meeting()
         db = AsyncMock()
+        scoped_factory, scoped_calls = _scoped_session_stub()
 
-        await cleanup_recording(meeting, db)
+        with patch("app.services.recording_cleanup.tenant_scoped_session", scoped_factory):
+            await cleanup_recording(meeting, db)
 
         assert meeting.status == "done"
         assert meeting.recording_deleted is False
         assert meeting.recording_deleted_at is None
-        db.commit.assert_not_awaited()
+        assert scoped_calls.committed is False  # no tenant session was opened either
 
 
 # ---------------------------------------------------------------------------
 # Guard conditions
 # ---------------------------------------------------------------------------
+
+
+class TestRlsFailLoud:
+    """Regression: cleanup_recording must surface the silent-UPDATE bug.
+
+    vexa_meetings has a tenant-scoped UPDATE RLS policy. When the cleanup
+    LOOP (which runs cross-org) passed its session down to cleanup_recording
+    without setting tenant context, `meeting.recording_deleted = True;
+    await db.commit()` silently updated 0 rows. The cleanup then ran forever
+    on the same meeting every 5 minutes.
+    """
+
+    @patch("app.services.recording_cleanup.delete_recording", new_callable=AsyncMock)
+    @pytest.mark.anyio
+    async def test_zero_rowcount_raises(self, mock_delete: AsyncMock) -> None:
+        mock_delete.return_value = True
+        meeting = _make_meeting(org_id=99)
+        db = AsyncMock()
+
+        @asynccontextmanager
+        async def _scoped_no_rows(_org_id: int):
+            session = AsyncMock()
+            result = MagicMock()
+            result.rowcount = 0  # RLS silently filtered the row
+            session.execute = AsyncMock(return_value=result)
+            session.commit = AsyncMock()
+            yield session
+
+        with (
+            patch("app.services.recording_cleanup.tenant_scoped_session", _scoped_no_rows),
+            pytest.raises(RuntimeError, match="matched 0 rows"),
+        ):
+            await cleanup_recording(meeting, db)
 
 
 class TestCleanupGuards:
@@ -167,8 +247,10 @@ class TestCleanupGuards:
         mock_delete.return_value = True
         meeting = _make_meeting(vexa_meeting_id=None)
         db = AsyncMock()
+        scoped_factory, _scoped_calls = _scoped_session_stub()
 
-        await cleanup_recording(meeting, db, recording_id=77)
+        with patch("app.services.recording_cleanup.tenant_scoped_session", scoped_factory):
+            await cleanup_recording(meeting, db, recording_id=77)
 
         mock_delete.assert_awaited_once_with(77, str(meeting.id))
         assert meeting.recording_deleted is True

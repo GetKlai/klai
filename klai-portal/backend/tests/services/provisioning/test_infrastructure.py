@@ -275,10 +275,12 @@ class TestCharacterizeFlushRedisAndRestartLibrechat:
         mock_docker.from_env.return_value.containers.get.assert_called_once_with("librechat-acme")
         container.restart.assert_called_once_with(timeout=10)
 
-    def test_redis_failure_does_not_block_container_restart(self):
-        """librechat.yaml has no TTL in Redis, so a silent swallow is bad; but a
-        failed flush should still let the restart happen — worst case the container
-        reads stale cached yaml, which is recoverable by the next regenerate.
+    def test_redis_failure_raises_without_touching_container(self):
+        """Fail-loud: a failed FLUSHALL means LibreChat keeps serving the
+        cached yaml while the operator thinks the change landed. Previously
+        this was a warning-and-continue. Now the helper raises so the caller
+        (provisioning orchestrator / mcp_servers restart task) sees the
+        failure and can surface it.
         """
         from app.services.provisioning import _flush_redis_and_restart_librechat
 
@@ -291,11 +293,38 @@ class TestCharacterizeFlushRedisAndRestartLibrechat:
         with (
             patch("app.services.provisioning.infrastructure._redis_sync_client", redis_factory),
             patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            pytest.raises(RedisError),
         ):
             mock_docker.from_env.return_value.containers.get.return_value = container
-            _flush_redis_and_restart_librechat("acme")  # must not raise
+            _flush_redis_and_restart_librechat("acme")
 
-        container.restart.assert_called_once_with(timeout=10)
+        # Container restart must NOT run when Redis flush failed — we don't
+        # want to bounce the tenant's LibreChat on a failed config update.
+        container.restart.assert_not_called()
+
+    def test_container_health_check_timeout_raises(self):
+        """If the container doesn't reach 'running' state within the grace
+        window, the helper raises. Previously this was a silent warning and
+        provisioning returned success with a broken tenant.
+        """
+        import app.services.provisioning.infrastructure as infra_mod
+        from app.services.provisioning import _flush_redis_and_restart_librechat
+
+        redis_factory, _ = _mock_redis_sync_client()
+
+        container = MagicMock()
+        container.status = "restarting"  # never flips to 'running'
+
+        with (
+            patch("app.services.provisioning.infrastructure._redis_sync_client", redis_factory),
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+            # Short-circuit the 30s deadline so the test runs in ms.
+            patch.object(infra_mod.time, "monotonic", side_effect=[0.0, 31.0]),
+            patch.object(infra_mod.time, "sleep"),
+            pytest.raises(RuntimeError, match="did not reach running state"),
+        ):
+            mock_docker.from_env.return_value.containers.get.return_value = container
+            _flush_redis_and_restart_librechat("acme")
 
     def test_never_calls_container_exec_run(self):
         """Regression guard against the SEC-021 bug (exec/*/start forbidden)."""

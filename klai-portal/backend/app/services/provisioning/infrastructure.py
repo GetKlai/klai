@@ -20,7 +20,6 @@ import pymongo
 import redis
 import structlog
 from pymongo.errors import OperationFailure
-from redis.exceptions import RedisError
 
 from app.core.config import settings
 from app.services.provisioning.generators import _generate_librechat_yaml
@@ -118,17 +117,16 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
     R-001: FLUSHALL clears all Redis keys including active sessions.
     Acceptable for config updates; document in UI that changes cause a brief
     interruption.
+
+    Fail-loud: both the Redis flush and the post-restart health check are
+    hard requirements. A failed flush means LibreChat keeps serving stale
+    yaml and the operator thinks their change landed; a failed health check
+    means the tenant's LibreChat is down and provisioning silently succeeded.
+    Both were previously logged as warnings and ignored. Now they raise.
     """
-    # Flush Redis over the wire. A failure here is logged but not fatal — the
-    # restart still happens, and worst case LibreChat keeps reading the stale
-    # cached yaml until the next regeneration. The CI-facing regenerate path
-    # surfaces the error to the operator via response.errors.
-    try:
-        with _redis_sync_client() as client:
-            client.flushall()
-        logger.info("redis_flushed", slug=slug)
-    except RedisError as exc:
-        logger.warning("redis_flushall_failed", slug=slug, error=str(exc))
+    with _redis_sync_client() as client:
+        client.flushall()
+    logger.info("redis_flushed", slug=slug)
 
     # Restart the tenant's LibreChat container. /containers/{id}/restart is
     # allowed by docker-socket-proxy (CONTAINERS=1 + POST=1).
@@ -138,24 +136,30 @@ def _flush_redis_and_restart_librechat(slug: str) -> None:
     container.restart(timeout=10)
     logger.info("librechat_container_restarted", container=container_name)
 
-    # Health check: wait up to 30s for container to reach running state
+    # Health check: wait up to 30s for the container to reach running state.
+    # @MX:NOTE: sync sleep intentional — this function is invoked only via
+    # loop.run_in_executor() from async callers (app/api/mcp_servers.py + this
+    # module's provisioning orchestrator). Inside the executor thread there is
+    # no running event loop, so asyncio.sleep would raise RuntimeError.
     deadline = time.monotonic() + 30
+    last_status: str | None = None
     while time.monotonic() < deadline:
         try:
             container.reload()
-            if container.status == "running":
+            last_status = container.status
+            if last_status == "running":
                 logger.info("librechat_container_running", container=container_name)
                 return
         except Exception as exc:
             logger.debug("container_health_check_reload_failed", error=str(exc))
-        # @MX:NOTE: sync sleep intentional — this function is invoked only via
-        # loop.run_in_executor() from async callers (app/api/mcp_servers.py + this
-        # module's provisioning orchestrator). Inside the executor thread there is
-        # no running event loop, so asyncio.sleep would raise RuntimeError. F-028
-        # verified via call-site trace.
         time.sleep(3)  # nosemgrep: arbitrary-sleep
 
-    logger.warning("librechat_container_not_running", container=container_name, timeout_seconds=30)
+    # Timed out. Previously a warning; now fatal so provisioning / config
+    # regeneration explicitly fails and the operator sees it.
+    raise RuntimeError(
+        f"LibreChat container {container_name!r} did not reach running state "
+        f"within 30s after restart (last status: {last_status})"
+    )
 
 
 def _write_tenant_caddyfile(slug: str) -> None:

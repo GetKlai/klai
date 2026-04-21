@@ -26,7 +26,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, get_db, set_tenant
+from app.core.database import get_db, set_tenant, tenant_scoped_session
 from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
@@ -58,21 +58,13 @@ class PartnerAuthContext:
 async def _update_last_used(key_id: str, org_id: int) -> None:
     """Update last_used_at timestamp (fire-and-forget, independent session).
 
-    Uses raw SQL with explicit set_config because this runs as an asyncio.create_task
-    on a fresh session — no tenant context from the request is available.
-
-    The connection is explicitly pinned via session.connection() before set_config;
-    without this, SQLAlchemy async can check out a different pooled connection for
-    the UPDATE, the SET is invisible, and RLS silently filters the row to zero
-    (UPDATEs don't raise when the USING clause excludes all rows).
+    Fire-and-forget: runs as asyncio.create_task so the caller is not blocked.
+    `tenant_scoped_session` pins the connection and sets app.current_org_id
+    atomically, so the UPDATE is visible to RLS. rowcount==0 raises — the
+    RLS guard event listener also flags this at ERROR level as a safety net.
     """
     try:
-        async with AsyncSessionLocal() as db:
-            await db.connection()
-            await db.execute(
-                text("SELECT set_config('app.current_org_id', :oid, false)"),
-                {"oid": str(org_id)},
-            )
+        async with tenant_scoped_session(org_id) as db:
             result = await db.execute(
                 text("UPDATE partner_api_keys SET last_used_at = now() WHERE id = :id"),
                 {"id": key_id},

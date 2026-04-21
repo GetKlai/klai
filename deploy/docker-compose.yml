@@ -278,15 +278,28 @@ services:
           cpus: '6'
           memory: 12G
 
-  # ─── Docker socket proxy (limits portal-api to required Docker API calls only)
+  # ─── Docker socket proxy (limits portal-api + runtime-api to required Docker API calls only)
+  # SPEC-SEC-021: routes portal-api + runtime-api through this proxy instead of mounting the socket directly.
+  # SPEC-SEC-024: audit verified this minimum (CONTAINERS+NETWORKS+POST+DELETE) covers every
+  # Docker API call portal-api actually makes — see .moai/specs/SPEC-SEC-024/plan.md Tabel C.
+  # Runtime-api is black-box; unexpected 403's are caught by the permanent Grafana alert
+  # "Security — Proxy Denials" (SPEC-SEC-024-R12). Fix-forward: add the specific verb here
+  # if the alert fires. Never add a verb preventively.
+  # FORBIDDEN — never enable any of these (see docker-socket-proxy.md pitfall rule):
+  #   EXEC=1     → grants arbitrary shell in any container (the whole point of this proxy)
+  #   BUILD=1    → arbitrary image build on the host
+  #   IMAGES=1   → image pull/push/remove, bypasses deploy-time pinning
+  #   VOLUMES=1  → host volume manipulation
+  #   SYSTEM=1   → host-level Docker daemon info/control
+  #   PLUGINS=1  → load arbitrary Docker plugins
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:v0.4.2
     restart: unless-stopped
     environment:
-      CONTAINERS: 1
-      NETWORKS: 1
-      POST: 1
-      DELETE: 1
+      CONTAINERS: 1   # GET /containers/json + /containers/{id}/json — list, inspect
+      NETWORKS: 1     # GET /networks + /networks/{id} — list, inspect, connect
+      POST: 1         # enables POST verbs: /containers/create+start+restart, /networks/connect
+      DELETE: 1       # enables DELETE /containers/{id} — provisioning rollback + stale cleanup
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:

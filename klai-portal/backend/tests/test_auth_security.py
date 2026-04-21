@@ -121,29 +121,33 @@ class TestAuthAuditLogging:
 
     @pytest.mark.asyncio
     async def test_logout_writes_auth_logout_audit(self) -> None:
-        """The logout endpoint must write an audit entry with action='auth.logout'."""
-        from app.api.auth import logout
+        """The BFF logout endpoint must write an audit entry with action='auth.logout'."""
+        from app.api.auth_bff import logout
+        from app.core.session import SessionContext
 
-        response = MagicMock()
-        db = AsyncMock()
+        session = SessionContext(
+            sid="sess-xyz",
+            zitadel_user_id="user-42",
+            access_token="atk",
+            csrf_token="csrf-xyz",
+            access_token_expires_at=0,
+        )
 
-        # Provide a valid-looking SSO cookie value (will be decrypted)
         with (
-            patch("app.api.auth.audit") as mock_audit,
-            patch("app.api.auth._decrypt_sso", return_value={"sid": "sess-xyz", "stk": "tok-1"}),
+            patch("app.api.auth_bff.audit") as mock_audit,
+            patch("app.api.auth_bff.session_service") as mock_session_service,
         ):
             mock_audit.log_event = AsyncMock()
+            mock_session_service.load = AsyncMock(return_value=None)
+            mock_session_service.revoke = AsyncMock()
 
-            await logout(response=response, klai_sso="encrypted-cookie-value", db=db)
+            await logout(session=session)
 
             mock_audit.log_event.assert_called_once()
-            call_kwargs = mock_audit.log_event.call_args
-            found_action = None
-            if call_kwargs.kwargs:
-                found_action = call_kwargs.kwargs.get("action")
-            elif len(call_kwargs.args) >= 4:
-                found_action = call_kwargs.args[3]
-            assert found_action == "auth.logout"
+            call = mock_audit.log_event.call_args
+            assert call.kwargs.get("action") == "auth.logout"
+            assert call.kwargs.get("actor") == "user-42"
+            assert call.kwargs.get("resource_id") == "sess-xyz"
 
     @pytest.mark.asyncio
     async def test_totp_login_writes_auth_login_totp(self) -> None:

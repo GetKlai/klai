@@ -31,6 +31,7 @@ from app.core.session import (
     SessionContext,
 )
 from app.models.portal import PortalUser
+from app.services import audit
 from app.services.bff_oidc import (
     OidcFlowError,
     build_authorize_url,
@@ -48,6 +49,29 @@ from app.services.oidc_pending import oidc_pending
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/auth", tags=["auth-bff"])
+
+
+# ---------------------------------------------------------------------------
+# OIDC error classification
+# ---------------------------------------------------------------------------
+#
+# A handful of callback failures are transient and recoverable by simply
+# restarting the authorize flow — the user has done nothing wrong and should
+# not see an error page. Canonical example: a stale browser-history callback
+# URL arrives with a state that was already consumed (or a fresh callback
+# races a container restart that dropped the in-memory pieces of the flow).
+#
+# For those we set a short-lived retry cookie and bounce through `/`, which
+# immediately fires signinRedirect(). If a second recoverable failure lands
+# while the retry cookie is still present, we stop bouncing and show the
+# error page — this prevents infinite loops when something is fundamentally
+# broken upstream.
+#
+# Anything outside the recoverable set is treated as user-visible.
+
+_RECOVERABLE_OIDC_REASONS: frozenset[str] = frozenset({"invalid_state"})
+_RETRY_COOKIE_NAME = "klai_oidc_retry"
+_RETRY_COOKIE_MAX_AGE_SECONDS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +107,9 @@ async def logout(
 ) -> Response:
     id_token_hint: str | None = None
     refresh_token_to_revoke: str | None = None
+    audit_resource_id = "unknown"
     if session is not None:
+        audit_resource_id = session.sid
         record = await session_service.load(session.sid)
         if record is not None:
             id_token_hint = record.id_token or None
@@ -92,6 +118,14 @@ async def logout(
 
     if refresh_token_to_revoke:
         await revoke_token(refresh_token_to_revoke, token_type_hint="refresh_token")  # noqa: S106
+
+    await audit.log_event(
+        org_id=0,
+        actor=session.zitadel_user_id if session is not None else "unknown",
+        action="auth.logout",
+        resource_type="session",
+        resource_id=audit_resource_id,
+    )
 
     response = Response(status_code=204)
     _clear_cookies(response)
@@ -153,15 +187,15 @@ async def oidc_callback(
 ) -> Response:
     if error:
         logger.warning("bff_oidc_callback_op_error", error=error)
-        return _fail_redirect(error)
+        return _fail_redirect(error, request)
 
     if not code or not state:
-        return _fail_redirect("invalid_request")
+        return _fail_redirect("invalid_request", request)
 
     pending = await oidc_pending.consume(state)
     if pending is None:
         logger.warning("bff_oidc_callback_unknown_state")
-        return _fail_redirect("invalid_state")
+        return _fail_redirect("invalid_state", request)
 
     current_ua_hash = session_service.hash_metadata(request.headers.get("user-agent"))
     if pending.user_agent_hash and pending.user_agent_hash != current_ua_hash:
@@ -174,16 +208,16 @@ async def oidc_callback(
             redirect_uri=_callback_url(),
         )
     except OidcFlowError as exc:
-        return _fail_redirect(exc.code or "token_exchange_failed")
+        return _fail_redirect(exc.code or "token_exchange_failed", request)
 
     try:
         claims = verify_id_token(tokens.id_token)
     except OidcFlowError as exc:
-        return _fail_redirect(exc.code or "id_token_invalid")
+        return _fail_redirect(exc.code or "id_token_invalid", request)
 
     zitadel_user_id = str(claims.get("sub", ""))
     if not zitadel_user_id:
-        return _fail_redirect("id_token_invalid")
+        return _fail_redirect("id_token_invalid", request)
 
     portal_row = (
         await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
@@ -217,6 +251,10 @@ async def oidc_callback(
         csrf_token=record.csrf_token,
         max_age_seconds=settings.bff_session_ttl_seconds,
     )
+    # A previous recoverable failure may have left the retry cookie set; clear
+    # it now that we have a valid session so a future transient failure still
+    # gets its one free retry.
+    _clear_retry_cookie(response)
     logger.info("bff_oidc_callback_success", zitadel_user_id=zitadel_user_id, org_id=org_id)
     return response
 
@@ -256,6 +294,17 @@ def set_session_cookies(
     )
 
 
+# @MX:ANCHOR: canonical logout-cookie clearing.
+# @MX:REASON: Two cookie systems coexist:
+#   1. __Secure-klai_session + __Secure-klai_csrf — the SPEC-AUTH-008 BFF pair.
+#   2. klai_sso — the SPEC-AUTH-006 Login V2 "remember Zitadel session" cookie,
+#      still consumed by /api/auth/sso-complete in auth.py for silent login
+#      when the user lands on /login?authRequest=X.
+# Logout MUST wipe both. Without klai_sso clearing, any post-logout reauth
+# attempt (e.g. a stale tab, or LoginPage auto-signinRedirect firing during
+# navigation) re-authenticates the user silently. Product consequence: after
+# explicit logout the user enters credentials again — this is desired
+# behaviour, not a regression.
 def _clear_cookies(response: Response) -> None:
     domain = _cookie_domain()
     for name, httponly in ((SESSION_COOKIE_NAME, True), (CSRF_COOKIE_NAME, False)):
@@ -269,11 +318,6 @@ def _clear_cookies(response: Response) -> None:
             secure=True,
             samesite="lax",
         )
-    # Also invalidate the legacy SPEC-AUTH-006 klai_sso cookie. Without this
-    # the /api/auth/sso-complete endpoint remains usable, so any post-logout
-    # reauth attempt (e.g. LoginPage auto-signinRedirect racing with the
-    # Zitadel end_session navigation) silently re-authenticates the user.
-    # Uses response.delete_cookie so the attrs match auth.py's set path.
     response.delete_cookie(key="klai_sso", domain=domain or None, path="/")
 
 
@@ -299,9 +343,52 @@ def _callback_url() -> str:
     return f"{_origin()}/api/auth/oidc/callback"
 
 
-def _fail_redirect(reason: str) -> RedirectResponse:
+def _fail_redirect(reason: str, request: Request) -> RedirectResponse:
+    """Redirect away from a failed OIDC callback.
+
+    Recoverable reasons (e.g. `invalid_state`) get ONE silent retry: we set a
+    short-lived cookie and redirect to `/`, where LoginPage auto-fires a fresh
+    signinRedirect. If the retry cookie is already present we treat the second
+    failure as fatal, clear the cookie, and show `/logged-out?reason=<code>`.
+    Non-recoverable reasons always show the error page.
+    """
     safe_reason = urllib.parse.quote(reason, safe="")
-    return RedirectResponse(url=f"{_origin()}/logged-out?reason={safe_reason}", status_code=302)
+    retry_cookie_present = request.cookies.get(_RETRY_COOKIE_NAME) is not None
+
+    if reason in _RECOVERABLE_OIDC_REASONS and not retry_cookie_present:
+        response = RedirectResponse(url=f"{_origin()}/", status_code=302)
+        _set_retry_cookie(response)
+        logger.info("bff_oidc_callback_auto_retry", reason=reason)
+        return response
+
+    response = RedirectResponse(
+        url=f"{_origin()}/logged-out?reason={safe_reason}",
+        status_code=302,
+    )
+    _clear_retry_cookie(response)
+    return response
+
+
+def _set_retry_cookie(response: Response) -> None:
+    domain = _cookie_domain()
+    response.set_cookie(
+        _RETRY_COOKIE_NAME,
+        "1",
+        max_age=_RETRY_COOKIE_MAX_AGE_SECONDS,
+        path="/",
+        domain=domain,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+
+
+def _clear_retry_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=_RETRY_COOKIE_NAME,
+        domain=_cookie_domain() or None,
+        path="/",
+    )
 
 
 def _safe_return_to(value: str) -> str:

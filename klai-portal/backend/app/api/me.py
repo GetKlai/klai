@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bearer import bearer
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant
 from app.models.audit import PortalAuditLog
 from app.models.events import ProductEvent
 from app.models.groups import PortalGroup, PortalGroupMembership
@@ -91,6 +91,7 @@ async def me(
     preferred_language: Literal["nl", "en"] = "nl"
     portal_role: str = "member"
     org_found: bool = False
+    resolved_org_id: int | None = None
     if zitadel_user_id:
         result = await db.execute(
             select(PortalOrg, PortalUser)
@@ -101,6 +102,7 @@ async def me(
         if row:
             org, portal_user = row
             org_found = True
+            resolved_org_id = org.id
             provisioning_status = org.provisioning_status
             mfa_policy = org.mfa_policy
             preferred_language = portal_user.preferred_language
@@ -123,7 +125,13 @@ async def me(
         except Exception as exc:
             logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc)
 
-    products = await get_effective_products(zitadel_user_id, db) if zitadel_user_id else []
+    # get_effective_products queries portal_user_products + portal_group_products,
+    # both RLS-protected. The session has to carry app.current_org_id before the
+    # query is issued or PostgreSQL rejects it with InsufficientPrivilegeError.
+    products: list[str] = []
+    if zitadel_user_id and resolved_org_id is not None:
+        await set_tenant(db, resolved_org_id)
+        products = await get_effective_products(zitadel_user_id, db)
 
     return MeResponse(
         user_id=zitadel_user_id,

@@ -1520,7 +1520,6 @@
   "admin_billing_placeholder_zipcode": "1234 AB",
   "admin_billing_placeholder_city": "Amsterdam",
   "admin_billing_placeholder_tax_number": "NL123456789B01",
-  "session_token_expiring": "Sessie wordt verlengd...",
 
   "admin_nav_integrations": "Integraties",
   "admin_section_integrations_title": "Integraties",
