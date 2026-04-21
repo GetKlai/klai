@@ -22,6 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install yq + jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          sudo curl -fsSL \
+            https://github.com/mikefarah/yq/releases/download/v4.47.1/yq_linux_amd64 \
+            -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+          jq --version
+
       - name: Run audit
         run: bash scripts/audit-compose-volumes.sh
 
