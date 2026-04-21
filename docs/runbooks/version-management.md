@@ -136,30 +136,43 @@ For any external service (non-`ghcr.io/getklai/*`):
 1. **Research**: read the release notes between current pinned version and target. Data-migration-on-startup? Config file syntax change? Image labels show new required env vars?
 2. **Repo**: edit `deploy/docker-compose.yml` with the new explicit version tag.
 3. **VERSIONS.md**: update the row with the new version; re-check rationale is still accurate.
-4. **Commit + push**: `deploy-compose.yml` workflow auto-syncs the compose file to `/opt/klai/docker-compose.yml`.
-5. **Pull + restart on server**:
+4. **Stateful-service pre-flight** (if the service has a `category: data` entry in `deploy/volume-mounts.yaml`):
+   - Run `scripts/audit-compose-volumes.sh` locally — CI will run it on the PR anyway, but catching it locally saves a roundtrip.
+   - Confirm the last Storage Box backup is ≤ 24h old via `sftp -P 23 $STORAGEBOX_USER@$STORAGEBOX_HOST ls backups/core-01/` — if older, trigger a manual `sudo -u klai /opt/klai/scripts/backup.sh` before the upgrade.
+   - Check if the new image changes its data path: `docker image inspect <image> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '_DATA_PATH|PGDATA|_HOME'` — compare with the inventory's `container_path` for this service.
+5. **Commit + push**: `deploy-compose.yml` workflow auto-syncs the compose file to `/opt/klai/docker-compose.yml`.
+6. **Pull + restart on server**:
    ```bash
    ssh core-01 "cd /opt/klai && docker compose pull <service> && docker compose up -d <service>"
    ```
-6. **Verify**:
+7. **Verify** — container health AND data integrity:
    ```bash
    ssh core-01 "docker ps --filter name=<service> --format '{{.Names}}\t{{.Status}}\t{{.CreatedAt}}'"
    ssh core-01 "docker logs --tail 30 <container>"
+   # For stateful services: prove the new container actually persists to the host volume.
+   ssh core-01 "sudo /opt/klai/scripts/persistence-smoke.sh <service>"
    ```
-   Container must be `Up X seconds (healthy)`. Logs must not show errors.
+   Container must be `Up X seconds (healthy)`. Logs must not show errors. For stateful services, persistence-smoke must exit 0 — `Up` alone does not prove the new container's writes survive a recreate.
 
 ### 3.4 Docker image major upgrade
 
 Same as minor + **always** these extra steps:
 
-1. **Back up data volume before starting**:
+1. **Fresh manual backup immediately before the upgrade** (not yesterday's cron backup):
+   ```bash
+   ssh core-01 "sudo -u klai /opt/klai/scripts/backup.sh"
+   # Grab the dated Storage Box path — include it in the PR description.
+   ```
+   For services outside `backup.sh`'s rotation, also take a per-volume tar:
    ```bash
    ssh core-01 "docker run --rm -v <volume>:/data -v /opt/klai/backups:/backup alpine tar czf /backup/<service>-$(date +%F).tar.gz /data"
    ```
 2. **Check for data migration**: release notes frequently mandate a migration step (`meilisearch` v1.40 → v1.42 is a concrete example — the binary refused to start against the old DB).
-3. **Plan rollback**: know the exact `git revert <sha>` command + how to restore the volume from backup.
-4. **Execute in low-traffic window**: prod bumps for stateful services happen outside business hours.
-5. **Update `VERSIONS.md` rationale**: a major bump often changes the upgrade path for future bumps.
+3. **Check if the data path changed**: major image upgrades sometimes relocate their data dir. Run `docker image inspect <new-image> --format '{{range .Config.Env}}{{println .}}{{end}}'` and diff against the same call on the old image. If the path changed, update `deploy/volume-mounts.yaml` AND the compose mount target in the SAME commit — the audit CI will block you if they disagree.
+4. **Plan rollback**: know the exact `git revert <sha>` command + how to restore the volume from backup.
+5. **Execute in low-traffic window**: prod bumps for stateful services happen outside business hours.
+6. **Run persistence-smoke after startup**: container `Up X (healthy)` is necessary but not sufficient. Run `sudo /opt/klai/scripts/persistence-smoke.sh <service>` and confirm OK before closing the PR.
+7. **Update `VERSIONS.md` rationale**: a major bump often changes the upgrade path for future bumps.
 
 ### 3.5 Python runtime upgrade (e.g. 3.13 → 3.14)
 
@@ -317,6 +330,23 @@ Zitadel minor bumps sometimes invalidate the portal-api PAT (`Errors.Token.Inval
 - Have a fresh PAT rotation window scheduled post-deploy
 - See `.claude/rules/klai/platform/zitadel.md` and `runbooks/platform-recovery.md#zitadel-pat-rotation`
 
+### 7.10 Bind mount path must match the image's data path (CRIT)
+
+Declaring `/opt/klai/X:/some/path` in compose tells Docker where to mount, not where the image writes. If the image's configured data path differs, the bind mount is cosmetic — writes still "succeed" (into the container's writable layer) and vanish on recreate. The service appears healthy for months until the next container restart, at which point all data is lost.
+
+**Concrete case:** 2026-04-19. FalkorDB mount was `/opt/klai/falkordb-data:/data` but the image writes to `/var/lib/falkordb/data` (`FALKORDB_DATA_PATH` env). The bug existed for 24 days; an `:latest` → `v4.18.1` pin triggered the recreate that exposed it; the entire Graphiti knowledge graph was lost across all orgs.
+
+**Why:** `/data` is the Redis/MongoDB convention — "must also apply to anything Redis-like" is an easy assumption to make. FalkorDB bundles a custom `run.sh` that picks `/var/lib/falkordb/data` unrelated to the base-image default. There's no diagnostic — Redis happily writes to whichever directory it is told about.
+
+**Prevention:** Before merging any `deploy/docker-compose.yml` change that adds or modifies a stateful mount, run:
+```bash
+docker image inspect <image> --format '{{range .Config.Env}}{{println .}}{{end}}'
+```
+Grep for `_DATA_PATH`, `_HOME`, `PGDATA`, `GF_PATHS_DATA`. Compare with the mount target. CI blocks mismatches automatically via `scripts/audit-compose-volumes.sh` — it is a required status check on any compose or inventory change.
+
+**Post-mortem:** `docs/runbooks/post-mortems/2026-04-19-falkordb-graph-loss.md`.
+**Structural response:** SPEC-INFRA-005 (stateful persistence hardening).
+
 ### 7.9 LibreChat patches are mount-point-specific
 
 Three CJS files are mounted into LibreChat at `/app/node_modules/@librechat/agents/dist/cjs/...`. The internal path can change between LibreChat versions. Every LibreChat upgrade requires opening the new image and verifying the mount paths still map to real files.
@@ -455,7 +485,19 @@ Quarterly, run a full audit:
 
 ---
 
-## 11. When this playbook is wrong
+## 11. Stateful service change checklist
+
+When a PR touches a stateful service (image, volume mount, env that affects data path), run through this before merging:
+
+1. **Inventory entry**: is the service in `deploy/volume-mounts.yaml`? If the PR adds a new volume, add the entry in the same commit. CI will block you otherwise.
+2. **Data path match**: does the inventory's `container_path` match the image's declared data path? `scripts/audit-compose-volumes.sh` is the mechanical check; run it locally to avoid a CI-roundtrip.
+3. **Backup coverage**: is the service in `deploy/scripts/backup.sh`? If yes, is the backup method still correct (e.g., image changed from PG17 → PG18 — `pg_dumpall` still works)? If no and `category: data`, add it.
+4. **Retention policy**: for PII-bearing volumes, is there an explicit retention in the inventory (e.g., `delete_on_success`, `max_age_days:N`)? Is it enforced in code with a regression test?
+5. **Fresh manual backup**: for major upgrades, `sudo -u klai /opt/klai/scripts/backup.sh` the day-of, before touching production.
+6. **Post-deploy smoke**: after restart, `sudo /opt/klai/scripts/persistence-smoke.sh <service>` exits 0.
+7. **Rollback known**: do you know exactly how to get back to the previous state? `git revert <sha>` plus the age-encrypted tarball name from step 5.
+
+## 12. When this playbook is wrong
 
 This playbook describes a stable policy, not an algorithm. Use judgment:
 
