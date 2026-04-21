@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pymongo.errors import OperationFailure
+from redis.exceptions import RedisError
 
 
 @pytest.fixture(autouse=True)
@@ -18,10 +20,13 @@ def _mock_settings():
 
     with patch("app.services.provisioning.infrastructure.settings") as mock:
         mock.domain = "getklai.com"
+        mock.mongo_root_username = "root"
         mock.mongo_root_password = "test-mongo-pw"
         mock.caddy_tenants_path = "/tmp/test-caddy-tenants"  # noqa: S108
         mock.caddy_container_name = "klai-core-caddy-1"
         mock.redis_container_name = "redis"
+        mock.redis_host = "redis"
+        mock.redis_port = 6379
         mock.redis_password = "test-redis-pw"
         mock.librechat_image = "ghcr.io/danny-avila/librechat:latest"
         mock.librechat_host_data_path = "/opt/klai/librechat-data"
@@ -52,50 +57,107 @@ class TestCharacterizeSyncRemoveContainer:
             _sync_remove_container("nonexistent")
 
 
-class TestCharacterizeSyncDropMongodbTenantUser:
-    """Characterization tests for _sync_drop_mongodb_tenant_user."""
+def _mock_mongo_client():
+    """Factory: pymongo.MongoClient replacement supporting `with _mongo_admin_client() as c`.
 
-    def test_executes_dropuser_script(self):
+    Returned tuple is (context-manager-factory, underlying_client) so tests can
+    assert on `client[db_name].command(...)` calls.
+    """
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    client.close = MagicMock()
+    # client[db_name] returns a db mock with a command() method
+    db = MagicMock()
+    client.__getitem__ = MagicMock(return_value=db)
+    return MagicMock(return_value=client), client, db
+
+
+class TestCharacterizeSyncDropMongodbTenantUser:
+    """Dropping a tenant MongoDB user via the pymongo protocol, not docker exec."""
+
+    def test_issues_dropuser_command_against_correct_db(self):
         from app.services.provisioning import _sync_drop_mongodb_tenant_user
 
-        mock_container = MagicMock()
-        with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
-            mock_docker.from_env.return_value.containers.get.return_value = mock_container
+        factory, client, db = _mock_mongo_client()
+        with patch("app.services.provisioning.infrastructure._mongo_admin_client", factory):
             _sync_drop_mongodb_tenant_user("acme")
-            mock_container.exec_run.assert_called_once()
-            call_args = mock_container.exec_run.call_args
-            cmd = call_args[0][0]
-            assert "mongosh" in cmd
-            assert 'dropUser("librechat-acme")' in cmd[-1]
+
+        client.__getitem__.assert_called_once_with("librechat-acme")
+        db.command.assert_called_once_with("dropUser", "librechat-acme")
+
+    def test_idempotent_on_user_not_found(self):
+        """dropUser on a missing user is not an error — offboarding must be re-runnable."""
+        from app.services.provisioning import _sync_drop_mongodb_tenant_user
+
+        factory, _client, db = _mock_mongo_client()
+        db.command.side_effect = OperationFailure(
+            "User not found",
+            code=11,  # _MONGO_USER_NOT_FOUND
+            details={"codeName": "UserNotFound"},
+        )
+        with patch("app.services.provisioning.infrastructure._mongo_admin_client", factory):
+            # Should NOT raise
+            _sync_drop_mongodb_tenant_user("acme")
+
+    def test_propagates_other_operation_failures(self):
+        from app.services.provisioning import _sync_drop_mongodb_tenant_user
+
+        factory, _client, db = _mock_mongo_client()
+        db.command.side_effect = OperationFailure("Auth failed", code=18, details={})
+        with (
+            patch("app.services.provisioning.infrastructure._mongo_admin_client", factory),
+            pytest.raises(OperationFailure),
+        ):
+            _sync_drop_mongodb_tenant_user("acme")
 
 
 class TestCharacterizeCreateMongodbTenantUser:
-    """Characterization tests for _create_mongodb_tenant_user."""
+    """Creating a tenant MongoDB user via the pymongo protocol, not docker exec."""
 
-    def test_creates_user_with_readwrite_role(self):
+    def test_creates_user_with_readwrite_role_on_tenant_db(self):
         from app.services.provisioning import _create_mongodb_tenant_user
 
-        mock_container = MagicMock()
-        mock_container.exec_run.return_value = (0, b"OK")
-        with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
-            mock_docker.from_env.return_value.containers.get.return_value = mock_container
+        factory, client, db = _mock_mongo_client()
+        with patch("app.services.provisioning.infrastructure._mongo_admin_client", factory):
             _create_mongodb_tenant_user("acme", "secret-pw")
-            mock_container.exec_run.assert_called_once()
-            cmd = mock_container.exec_run.call_args[0][0]
-            script = cmd[-1]
-            assert "createUser" in script
-            assert "librechat-acme" in script
-            assert "readWrite" in script
 
-    def test_raises_on_nonzero_exit(self):
+        client.__getitem__.assert_called_once_with("librechat-acme")
+        db.command.assert_called_once_with(
+            "createUser",
+            "librechat-acme",
+            pwd="secret-pw",
+            roles=[{"role": "readWrite", "db": "librechat-acme"}],
+        )
+
+    def test_raises_runtime_error_on_operation_failure(self):
         from app.services.provisioning import _create_mongodb_tenant_user
 
-        mock_container = MagicMock()
-        mock_container.exec_run.return_value = (1, b"Error")
-        with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
-            mock_docker.from_env.return_value.containers.get.return_value = mock_container
-            with pytest.raises(RuntimeError, match="MongoDB tenant user creation failed"):
-                _create_mongodb_tenant_user("acme", "secret-pw")
+        factory, _client, db = _mock_mongo_client()
+        db.command.side_effect = OperationFailure(
+            "User already exists", code=51003, details={"codeName": "Location51003"},
+        )
+        with (
+            patch("app.services.provisioning.infrastructure._mongo_admin_client", factory),
+            pytest.raises(RuntimeError, match="MongoDB tenant user creation failed"),
+        ):
+            _create_mongodb_tenant_user("acme", "secret-pw")
+
+    def test_never_calls_docker_exec(self):
+        """Regression guard: MongoDB ops MUST NOT go through docker-socket-proxy
+        (SEC-021 denies /exec/*/start). If anyone reintroduces `container.exec_run`,
+        this test fails because the docker patch is never engaged.
+        """
+        from app.services.provisioning import _create_mongodb_tenant_user
+
+        factory, _client, _db = _mock_mongo_client()
+        with (
+            patch("app.services.provisioning.infrastructure._mongo_admin_client", factory),
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+        ):
+            _create_mongodb_tenant_user("acme", "secret-pw")
+
+        mock_docker.from_env.assert_not_called()
 
 
 class TestCharacterizeWriteTenantCaddyfile:
@@ -178,31 +240,81 @@ class TestCharacterizeReloadCaddy:
                 _reload_caddy()
 
 
-class TestCharacterizeFlushRedisAndRestartLibrechat:
-    """Characterization tests for _flush_redis_and_restart_librechat."""
+def _mock_redis_sync_client():
+    """Factory: redis.Redis replacement supporting `with _redis_sync_client() as c`."""
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    client.flushall = MagicMock()
+    client.close = MagicMock()
+    return MagicMock(return_value=client), client
 
-    def test_flushes_redis_and_restarts_container(self):
+
+class TestCharacterizeFlushRedisAndRestartLibrechat:
+    """_flush_redis_and_restart_librechat: Redis protocol + container restart.
+
+    Pinned so we never regress back to `redis_container.exec_run([FLUSHALL])` —
+    that path 403s under docker-socket-proxy (SEC-021).
+    """
+
+    def test_flushes_redis_over_protocol_then_restarts_container(self):
         from app.services.provisioning import _flush_redis_and_restart_librechat
 
-        mock_redis = MagicMock()
-        mock_redis.exec_run.return_value = (0, b"OK")
-        mock_container = MagicMock()
-        mock_container.status = "running"
+        redis_factory, redis_client = _mock_redis_sync_client()
+        container = MagicMock()
+        container.status = "running"
 
-        with patch("app.services.provisioning.infrastructure.docker") as mock_docker:
-            client = mock_docker.from_env.return_value
-
-            def get_container(name):
-                if name == "redis":
-                    return mock_redis
-                return mock_container
-
-            client.containers.get.side_effect = get_container
+        with (
+            patch("app.services.provisioning.infrastructure._redis_sync_client", redis_factory),
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+        ):
+            mock_docker.from_env.return_value.containers.get.return_value = container
             _flush_redis_and_restart_librechat("acme")
-            mock_redis.exec_run.assert_called_once()
-            redis_cmd = mock_redis.exec_run.call_args[0][0]
-            assert "FLUSHALL" in redis_cmd
-            mock_container.restart.assert_called_once_with(timeout=10)
+
+        redis_client.flushall.assert_called_once()
+        # Docker is still used — but only for container restart, never exec.
+        mock_docker.from_env.return_value.containers.get.assert_called_once_with("librechat-acme")
+        container.restart.assert_called_once_with(timeout=10)
+
+    def test_redis_failure_does_not_block_container_restart(self):
+        """librechat.yaml has no TTL in Redis, so a silent swallow is bad; but a
+        failed flush should still let the restart happen — worst case the container
+        reads stale cached yaml, which is recoverable by the next regenerate.
+        """
+        from app.services.provisioning import _flush_redis_and_restart_librechat
+
+        redis_factory, redis_client = _mock_redis_sync_client()
+        redis_client.flushall.side_effect = RedisError("connection refused")
+
+        container = MagicMock()
+        container.status = "running"
+
+        with (
+            patch("app.services.provisioning.infrastructure._redis_sync_client", redis_factory),
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+        ):
+            mock_docker.from_env.return_value.containers.get.return_value = container
+            _flush_redis_and_restart_librechat("acme")  # must not raise
+
+        container.restart.assert_called_once_with(timeout=10)
+
+    def test_never_calls_container_exec_run(self):
+        """Regression guard against the SEC-021 bug (exec/*/start forbidden)."""
+        from app.services.provisioning import _flush_redis_and_restart_librechat
+
+        redis_factory, _redis_client = _mock_redis_sync_client()
+        container = MagicMock()
+        container.status = "running"
+
+        with (
+            patch("app.services.provisioning.infrastructure._redis_sync_client", redis_factory),
+            patch("app.services.provisioning.infrastructure.docker") as mock_docker,
+        ):
+            mock_docker.from_env.return_value.containers.get.return_value = container
+            _flush_redis_and_restart_librechat("acme")
+
+        # If anyone reintroduces exec_run(), this assertion fails.
+        assert not container.exec_run.called
 
 
 class TestCharacterizeStartLibrechatContainer:
