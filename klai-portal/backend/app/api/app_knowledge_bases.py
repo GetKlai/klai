@@ -666,9 +666,7 @@ async def update_knowledge_base(
     # leaves both systems in the old, consistent state instead of split-brain.
     if visibility_changed:
         try:
-            await knowledge_ingest_client.update_kb_visibility(
-                org.zitadel_org_id, kb.slug, kb.visibility
-            )
+            await knowledge_ingest_client.update_kb_visibility(org.zitadel_org_id, kb.slug, kb.visibility)
         except Exception as exc:
             # Revert the in-memory change; portal hasn't been committed yet.
             await db.rollback()
@@ -681,8 +679,7 @@ async def update_knowledge_base(
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=(
-                    "Could not propagate visibility change to knowledge-ingest; "
-                    "no changes were saved. Please retry."
+                    "Could not propagate visibility change to knowledge-ingest; no changes were saved. Please retry."
                 ),
             ) from exc
 
