@@ -71,8 +71,7 @@ _ALLOWLIST: dict[str, str] = {
     # access.py is a service layer; every caller is an authenticated API
     # route that goes through _get_caller_org before calling these helpers.
     "app/services/access.py": (
-        "service layer — all callers pass a db session that already has "
-        "tenant context set via _get_caller_org"
+        "service layer — all callers pass a db session that already has tenant context set via _get_caller_org"
     ),
 }
 
@@ -126,6 +125,5 @@ def test_allowlist_entries_still_exist(path: str, reason: str) -> None:
     assert full.exists(), f"Allowlisted path no longer exists: {path}"
     src = full.read_text(encoding="utf-8")
     assert any(re.search(rf"\b{m}\b", src) for m in _STRICT_MODELS), (
-        f"{path} no longer queries any RLS-strict model — remove from _ALLOWLIST. "
-        f"(reason was: {reason})"
+        f"{path} no longer queries any RLS-strict model — remove from _ALLOWLIST. (reason was: {reason})"
     )
