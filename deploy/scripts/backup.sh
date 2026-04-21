@@ -24,8 +24,15 @@
 #  14. Encrypt + upload — age-encrypt then rsync to Hetzner Storage Box
 #
 # Usage:
-#   ./scripts/backup.sh                 # manual run
-#   Cron: 0 2 * * * /opt/klai/scripts/backup.sh >> /opt/klai/logs/backup.log 2>&1
+#   Production cron (runs as `klai` user — see `sudo crontab -u klai -l`):
+#     0 2 * * * /opt/klai/scripts/backup.sh >> /opt/klai/logs/backup.log 2>&1
+#
+#   Manual run: always invoke as the `klai` user, NOT as root. Only `klai`
+#   has the SSH key registered with the Hetzner Storage Box:
+#     sudo -u klai /opt/klai/scripts/backup.sh
+#
+#   Running as root produces all local artifacts correctly but the final
+#   rsync step fails with `Permission denied (publickey,password)`.
 #
 # Required env vars (loaded from /opt/klai/.env):
 #   MONGO_ROOT_PASSWORD   — MongoDB root password
