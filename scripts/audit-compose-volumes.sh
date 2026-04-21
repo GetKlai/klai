@@ -85,8 +85,19 @@ need() {
 
 need docker
 
-YQ() { docker run --rm -i -v "${REPO_ROOT}:/repo:ro" -w /repo mikefarah/yq:4.47.1 "$@"; }
-JQ() { docker run --rm -i ghcr.io/jqlang/jq:1.7.1 "$@"; }
+# Prefer host-installed yq/jq (fast, no docker-in-docker fragility). Fall back
+# to pinned docker images when the host doesn't have them (e.g., someone's
+# laptop without a yq install).
+if command -v yq >/dev/null 2>&1; then
+  YQ() { yq "$@"; }
+else
+  YQ() { docker run --rm -i -v "${REPO_ROOT}:/repo:ro" -w /repo mikefarah/yq:4.47.1 "$@"; }
+fi
+if command -v jq >/dev/null 2>&1; then
+  JQ() { jq "$@"; }
+else
+  JQ() { docker run --rm -i ghcr.io/jqlang/jq:1.7.1 "$@"; }
+fi
 
 [[ -f "${COMPOSE_FILE}" ]] || {
   echo "error: ${COMPOSE_FILE} not found" >&2
