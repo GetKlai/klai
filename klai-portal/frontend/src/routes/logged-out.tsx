@@ -39,7 +39,7 @@ function LoggedOutPage() {
       </div>
 
       <Button
-        onClick={() => auth.signinRedirect()}
+        onClick={() => auth.signinRedirect({ returnTo: '/app' })}
         size="lg"
         className="w-full gap-3"
       >
