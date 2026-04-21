@@ -1,9 +1,9 @@
 ---
 id: SPEC-PROV-001
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-04-21
 ---
 
 # Acceptance Criteria SPEC-PROV-001
@@ -21,19 +21,22 @@ updated: 2026-04-19
 **Given** provisioning is gestart voor een org en `_start_librechat_container` raiset `docker.errors.APIError` (bijvoorbeeld image-pull failure),
 **When** de orchestrator de exception catcht,
 **Then** transitioneert `provisioning_status` eerst naar `failed_rollback_pending`,
-**And** worden compensators uitgevoerd voor step 6 (geen — interne DB), step 5 (docs-app DELETE, best-effort), step 4 (`shutil.rmtree(tenant_dir)`), step 3 (`_sync_drop_mongodb_tenant_user`), step 2 (`POST /team/delete` op LiteLLM), step 1 (`zitadel.delete_librechat_oidc_app`),
+**And** worden compensators door `AsyncExitStack.__aexit__` uitgevoerd in LIFO-volgorde voor step 6 (geen — interne DB), step 5 (docs-app DELETE, best-effort), step 4 (`shutil.rmtree(tenant_dir)`), step 3 (`_sync_drop_mongodb_tenant_user`), step 2 (`POST /team/delete` op LiteLLM), step 1 (`zitadel.delete_librechat_oidc_app`),
 **And** na succesvolle afronding transitioneert `provisioning_status` naar `failed_rollback_complete`,
-**And** `org.slug` is leeg (`""`),
-**And** er zijn geen residuele Zitadel apps, LiteLLM teams, Mongo users, of directory trees voor deze tenant op de host.
+**And** `org.deleted_at` is gezet op `now()` (soft-delete), `org.slug` blijft zichtbaar voor audit,
+**And** er zijn geen residuele Zitadel apps, LiteLLM teams, Mongo users, of directory trees voor deze tenant op de host,
+**And** een nieuwe signup met dezelfde org-naam kan dezelfde slug claimen dankzij de partial unique index `ix_portal_orgs_slug_active`.
 
-## Scenario 3 — SIGKILL tussen step 3 en step 4, daarna retry (R6, R11)
+## Scenario 3 — SIGKILL tussen step 3 en step 4, daarna retry (R6, R11, R21)
 
 **Given** tijdens provisioning wordt portal-api SIGKILL'd terwijl `provisioning_status='creating_mongo_user'` reeds gecommit is en step 4 (`writing_env_file`) nog niet gestart,
-**When** portal-api herstart en een admin de POST `/api/orgs/{slug}/retry-provisioning` aanroept,
-**Then** retourneert de endpoint `409 {"error": "not_in_retryable_state", "state": "creating_mongo_user"}` omdat de state geen `failed_rollback_complete` is,
-**And** de operator voert `scripts/migrate_failed_provisioning_status.py --single-org <id> --to failed_rollback_pending` (of via cleanup-pipeline naar `failed_rollback_complete`),
-**And** een tweede retry-provisioning call vanaf `failed_rollback_complete` transitioneert via `queued` → volledige forward sequence → `ready`,
-**And** dit gebeurt zonder dat de operator handmatige Mongo-user cleanup heeft uitgevoerd (de compensator step die in `failed_rollback_complete` mapping al gedraaid heeft, heeft de user gedropped).
+**When** portal-api herstart,
+**Then** draait de stuck-detector uit M7 na 15 minuten (of direct als de `updated_at` drempel al overschreden is bij startup),
+**And** transitioneert de detector `provisioning_status` naar `failed_rollback_pending`,
+**And** wordt een `product_event` `provisioning.stuck_recovered` ingeschoten.
+**When** een admin daarna de POST `/api/orgs/{slug}/retry-provisioning` aanroept,
+**Then** retourneert de endpoint `409 {"error": "manual_cleanup_required", "state": "failed_rollback_pending"}` — de Mongo user uit step 3 staat mogelijk nog, operator moet handmatig inspecteren,
+**And** zodra ops de externe resources heeft opgeruimd en de rij handmatig op `failed_rollback_complete` heeft gezet (met `deleted_at = now()`), slaagt een nieuwe retry-call: transitioneert via `queued` → volledige forward sequence → `ready`.
 
 ## Scenario 4 — Compensator faalt mid-rollback (R10)
 
@@ -87,15 +90,16 @@ updated: 2026-04-19
 **And** blijft de rij onveranderd,
 **And** `alembic upgrade head` op een schone DB creëert de constraint succesvol.
 
-## Scenario 10 — Legacy `'failed'` data migreert correct
+## Scenario 10 — Inline Alembic migratie voor twee bestaande test-orgs
 
-**Given** de productiedatabase bevat orgs met `provisioning_status='failed'` en residuele Docker containers,
-**When** het ops-script `migrate_failed_provisioning_status.py` dry-run wordt uitgevoerd,
-**Then** bevat de CSV output per org een `recommended_new_state` kolom met:
-- `failed_rollback_pending` voor orgs met nog levende containers, Zitadel apps, LiteLLM teams, of Mongo users,
-- `failed_rollback_complete` voor orgs zonder residuele resources,
-**And** de operator kan de CSV reviewen en corrigeren voordat `--apply` wordt uitgevoerd,
-**And** na `--apply` matchen alle gemigreerde rijen aan de CHECK constraint.
+**Given** de productiedatabase bevat twee test-orgs (Voys en Klai) met `provisioning_status='ready'` en eventuele legacy `'active'` waarden uit testfixtures,
+**When** `alembic upgrade head` wordt uitgevoerd,
+**Then** voegt de migratie de `deleted_at TIMESTAMPTZ NULL` kolom toe aan `portal_orgs`,
+**And** vervangt de oude `ix_portal_orgs_slug` door de partial unique index `ix_portal_orgs_slug_active` (`UNIQUE (slug) WHERE deleted_at IS NULL`),
+**And** voeren de inline `UPDATE`-statements de twee test-orgs netjes naar `'ready'`,
+**And** markeert de fail-safe UPDATE eventuele onverwachte `'failed'`-rijen als `'failed_rollback_pending'`,
+**And** wordt de CHECK constraint `ck_portal_orgs_provisioning_status` succesvol aangemaakt,
+**And** `alembic downgrade -1 && alembic upgrade head` slaagt idempotent.
 
 ## Scenario 11 — get_chat_health compatibel met tussenstaten (R18)
 
@@ -111,6 +115,27 @@ updated: 2026-04-19
 **Then** retourneert de endpoint `{"provisioning_status": "creating_mongo_user", ...}` zonder error,
 **And** valt de frontend terug op de generieke "provisioning in progress" copy.
 
+## Scenario 13 — Stuck-detector pakt gecrashte run op (R21)
+
+**Given** een org staat in `provisioning_status='creating_mongo_user'` met `updated_at = now() - interval '20 minutes'` (portal-api crashte 20 minuten geleden midden in de run),
+**When** portal-api opstart en de `lifespan` stuck-detector draait,
+**Then** vindt `reconcile_stuck_provisionings` deze org,
+**And** transitioneert de detector `provisioning_status` naar `failed_rollback_pending` via de bestaande `transition_state` helper,
+**And** logt hij `logger.warning("provisioning_stuck_detected", org_id=..., last_state="creating_mongo_user", stuck_since=...)`,
+**And** wordt een `product_event` met `event_type="provisioning.stuck_recovered"` ingeschoten,
+**And** worden **geen** compensators aangeroepen (de detector raakt externe resources niet aan),
+**And** een org met `updated_at = now() - interval '5 minutes'` in dezelfde staat wordt overgeslagen (te recent).
+
+## Scenario 14 — Retry met slug-botsing door nieuwe signup (R11, spec R6)
+
+**Given** een org `A` staat in `failed_rollback_complete` met slug `acme` en `deleted_at = now() - interval '1 hour'`,
+**And** een nieuwe signup heeft ondertussen een nieuwe org `B` aangemaakt met dezelfde slug `acme` (`deleted_at IS NULL`, `provisioning_status='ready'`),
+**When** een admin POST `/api/orgs/acme/retry-provisioning` aanroept voor org `A`,
+**Then** detecteert de endpoint binnen de `SELECT FOR UPDATE`-lock dat er een andere actieve rij met dezelfde slug bestaat,
+**And** retourneert het endpoint `409 {"error": "slug_in_use_by_new_org", "state": "failed_rollback_complete"}`,
+**And** blijft org `A` onveranderd (`deleted_at` blijft gezet, `provisioning_status` blijft `failed_rollback_complete`),
+**And** verwijst de runbook (M6) naar het vervolg: ops kan org `A` hard-deleten of intact laten voor audit.
+
 ## Edge cases
 
 **EC1 — DB down midden in provisioning.** Als `transition_state` zelf faalt met een
@@ -118,8 +143,8 @@ updated: 2026-04-19
 probeert vervolgens óók een state transitie naar `failed_rollback_pending` — die faalt
 eveneens. Resultaat: status blijft op laatst-succesvolle checkpoint, structured log
 bevat `failed_status_persist_error`, externe resources blijven staan. Dit is acceptabel:
-na DB-herstel kan een operator via het migratiescript mappen naar
-`failed_rollback_pending` en handmatig opruimen.
+na DB-herstel pakt de stuck-detector (M7) deze org na 15 minuten alsnog op en mapt
+hem naar `failed_rollback_pending` zodat ops hem ziet in Grafana.
 
 **EC2 — Zeer trage Caddy reload.** Als `_reload_caddy` langer dan 30s duurt (de huidige
 restart timeout), raiset de Docker client een timeout. R9 triggert rollback. De Caddy-
@@ -141,6 +166,7 @@ was er voorheen niet — toevoeging in M3.)
 ## Quality gate criteria
 
 - [HARD] Pytest coverage voor `app/services/provisioning/state_machine.py`: **≥ 90%**.
+- [HARD] Pytest coverage voor `app/services/provisioning/stuck_detector.py`: **≥ 90%**.
 - [HARD] Pytest coverage voor gewijzigde delen van `orchestrator.py`: **≥ 85%**.
 - [HARD] Ruff check: zero new warnings op gewijzigde files.
 - [HARD] Pyright: zero new errors op gewijzigde files.
@@ -158,6 +184,7 @@ was er voorheen niet — toevoeging in M3.)
 - [ ] M4 retry endpoint gemerged, OpenAPI schema bijgewerkt.
 - [ ] M5 Grafana dashboard panel voor provisioning timeline live.
 - [ ] M6 runbook `provisioning-retry.md` gepubliceerd, on-call team briefed.
-- [ ] Scenario 1 t/m 12 geautomatiseerd in CI.
+- [ ] M7 stuck-detector gemerged, staging test (stop portal-api mid-run → startup → recovery) uitgevoerd.
+- [ ] Scenario 1 t/m 14 geautomatiseerd in CI.
 - [ ] Een productie-failure in de eerste week na deploy wordt succesvol retryable zonder handmatige DB cleanup (observatie-acceptatie).
 - [ ] Deploy workflow (`git push` → `gh run watch` → verify container age op core-01) uitgevoerd voor elke milestone.

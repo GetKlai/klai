@@ -17,3 +17,4 @@ Never claim something is deployed before both CI is green AND the new code is co
 - Error text: `text-[var(--color-destructive)]` not `text-red-600`
 - i18n: all UI strings via Paraglide (`import * as m from '@/paraglide/messages'`)
 - Reference implementation: `frontend/src/routes/admin/users/invite.tsx`
+- Tenant provisioning: see [docs/runbooks/provisioning-retry.md](../docs/runbooks/provisioning-retry.md) for the state machine, retry endpoint, and stuck-detector behaviour (SPEC-PROV-001).

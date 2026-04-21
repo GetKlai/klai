@@ -45,6 +45,23 @@ setup_logging("portal-api")
 logger = logging.getLogger(__name__)
 
 
+async def _run_stuck_detector() -> None:
+    """SPEC-PROV-001 M7: reconcile provisioning runs stuck by a previous
+    portal-api crash / deploy. Non-blocking — failures are logged but do
+    not prevent startup.
+    """
+    try:
+        from app.core.database import AsyncSessionLocal as _AsyncSessionLocal
+        from app.services.provisioning.stuck_detector import reconcile_stuck_provisionings
+
+        async with _AsyncSessionLocal() as reconcile_db:
+            reconciled = await reconcile_stuck_provisionings(reconcile_db)
+        if reconciled:
+            logger.warning("Provisioning stuck-detector reconciled %d row(s)", reconciled)
+    except Exception:
+        logger.warning("Provisioning stuck-detector failed at startup", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncio
@@ -112,6 +129,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     install_rls_guard(engine)
     logger.info("RLS silent-filter guard installed")
+
+    await _run_stuck_detector()
 
     poller_task = asyncio.create_task(poll_loop())
     logger.info("Bot poller started")

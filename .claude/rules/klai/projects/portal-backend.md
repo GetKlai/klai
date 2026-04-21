@@ -72,3 +72,29 @@ Propagate locale through OAuth/redirect flows via query parameter, not browser s
 `klai-portal/backend/scripts/` is NOT copied into the container (no `COPY scripts/` in Dockerfile).
 Data migration scripts in `scripts/` cannot be run via `docker exec portal-api python scripts/foo.py`.
 Workaround: pass inline via `docker exec portal-api python3 -c "$(cat scripts/foo.py)"` or add `COPY scripts/ scripts/` to the Dockerfile.
+
+## Provisioning state machine (SPEC-PROV-001)
+
+Tenant provisioning is a one-level compensating transaction with a DB state
+machine on `portal_orgs.provisioning_status`. Each forward step writes a
+checkpoint via `transition_state()` and registers its compensator on a
+`contextlib.AsyncExitStack`.
+
+- Orchestrator: `app/services/provisioning/orchestrator.py`
+- State machine: `app/services/provisioning/state_machine.py`
+- Stuck detector: `app/services/provisioning/stuck_detector.py` (runs at startup)
+- Retry endpoint: `app/api/admin/retry_provisioning.py` (admin-only)
+- Runbook: `docs/runbooks/provisioning-retry.md`
+
+**Invariants:**
+- Every state transition uses `SELECT ... FOR UPDATE` (serialises concurrent retries).
+- Slug uniqueness uses a partial unique index `ix_portal_orgs_slug_active` so
+  that a failed row can be soft-deleted and the slug reclaimed on retry.
+- Compensators MUST be idempotent — they are drained via AsyncExitStack on
+  abort and must not raise (best-effort rollback, SPEC R10).
+- When adding a new `PortalOrg` query that MUST hide soft-deleted rows, add
+  `.where(PortalOrg.deleted_at.is_(None))` explicitly. Never rely on implicit
+  filtering.
+- Never emit `provisioning_status = 'failed'` — that legacy value is out.
+  Use `failed_rollback_pending` (rollback failed) or `failed_rollback_complete`
+  (rollback succeeded, row soft-deleted).

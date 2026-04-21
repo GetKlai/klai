@@ -24,7 +24,6 @@ from app.services.provisioning.orchestrator import (
     _caddy_lock,
     _provision,
     _ProvisionState,
-    _rollback,
     provision_tenant,
 )
 
@@ -37,7 +36,6 @@ __all__ = [
     "_generate_librechat_yaml",
     "_provision",
     "_reload_caddy",
-    "_rollback",
     "_slugify_unique",
     "_start_librechat_container",
     "_sync_drop_mongodb_tenant_user",

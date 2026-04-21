@@ -1,0 +1,160 @@
+{
+  "annotations": { "list": [] },
+  "description": "Tenant provisioning state machine — SPEC-PROV-001 (per-tenant timeline, failure rate, stuck detector recoveries)",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Provisioning runs started (last 30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM product_events WHERE event_type = 'provisioning.state_transition' AND properties->>'to_state' = 'queued' AND created_at >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Provisioning runs succeeded (ready, last 30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM product_events WHERE event_type = 'provisioning.state_transition' AND properties->>'to_state' = 'ready' AND created_at >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Provisioning runs failed (failed_rollback_complete, last 30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM product_events WHERE event_type = 'provisioning.state_transition' AND properties->>'to_state' = 'failed_rollback_complete' AND created_at >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Rollback-pending (manual cleanup required, last 30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT COUNT(*) AS value FROM product_events WHERE event_type = 'provisioning.state_transition' AND properties->>'to_state' = 'failed_rollback_pending' AND created_at >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Transitions over time (by target state)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, properties->>'to_state' AS metric, COUNT(*) AS value FROM product_events WHERE event_type = 'provisioning.state_transition' AND created_at >= $__timeFrom() AND created_at <= $__timeTo() GROUP BY 1, 2 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Step duration p95 (ms, last 7d)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 14 },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, properties->>'step' AS metric, percentile_cont(0.95) WITHIN GROUP (ORDER BY (properties->>'duration_ms')::int) AS value FROM product_events WHERE event_type = 'provisioning.state_transition' AND properties->>'duration_ms' IS NOT NULL AND created_at >= NOW() - INTERVAL '7 days' GROUP BY 1, 2 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Stuck-detector recoveries (last 30d)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 14 },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(*) AS recovered FROM product_events WHERE event_type = 'provisioning.stuck_recovered' AND created_at >= NOW() - INTERVAL '30 days' GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Timeline per org — paste org_id in the variable",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "portal-postgres" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 23 },
+      "options": {},
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "portal-postgres" },
+          "rawSql": "SELECT created_at AS \"time\", properties->>'from_state' AS \"from\", properties->>'to_state' AS \"to\", properties->>'step' AS step, (properties->>'duration_ms')::int AS duration_ms FROM product_events WHERE event_type = 'provisioning.state_transition' AND org_id = ${org_id:csv} ORDER BY created_at ASC",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["klai", "provisioning", "spec-prov-001"],
+  "templating": {
+    "list": [
+      {
+        "name": "org_id",
+        "type": "textbox",
+        "label": "Org ID",
+        "query": "0",
+        "current": { "value": "0", "text": "0" }
+      }
+    ]
+  },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Klai Provisioning",
+  "uid": "klai-provisioning",
+  "version": 1
+}
