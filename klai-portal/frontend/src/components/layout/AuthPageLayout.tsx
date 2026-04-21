@@ -29,12 +29,13 @@ export function AuthPageLayout({ leftContent, children, showLocale = false }: Au
             backgroundRepeat: 'no-repeat',
           }}
         />
-        {/* Overlay — warm rl-dark at ~55% + bottom fade for copy legibility */}
+        {/* Overlay — warm rl-dark, heavy in the content band (40–90%) where
+            the body paragraph + bullets live, lighter at the logo edge. */}
         <div
           className="absolute inset-0 z-0"
           style={{
             background:
-              'linear-gradient(180deg, rgba(25,25,24,0.45) 0%, rgba(25,25,24,0.55) 55%, rgba(25,25,24,0.72) 100%)',
+              'linear-gradient(180deg, rgba(25,25,24,0.35) 0%, rgba(25,25,24,0.55) 25%, rgba(25,25,24,0.78) 45%, rgba(25,25,24,0.80) 80%, rgba(25,25,24,0.88) 100%)',
           }}
         />
 
