@@ -203,18 +203,18 @@ function LoginPage() {
           {m.login_hero_highlight()}
         </span>
       </h1>
-      <p className="text-base leading-relaxed text-[var(--color-rl-cream)]/90 max-w-md">
+      <p className="text-base leading-relaxed text-[var(--color-rl-cream)] max-w-md">
         {m.login_hero_body()}
       </p>
       <div className="flex flex-col gap-3.5 pt-2">
-        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]/90">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/15 ring-1 ring-[var(--color-rl-accent)]/30">
+        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/20 ring-1 ring-[var(--color-rl-accent)]/40">
             <Shield size={14} className="text-[var(--color-rl-accent)]" />
           </span>
           {m.login_hero_bullet_eu()}
         </div>
-        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]/90">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/15 ring-1 ring-[var(--color-rl-accent)]/30">
+        <div className="flex items-center gap-3 text-sm text-[var(--color-rl-cream)]">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-rl-accent)]/20 ring-1 ring-[var(--color-rl-accent)]/40">
             <Lock size={14} className="text-[var(--color-rl-accent)]" />
           </span>
           {m.login_hero_bullet_open()}
