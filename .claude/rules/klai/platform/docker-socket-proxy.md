@@ -23,6 +23,40 @@ docker-socket-proxy:
     DELETE: 1
 ```
 
+## Allowed verbs (per-verb rationale, SPEC-SEC-024)
+
+Each `=1` below has at least one concrete production code path in
+`klai-portal/backend/app/`. Any verb **not** listed here is either
+"keep not-set" (explicitly never enabled) or outright forbidden.
+Source of truth: SPEC-SEC-024 plan.md Tabel C (exhaustive audit).
+
+| Verb | Status | Production callsite | Docker endpoint |
+|---|---|---|---|
+| `CONTAINERS` | **keep** | `infrastructure.py:68,135,207,222` `client.containers.get(name)` | `GET /containers/{id}/json` |
+| `CONTAINERS + DELETE` | **keep** | `infrastructure.py:69,223` `c.remove(force=True)` | `DELETE /containers/{id}?force=true` |
+| `CONTAINERS + POST` | **keep** | `infrastructure.py:136,208` `container.restart(timeout=10)` | `POST /containers/{id}/restart` |
+| `CONTAINERS + POST` | **keep** | `infrastructure.py:236` `client.containers.run(image=..., ...)` | `POST /containers/create` + `POST /containers/{id}/start` |
+| `NETWORKS` | **keep** | `infrastructure.py:254` `client.networks.get(net_name)` | `GET /networks/{id}` |
+| `NETWORKS + POST` | **keep** | `infrastructure.py:255` `net.connect(container_name)` | `POST /networks/{id}/connect` |
+| `EXEC` | **keep not-set** | — (audit: 0 calls in `app/`) | `POST /exec/*/start`, `POST /containers/{id}/exec` — both 403 |
+| `IMAGES` | **keep not-set** | — (audit: 0 calls in `app/`; images pinned at deploy time) | `GET/POST /images/*` |
+| `VOLUMES` | **keep not-set** | — | `GET/POST/DELETE /volumes/*` |
+| `BUILD` | **keep not-set** | — | `POST /build` |
+| `SYSTEM` | **keep not-set** | — | `GET /info`, `/version` |
+| `PLUGINS` | **keep not-set** | — | `GET/POST /plugins/*` |
+
+**Runtime-api** is a black-box vendored image (`vexaai/runtime-api:0.10.0-...`).
+Its Docker-API usage is not audited. If a runtime-api call-path needs a verb
+we dropped, the **permanent Grafana alert "Security — Proxy Denials"**
+(SPEC-SEC-024-R12) fires on the first 403. Fix-forward: add the specific verb
+with a single compose-commit — never preventively.
+
+**Mechanical guard against reintroduction**: `rules/no-exec-run.yml` runs on
+every portal-api PR via `ast-grep/action` in `.github/workflows/portal-api.yml`
+(SPEC-SEC-024-R7). A new `$OBJ.exec_run($$$)` in `klai-portal/backend/app/`
+fails CI with exit-code ≠ 0. Regression-guard tests under
+`klai-portal/backend/tests/` are allow-listed.
+
 ## /exec/*/start is blocked by design (CRIT)
 
 The proxy does NOT set `EXEC=1`. Any call to `container.exec_run([...])`
