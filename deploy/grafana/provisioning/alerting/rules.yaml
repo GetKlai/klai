@@ -38,7 +38,11 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:~"portal-api|runtime-api" AND "Forbidden" AND "docker-socket-proxy"'
+              # structlog emits to structured fields (error:, exception:, event:)
+              # rather than _msg, so we scope the text search to those fields.
+              # Covers docker-py raising APIError (lands in error:) as well as
+              # uncaught tracebacks (lands in exception:).
+              expr: 'service:(portal-api OR runtime-api) AND (error:Forbidden OR exception:Forbidden) AND (error:docker-socket-proxy OR exception:docker-socket-proxy)'
               queryType: instant
           - refId: reduce
             datasourceUid: __expr__
