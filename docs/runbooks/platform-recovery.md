@@ -220,3 +220,67 @@ Run the UPDATE SQL from [#zitadel-login-v2-recovery](#zitadel-login-v2-recovery)
 ### Step 6 — Update .env.sops
 
 Follow the SOPS steps from [#zitadel-pat-rotation](#zitadel-pat-rotation) step 4 — add all three new vars.
+
+---
+
+## librechat-stale-config-recovery
+
+**Situation:** A tenant reports that a recent config change (MCP server toggle, interface update, endpoint change) is not active — the chat iframe behaves as if the old settings are still in place even after a page reload.
+
+**Root cause (most common):** portal-api's Redis FLUSHALL failed during provisioning, so the tenant's LibreChat container restarted against stale yaml cached in Redis (no TTL — see `platform/librechat.md`). The `/regenerate` API path surfaces this in its `errors` response but the `mcp_servers` path only logs a warning, so the failure can go unnoticed.
+
+**Signal to look for:** structured log line in VictoriaLogs:
+
+```
+service:portal-api AND event:redis_flushall_failed
+```
+
+Returned fields: `slug`, `error`, `request_id` (propagated from Caddy).
+
+### Step 1 — Confirm staleness
+
+Get the failing event's `request_id` from the log line above, then trace the full chain to see which tenant and what triggered it:
+
+```
+request_id:<uuid>
+```
+
+If the trigger was an MCP toggle from the portal UI, the user-visible impact is "my MCP change didn't take effect." If the trigger was `/internal/librechat/regenerate`, the CI run already surfaced it in its response body.
+
+### Step 2 — Manually re-run the regenerate workflow
+
+The cleanest recovery is to re-trigger the global regenerate workflow. It re-reads the base yaml, writes per-tenant yaml, re-attempts FLUSHALL, and restarts every tenant container:
+
+```bash
+gh workflow run deploy-librechat-config.yml
+gh run watch --exit-status $(gh run list --workflow=deploy-librechat-config.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+```
+
+Alternative for a single tenant (faster, less impact on other tenants):
+
+```bash
+ssh core-01 "docker exec klai-core-redis-1 redis-cli -a \$(sudo grep ^REDIS_PASSWORD= /opt/klai/.env | cut -d= -f2-) FLUSHALL"
+ssh core-01 "docker restart librechat-<slug>"
+```
+
+> Note: the `docker exec` above runs **on the server**, not from portal-api — so it bypasses the docker-socket-proxy. This is why the runbook is the correct recovery surface, not portal-api code.
+
+### Step 3 — Verify
+
+- Reload the tenant's chat page; confirm the config change is now active.
+- Check VictoriaLogs: no new `redis_flushall_failed` events should appear.
+
+### Step 4 — If FLUSHALL keeps failing
+
+Something is wrong with the Redis container itself. Check:
+
+```bash
+ssh core-01 "docker ps --filter name=redis --format '{{.Names}}\t{{.Status}}'"
+ssh core-01 "docker logs --tail 50 klai-core-redis-1"
+```
+
+Common causes: container OOM, port conflict, auth mismatch between `/opt/klai/.env` and the running container. See `docker-socket-proxy.md` for the allowed proxy verbs — if you're debugging from portal-api, remember `/exec/*/start` is blocked and you need to run redis-cli on the host.
+
+### Follow-up
+
+A dedicated SPEC for alerting infra (alertmanager + Grafana alert-provisioning + notification channels) is the right long-term fix so this runbook doesn't have to be triggered by end-user reports. Until then: a weekly manual query of `service:portal-api AND event:redis_flushall_failed` in VictoriaLogs catches stragglers.
