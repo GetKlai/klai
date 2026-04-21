@@ -1,0 +1,142 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+        "enable": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "tags": ["deploy"],
+        "query": { "query": "service:caddy AND \"reload\"" },
+        "textFormat": "Caddy reload (deploy proxy)",
+        "titleFormat": "Deploy event"
+      }
+    ]
+  },
+  "description": "SPEC-SEC-024 — visualise docker-socket-proxy 403 denials by service with deploy annotations.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "SPEC-SEC-024",
+      "url": "https://github.com/GetKlai/klai/blob/main/.moai/specs/SPEC-SEC-024/spec.md",
+      "type": "link",
+      "icon": "external link"
+    },
+    {
+      "title": "docker-socket-proxy pitfall",
+      "url": "https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/platform/docker-socket-proxy.md",
+      "type": "link",
+      "icon": "doc"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "403 denials per service (last 6h)",
+      "description": "Count of Forbidden log lines mentioning docker-socket-proxy, grouped by service. A spike matches a call path hitting a blocked verb.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "lineWidth": 1,
+            "stacking": { "mode": "normal", "group": "A" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+          "expr": "service:~\"portal-api|runtime-api\" AND \"Forbidden\" AND \"docker-socket-proxy\"",
+          "queryType": "stats",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Recent violations (last 20)",
+      "description": "Most recent 403 hits with request_id for drill-through to full trace.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "filterable": true, "inspect": false },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "_time" }, "properties": [ { "id": "custom.width", "value": 200 } ] },
+          { "matcher": { "id": "byName", "options": "service" }, "properties": [ { "id": "custom.width", "value": 140 } ] },
+          { "matcher": { "id": "byName", "options": "request_id" }, "properties": [ { "id": "custom.width", "value": 320 } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+          "expr": "service:~\"portal-api|runtime-api\" AND \"Forbidden\" AND \"docker-socket-proxy\" | fields _time, service, request_id, _msg",
+          "queryType": "instant",
+          "maxLines": 20
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "Raw log lines",
+      "description": "Unfiltered log stream for investigation. Copy a request_id from here and query request_id:<uuid> to see the full upstream chain.",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 19 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "enableLogDetails": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+          "expr": "service:~\"portal-api|runtime-api\" AND \"Forbidden\" AND \"docker-socket-proxy\"",
+          "queryType": "range"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["security", "SPEC-SEC-024", "docker-socket-proxy"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Security — Proxy Denials",
+  "uid": "spec-sec-024-proxy-denials",
+  "version": 1,
+  "weekStart": ""
+}

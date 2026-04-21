@@ -1,0 +1,27 @@
+# SPEC-SEC-024-R12/R13 — routing for proxy-denial alerts.
+#
+# Matches on label spec=SPEC-SEC-024 (set by rules.yaml). Any other alert
+# falls through to the default receiver (which Grafana creates automatically).
+#
+# Grouping + repeat_interval mirror the SPEC: one email per (service, alert)
+# per 24h maximum, so a wedged verb doesn't produce a flood.
+
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: grafana-default-email   # existing default (installed by Grafana)
+    group_by:
+      - grafana_folder
+      - alertname
+    routes:
+      - receiver: klai-dev-alerts-email
+        matchers:
+          - spec = SPEC-SEC-024
+        group_by:
+          - alertname
+          - service
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 24h
+        continue: false
