@@ -64,6 +64,15 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2025-71176
 
+      # Guards against the two classes of alembic mistakes we've been bitten by:
+      # 1. Hand-typed rev ids (SPEC-KB-020: duplicate `a1b2c3d4e5f6` crashed
+      #    `alembic upgrade head` in production).
+      # 2. Orphan branches (SPEC-PROV-001 deploy: two heads caused
+      #    `alembic heads` to report ambiguous state).
+      # Enforced here so a PR that introduces either can never reach main.
+      - name: Alembic integrity (single head, no duplicate rev ids)
+        run: uv run python scripts/validate_alembic.py
+
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
 
