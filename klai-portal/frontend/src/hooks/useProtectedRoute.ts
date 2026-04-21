@@ -18,14 +18,29 @@ import { useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useCurrentUser, type CurrentUser } from '@/hooks/useCurrentUser'
 
-export interface UseProtectedRouteOptions {
+interface BaseOptions {
   /** Path to send unauthenticated visitors to. Defaults to `/`. */
   readonly fallback?: string
-  /** Require `isAdmin` or `isGroupAdmin` on the /api/me response. */
-  readonly requireAdmin?: boolean
-  /** Path to send authenticated-but-insufficient-role visitors to. Required when `requireAdmin` is true. */
-  readonly noRoleFallback?: string
 }
+
+interface AdminOptions extends BaseOptions {
+  /** Require `isAdmin` or `isGroupAdmin` on the /api/me response. */
+  readonly requireAdmin: true
+  /** Path to send authenticated-but-insufficient-role visitors to. */
+  readonly noRoleFallback: string
+}
+
+interface NonAdminOptions extends BaseOptions {
+  readonly requireAdmin?: false
+  readonly noRoleFallback?: never
+}
+
+/**
+ * Discriminated union: setting `requireAdmin: true` makes `noRoleFallback`
+ * compile-time mandatory so admin-only routes cannot silently leave
+ * non-admin visitors stuck on a spinner.
+ */
+export type UseProtectedRouteOptions = AdminOptions | NonAdminOptions
 
 export interface UseProtectedRouteResult {
   /** User record once loaded (undefined until /api/me resolves). */
@@ -36,11 +51,12 @@ export interface UseProtectedRouteResult {
   readonly canRender: boolean
 }
 
-export function useProtectedRoute({
-  fallback = '/',
-  requireAdmin = false,
-  noRoleFallback,
-}: UseProtectedRouteOptions = {}): UseProtectedRouteResult {
+export function useProtectedRoute(
+  options: UseProtectedRouteOptions = {},
+): UseProtectedRouteResult {
+  const fallback = options.fallback ?? '/'
+  const requireAdmin = options.requireAdmin === true
+  const noRoleFallback = requireAdmin ? options.noRoleFallback : undefined
   const auth = useAuth()
   const navigate = useNavigate()
   const { user, isPending: userLoading } = useCurrentUser()

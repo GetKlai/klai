@@ -121,9 +121,12 @@ class TestAuthAuditLogging:
 
     @pytest.mark.asyncio
     async def test_logout_writes_auth_logout_audit(self) -> None:
-        """The BFF logout endpoint must write an audit entry with action='auth.logout'."""
+        """The BFF logout endpoint must write an audit entry with action='auth.logout',
+        scoped to the session's real org_id so tenant-scoped audit queries see it.
+        """
         from app.api.auth_bff import logout
         from app.core.session import SessionContext
+        from app.services.bff_session import SessionRecord
 
         session = SessionContext(
             sid="sess-xyz",
@@ -132,13 +135,27 @@ class TestAuthAuditLogging:
             csrf_token="csrf-xyz",
             access_token_expires_at=0,
         )
+        record = SessionRecord(
+            sid="sess-xyz",
+            zitadel_user_id="user-42",
+            org_id=8,
+            access_token="atk",
+            refresh_token="",
+            access_token_expires_at=0,
+            id_token="",
+            csrf_token="csrf-xyz",
+            created_at=0,
+            last_seen_at=0,
+            user_agent_hash="",
+            ip_hash="",
+        )
 
         with (
             patch("app.api.auth_bff.audit") as mock_audit,
             patch("app.api.auth_bff.session_service") as mock_session_service,
         ):
             mock_audit.log_event = AsyncMock()
-            mock_session_service.load = AsyncMock(return_value=None)
+            mock_session_service.load = AsyncMock(return_value=record)
             mock_session_service.revoke = AsyncMock()
 
             await logout(session=session)
@@ -148,6 +165,7 @@ class TestAuthAuditLogging:
             assert call.kwargs.get("action") == "auth.logout"
             assert call.kwargs.get("actor") == "user-42"
             assert call.kwargs.get("resource_id") == "sess-xyz"
+            assert call.kwargs.get("org_id") == 8, "audit must carry real org_id, not sentinel 0"
 
     @pytest.mark.asyncio
     async def test_totp_login_writes_auth_login_totp(self) -> None:
