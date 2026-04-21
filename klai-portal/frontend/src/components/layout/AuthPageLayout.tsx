@@ -10,19 +10,19 @@ interface AuthPageLayoutProps {
  * Two-panel auth page shell shared by login, signup, forgot-password,
  * set-password, verify-email, and 2FA setup pages.
  *
- * Left panel: hero-bg.webp (same as marketing homepage) with a dark gradient
- * overlay for legibility of cream hero copy + white logo.
+ * Left panel: bg-1.webp with a dark gradient overlay for legibility of
+ * cream hero copy + white logo.
  * Right panel: ivory content area with optional locale switcher.
  */
 export function AuthPageLayout({ leftContent, children, showLocale = false }: AuthPageLayoutProps) {
   return (
     <div className="flex min-h-screen bg-[var(--color-background)]">
-      {/* Left panel — branding on hero bg */}
+      {/* Left panel — branding on bg-1 */}
       <div
         className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 text-[var(--color-rl-cream)]"
         style={{
           backgroundImage:
-            "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.2) 100%), url('/hero-bg.webp')",
+            "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.2) 100%), url('/bg-1.webp')",
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat',
