@@ -1,9 +1,9 @@
 ---
 id: SPEC-OBS-001
-version: 0.2.0
+version: 0.2.1
 status: draft
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 author: Mark Vletter
 priority: high
 ---
@@ -44,16 +44,16 @@ Alle scenarios in Given-When-Then-formaat. Elke scenario is gekoppeld aan één 
 ### AC-4: Test-alert komt als mail aan
 **Relates to:** SPEC-OBS-001-R4, R5
 
-- **Given** contact point `email-primary` is geconfigureerd met `url: ${KLAI_MAILER_ALERT_WEBHOOK_URL}`, klai-mailer's `POST /api/alerts/email` endpoint is live, `ALERTS_EMAIL_RECIPIENTS` bevat minimaal één geldig adres.
-- **When** een operator via Grafana UI → Contact points → email-primary → "Test" een test-bericht triggert.
-- **Then** binnen 60 seconden arriveert een mail in `ALERTS_EMAIL_RECIPIENTS` met subject `[KLAI-ALERT-test] TestAlert` (of Grafana's equivalent), body bevat severity, alert-name, en een testbericht.
+- **Given** contact point `klai-ops-alerts-email` (type: email) is geprovisioneerd met `addresses: ${ALERTS_EMAIL_RECIPIENTS}`; Grafana's GF_SMTP is reeds geconfigureerd door SEC-024; `ALERTS_EMAIL_RECIPIENTS` bevat minimaal één geldig adres.
+- **When** een operator via Grafana UI → Contact points → klai-ops-alerts-email → "Test" een test-bericht triggert.
+- **Then** binnen 60 seconden arriveert een mail in `ALERTS_EMAIL_RECIPIENTS` met subject `[KLAI-ALERT-test] TestAlert` (of Grafana's equivalent), body bevat severity, alert-name, en een testbericht. Mail-headers tonen verzending via Cloud86 SMTP (`shared199.cloud86-host.io`) — dezelfde infrastructuur die SEC-024 gebruikt.
 
-### AC-5: Alle severity-levels routeren naar email-primary
-**Relates to:** SPEC-OBS-001-R5
+### AC-5: OBS-alerts en SEC-alerts gebruiken gescheiden contact points
+**Relates to:** SPEC-OBS-001-R4, R5
 
-- **Given** meerdere rules actief met verschillende severities (CRIT, HIGH, MED).
-- **When** een CRIT-rule fires (bijv. handmatig een 5xx-spike veroorzaakt) en separately een MED-rule fires (bijv. disk vol-simulatie).
-- **Then** beide berichten arriveren bij `ALERTS_EMAIL_RECIPIENTS`; beide subjecten bevatten hun juiste severity-waarde (`[KLAI-ALERT-critical]` vs `[KLAI-ALERT-medium]`); geen bericht gaat naar een ander kanaal.
+- **Given** twee rules actief: `spec-sec-024-proxy-denials` (SEC-024) en bijvoorbeeld `portal_api_5xx_rate_high` (OBS-001).
+- **When** beide rules firen in kort opeenvolgende momenten.
+- **Then** de SEC-024 mail gaat naar `klai-dev-alerts-email` (bestaande ontvangers); de OBS-001 mail gaat naar `klai-ops-alerts-email` (nieuwe ontvangers uit `ALERTS_EMAIL_RECIPIENTS`). Beide gebruiken dezelfde GF_SMTP-infrastructuur onderwater. Geen cross-routing tussen de twee contact points.
 
 ### AC-6: Alert-payload met secret wordt geredacteerd
 **Relates to:** SPEC-OBS-001-R6
@@ -69,16 +69,16 @@ Alle scenarios in Given-When-Then-formaat. Elke scenario is gekoppeld aan één 
 ### AC-7: Literal credential in config blokkeert PR
 **Relates to:** SPEC-OBS-001-R7, R8
 
-- **Given** een PR wijzigt `deploy/grafana/provisioning/alerting/contact-points/email.yaml` en bevat bijvoorbeeld een literal `password: s3cr3t!` of een SMTP-URL met wachtwoord.
+- **Given** een PR wijzigt `deploy/grafana/provisioning/alerting/contact-points/ops-email.yaml` en bevat bijvoorbeeld een literal `password: s3cr3t!`, een SMTP-URL met wachtwoord, of een hardcoded `mark.vletter@voys.nl:somepassword@smtp...` combo.
 - **When** de `alerting-check` GitHub Action draait.
 - **Then** het `audit-alert-secrets.sh` script exiteert met non-zero, het CI-check-block rapporteert de vindplaats, en de PR kan niet merged worden totdat de waarde vervangen is door `${VAR_NAME}`.
 
 ### AC-8: Env-var substitution werkt in runtime
 **Relates to:** SPEC-OBS-001-R7
 
-- **Given** `email.yaml` bevat `url: ${KLAI_MAILER_ALERT_WEBHOOK_URL}` en de env-var is correct gezet via SOPS.
-- **When** Grafana leest de provisioning-file.
-- **Then** Grafana verstuurt bij een test-alert naar de daadwerkelijke mailer-URL; geen logging van die URL zelf in Grafana-logs; Grafana's `/api/v1/provisioning/contact-points` retourneert de URL-veld gemaskeerd of als lege string (standaard Grafana API-gedrag voor secure fields).
+- **Given** `ops-email.yaml` bevat `addresses: ${ALERTS_EMAIL_RECIPIENTS}` en de env-var is correct gezet via SOPS in `klai-infra/core-01/.env.sops`.
+- **When** Grafana leest de provisioning-file na `docker compose up -d grafana` (recreate — NIET `restart`, zie SEC-024 defect 2).
+- **Then** Grafana verstuurt bij een test-alert naar het daadwerkelijke adres; Grafana's `/api/v1/provisioning/contact-points` retourneert de addresses-waarde zoals geprovisioneerd (niet gemaskeerd — het is een adres, geen secret). De onderliggende `GF_SMTP_PASSWORD` verschijnt nergens in logs of API-responses.
 
 ---
 
@@ -258,20 +258,20 @@ Alle scenarios in Given-When-Then-formaat. Elke scenario is gekoppeld aan één 
 - **When** Grafana probeert een LogsQL-alert te evalueren.
 - **Then** de specifieke rule gaat naar state "Error" (niet "Firing"); `execErrState: Alerting` triggert een alert met name `rule_evaluation_failed` → zichtbaar als een distinct signaal.
 
-### EC-2: klai-mailer is down tijdens alert fire
-- **Given** klai-mailer container is gestopt.
-- **When** Grafana probeert een alert-webhook te POST-en.
-- **Then** Grafana logt `level=error msg="notification failed"`, retries een paar keer (Grafana-default), dan stopt; de alert blijft in state "Firing" in Grafana UI maar er komt geen mail aan. Detectie: de `container_down` rule voor klai-mailer zelf (maar die kan ook niet gemaild worden). Hartslag via Uptime Kuma detecteert dit niet (die blijft werken). **Mitigatie:** klai-mailer is zelf een deployment-kritische service; bestaande container health-checks + restart-policy houden hem up. Quarterly review checks of klai-mailer uptime acceptabel is.
+### EC-2: Cloud86 SMTP is onbereikbaar tijdens alert fire
+- **Given** de Cloud86 SMTP-host is down of onbereikbaar vanaf core-01.
+- **When** Grafana probeert een alert-mail te versturen.
+- **Then** Grafana logt `level=error msg="failed to send notification"`, retries een paar keer (Grafana-default), dan stopt; de alert blijft in state "Firing" in Grafana UI maar er komt geen mail aan. **Detectie:** de hartslag via Uptime Kuma blijft werken (HTTP-push, geen SMTP) — dus géén valse alerter-down mail, maar de operator ziet ook geen reguliere alerts. **Mitigatie:** als dit structureel voorkomt, overweeg een tweede SMTP-provider configureren. Single point of failure in Cloud86 is een bekend aandachtspunt en is reden waarom R24 de heartbeat-pad expliciet op een ander account zet.
 
 ### EC-3: Operator wijzigt rule tijdens actieve fire
 - **Given** een alert fires.
 - **When** een PR wijzigt de threshold en wordt gemerged terwijl alert actief is.
 - **Then** Grafana herlaadt de rule; als de nieuwe threshold de conditie nog steeds satisfies, blijft alert in "Firing" zonder nieuwe notificatie (continuation); als nieuwe threshold conditie niet meer satisfies, lost alert op.
 
-### EC-4: SOPS-decryption faalt voor `KLAI_MAILER_ALERT_WEBHOOK_URL`
-- **Given** `.env` mist de webhook-var na een corrupte SOPS-sync.
+### EC-4: SOPS-decryption faalt voor `ALERTS_EMAIL_RECIPIENTS`
+- **Given** `.env` mist de ontvangers-var na een corrupte SOPS-sync.
 - **When** Grafana opstart.
-- **Then** de email-primary contact-point krijgt een lege URL; Grafana's interne test-send toont een error in de UI; operator moet handmatig detecteren. **Mitigatie:** een extra pre-flight check in de deploy-workflow die `printenv KLAI_MAILER_ALERT_WEBHOOK_URL | grep -q '^http'` vóór Grafana-recreate; faalt de deploy als env leeg is.
+- **Then** de `klai-ops-alerts-email` contact-point krijgt een lege adresseer-lijst; Grafana's interne test-send toont een error in de UI ("no recipients"); operator moet handmatig detecteren. **Mitigatie:** een extra pre-flight check in de deploy-workflow die `printenv ALERTS_EMAIL_RECIPIENTS | grep -q '@'` vóór Grafana-recreate; faalt de deploy als env leeg is.
 
 ### EC-5: Rule met labels die niet matchen bij evaluatie
 - **Given** een rule refereert `{{ $labels.slug }}` in de summary, maar een concrete match heeft geen `slug` label.
@@ -315,19 +315,23 @@ Alle punten hieronder moeten groen zijn voor merge-to-main van elke milestone-PR
 - [ ] `scripts/verify-alert-runbooks.sh` passes.
 - [ ] YAML-lint passes voor alle bestanden in `deploy/grafana/provisioning/alerting/`.
 - [ ] `docker compose config grafana | grep -A 20 environment` toont alle verwachte nieuwe env-vars correct geïnterpoleerd (geen onopgeloste `${…}`).
+- [ ] Deploy-workflow gebruikt `docker compose up -d grafana` (recreate), niet `restart` — SEC-024 pitfall.
 
 ### Functional
 
-- [ ] Handmatige test-alert naar `email-primary` komt aan binnen 60 seconden.
+- [ ] Handmatige test-alert naar `klai-ops-alerts-email` komt aan binnen 60 seconden.
+- [ ] Bestaande `klai-dev-alerts-email` (SEC-024) blijft werken (regressie-check: `spec-sec-024-proxy-denials` fire produceert nog steeds mail).
 - [ ] Elke nieuwe rule heeft een `uid`, `title`, `runbook_url` annotation en een `severity` label.
 - [ ] Elke rule's `datasourceUid` matcht een bestaande datasource (`victoriametrics` of `victorialogs`).
+- [ ] LogsQL-regels gebruiken expliciete `field:value` syntax (SEC-024 pitfall); vóór merge handmatig gevalideerd via VictoriaLogs MCP.
 - [ ] Nieuwe rules evalueren zonder "Error"-status in Grafana UI na 2 evaluation-cycles.
 
 ### Security / secret hygiene
 
-- [ ] Geen literal webhook-URLs, API-tokens, of SMTP-credentials in git.
+- [ ] Geen literal SMTP-credentials, tokens, of webhook-URLs in git.
 - [ ] Nieuwe env-vars zijn gedocumenteerd in de SPEC en toegevoegd aan SOPS.
-- [ ] Hartslag-pad gebruikt onafhankelijke SMTP (Uptime Kuma eigen config), niet klai-mailer.
+- [ ] `GRAFANA_SMTP_PASSWORD` is niet gewijzigd — SEC-024's setup blijft intact.
+- [ ] Hartslag-pad gebruikt onafhankelijke SMTP-account op public-01 (Uptime Kuma eigen config), niet Grafana's Cloud86-credential.
 
 ### Documentation
 
