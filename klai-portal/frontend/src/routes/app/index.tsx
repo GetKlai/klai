@@ -6,7 +6,6 @@ import { ChevronDown } from 'lucide-react'
 
 import { apiFetch } from '@/lib/apiFetch'
 import { useAuth } from '@/lib/auth'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { chatKbLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 
@@ -166,8 +165,6 @@ function ChatHome() {
 // ---------------------------------------------------------------------------
 
 function ChatConfigBar() {
-  const { user: currentUser } = useCurrentUser()
-  const myUserId = currentUser?.user_id
   const queryClient = useQueryClient()
   const [collOpen, setCollOpen] = useState(false)
 
@@ -181,7 +178,9 @@ function ChatConfigBar() {
     queryFn: async () => apiFetch<{ knowledge_bases: OrgKB[] }>('/api/app/knowledge-bases'),
   })
 
-  const allKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => kb.slug !== `personal-${myUserId}`)
+  // Exclude every personal-* slug: the caller's own toggles via "Persoonlijk"
+  // and other users' personal KBs should never show up in the chat dropdown.
+  const allKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => !kb.slug.startsWith('personal-'))
   const allSlugs = allKbs.map((kb) => kb.slug)
   const currentSlugs: string[] = pref
     ? pref.kb_slugs_filter === null ? allSlugs : pref.kb_slugs_filter.filter((s) => allSlugs.includes(s))
