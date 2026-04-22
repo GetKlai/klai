@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-005
-version: 0.6.0
+version: 0.7.0
 status: complete
 created: 2026-04-19
 updated: 2026-04-22
@@ -11,6 +11,14 @@ priority: high
 # SPEC-INFRA-005: Stateful service persistence, backup, and observability hardening
 
 ## HISTORY
+
+### v0.7.0 (2026-04-22)
+- Research-uploads retention policy decided + implemented (REQ-R1). Three event-driven triggers, no time-based sweep:
+    1. `delete_when_source_removed` — `sources.py::delete_source` calls `upload_storage.delete_one()`.
+    2. `delete_when_notebook_removed` — `notebooks.py::delete_notebook` calls `upload_storage.cleanup_notebook()`. Closes a pre-existing orphan-files bug where Source rows were dropped but the underlying PDFs remained on disk.
+    3. `delete_when_tenant_removed` — `upload_storage.cleanup_tenant()` plus a `scripts/research_tenant_cleanup.py` ops CLI. Today operates as a manual ops command; will be wired into portal-api when tenant teardown ships.
+- Helper module `klai-focus/research-api/app/services/upload_storage.py` centralises save + all three cleanup paths, with path-traversal guards and idempotent semantics. 13 regression tests pin the behaviour.
+- Inventory entry for `research-uploads` updated: retention=`event_driven`, with file paths to enforcement code + test.
 
 ### v0.6.0 (2026-04-22)
 - Phase 4 complete (effectively). gitea, grafana, victoriametrics, victorialogs all gain Docker-native healthchecks. Each verified `(healthy)` in production. Ollama remains the one image without a CMD healthcheck because it ships distroless — covered by the existing Uptime Kuma `push_exec` probe in `push-health.sh`.
