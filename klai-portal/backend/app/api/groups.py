@@ -192,7 +192,7 @@ async def create_group(
         ) from exc
 
     await db.commit()
-    await db.refresh(group)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     prods_result = await db.execute(
         select(PortalGroupProduct.product)
@@ -251,7 +251,7 @@ async def update_group(
         ) from exc
 
     await db.commit()
-    await db.refresh(group)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     prods_result = await db.execute(
         select(PortalGroupProduct.product)
@@ -560,7 +560,7 @@ async def assign_group_product(
         details={"product": body.product, "group_id": group_id},
     )
     await db.commit()
-    await db.refresh(record)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return GroupProductOut(product=record.product, enabled_at=record.enabled_at, enabled_by=record.enabled_by)
 
 

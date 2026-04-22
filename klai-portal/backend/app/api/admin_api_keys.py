@@ -195,7 +195,7 @@ async def create_api_key(
         )
 
     await db.commit()
-    await db.refresh(key_row)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     emit_event(
         "api_key.created",

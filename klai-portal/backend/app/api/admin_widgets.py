@@ -181,7 +181,7 @@ async def create_widget(
         db.add(WidgetKbAccess(widget_id=internal_id, kb_id=kb_id))
 
     await db.commit()
-    await db.refresh(widget_row)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     emit_event(
         "widget.created",

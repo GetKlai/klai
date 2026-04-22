@@ -605,7 +605,7 @@ async def update_default_org_role(
 
     kb.default_org_role = body.default_org_role
     await db.commit()
-    await db.refresh(kb)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _kb_out(kb)
 
 
@@ -896,7 +896,7 @@ async def invite_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="User already has access to this knowledge base",
         ) from exc
-    await db.refresh(access)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return UserMemberOut(
         id=access.id,
         user_id=access.user_id,
@@ -937,7 +937,7 @@ async def update_user_role(
 
     access.role = body.role
     await db.commit()
-    await db.refresh(access)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     profile = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == access.user_id))
     portal_user = profile.scalar_one_or_none()
@@ -1025,7 +1025,7 @@ async def invite_group(
             status_code=status.HTTP_409_CONFLICT,
             detail="Group already has access to this knowledge base",
         ) from exc
-    await db.refresh(access)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return GroupMemberOut(
         id=access.id,
         group_id=access.group_id,
@@ -1067,7 +1067,7 @@ async def update_group_role(
 
     row.PortalGroupKBAccess.role = body.role
     await db.commit()
-    await db.refresh(row.PortalGroupKBAccess)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return GroupMemberOut(
         id=row.PortalGroupKBAccess.id,
         group_id=row.PortalGroupKBAccess.group_id,

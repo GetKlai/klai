@@ -243,7 +243,7 @@ async def create_taxonomy_node(
         ) from exc
 
     await db.commit()
-    await db.refresh(node)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _node_out(node)
 
 
@@ -306,7 +306,7 @@ async def update_taxonomy_node(
             detail="A sibling node with this name already exists",
         ) from exc
 
-    await db.refresh(node)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _node_out(node)
 
 
@@ -479,7 +479,7 @@ async def create_proposal(
     )
     db.add(proposal)
     await db.commit()
-    await db.refresh(proposal)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _proposal_out(proposal)
 
 
@@ -648,11 +648,11 @@ async def approve_proposal(
             detail="Operation failed due to a naming conflict",
         ) from exc
 
-    await db.refresh(proposal)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     # R4: trigger auto-categorise via Procrastinate job (SPEC-KB-026 R5)
     if _new_node is not None and _cluster_centroid_for_autocategorise:
-        await db.refresh(_new_node)  # ensure _new_node.id is populated after commit
+        # No post-commit refresh: expire_on_commit=False keeps _new_node.id in memory after commit.
         from app.services.knowledge_ingest_client import enqueue_auto_categorise
 
         await enqueue_auto_categorise(
@@ -699,7 +699,7 @@ async def reject_proposal(
     proposal.rejection_reason = body.reason
 
     await db.commit()
-    await db.refresh(proposal)
+    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _proposal_out(proposal)
 
 
