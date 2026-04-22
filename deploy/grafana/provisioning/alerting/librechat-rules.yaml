@@ -73,7 +73,7 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         for: 0s
         keepFiringFor: 30m
         isPaused: false
