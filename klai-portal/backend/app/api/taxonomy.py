@@ -242,8 +242,8 @@ async def create_taxonomy_node(
             detail="A sibling node with this name already exists",
         ) from exc
 
+    await db.refresh(node)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _node_out(node)
 
 
@@ -478,8 +478,9 @@ async def create_proposal(
         confidence_score=body.confidence_score,
     )
     db.add(proposal)
+    await db.flush()
+    await db.refresh(proposal)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return _proposal_out(proposal)
 
 

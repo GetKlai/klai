@@ -191,8 +191,8 @@ async def create_group(
             detail="Group name already exists in this organisation",
         ) from exc
 
+    await db.refresh(group)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
     prods_result = await db.execute(
         select(PortalGroupProduct.product)
@@ -559,8 +559,8 @@ async def assign_group_product(
         resource_id=f"{group_id}:{body.product}",
         details={"product": body.product, "group_id": group_id},
     )
+    await db.refresh(record)  # Pre-commit refresh to load server_default columns while tenant context is still set.
     await db.commit()
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
     return GroupProductOut(product=record.product, enabled_at=record.enabled_at, enabled_by=record.enabled_by)
 
 

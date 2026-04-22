@@ -889,14 +889,15 @@ async def invite_user(
     )
     db.add(access)
     try:
-        await db.commit()
+        await db.flush()
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="User already has access to this knowledge base",
         ) from exc
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
+    await db.refresh(access)  # Pre-commit refresh to load server_default columns while tenant context is still set.
+    await db.commit()
     return UserMemberOut(
         id=access.id,
         user_id=access.user_id,
@@ -1018,14 +1019,15 @@ async def invite_group(
     )
     db.add(access)
     try:
-        await db.commit()
+        await db.flush()
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Group already has access to this knowledge base",
         ) from exc
-    # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
+    await db.refresh(access)  # Pre-commit refresh to load server_default columns while tenant context is still set.
+    await db.commit()
     return GroupMemberOut(
         id=access.id,
         group_id=access.group_id,
