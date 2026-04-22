@@ -663,24 +663,35 @@ async def vexa_webhook(
     }
     portal_status = VEXA_STATUS_MAP.get(payload.status or "")
 
-    # Prefer vexa_meeting_id (unambiguous FK); fall back to (platform, native_meeting_id)
-    # pair which can correlate even during the "pending" phase before a bot is spawned.
-    if payload.vexa_meeting_id is not None:
-        meeting = await db.scalar(
-            select(VexaMeeting)
-            .where(VexaMeeting.vexa_meeting_id == payload.vexa_meeting_id)
-            .order_by(VexaMeeting.created_at.desc())
-        )
-    else:
-        meeting = await db.scalar(
-            select(VexaMeeting)
-            .where(
-                VexaMeeting.platform == payload.platform,
-                VexaMeeting.native_meeting_id == payload.native_meeting_id,
-                VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
+    # The webhook has no tenant context (Vexa only knows its own meeting
+    # id, not our org_id), so the correlation SELECT must cross tenants.
+    # Use an explicit cross_org_session; the subsequent UPDATE is then
+    # scoped to the meeting's own org via tenant_scoped_session.
+    from app.core.database import cross_org_session, tenant_scoped_session
+
+    async with cross_org_session() as lookup_db:
+        # Prefer vexa_meeting_id (unambiguous FK); fall back to
+        # (platform, native_meeting_id) pair which can correlate even
+        # during the "pending" phase before a bot is spawned.
+        if payload.vexa_meeting_id is not None:
+            meeting = await lookup_db.scalar(
+                select(VexaMeeting)
+                .where(VexaMeeting.vexa_meeting_id == payload.vexa_meeting_id)
+                .order_by(VexaMeeting.created_at.desc())
             )
-            .order_by(VexaMeeting.created_at.desc())
-        )
+        else:
+            meeting = await lookup_db.scalar(
+                select(VexaMeeting)
+                .where(
+                    VexaMeeting.platform == payload.platform,
+                    VexaMeeting.native_meeting_id == payload.native_meeting_id,
+                    VexaMeeting.status.in_((*ACTIVE_STATUSES, "stopping")),
+                )
+                .order_by(VexaMeeting.created_at.desc())
+            )
+        # Detach so we can use the instance on a different (tenant-scoped) session below.
+        if meeting is not None:
+            lookup_db.expunge(meeting)
     if meeting is None:
         logger.warning(
             "Vexa webhook: no matching meeting",
@@ -690,34 +701,46 @@ async def vexa_webhook(
         )
         return {"status": "ignored"}
 
-    if payload.status is not None and payload.status != "completed":
-        if portal_status and meeting.status != portal_status and meeting.status != "stopping":
-            meeting.status = portal_status
-            await db.commit()
-            logger.info(
-                "Vexa webhook: synced status",
-                vexa_status=payload.status,
-                portal_status=portal_status,
-                meeting_id=str(meeting.id),
+    # From here on we mutate the meeting — switch to a session scoped to
+    # the meeting's own tenant so vexa_meetings' tenant_update RLS policy
+    # accepts the write. The request-level `db` (from get_db, no tenant
+    # set) cannot be reused for UPDATEs on RLS-strict tables.
+    if meeting.org_id is None:
+        logger.warning("vexa_webhook_skipped_missing_org_id", meeting_id=str(meeting.id))
+        return {"status": "ignored"}
+
+    async with tenant_scoped_session(meeting.org_id) as scoped_db:
+        # Re-attach the detached ORM instance to the new session.
+        meeting = await scoped_db.merge(meeting)
+
+        if payload.status is not None and payload.status != "completed":
+            if portal_status and meeting.status != portal_status and meeting.status != "stopping":
+                meeting.status = portal_status
+                await scoped_db.commit()
+                logger.info(
+                    "Vexa webhook: synced status",
+                    vexa_status=payload.status,
+                    portal_status=portal_status,
+                    meeting_id=str(meeting.id),
+                )
+            return {"status": "synced"}
+
+        meeting.status = "stopping"
+        meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
+        if payload.vexa_meeting_id:
+            meeting.vexa_meeting_id = payload.vexa_meeting_id
+        await scoped_db.commit()
+
+        await run_transcription(meeting, scoped_db)
+        await scoped_db.commit()
+
+        if meeting.status == "completed":
+            await cleanup_recording(meeting, scoped_db, recording_id=payload.recording_id)
+            emit_event(
+                "meeting.completed",
+                org_id=meeting.org_id,
+                user_id=meeting.zitadel_user_id,
+                properties={"platform": meeting.platform, "duration_seconds": meeting.duration_seconds},
             )
-        return {"status": "synced"}
-
-    meeting.status = "stopping"
-    meeting.ended_at = datetime.now(UTC) if not meeting.ended_at else meeting.ended_at
-    if payload.vexa_meeting_id:
-        meeting.vexa_meeting_id = payload.vexa_meeting_id
-    await db.commit()
-
-    await run_transcription(meeting, db)
-    await db.commit()
-
-    if meeting.status == "completed":
-        await cleanup_recording(meeting, db, recording_id=payload.recording_id)
-        emit_event(
-            "meeting.completed",
-            org_id=meeting.org_id,
-            user_id=meeting.zitadel_user_id,
-            properties={"platform": meeting.platform, "duration_seconds": meeting.duration_seconds},
-        )
 
     return {"status": "ok"}

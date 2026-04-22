@@ -124,6 +124,11 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # app/services/access.py — get_accessible_kb_slugs takes org_id,
         # only called from app_knowledge_bases routes under _get_caller_org.
         "get_accessible_kb_slugs",
+        # app/services/access.py — accept org_id parameter; called from
+        # meetings.py routes under _get_caller_org which already ran
+        # set_tenant for this session.
+        "get_accessible_meetings",
+        "count_accessible_meetings",
     }
 )
 
@@ -245,7 +250,16 @@ class _QueryVisitor(ast.NodeVisitor):
             return
 
         callee = self._call_target_name(node)
-        if callee in TENANT_ESTABLISHING_CALLS or callee in ALLOWED_HELPER_FUNCTIONS:
+        # Only TENANT_ESTABLISHING_CALLS actually set app.current_org_id on
+        # the current session. Calling an ALLOWED_HELPER_FUNCTIONS entry does
+        # NOT establish tenant — those helpers assume tenant is already set
+        # by the caller, OR they open their own independent session. Treating
+        # them as tenant-establishing would mask silent RLS failures in the
+        # caller's own session (see recording_cleanup_loop incident on
+        # 2026-04-22: it called cleanup_recording which opens its own
+        # tenant_scoped_session, but the loop's OWN SELECT on VexaMeeting
+        # still ran without tenant context and got 42501'd in production).
+        if callee in TENANT_ESTABLISHING_CALLS:
             name, queries, _ = self._fn_stack[-1]
             self._fn_stack[-1] = (name, queries, True)
 
