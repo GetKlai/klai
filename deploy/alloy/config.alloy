@@ -80,6 +80,13 @@ loki.write "victorialogs" {
 prometheus.exporter.unix "node" {
   include_exporter_metrics = true
   disable_collectors       = ["wifi", "arp"]
+
+  // SPEC-INFRA-005 Phase 6: the host-side persistence probe writes .prom
+  // files here every 10 min; node_exporter's textfile collector surfaces
+  // them as klai_persistence_file_age_seconds{service="…"} gauges.
+  textfile {
+    directory = "/var/lib/node_exporter/textfile_collector"
+  }
 }
 
 prometheus.scrape "node" {
