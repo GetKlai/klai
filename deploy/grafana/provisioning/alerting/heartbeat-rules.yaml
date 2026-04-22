@@ -1,0 +1,70 @@
+# SPEC-OBS-001 Phase E — alerter-on-alerter heartbeat (R22).
+#
+# Routed via spec=SPEC-OBS-001 + alert_type=heartbeat → heartbeat-kuma
+# (see policies.yaml). The heartbeat-kuma contact point GETs the Uptime
+# Kuma push URL every 5 min, so Kuma sees a fresh heartbeat every cycle.
+#
+# When Grafana stops pushing (alerter is down), Kuma fires its own SMTP
+# notification (configured directly in Kuma's SQLite, not via Grafana
+# or klai-mailer) — see runbook alerter-down-recovery.
+#
+# Independence guarantees:
+#   - Grafana down                      → Kuma sees no push, fires.
+#   - klai-mailer down                  → irrelevant to this path.
+#   - Grafana on core-01 down (host)    → Kuma on public-01 keeps running.
+#   - Cloud86 SMTP down                 → both paths fail (single SMTP
+#                                          provider; isolation gap, see
+#                                          DEFERRED.md / future SPEC).
+#
+# The rule is synthetic: math expression `1` always evaluates true,
+# threshold `> 0` always crosses → always firing. Group-level
+# repeat_interval=5m drives the push cadence (every 5 min the same
+# notification gets re-sent → webhook GET → Kuma push API hit).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-heartbeat
+    folder: Klai
+    interval: 5m
+    rules:
+      - uid: obs-001-alerter-heartbeat
+        title: alerter_heartbeat
+        condition: threshold
+        data:
+          - refId: math
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: math
+              type: math
+              expression: '1'
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 60
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: math
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 0s
+        isPaused: false
+        labels:
+          spec: SPEC-OBS-001
+          alert_type: heartbeat
+        annotations:
+          summary: 'alerter heartbeat tick'
+          runbook_url: 'docs/runbooks/platform-recovery.md#alerter-down-recovery'
+          description: 'Synthetic always-firing rule. Each evaluation triggers a webhook GET to Uptime Kuma. If this stops, the alerter itself is down — see runbook alerter-down-recovery.'

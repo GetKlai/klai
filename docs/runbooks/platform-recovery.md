@@ -613,3 +613,76 @@ After fix: error log volume drops below 10/10min, alert auto-resolves.
 ### Follow-up
 
 If the same connector class (Confluence, HubSpot, Notion) repeatedly errors across orgs, that connector needs hardening (better retry logic, structured error reporting). Track in a follow-up SPEC.
+
+---
+
+## alerter-down-recovery
+
+**Related alert**: SPEC-OBS-001-R23 (Uptime Kuma push monitor `Klai alerter heartbeat (OBS-001)`)
+
+**Situation**: Uptime Kuma on public-01 stopped receiving the 5-minute heartbeat push from Grafana. This means EITHER Grafana itself is down, OR Grafana is up but its alerting evaluation is broken (rule paused, contact-point misconfig, network split between core-01 and public-01).
+
+**Signal to look for**: an email with subject `[KLAI-ALERTER-DOWN] Klai alerter heartbeat (OBS-001) (...)` from `hello@getklai.com` to `mark.vletter@voys.nl`. The mail arrives via Uptime Kuma's own SMTP path, NOT via Grafana — so receiving it confirms the dead-man's-switch worked.
+
+### Step 1 — Is Grafana up?
+
+```bash
+ssh core-01 "docker ps --filter name=grafana --format '{{.Names}}\t{{.Status}}'"
+```
+
+If not running: see `container-down` runbook (likely cause: OOM, deploy-compose workflow failure, or core-01 host issue).
+
+If `Restarting`: see `container-restart-loop`.
+
+### Step 2 — Is alerting itself running?
+
+```bash
+ssh core-01 "docker logs --tail 30 klai-core-grafana-1 2>&1 | grep -iE 'alert|provisioning'"
+```
+
+Look for: `failed to provision`, `error`, missing scheduler ticks. The scheduler should log every minute.
+
+### Step 3 — Is the heartbeat rule healthy?
+
+```bash
+ssh core-01 'docker exec klai-core-grafana-1 sh -c "curl -sf -u admin:\$GF_SECURITY_ADMIN_PASSWORD http://localhost:3000/api/prometheus/grafana/api/v1/rules" 2>&1' | grep -o '"name":"alerter_heartbeat".*"health":"[^"]*"' | head -1
+```
+
+Expected: `"health":"ok"`. If `error`: the rule's expression broke (rare — it's just `math: 1`).
+
+### Step 4 — Is the webhook URL set?
+
+```bash
+ssh core-01 "docker exec klai-core-grafana-1 printenv KUMA_HEARTBEAT_URL"
+```
+
+Expected: `https://status.getklai.com/api/push/<token>?status=up&msg=ok`. If empty, the SOPS env-var didn't deploy — see `deploy.md` for SOPS sync.
+
+### Step 5 — Test the webhook manually
+
+```bash
+ssh core-01 "docker exec klai-core-grafana-1 curl -sf \"\$KUMA_HEARTBEAT_URL\""
+```
+
+Expected: `{"ok":true,"msg":"OK"}` (Kuma push API response). If 404 or different: the push token is wrong (check Kuma SQLite `monitor` table for the current token).
+
+### Step 6 — Force one heartbeat manually if needed
+
+If the rule is healthy but Kuma still hasn't received a heartbeat, force one:
+
+```bash
+ssh -i ~/.ssh/klai_ed25519 root@65.109.237.64 "
+  KUMA=\$(docker ps -q --filter name=uptime-kuma | head -1)
+  docker exec \$KUMA sqlite3 /app/data/kuma.db \"SELECT id, name, push_token FROM monitor WHERE name LIKE '%alerter heartbeat%'\"
+"
+```
+
+Use the push token to construct the URL, then `curl` it from anywhere — Kuma will mark UP.
+
+### Verify
+
+After fix: Uptime Kuma's monitor `Klai alerter heartbeat (OBS-001)` shows status UP. The next email from Kuma will be a "monitor up" recovery notification (suppressed if `disableResolveMessage` is set in its notification, which it isn't currently → expect a recovery mail).
+
+### Follow-up
+
+If this fires repeatedly without a clear root cause, investigate why core-01 ↔ public-01 connectivity is flaky (Hetzner internal network, firewall, Caddy on public-01 handling the inbound). One follow-up improvement: a SECOND independent SMTP provider for Kuma (currently shares Cloud86 with Grafana — a Cloud86 outage knocks out both paths). See DEFERRED.md.
