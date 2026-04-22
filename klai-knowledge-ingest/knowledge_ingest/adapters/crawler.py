@@ -22,6 +22,26 @@ from knowledge_ingest.sync_images import download_and_upload_crawl_images
 logger = structlog.get_logger()
 
 
+# @MX:ANCHOR: AuthWallDetected -- propagates login-indicator triggers from _ingest_crawl_result
+#   back up to run_crawl_job, which converts them into a single structured
+#   crawl_jobs.error entry and halts the remaining BFS pages.
+# @MX:REASON: A silent auth wall would otherwise ingest login pages as "content"
+#   and pollute Qdrant. Hard failing with a typed exception keeps the error
+#   surface at exactly one row per sync regardless of page count.
+# @MX:SPEC: SPEC-CRAWLER-004 REQ-02.3
+class AuthWallDetected(Exception):
+    """Raised when a page matches the configured ``login_indicator_selector``.
+
+    Attributes:
+        selector: The CSS selector that matched. Included in ``crawl_jobs.error``
+            so operators can tell which indicator fired without reading logs.
+    """
+
+    def __init__(self, selector: str) -> None:
+        super().__init__(f"auth_wall_detected: {selector}")
+        self.selector = selector
+
+
 def _build_image_store() -> ImageStore | None:
     """Construct an ImageStore from settings, or None if disabled.
 
@@ -52,6 +72,7 @@ async def run_crawl_job(
     exclude_patterns: list[str] | None = None,
     rate_limit: float = 2.0,
     content_selector: str | None = None,
+    login_indicator_selector: str | None = None,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
@@ -63,6 +84,12 @@ async def run_crawl_job(
     Note: exclude_patterns is accepted for API compatibility but not forwarded
     to Crawl4AI (URLPatternFilter supports include-only).  rate_limit is also
     accepted for compatibility; Crawl4AI manages its own request pacing.
+
+    ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
+    injected into crawl4ai's wait_for and also re-checked on every returned
+    page. If any page is flagged as auth-walled the job is marked failed
+    with ``error='auth_wall_detected: {selector}'`` and no further pages
+    are ingested.
     """
     await _update_job(job_id, status="running")
 
@@ -76,6 +103,7 @@ async def run_crawl_job(
             max_depth=max_depth,
             max_pages=max_pages,
             include_patterns=include_patterns,
+            login_indicator_selector=login_indicator_selector,
         )
 
         pool = await get_pool()
@@ -90,13 +118,24 @@ async def run_crawl_job(
 
         for result in results:
             url = result.url
+            # SPEC-CRAWLER-004 Fase B: detect login-indicator trigger.
+            # crawl4ai returns success=False when the injected wait_for times
+            # out on the login selector; surfacing that as AuthWallDetected
+            # gives us a single structured failure per sync.
+            if login_indicator_selector and not result.success:
+                raise AuthWallDetected(login_indicator_selector)
             try:
                 await _ingest_crawl_result(
                     result, url, org_id, kb_slug,
                     pool=pool,
                     stored=known_hashes.get(url),
+                    login_indicator_selector=login_indicator_selector,
                 )
                 pages_done += 1
+            except AuthWallDetected:
+                # Halt the whole BFS — downstream handler in the except block
+                # writes the job row; do not keep ingesting follow-up pages.
+                raise
             except Exception as exc:
                 logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
                 pages_failed += 1
@@ -128,6 +167,13 @@ async def run_crawl_job(
             pages_done=pages_done, pages_failed=pages_failed,
         )
 
+    except AuthWallDetected as exc:
+        # SPEC-CRAWLER-004 REQ-02.3: one structured error per sync, no artifacts.
+        logger.error(
+            "crawl_job_auth_wall",
+            job_id=job_id, selector=exc.selector, pages_ingested=pages_done,
+        )
+        await _update_job(job_id, status="failed", error=str(exc))
     except Exception as exc:
         logger.exception("crawl_job_error", job_id=job_id, error=str(exc))
         await _update_job(job_id, status="failed", error=str(exc))
@@ -140,6 +186,7 @@ async def _ingest_crawl_result(
     kb_slug: str,
     pool: object | None = None,
     stored: pg_store.PageHashes | None | object = _UNSET,
+    login_indicator_selector: str | None = None,
 ) -> None:
     """Process a crawl result: dedup, extract links, ingest.
 
@@ -152,6 +199,12 @@ async def _ingest_crawl_result(
        WHERE org_id = '<org>' AND kb_slug = '<slug>';
     """
     if not result.success:
+        # With a login indicator set, crawl4ai's wait_for fails on auth-walled
+        # pages and returns success=False. run_crawl_job catches this first
+        # (before calling us), but guard here too so a direct caller still
+        # surfaces the typed exception instead of a generic ValueError.
+        if login_indicator_selector:
+            raise AuthWallDetected(login_indicator_selector)
         raise ValueError(f"Crawl failed: {result.error_message}")
 
     # Detect PDF: check Content-Type header first, fall back to URL extension
