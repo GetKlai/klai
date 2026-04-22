@@ -59,6 +59,10 @@ class CrawlResult:
     word_count: int
     success: bool
     links: dict[str, list[dict]] = field(default_factory=dict)
+    # SPEC-CRAWLER-004 Fase A: crawl4ai populates ``media.images`` with dicts
+    # shaped like ``{"src": "...", "alt": "...", "score": N}``. Other keys
+    # (``videos``, ``audios``) exist but knowledge-ingest currently ignores them.
+    media: dict[str, list[dict]] = field(default_factory=dict)
     error_message: str | None = None
     metadata: dict[str, Any] | None = None
     response_headers: dict[str, str] | None = None
@@ -182,6 +186,7 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
         word_count=len(text.split()),
         success=page.get("success", True),
         links=page.get("links", {}),
+        media=page.get("media") or {},
         error_message=page.get("error_message"),
         metadata=page.get("metadata"),
         response_headers=page.get("response_headers"),

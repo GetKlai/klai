@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     taxonomy_cluster_trigger_count: int = 20
     taxonomy_centroid_max_age_hours: int = 48
 
+    # SPEC-CRAWLER-004 Fase A — Garage S3 for consolidated crawl image pipeline.
+    # Feature-flagged via empty endpoint: when ``garage_s3_endpoint`` is blank
+    # the crawler skips image upload and writes no ``image_urls`` into Qdrant.
+    garage_s3_endpoint: str = ""
+    garage_access_key: str = ""
+    garage_secret_key: str = ""
+    garage_bucket: str = "klai-images"
+    garage_region: str = "garage"
+    # httpx timeout for individual image downloads. Kept short — a slow
+    # third-party host must not block a whole page ingest.
+    image_download_timeout: float = 10.0
+
     model_config = {"env_file": ".env"}
 
     @model_validator(mode="after")

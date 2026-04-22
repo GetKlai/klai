@@ -1104,6 +1104,13 @@ services:
       GRAPHITI_ENABLED: "true"
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
+      # SPEC-CRAWLER-004 Fase A — shared Garage S3 image pipeline.
+      # Empty GARAGE_S3_ENDPOINT disables image extraction silently.
+      GARAGE_S3_ENDPOINT: garage:3900
+      GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY}
+      GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
+      GARAGE_REGION: garage
     networks:
       - klai-net
       - net-postgres
@@ -1111,6 +1118,7 @@ services:
       - qdrant
       - postgres
       - falkordb
+      - garage
 
   # ─── Garage S3 (image storage for knowledge pipeline) ────────────────────────
   # Garage serves images via two endpoints:
