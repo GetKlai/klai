@@ -50,17 +50,35 @@ jobs:
             cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
-            # provisioning only at startup, so we need to restart. Use
-            # `up -d` instead of `restart`: `restart` keeps the existing
-            # container env (docker-compose.yml + .env changes are ignored),
-            # while `up -d` recreates the container with fresh env if the
-            # compose file or .env drifted. Required for env-var changes
-            # to grafana (e.g. VICTORIALOGS_AUTH_*, future GF_SMTP_*).
-            # Short downtime (~10s) is acceptable for an internal
+            # provisioning only at startup, so we need to restart when files
+            # change. Use `up -d` instead of `restart`: `restart` keeps the
+            # existing container env (docker-compose.yml + .env changes are
+            # ignored), while `up -d` recreates the container with fresh env
+            # if the compose file or .env drifted. Required for env-var
+            # changes to grafana (e.g. VICTORIALOGS_AUTH_*, GF_SMTP_*).
+            #
+            # SPEC-OBS-001 Phase C — bind-mount-only changes detection.
+            # `up -d` is a no-op when bind-mount source content changes but
+            # the service definition (image, env, ports) is unchanged. Pure
+            # provisioning-file edits (new alert rule YAML, dashboard JSON)
+            # therefore land on disk but Grafana keeps running with the old
+            # config until something else triggers a recreate. We capture
+            # rsync's content-based diff (`-c` checksums, ignoring mtime
+            # churn from the fresh git clone) and only force-recreate when
+            # files actually changed. Falls back to plain `up -d` for the
+            # service-definition path so env-var changes still recreate
+            # naturally. Short downtime (~10s) is acceptable for an internal
             # observability tool; no user-facing impact.
             mkdir -p /opt/klai/grafana/provisioning
-            rsync -a deploy/grafana/provisioning/ /opt/klai/grafana/provisioning/
-            docker compose --project-directory /opt/klai up -d grafana
+            RSYNC_PROV_CHANGES=$(rsync -ac --itemize-changes deploy/grafana/provisioning/ /opt/klai/grafana/provisioning/ | grep -E '^[<>*]' || true)
+            if [ -n "$RSYNC_PROV_CHANGES" ]; then
+              echo "Grafana provisioning content changed:"
+              echo "$RSYNC_PROV_CHANGES"
+              docker compose --project-directory /opt/klai up -d --force-recreate grafana
+            else
+              echo "Grafana provisioning unchanged; using plain up -d (recreates only on service-definition diff)"
+              docker compose --project-directory /opt/klai up -d grafana
+            fi
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,
