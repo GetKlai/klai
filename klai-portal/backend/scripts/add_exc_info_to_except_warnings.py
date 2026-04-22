@@ -95,9 +95,7 @@ def _patch_file(path: Path) -> int:
     # ast end_col_offset / end_lineno point at the closing `)`. We process
     # offenders bottom-up so earlier edits don't shift later positions.
     lines = source.splitlines(keepends=True)
-    offenders_sorted = sorted(
-        finder.offenders, key=lambda n: (n.end_lineno or 0, n.end_col_offset or 0), reverse=True
-    )
+    offenders_sorted = sorted(finder.offenders, key=lambda n: (n.end_lineno or 0, n.end_col_offset or 0), reverse=True)
     for call in offenders_sorted:
         end_line_idx = (call.end_lineno or 1) - 1
         end_col = call.end_col_offset or 0

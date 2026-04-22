@@ -173,9 +173,7 @@ def test_logger_warnings_in_except_capture_traceback():
         offenders.extend(_audit_file(path))
 
     if offenders:
-        formatted = "\n".join(
-            f"  {p}:{lineno} in {fn}()\n    {snippet}" for p, lineno, fn, snippet in offenders
-        )
+        formatted = "\n".join(f"  {p}:{lineno} in {fn}()\n    {snippet}" for p, lineno, fn, snippet in offenders)
         pytest.fail(
             f"{len(offenders)} `logger.warning`/`logger.error` calls inside `except Exception` "
             "blocks are missing `exc_info=True`. Add the kwarg, or switch to "
