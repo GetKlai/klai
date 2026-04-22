@@ -10,6 +10,44 @@ SEC-021 routes all portal-api and runtime-api Docker API traffic through
 `tecnativa/docker-socket-proxy` instead of binding `/var/run/docker.sock`
 directly. The proxy restricts which Docker API endpoints are reachable.
 
+## Vexa runtime-api speaks Unix socket only (HIGH)
+
+The Vexa `runtime-api` image (`vexaai/runtime-api:0.10.0-*`) hardcodes
+`requests_unixsocket` in `runtime_api/backends/docker.py`. It ignores
+`DOCKER_HOST=tcp://...` and builds `http+unix://<encoded path>` URLs
+unconditionally. As of Vexa `main` on 2026-04-22 this has not changed
+across v0.10 → v0.10.3. There are no open upstream issues or PRs.
+
+**Why it matters:** The portal-api docker-socket-proxy pattern (pure TCP)
+cannot be copied directly for runtime-api. Pointing `DOCKER_HOST` at the
+proxy makes startup fail with `FileNotFoundError: [Errno 2] No such file
+or directory` the moment `_get_session()` runs.
+
+**Klai solution:** A `alpine/socat` sidecar (`runtime-api-socket-proxy`)
+listens on a Unix socket in a named volume (`runtime-api-docker-socket`)
+and forwards every byte to `docker-socket-proxy:2375`. Runtime-api mounts
+the named volume at `/var/run/` so it sees what it believes is a local
+socket. The whitelist enforcement still happens in docker-socket-proxy —
+runtime-api gets CONTAINERS/NETWORKS/POST/DELETE only, and forbidden
+verbs (EXEC, IMAGES, VOLUMES, SYSTEM) return 403 at the proxy.
+
+**Verification (run after any compose change touching runtime-api):**
+```bash
+# Must 403:
+docker exec klai-core-runtime-api-1 python -c \
+  "import requests_unixsocket as r; \
+   print(r.Session().post('http+unix://%2Fvar%2Frun%2Fdocker.sock/v1.53/exec/x/start').status_code)"
+# Must 200:
+docker exec klai-core-runtime-api-1 python -c \
+  "import requests_unixsocket as r; \
+   print(r.Session().get('http+unix://%2Fvar%2Frun%2Fdocker.sock/v1.53/containers/json').status_code)"
+```
+
+**Prevention:** Do not point runtime-api at `tcp://docker-socket-proxy:2375`.
+Always route through the socat sidecar. If Vexa upstream adds TCP support
+in a future release (watch `services/runtime-api/runtime_api/backends/docker.py`),
+the sidecar can be removed and `DOCKER_HOST` env var re-introduced.
+
 ## Allowed verbs (current prod config)
 
 `deploy/docker-compose.yml` sets:

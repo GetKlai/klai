@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-021
-version: 0.2.0
-status: draft (claims verified)
+version: 0.3.0
+status: implemented
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-04-22
 author: Mark Vletter
 priority: high
 ---
@@ -11,6 +11,39 @@ priority: high
 # SPEC-SEC-021: runtime-api achter docker-socket-proxy
 
 ## HISTORY
+
+### v0.3.0 (2026-04-22)
+- **Implemented in dev.** Runtime-api no longer mounts `/var/run/docker.sock`
+  directly. All Docker API calls flow through a new socat sidecar
+  (`runtime-api-socket-proxy`, `alpine/socat:1.7.3.4-r1`) into the existing
+  `docker-socket-proxy:2375` whitelist.
+- **Discovered constraint (blocker for original v0.2 approach):** Vexa
+  `runtime-api` hardcodes `requests_unixsocket` — it cannot speak TCP to
+  `docker-socket-proxy:2375` at all. `DOCKER_HOST=tcp://...` causes startup
+  crash with `FileNotFoundError`. Verified by reading `main` branch source
+  at 2026-04-22 + checking v0.10.1/0.10.2/0.10.3 changelogs + zero open
+  upstream issues. No upstream fix on the horizon.
+- **Architecture** (see `.claude/rules/klai/platform/docker-socket-proxy.md`
+  "Vexa runtime-api speaks Unix socket only" section for details):
+  - New named volume `runtime-api-docker-socket` shared between
+    `runtime-api-socket-proxy` (socat) and `runtime-api` (Vexa).
+  - socat listens on `UNIX-LISTEN:/var/run/docker.sock,mode=0660,user=999,group=999`
+    (runtime-api's uid) and forwards to `TCP:docker-socket-proxy:2375`.
+  - runtime-api mounts the named volume at `/var/run/` — sees a local
+    Unix socket, never the real host daemon socket.
+  - runtime-api removed from the `socket-proxy` network (only the socat
+    sidecar is there now).
+- **Verification (dev, 2026-04-22):**
+  - `runtime-api` startup log: `Docker connected (API 1.53)` ✅
+  - Health: `healthy` ✅
+  - Binds: only `./vexa/profiles.yaml:ro` + named volume — no host socket ✅
+  - Negative: `POST /exec/{id}/start` → 403 ✅
+  - Negative: `GET /images/json` → 403 ✅
+  - Positive: `GET /containers/json` → 200 (46 containers) ✅
+- **Remaining:** production rollout (currently dev-only), end-to-end bot
+  spawn test against a live meeting (blocked on user scheduling a test
+  meeting), `runtime-api` Dockerfile non-root audit (moved out of scope —
+  tracked separately under SEC-018 follow-up).
 
 ### v0.2.0 (2026-04-19)
 - Verified the foundational claim: portal-api already uses `tecnativa/docker-socket-proxy:v0.4.2` at `docker-compose.yml:281-292` with whitelist `CONTAINERS=1 NETWORKS=1 POST=1 DELETE=1` on the `socket-proxy` network (`internal: true`). Portal-api consumes it via `DOCKER_HOST: tcp://docker-socket-proxy:2375` at line 316.

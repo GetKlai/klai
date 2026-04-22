@@ -1,7 +1,7 @@
 # Klai — Security, Code & Dead Code Audit Plan
 
 **Start:** 2026-04-19
-**Laatst bijgewerkt:** 2026-04-19 — ALLE code-wijzigingen LIVE + gesmoketest. SEC-004 middleware in research-api + scribe-api (401 op no-header, 200 op /health). SEC-020/021/022 via SPEC-drafts en audit-rapporten vastgelegd voor follow-up sessies. Alleen Task #31 (Playwright E2E) vereist nog user-login; #32 deferred.
+**Laatst bijgewerkt:** 2026-04-21 — 4 post-audit follow-up SPECs gelanded sinds 19 apr: SPEC-SEC-024 (docker-socket-proxy compliance, LIVE) + SPEC-PROV-001 (transactional provisioning, LIVE) + SPEC-OBS-001 (Grafana alerting, draft) + SPEC-INFRA-005 (stateful persistence + volume-audit CI, Phase 1+2 LIVE). Plus major RLS silent-failure hardening (AUTH-008 phase E/F). Alle originele SEC-tickets gesloten behalve SEC-022 (vereist live-ops window). Task #31 (Playwright E2E) nog open.
 **Werklocatie:** `.moai/audit/`
 **Scope:** hele klai-monorepo (13 sub-repos)
 
@@ -10,15 +10,16 @@
 | Fase | Status | Artefact | # Findings |
 |---|---|---|---|
 | 0 — Inventaris | partial (via scope-tabel) | — | — |
-| 1 — Secrets & config | **grotendeels gedekt door parallelle session** | `reports/cve-triage-2026-04-19.md` (indirect) | secret scanning + push protection LIVE; gitleaks sweep niet strikt gedaan (accept risk — push protection dekt nieuwe commits) |
+| 1 — Secrets & config | **✅ covered** | `reports/cve-triage-2026-04-19.md` + gitleaks config (commit 1fe61b66) | secret scanning + push protection + gitleaks-config LIVE; nieuwe commits gedekt |
 | 2 — Dependencies | **grotendeels gedekt door parallelle session** | `reports/dependency-audit-2026-04-19.md`, `docs/runbooks/version-management.md` | 26 images pinned, 1 CRITICAL CVE gefixt (LiteLLM), 6 CVE-detectielagen actief, 3 critical upstream-blocked |
-| **3 — Tenant isolation** | **✅ completed** | `04-tenant-isolation.md`, `04-2-query-inventory.md`, `04-3-prework-caddy.md` | **22** (2 CRITICAL, 5 HIGH, 7 MEDIUM, 5 LOW, 2 POSITIVE, 1 unknown) |
+| **3 — Tenant isolation** | **✅ completed** | `04-tenant-isolation.md`, `04-2-query-inventory.md`, `04-3-prework-caddy.md` | **22** (2 CRITICAL, 5 HIGH, 7 MEDIUM, 5 LOW, 2 POSITIVE, 1 unknown) + RLS silent-failure class (AUTH-008-E, 2026-04-20) |
 | **4 — Input validation / injection** | **✅ completed** | `05-injection.md` | **7** (0 CRITICAL, 0 HIGH, 5 MEDIUM, 2 LOW, F-026 false positive) |
-| 5 — API hardening | partial (via Caddy verify) | `06-api-hardening.md` | (reeds dekt F-018, F-020, F-022) |
+| 5 — API hardening | **grotendeels gedekt** (Caddy verify + X-XSS-Protection header via 1fe61b66) | `06-api-hardening.md` | dekt F-018, F-020, F-022; CORS + rate-limit + XSS header LIVE; CSP-audit en HSTS-preload check nog open |
 | **6 — Dead code** | **✅ completed** | `07-dead-code.md` | **29** (22 Python + 7 TS; DEAD-008 false positive — deferred feature) |
 | **Vexa audit** | **✅ completed** | `08-vexa.md` | **8** (V-001..V-008 / F-030..F-037; 2 HIGH) |
 | **BFF-proxy gap** | **✅ identified + fixed** | `09-bff-proxy-gap.md` | F-038 (SEC-023 LIVE) |
-| 7 — Synthesiseer | **✅ completed (living)** | `99-fix-roadmap.md` | 19 fix-groepen DONE (inclusief 2 SPECs + 1 externe audit) + 1 user-action open (#31 Playwright E2E) + 1 deferred (#32) |
+| **Post-audit follow-ups** | **✅ tracked in roadmap** | `.moai/specs/SPEC-SEC-024/`, `.../SPEC-PROV-001/`, `.../SPEC-OBS-001/`, `.../SPEC-INFRA-005/` | 4 SPECs: 2 LIVE (SEC-024, PROV-001), 1 in_progress (INFRA-005 Phase 1+2 LIVE), 1 draft (OBS-001) + AUTH-008 phase E/F (RLS + auth surface) LIVE |
+| 7 — Synthesiseer | **✅ completed (living)** | `99-fix-roadmap.md` | 21 fix-groepen DONE + 2 open (SEC-022 live-ops window, OBS-001 implementation) + 1 in_progress (INFRA-005 Phase 3+) + 1 user-action (#31 Playwright E2E) + 1 deferred (#32) |
 
 **Pre-work status:**
 - [x] PRE-A — PG-role `bypassrls` = false voor `portal_api` ✓
@@ -41,11 +42,16 @@
 - [x] **SEC-012** JWT audience research-api — LIVE, smoke-tested (401 op bogus bearer). Scribe-deel superseded door SPEC-VEXA-003.
 - [x] **SEC-004** Defense-in-depth AuthGuardMiddleware in research-api + scribe-api — LIVE, smoke-tested (401 zonder header, 200 op /health)
 - [x] **SEC-020** Vexa external repo audit — DONE in `.moai/audit/10-vexa-external-audit.md`. Vexa auth-contract solide (fail-closed, hmac.compare_digest). 1 follow-up: `ALLOW_PRIVATE_CALLBACKS=1` flip.
-- [x] **SEC-021** runtime-api docker-socket-proxy — SPEC'd in `.moai/specs/SPEC-SEC-021/spec.md`. Implementation apart ticket.
-- [x] **SEC-022** vexa-bots network egress — SPEC'd in `.moai/specs/SPEC-SEC-022/spec.md`. Implementation vereist live-ops window.
-- [ ] **Task #31** SEC-023 end-to-end Playwright verify — OPEN (requires user login credentials)
+- [x] **SEC-021** runtime-api docker-socket-proxy — **IMPLEMENTED in dev 2026-04-22**. Vexa runtime-api kan geen TCP spreken (hardcoded `requests_unixsocket`), dus via `alpine/socat:1.7.3.4-r1` sidecar die Unix socket forwardt naar `docker-socket-proxy:2375`. Hardening verified: EXEC/IMAGES/VOLUMES/SYSTEM geven 403, CONTAINERS/NETWORKS werken. SPEC v0.3.0 in `.moai/specs/SPEC-SEC-021/spec.md`. Portal-api scope eerder al gesloten via SPEC-SEC-024.
+- [ ] **SEC-022** vexa-bots network egress — SPEC'd in `.moai/specs/SPEC-SEC-022/spec.md`. Implementation vereist live-ops window.
+- [x] **SEC-024** docker-socket-proxy compliance audit — LIVE. M1 exec_run audit + M2 proxy-pin/forbidden-verbs + M3 ast-grep CI-guard + M4 smoke-test + Grafana alert/dashboard + deploy-compose sync. Zero-tolerance alerting op denial-endpoint.
+- [x] **PROV-001** Transactional tenant provisioning — LIVE (71b9c973). AsyncExitStack rollback + idempotent retry + startup stuck-detector.
+- [ ] **OBS-001** Grafana Unified Alerting + e-mail — DRAFT v0.2.0. Getriggerd door FLUSHALL observability gap. Implementation open.
+- [~] **INFRA-005** Stateful service persistence + backup — IN_PROGRESS. Phase 1 (volume inventory) + Phase 2 (audit-compose CI) LIVE. Phase 3+ (healthchecks, FalkorDB/Qdrant/Garage backup, research-uploads retention) open.
+- [x] **AUTH-008-E/F** RLS silent-failure + auth surface cleanup — LIVE (849c7117 + 42fd9f06 + a2a6a0be + ba7861be + 47e51685 + f05f59b4 + eb067246 + 48559c79 + c5da5c17 + ce145a58). Class-of-bug: `SET LOCAL app.tenant_id` kon silently falen zonder pinned connection. Fix: pin + fail-loud.
+- [x] **Task #31** SEC-023 end-to-end Playwright verify — DONE (user confirmed 2026-04-21)
 - [x] **Task #32** BFF proxy streaming upload body — DEFERRED (geen upload-pad gaat nu via BFF proxy; wordt relevant zodra dat verandert)
-- [ ] **DEAD-* batch** config+connector dead code — OPEN, pending user review
+- [x] **DEAD-* batch** config+connector dead code — RESOLVED (zie roadmap 2026-04-19 DEAD-batch triage entry)
 
 ## Principe
 
