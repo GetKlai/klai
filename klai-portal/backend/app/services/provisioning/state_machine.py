@@ -13,8 +13,7 @@ trivial to reason about and to unit test.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import structlog
 from sqlalchemy import select
@@ -22,6 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.portal import PortalOrg
 from app.services.events import emit_event
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = structlog.get_logger()
 
@@ -55,6 +57,14 @@ FORWARD_SEQUENCE: Final[list[tuple[str, str]]] = [
     ("caddy_reload", "reloading_caddy"),
     ("system_groups", "creating_system_groups"),
 ]
+
+# States accepted as the entry point for `provision_tenant`. `pending` is the
+# row's initial value (before the BackgroundTask starts); `queued` is written
+# by the admin retry endpoint. Every other value means the row is in a state
+# that must NOT re-enter the forward sequence (intermediate, terminal, or
+# already-cleaned-up). Used by the orchestrator's entry guard AND by the
+# initial `transition_state` precondition check.
+ENTRY_STATES: Final[frozenset[str]] = frozenset({"pending", "queued"})
 
 # Terminal states that indicate the provisioning run is finished (successfully or
 # otherwise). Callers can use this set to gate retry/observability logic.
@@ -92,33 +102,41 @@ async def transition_state(
     db: AsyncSession,
     org_id: int,
     *,
-    from_state: str | None,
+    from_state: str | Iterable[str] | None,
     to_state: str,
     step: str,
 ) -> None:
     """Atomically transition `portal_orgs.provisioning_status` to `to_state`.
 
     Acquires a row-level lock via `SELECT ... FOR UPDATE`, verifies the current
-    state matches `from_state` (if provided), writes the new state, commits,
+    state matches ``from_state`` (if provided), writes the new state, commits,
     and emits exactly one structured log entry plus one product_event.
 
     Args:
         db: The async SQLAlchemy session used for the whole provisioning run.
         org_id: Primary key of the `portal_orgs` row.
-        from_state: Expected current `provisioning_status`. If ``None`` the
-            lock is taken without precondition (used for the initial
-            `pending`/`queued` → first step transition where both legacy and
-            new entry values must be accepted).
-        to_state: New `provisioning_status` value. Must be one of the values
-            enumerated in the CHECK constraint `ck_portal_orgs_provisioning_status`.
-        step: Human-readable step name (see `FORWARD_SEQUENCE`), included in
-            structured logs and product_event properties.
+        from_state: Expected current ``provisioning_status``. Three forms:
+            - ``str`` — must match exactly (used for every step-to-step
+              transition where the predecessor state is known).
+            - ``Iterable[str]`` (typically a set/frozenset) — current state
+              must be in this set (used for the initial transition that
+              accepts either ``"pending"`` or ``"queued"``, and for
+              terminal transitions that may come from any intermediate
+              state).
+            - ``None`` — precondition check is skipped. Reserved for
+              edge cases where the caller genuinely has no expectation
+              (e.g. a last-resort reconciliation). Prefer a set instead.
+        to_state: New ``provisioning_status`` value. Must be one of the
+            values enumerated in the CHECK constraint
+            ``ck_portal_orgs_provisioning_status``.
+        step: Human-readable step name (see ``FORWARD_SEQUENCE``), included
+            in structured logs and product_event properties.
 
     Raises:
-        StateTransitionConflict: If `from_state` is provided and the row's
-            current `provisioning_status` does not match — typically a
-            concurrent run.
-        LookupError: If no row with `org_id` exists.
+        StateTransitionConflict: If ``from_state`` is a str/iterable and the
+            row's current ``provisioning_status`` does not match — typically
+            a concurrent run.
+        LookupError: If no row with ``org_id`` exists.
     """
     # @MX:NOTE: SPEC-PROV-001 R2/R14 — FOR UPDATE is the concurrency guarantee.
     # Do not remove the with_for_update() call without an alternative lock.
@@ -130,12 +148,15 @@ async def transition_state(
     current_state = org.provisioning_status
 
     if from_state is not None:
-        # R5 allows the initial transition from either `pending` or `queued`,
-        # which is handled by passing from_state=None from the orchestrator for
-        # that first step; for every subsequent step we expect an exact match.
-        if current_state != from_state:
+        allowed_states: frozenset[str]
+        if isinstance(from_state, str):
+            allowed_states = frozenset({from_state})
+        else:
+            allowed_states = frozenset(from_state)
+        if current_state not in allowed_states:
             raise StateTransitionConflict(
-                f"org_id={org_id} expected from_state={from_state!r} but found {current_state!r}"
+                f"org_id={org_id} expected from_state={sorted(allowed_states)!r} "
+                f"but found {current_state!r}"
             )
 
     org.provisioning_status = to_state
