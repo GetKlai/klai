@@ -1,7 +1,12 @@
 """Tests for image extraction utilities and data models."""
 
 from app.adapters.base import DocumentRef, ImageRef
-from app.services.image_utils import extract_markdown_image_urls, resolve_relative_url
+from app.services.image_utils import (
+    dedupe_image_urls,
+    extract_markdown_image_urls,
+    is_valid_image_src,
+    resolve_relative_url,
+)
 
 
 class TestExtractMarkdownImageUrls:
@@ -70,6 +75,63 @@ class TestResolveRelativeUrl:
 
     def test_empty_base_returns_relative(self):
         assert resolve_relative_url("img.png", "") == "img.png"
+
+
+class TestIsValidImageSrc:
+    """Guard against srcset debris (Cloudflare image-resize comma-split)."""
+
+    def test_accepts_absolute_http(self):
+        assert is_valid_image_src("https://example.com/img.png")
+
+    def test_accepts_absolute_https(self):
+        assert is_valid_image_src("https://cdn.example.com/a/b.jpg")
+
+    def test_accepts_protocol_relative(self):
+        assert is_valid_image_src("//cdn.example.com/img.png")
+
+    def test_accepts_root_relative(self):
+        assert is_valid_image_src("/assets/img.png")
+
+    def test_accepts_relative_path(self):
+        assert is_valid_image_src("images/x.png")
+
+    def test_accepts_dot_relative(self):
+        assert is_valid_image_src("./img.png")
+
+    def test_rejects_empty(self):
+        assert not is_valid_image_src("")
+
+    def test_rejects_whitespace(self):
+        assert not is_valid_image_src("   ")
+
+    def test_rejects_data_uri(self):
+        assert not is_valid_image_src("data:image/png;base64,iVBOR")
+
+    def test_rejects_srcset_quality_fragment(self):
+        # Real-world Cloudflare comma-split debris.
+        assert not is_valid_image_src("quality=90")
+
+    def test_rejects_srcset_fit_fragment(self):
+        assert not is_valid_image_src("fit=scale-down")
+
+    def test_rejects_srcset_width_fragment(self):
+        assert not is_valid_image_src("w=1920")
+
+    def test_accepts_cloudflare_resize_url(self):
+        # The *full* Cloudflare URL must still pass — it has / and the =s are inside a path.
+        url = "https://images.spr.so/cdn-cgi/imagedelivery/abc/def/w=1920,quality=90,fit=scale-down"
+        assert is_valid_image_src(url)
+
+
+class TestDedupeImageUrls:
+    def test_preserves_first_seen_order(self):
+        assert dedupe_image_urls(["a", "b", "a", "c", "b"]) == ["a", "b", "c"]
+
+    def test_empty_input(self):
+        assert dedupe_image_urls([]) == []
+
+    def test_all_unique_unchanged(self):
+        assert dedupe_image_urls(["a", "b", "c"]) == ["a", "b", "c"]
 
 
 class TestImageRef:
