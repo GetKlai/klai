@@ -155,8 +155,7 @@ async def transition_state(
             allowed_states = frozenset(from_state)
         if current_state not in allowed_states:
             raise StateTransitionConflict(
-                f"org_id={org_id} expected from_state={sorted(allowed_states)!r} "
-                f"but found {current_state!r}"
+                f"org_id={org_id} expected from_state={sorted(allowed_states)!r} but found {current_state!r}"
             )
 
     org.provisioning_status = to_state
