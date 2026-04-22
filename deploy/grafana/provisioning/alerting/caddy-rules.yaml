@@ -1,0 +1,139 @@
+# SPEC-OBS-001 Phase D — Caddy edge alerts (LogsQL via VictoriaLogs).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email (see policies.yaml).
+#
+#   R9  caddy_5xx_rate_high   CRIT  >1% 5xx over 5m (any upstream)
+#
+# SPEC v0.2.1 R9 originally specified `caddy_http_requests_total{service="portal-api",...}`
+# expecting per-upstream Prometheus metrics. Reality: Caddy doesn't expose
+# Prometheus metrics in this setup, only structured access logs to VictoriaLogs.
+# Caddy access logs include `request.host` (the Host header) but NOT the
+# upstream service name, so per-upstream filtering is brittle (every new
+# subdomain would need an exclusion).
+#
+# Pragmatic broadening: alert on any Caddy 5xx rate >1% over 5m. Catches
+# portal-api 5xx by definition and also catches grafana/auth/firecrawl 5xx
+# bursts that are equally operationally relevant.
+#
+# Field shapes verified against production VictoriaLogs (2026-04-22):
+#   service:caddy       → 1 stream (klai-core-caddy-1)
+#   status:5*           → matches "500", "502", etc. (string field)
+#   duration            → "0.001569716"-style string seconds (R10's home if/when added)
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-caddy
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R9 (broadened): caddy_5xx_rate_high ──────────────────────────────
+      # Two LogsQL queries: count of 5xx + count of total. Math expression
+      # divides them. Threshold > 0.01 (=1%). `for: 5m` debounces transient
+      # spikes (a single bot scan can briefly push the ratio up).
+      - uid: obs-001-caddy-5xx-rate-high
+        title: caddy_5xx_rate_high
+        condition: ratio_threshold
+        data:
+          - refId: fivexx
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: fivexx
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:caddy AND status:5*'
+              queryType: instant
+          - refId: total
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: total
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:caddy'
+              queryType: instant
+          - refId: fivexx_count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: fivexx_count
+              type: reduce
+              reducer: count
+              expression: fivexx
+          - refId: total_count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: total_count
+              type: reduce
+              reducer: count
+              expression: total
+          - refId: ratio
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: ratio
+              type: math
+              # Guard against /0 when the system is genuinely idle.
+              # max(total_count, 1) means: if no traffic at all, ratio=0
+              # (no fire on quiet periods).
+              expression: '$fivexx_count / max($total_count, 1)'
+          - refId: ratio_threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: ratio_threshold
+              type: threshold
+              expression: ratio
+              conditions:
+                - evaluator: { params: [0.01], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: caddy
+        annotations:
+          summary: 'Caddy 5xx rate above 1% over the last 5 min ({{ $values.ratio | humanizePercentage }})'
+          runbook_url: 'docs/runbooks/platform-recovery.md#caddy-5xx-surge'
+          description: |
+            More than 1% of Caddy responses in the last 5 minutes returned a
+            5xx status code. This catches errors from any upstream behind
+            Caddy (portal-api, grafana, auth, etc.) — see request.host in
+            the matching log lines to identify which.
+
+            Triage:
+              1. VictoriaLogs query (Grafana → Explore → VictoriaLogs):
+                   service:caddy AND status:5*
+              2. Group by request.host to identify the affected upstream:
+                   service:caddy AND status:5* | stats by(request.host) count() as hits
+              3. Once upstream identified, see its container logs:
+                   ssh core-01 "docker logs --tail 100 klai-core-{service}-1"
+              4. If portal-api: see #portal-api-5xx-surge (this runbook section).
+              5. If a different upstream: check its specific runbook section
+                 or the generic container_down / container_restart_loop runbooks.

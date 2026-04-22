@@ -489,3 +489,127 @@ Alert auto-resolves once avail-ratio rises above 0.15 and stays there for one ev
 ### Follow-up
 
 If disk fills repeatedly (more than once per quarter), this server needs more disk OR a stricter retention policy on logs/volumes. Track in a follow-up SPEC. Don't keep firefighting the same condition.
+
+---
+
+## caddy-5xx-surge
+
+**Related alert**: SPEC-OBS-001-R9 (`caddy_5xx_rate_high`, CRIT)
+
+**Situation**: More than 1% of Caddy responses returned a 5xx status code over the last 5 minutes. This catches errors from any upstream behind Caddy (portal-api, grafana, auth, knowledge services), not just one. Mostly fires when one specific upstream is degraded.
+
+**Signal to look for**:
+```
+service:caddy AND status:5*
+```
+In Grafana → Explore → VictoriaLogs.
+
+### Step 1 — Identify the affected upstream
+
+```
+service:caddy AND status:5* | stats by(request.host) count() as hits
+```
+
+The host with the most hits is the suspect. Common mappings:
+- `my.getklai.com` or `*.getklai.com` (tenant subdomains) → portal-api
+- `auth.getklai.com` → Zitadel
+- `grafana.getklai.com` → Grafana itself
+- `firecrawl.getklai.com` → firecrawl-api
+- `logs-ingest.getklai.com` → alloy
+
+### Step 2 — Check that upstream's logs
+
+```bash
+ssh core-01 "docker logs --tail 100 klai-core-{service}-1"
+```
+
+For portal-api specifically:
+```bash
+ssh core-01 "docker logs --tail 100 klai-core-portal-api-1 | grep -E 'level=error|status_code=5'"
+```
+
+### Step 3 — Sample a request_id end-to-end
+
+```
+service:caddy AND status:5* AND request.host:{problematic_host} | sort by(_time) desc | limit 1
+```
+
+Copy the `resp_headers.X-Request-Id` value, then trace cross-service:
+```
+request_id:{uuid}
+```
+
+This shows the full chain: Caddy → portal-api → downstream service. The 5xx originates wherever the chain breaks.
+
+### Step 4 — Mitigate
+
+If transient (load spike, single bad request): nothing to do, alert auto-resolves.
+
+If sustained: depends on root cause:
+- DB connection failure → check DB container health
+- Upstream container down → see `container-down` runbook
+- Upstream container in restart loop → see `container-restart-loop` runbook
+- Application bug → revert the latest deploy of that service
+
+### Verify
+
+After fix: 5xx rate drops below 1%, alert auto-resolves within one evaluation cycle (1m) plus `for: 5m` debounce.
+
+### Follow-up
+
+If a specific upstream surges 5xx repeatedly across days, that service needs deeper instrumentation (per-endpoint metrics, structured error logs). Track in a follow-up SPEC.
+
+---
+
+## knowledge-ingest-error-surge
+
+**Related alert**: SPEC-OBS-001-R16 (`ingest_error_rate_elevated`, HIGH)
+
+**Situation**: knowledge-ingest emitted more than 10 error-level log lines in the last 10 minutes. Common causes: an upstream connector returning 401/429/500, a malformed document blocking a Celery worker, or graphiti/Neo4j connectivity issues.
+
+**Signal to look for**:
+```
+service:knowledge-ingest AND level:error
+```
+
+### Step 1 — Pattern-classify the errors
+
+```
+service:knowledge-ingest AND level:error | sort by(_time) desc | limit 20
+```
+
+Group by the most common error fingerprint. Fast triage:
+- `Job ... failed` with traceback → application-level job failure
+- `401 Unauthorized` / `403 Forbidden` → connector secret expired
+- `429 Too Many Requests` → upstream rate-limit hit; throttle our calls
+- `Neo4j` / `graphiti` in error → graph backend connectivity issue
+- `OperationalError` / `connection refused` → Postgres or other dependency
+
+### Step 2 — If a single org_id dominates
+
+```
+service:knowledge-ingest AND level:error | stats by(org_id) count() as hits
+```
+
+A spike concentrated in one org usually means their connector is misconfigured (expired token, revoked OAuth, deleted Confluence space). Notify the customer or temporarily disable the connector.
+
+### Step 3 — If the ingest worker itself is unhealthy
+
+```bash
+ssh core-01 "docker ps --filter name=knowledge-ingest --format 'table {{.Names}}\t{{.Status}}'"
+ssh core-01 "docker logs --tail 200 klai-core-knowledge-ingest-1 | tail -100"
+```
+
+If restart loop: see `container-restart-loop` runbook.
+
+### Step 4 — Connector-secret rotation
+
+If 401/403 dominates and matches a known secret-expiry: see `klai-infra/CONNECTOR_SECRET_ROTATION.md`.
+
+### Verify
+
+After fix: error log volume drops below 10/10min, alert auto-resolves.
+
+### Follow-up
+
+If the same connector class (Confluence, HubSpot, Notion) repeatedly errors across orgs, that connector needs hardening (better retry logic, structured error reporting). Track in a follow-up SPEC.

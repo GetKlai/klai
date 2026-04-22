@@ -1,0 +1,90 @@
+# SPEC-OBS-001 Phase D — knowledge-ingest error-rate alerts (LogsQL).
+#
+# Routed via spec=SPEC-OBS-001 → klai-ops-alerts-email.
+#
+#   R16  ingest_error_rate_elevated   HIGH   >10 errors in 10m
+#
+# Field shape verified against production VictoriaLogs (2026-04-22):
+#   service:knowledge-ingest         → klai-core-knowledge-ingest-1
+#   level:error / level:warning      → structured field
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-ingest
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # ── R16: ingest_error_rate_elevated ──────────────────────────────────
+      # Looks back 10m, fires when count of error-level logs exceeds 10.
+      # for: 0s — once the count crosses, fire immediately. The 10m lookback
+      # already smooths out single-job-failure spikes.
+      - uid: obs-001-ingest-error-rate-elevated
+        title: ingest_error_rate_elevated
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND level:error'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service_group: ingest
+        annotations:
+          summary: 'knowledge-ingest emitted >10 errors in the last 10 min'
+          runbook_url: 'docs/runbooks/platform-recovery.md#knowledge-ingest-error-surge'
+          description: |
+            knowledge-ingest is emitting more than 10 error-level log lines
+            per 10 minutes. Common causes: an upstream connector (Confluence,
+            HubSpot, Notion) returning 401/429/500, a malformed document
+            blocking a job, or graphiti/Neo4j connectivity issues.
+
+            Triage:
+              1. VictoriaLogs query: service:knowledge-ingest AND level:error | sort by(_time) desc | limit 20
+              2. Common patterns:
+                 - "Job ... failed" → check the failing job's traceback
+                 - "401 Unauthorized" → connector secret expired (see CONNECTOR_SECRET_ROTATION.md)
+                 - "Neo4j" or "graphiti" in error → check Neo4j health
+              3. If a single org_id dominates: their connector may be misconfigured.
+                 ssh core-01 "docker logs --tail 200 klai-core-knowledge-ingest-1 | grep -i error"
