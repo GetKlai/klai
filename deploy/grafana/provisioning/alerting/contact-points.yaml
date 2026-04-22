@@ -54,7 +54,7 @@ contactPoints:
         settings:
           addresses: ${ALERTS_EMAIL_RECIPIENTS}
           singleEmail: false
-          subject: "[KLAI-ALERT-{{ .CommonLabels.severity }}] {{ .CommonLabels.alertname }}"
+          subject: '[KLAI-ALERT-{{ .CommonLabels.severity | default "info" }}] {{ .CommonLabels.alertname }}'
           message: |
             {{ range .Alerts -}}
             [{{ .Status | toUpper }}] {{ .Labels.alertname }}

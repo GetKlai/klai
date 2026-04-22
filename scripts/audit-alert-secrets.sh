@@ -55,7 +55,7 @@ check "Slack webhook URL" 'hooks\.slack\.com/services/[A-Z0-9]'
 check "Slack token (xoxb/xoxp/xoxa)" 'xox[bpao]-[0-9A-Za-z-]+'
 
 # 3. PEM block headers (private keys, certs shouldn't be in alert configs).
-check "PEM block" '^-----BEGIN[[:space:]]+[A-Z ]+-----'
+check "PEM block" '^[[:space:]]*-----BEGIN[[:space:]]+[A-Z ]+-----'
 
 # 4. SMTP URL with inline credentials (smtp://user:pass@host).
 check "SMTP URL with inline credentials" 'smtps?://[^[:space:]$/]+:[^[:space:]$/@]+@'
