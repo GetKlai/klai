@@ -148,6 +148,14 @@ def _on_after_cursor_execute(
     logger.error("%s\n  caller:\n%s", msg, caller)
 
 
+# @MX:ANCHOR fan_in=1 — single caller (app.main lifespan) but this is the
+#   lock-in point that makes the entire strict-RLS regime observable. Removing
+#   this install call silently disables silent-filter detection across all
+#   category-D tables. Treat as load-bearing.
+# @MX:REASON listener registration is idempotent but install_rls_guard is the
+#   only legitimate way to enable it — direct event.listen() calls would skip
+#   the idempotency check.
+# @MX:SPEC SPEC-SEC-007
 def install_rls_guard(engine: AsyncEngine | Engine) -> None:
     """Install the silent-filter guard on the given engine.
 

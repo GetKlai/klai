@@ -44,6 +44,13 @@ async def delete_recording(recording_id: int, meeting_id: str | None = None) -> 
         return False
 
 
+# @MX:ANCHOR fan_in=4 — invoked from meetings.vexa_webhook, meetings.delete_meeting,
+#   bot_poller (_handle_meeting_ended, _recover_stuck_meeting), and the cleanup loop.
+# @MX:REASON opens its OWN tenant_scoped_session for the UPDATE regardless of the
+#   caller's session state — critical because callers (cleanup loop, webhook) may
+#   hold cross-org or unscoped sessions. Changing that to reuse caller's `db` would
+#   re-introduce the silent-filter regression fixed on 2026-04-22.
+# @MX:SPEC SPEC-GDPR-002
 async def cleanup_recording(
     meeting: VexaMeeting,
     db: AsyncSession,

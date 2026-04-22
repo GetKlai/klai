@@ -13,6 +13,13 @@ from app.models.portal import PortalUser
 from app.models.products import PortalUserProduct
 
 
+# @MX:ANCHOR fan_in=4 — called from /api/me, /internal/knowledge-feature-check,
+#   dependencies.require_product, and SPEC-SEC-022 gating. Signature changes ripple.
+# @MX:REASON self-healing tenant context is a load-bearing contract: callers (especially
+#   /internal/* and FastAPI dependencies resolved in parallel with _get_caller_org)
+#   rely on this function to set_tenant itself via the portal_users permissive lookup.
+#   Removing that behaviour re-introduces the 2026-04-21 Voys incident class.
+# @MX:SPEC SPEC-SEC-007
 async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list[str]:
     """Return all products a user has access to (direct + group-inherited).
 
