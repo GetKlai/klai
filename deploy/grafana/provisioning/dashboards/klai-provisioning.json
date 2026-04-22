@@ -144,10 +144,14 @@
     "list": [
       {
         "name": "org_id",
-        "type": "textbox",
-        "label": "Org ID",
-        "query": "0",
-        "current": { "value": "0", "text": "0" }
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "portal-postgres" },
+        "label": "Tenant",
+        "query": "SELECT slug || ' (id=' || id || ')' AS __text, id AS __value FROM portal_orgs ORDER BY slug",
+        "refresh": 1,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false
       }
     ]
   },
