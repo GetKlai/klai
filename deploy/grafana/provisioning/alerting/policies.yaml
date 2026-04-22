@@ -43,18 +43,8 @@ policies:
         repeat_interval: 24h
         continue: false
 
-      # OBS-001 heartbeat — MUST match BEFORE the general OBS-001 route,
-      # otherwise heartbeat notifications would go to the ops mailbox.
-      - receiver: heartbeat-kuma
-        matchers:
-          - spec = SPEC-OBS-001
-          - alert_type = heartbeat
-        group_by:
-          - alertname
-        group_wait: 0s
-        group_interval: 5m
-        repeat_interval: 5m
-        continue: false
+      # OBS-001 heartbeat route lands in OBS-001 Phase E together with the
+      # heartbeat-kuma contact point and the synthetic always-fires rule.
 
       - receiver: klai-ops-alerts-email
         matchers:

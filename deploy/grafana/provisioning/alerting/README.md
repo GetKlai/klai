@@ -11,7 +11,7 @@ into Grafana at startup or after `docker compose up -d grafana` (recreate).
 
 | File | Purpose | SPEC |
 |---|---|---|
-| `contact-points.yaml` | Email receivers (`klai-dev-alerts-email`, `klai-ops-alerts-email`) + heartbeat webhook (`heartbeat-kuma`) | SEC-024, OBS-001 |
+| `contact-points.yaml` | Email receivers (`klai-dev-alerts-email`, `klai-ops-alerts-email`) — `heartbeat-kuma` lands in OBS-001 Phase E | SEC-024, OBS-001 |
 | `policies.yaml` | Notification routing: matchers on `spec=...` labels route to the right receiver | SEC-024, INFRA-005, OBS-001 |
 | `rules.yaml` | Permanent zero-tolerance alert on docker-socket-proxy 403's | SEC-024-R12 |
 | `persistence-rules.yaml` | Persistence file staleness + missing alerts | SPEC-INFRA-005 Phase 6 |
@@ -31,8 +31,8 @@ All rules set a `spec` label so routing is deterministic:
 
 - `spec=SPEC-SEC-024` → `klai-dev-alerts-email` (security incidents)
 - `spec=SPEC-INFRA-005` → `klai-dev-alerts-email` (persistence concerns)
-- `spec=SPEC-OBS-001` + `alert_type=heartbeat` → `heartbeat-kuma` (5-min push to Uptime Kuma)
 - `spec=SPEC-OBS-001` → `klai-ops-alerts-email` (operational alerts)
+- `spec=SPEC-OBS-001` + `alert_type=heartbeat` → `heartbeat-kuma` (added in Phase E)
 - Default fall-through → `grafana-default-email` (Grafana auto-installed)
 
 ## Environment variables
