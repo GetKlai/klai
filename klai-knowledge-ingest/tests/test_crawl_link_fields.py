@@ -1,11 +1,22 @@
 """
-Tests for link graph field population in crawl_url() (SPEC-CRAWLER-003, TASK-005).
+Tests for link graph field population in crawl_url() (SPEC-CRAWLER-003 TASK-005,
+restored under SPEC-CRAWLER-005 Fase 2).
 
-Verifies that crawl_url populates extra with links_to, anchor_texts,
-and incoming_link_count when link_graph data is available.
+Verifies that `POST /ingest/v1/crawl` populates `ingest_req.extra` with
+`links_to`, `anchor_texts`, and `incoming_link_count` when link_graph data
+is available.
+
+Diagnosis (SPEC-CRAWLER-005 Fase 2):
+  The original tests patched `knowledge_ingest.routes.crawl.httpx.AsyncClient`.
+  `routes/crawl.py` was refactored to use `crawl4ai_client._run_crawl` /
+  `crawl_page` instead of direct httpx calls, so the patch target no longer
+  exists on that module. The ingest-side contract these tests protect
+  (link_graph fields in extra) is unchanged — only the mock wiring needs
+  to match the current implementation.
 """
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from knowledge_ingest import link_graph
 from knowledge_ingest.models import CrawlRequest
@@ -19,41 +30,42 @@ def _make_mock_pool():
     return pool
 
 
-def _make_httpx_response(text: str = "<html><body><p>Hello world</p></body></html>", status_code: int = 200):
-    resp = MagicMock()
-    resp.text = text
-    resp.status_code = status_code
-    resp.raise_for_status = MagicMock()
-    return resp
+def _make_run_crawl_result(
+    fit_markdown: str = "Hello world\n\nSome prose here.",
+    html: str = "<html><body><p>Hello world</p></body></html>",
+) -> tuple[str, int, str]:
+    """Return the (fit_markdown, word_count, raw_html) tuple that
+    routes/crawl.py::_run_crawl produces."""
+    word_count = len(fit_markdown.split())
+    return fit_markdown, word_count, html
 
 
 @pytest.mark.asyncio
 async def test_crawl_url_populates_link_fields():
-    """When link_graph returns data, extra contains links_to, anchor_texts, incoming_link_count."""
+    """When link_graph returns data, extra contains links_to, anchor_texts,
+    incoming_link_count."""
     mock_pool = _make_mock_pool()
-    mock_resp = _make_httpx_response()
 
-    with patch("knowledge_ingest.routes.crawl.httpx.AsyncClient") as mock_client_cls, \
+    with patch("knowledge_ingest.routes.crawl._run_crawl", new_callable=AsyncMock,
+               return_value=_make_run_crawl_result()), \
          patch("knowledge_ingest.routes.crawl.pg_store") as mock_pg, \
-         patch("knowledge_ingest.routes.crawl.ingest_document", new_callable=AsyncMock) as mock_ingest, \
+         patch("knowledge_ingest.routes.crawl.ingest_document",
+               new_callable=AsyncMock) as mock_ingest, \
          patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
-         patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock, return_value=["https://example.com/b", "https://example.com/c"]), \
-         patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=["Page B", "Page C"]), \
-         patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=5), \
-         patch("knowledge_ingest.routes.crawl.get_pool", new_callable=AsyncMock, return_value=mock_pool):
+         patch("knowledge_ingest.routes.crawl.get_domain_selector",
+               new_callable=AsyncMock, return_value=None), \
+         patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock,
+                      return_value=["https://example.com/b", "https://example.com/c"]), \
+         patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock,
+                      return_value=["Page B", "Page C"]), \
+         patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock,
+                      return_value=5), \
+         patch("knowledge_ingest.routes.crawl.get_pool", new_callable=AsyncMock,
+               return_value=mock_pool):
 
-        # httpx mock
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
-        # pg_store mock
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
 
-        # ingest mock
         mock_ingest.return_value = {"chunks": 3}
 
         from knowledge_ingest.routes.crawl import crawl_url
@@ -79,22 +91,21 @@ async def test_crawl_url_populates_link_fields():
 async def test_crawl_url_caps_links_to_at_20():
     """When link_graph returns >20 outbound URLs, links_to is capped at 20."""
     mock_pool = _make_mock_pool()
-    mock_resp = _make_httpx_response()
 
-    with patch("knowledge_ingest.routes.crawl.httpx.AsyncClient") as mock_client_cls, \
+    with patch("knowledge_ingest.routes.crawl._run_crawl", new_callable=AsyncMock,
+               return_value=_make_run_crawl_result()), \
          patch("knowledge_ingest.routes.crawl.pg_store") as mock_pg, \
-         patch("knowledge_ingest.routes.crawl.ingest_document", new_callable=AsyncMock) as mock_ingest, \
+         patch("knowledge_ingest.routes.crawl.ingest_document",
+               new_callable=AsyncMock) as mock_ingest, \
          patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
-         patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock, return_value=[f"https://example.com/page-{i}" for i in range(25)]), \
+         patch("knowledge_ingest.routes.crawl.get_domain_selector",
+               new_callable=AsyncMock, return_value=None), \
+         patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock,
+                      return_value=[f"https://example.com/page-{i}" for i in range(25)]), \
          patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]), \
          patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0), \
-         patch("knowledge_ingest.routes.crawl.get_pool", new_callable=AsyncMock, return_value=mock_pool):
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+         patch("knowledge_ingest.routes.crawl.get_pool", new_callable=AsyncMock,
+               return_value=mock_pool):
 
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
@@ -116,24 +127,24 @@ async def test_crawl_url_caps_links_to_at_20():
 
 @pytest.mark.asyncio
 async def test_crawl_url_graceful_degradation_on_link_graph_error():
-    """When link_graph raises, crawl still succeeds with source_url only."""
+    """When link_graph.get_outbound_urls raises, crawl still succeeds with
+    source_url only (no link fields in extra)."""
     mock_pool = _make_mock_pool()
-    mock_resp = _make_httpx_response()
 
-    with patch("knowledge_ingest.routes.crawl.httpx.AsyncClient") as mock_client_cls, \
+    with patch("knowledge_ingest.routes.crawl._run_crawl", new_callable=AsyncMock,
+               return_value=_make_run_crawl_result()), \
          patch("knowledge_ingest.routes.crawl.pg_store") as mock_pg, \
-         patch("knowledge_ingest.routes.crawl.ingest_document", new_callable=AsyncMock) as mock_ingest, \
+         patch("knowledge_ingest.routes.crawl.ingest_document",
+               new_callable=AsyncMock) as mock_ingest, \
          patch("knowledge_ingest.routes.crawl.validate_url", new_callable=AsyncMock), \
-         patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock, side_effect=Exception("DB connection failed")), \
+         patch("knowledge_ingest.routes.crawl.get_domain_selector",
+               new_callable=AsyncMock, return_value=None), \
+         patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock,
+                      side_effect=Exception("DB connection failed")), \
          patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]), \
          patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0), \
-         patch("knowledge_ingest.routes.crawl.get_pool", new_callable=AsyncMock, return_value=mock_pool):
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+         patch("knowledge_ingest.routes.crawl.get_pool", new_callable=AsyncMock,
+               return_value=mock_pool):
 
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
