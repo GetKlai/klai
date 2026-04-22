@@ -1,7 +1,7 @@
 ---
 id: SPEC-KB-IMAGE-002
-version: "1.0"
-status: draft
+version: "1.1"
+status: completed
 created: 2026-04-22
 updated: 2026-04-22
 author: Mark Vletter
@@ -14,6 +14,7 @@ issue_number: 111
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-04-22 | Mark Vletter | Initial draft — extract duplicated image storage + helpers into `klai-libs/image-storage/` shared package |
+| 1.1 | 2026-04-22 | Mark Vletter | Completed — Fase 1-4 + docs landed on main. Shared lib live on both consumer services; 10 local files deleted; CI path filters fan out to both builds on a lib-only change. Zero behavioural change confirmed via regression baseline on both services. |
 
 ---
 

@@ -769,9 +769,24 @@ Two Python packages live under `klai-libs/` and are consumed by multiple service
   request, it loads cookies for the `connector_id` via this library and decrypts in-process —
   plaintext cookies never cross a service boundary (REQ-01.3, REQ-05.4).
 
-- **`klai-libs/image-storage/`** (SPEC-KB-IMAGE-002, planned) — `ImageStore` + image URL
-  helpers + `download_and_upload_*` orchestrators. Will be consumed by klai-connector and
-  knowledge-ingest once the SPEC lands; today both services still carry local copies.
+- **`klai-libs/image-storage/`** (SPEC-KB-IMAGE-002) — `ImageStore` (content-addressed
+  Garage S3 client) + URL helpers (`is_valid_image_src`, `resolve_relative_url`,
+  `dedupe_image_urls`, `extract_markdown_image_urls`) + two orchestrators:
+  `download_and_upload_adapter_images` (connector sync engine path, handles markdown URLs
+  and optional Unstructured base64 parser output) and `download_and_upload_crawl_images`
+  (web-crawl path, filters Cloudflare srcset debris and resolves relative URLs).
+  Consumed by klai-connector (sync engine, github adapter, knowledge-ingest client) and
+  klai-knowledge-ingest (crawler adapter). Both services' local `s3_storage.py`,
+  `sync_images.py` and `image_utils.py` copies were deleted in Fase 2/3 — only one
+  implementation now. S3 key format (`{org_id}/images/{kb_slug}/{sha256}.{ext}`) and
+  public URL prefix (`/kb-images/`) are invariants — changing either breaks every
+  previously uploaded image's URL.
+
+**Rule:** When you see identical modules in two services, stop and reach for
+`klai-libs/` before you let them drift. SPEC-KB-IMAGE-002 was the remediation for
+exactly that: after SPEC-CRAWLER-004 Fase A landed the crawl pipeline in
+knowledge-ingest, the repo carried ≈98%-identical ImageStore copies in both
+services. Duplication cost: an entire SPEC to undo.
 
 ---
 
