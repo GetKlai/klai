@@ -41,7 +41,11 @@ groups:
     rules:
 
       # ── R9 (adapted to count): caddy_5xx_count_high ──────────────────────
-      - uid: obs-001-caddy-5xx-count-high
+      # UID kept as `obs-001-caddy-5xx-rate-high` (history) to avoid orphan
+      # rule lingering after rename (file-provisioned rules don't auto-GC
+      # on UID change, and DELETE via API requires provenance bypass that
+      # the Grafana 13 X-Disable-Provenance header doesn't honor cleanly).
+      - uid: obs-001-caddy-5xx-rate-high
         title: caddy_5xx_count_high
         condition: threshold
         data:
