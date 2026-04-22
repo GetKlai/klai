@@ -227,6 +227,53 @@ class TestCrossOrgIsolation:
 # -- Tampered ciphertext ------------------------------------------------------
 
 
+class TestDecryptFromBlobs:
+    """decrypt_credentials_from_blobs round-trips without a SQLAlchemy session."""
+
+    @pytest.mark.asyncio()
+    async def test_round_trip_via_blobs(self) -> None:
+        """Encrypt via the session API, then decrypt via blobs only."""
+        kek_hex = os.urandom(32).hex()
+        store = ConnectorCredentialStore(kek_hex)
+
+        raw_dek = os.urandom(32)
+        # The DEK blob the caller would read from portal_orgs.connector_dek_enc
+        # is the raw DEK's hex, encrypted under the KEK.
+        connector_dek_enc = store._kek_cipher.encrypt(raw_dek.hex())  # type: ignore[attr-defined]
+
+        # Pre-encrypt sensitive fields under that DEK.
+        dek_cipher = AESGCMCipher(raw_dek)
+        sensitive = {"cookies": [{"name": "sid", "value": "abc"}]}
+        import json as _json
+
+        encrypted_credentials = dek_cipher.encrypt(_json.dumps(sensitive))
+
+        out = store.decrypt_credentials_from_blobs(
+            encrypted_credentials=encrypted_credentials,
+            connector_dek_enc=connector_dek_enc,
+        )
+        assert out == sensitive
+
+    @pytest.mark.asyncio()
+    async def test_wrong_kek_raises(self) -> None:
+        """A store built with a different KEK cannot decrypt the DEK blob."""
+        sender = ConnectorCredentialStore(os.urandom(32).hex())
+        receiver = ConnectorCredentialStore(os.urandom(32).hex())
+
+        raw_dek = os.urandom(32)
+        dek_blob = sender._kek_cipher.encrypt(raw_dek.hex())  # type: ignore[attr-defined]
+        dek_cipher = AESGCMCipher(raw_dek)
+        import json as _json
+
+        payload = dek_cipher.encrypt(_json.dumps({"cookies": [1]}))
+
+        with pytest.raises(InvalidTag):
+            receiver.decrypt_credentials_from_blobs(
+                encrypted_credentials=payload,
+                connector_dek_enc=dek_blob,
+            )
+
+
 class TestTamperedBlob:
     @pytest.mark.asyncio()
     async def test_tampered_blob_raises_invalid_tag(self) -> None:

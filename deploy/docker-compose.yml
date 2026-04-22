@@ -1111,6 +1111,10 @@ services:
       GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-klai-images}
       GARAGE_REGION: garage
+      # SPEC-CRAWLER-004 Fase C — KEK for decrypting connector cookies
+      # via POST /ingest/v1/crawl/sync. Shares the portal-api KEK so every
+      # service decrypts the same blobs. Empty disables the endpoint.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
     networks:
       - klai-net
       - net-postgres

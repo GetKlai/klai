@@ -73,6 +73,9 @@ async def run_crawl_job(
     rate_limit: float = 2.0,
     content_selector: str | None = None,
     login_indicator_selector: str | None = None,
+    cookies: list[dict] | None = None,
+    canary_url: str | None = None,
+    canary_fingerprint: str | None = None,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
@@ -104,7 +107,14 @@ async def run_crawl_job(
             max_pages=max_pages,
             include_patterns=include_patterns,
             login_indicator_selector=login_indicator_selector,
+            cookies=cookies,
         )
+        # canary_url / canary_fingerprint are accepted for forwards-compat with
+        # the /ingest/v1/crawl/sync request body; they are plumbed here but the
+        # bulk crawl does not yet evaluate them (SPEC-CRAWL-004 canary check
+        # currently lives in the preview endpoint). Declaring + no-opping them
+        # keeps the public signature stable for Fase D delegation.
+        _ = (canary_url, canary_fingerprint)
 
         pool = await get_pool()
         await pool.execute(

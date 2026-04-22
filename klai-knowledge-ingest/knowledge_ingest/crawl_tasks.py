@@ -21,6 +21,9 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         rate_limit: float = 2.0,
         content_selector: str | None = None,
         login_indicator_selector: str | None = None,
+        cookies: list[dict] | None = None,
+        canary_url: str | None = None,
+        canary_fingerprint: str | None = None,
     ) -> None:
         from knowledge_ingest.adapters.crawler import run_crawl_job
         await run_crawl_job(
@@ -35,6 +38,9 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             rate_limit=rate_limit,
             content_selector=content_selector,
             login_indicator_selector=login_indicator_selector,
+            cookies=cookies,
+            canary_url=canary_url,
+            canary_fingerprint=canary_fingerprint,
         )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]

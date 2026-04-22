@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # third-party host must not block a whole page ingest.
     image_download_timeout: float = 10.0
 
+    # SPEC-CRAWLER-004 Fase C — KEK for decrypting connector cookies fetched
+    # via the new /ingest/v1/crawl/sync endpoint. 64-char hex (32 bytes); an
+    # empty value disables the endpoint (501 Not Implemented) so dev
+    # environments can run knowledge-ingest without provisioning a KEK.
+    encryption_key: str = ""
+
     model_config = {"env_file": ".env"}
 
     @model_validator(mode="after")
