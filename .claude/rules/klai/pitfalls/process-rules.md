@@ -1,5 +1,25 @@
 # Process Rules
 
+## adapter-framework-bleed (HIGH)
+When a service is declared "a pure X adapter framework" but you find
+infrastructure concepts leaking into its public contract (S3 clients,
+persistence primitives, MIME-validation helpers, content-fingerprint
+fields) — stop before deleting them. Audit every consumer of those
+concepts first. SPEC-CRAWLER-004 planned to delete `ImageRef` +
+`DocumentRef.images` + `DocumentRef.content_fingerprint` from
+klai-connector's BaseAdapter as "obviously crawl-only leakage". Only
+`content_fingerprint` was actually crawl-only; github and notion
+adapters were silently relying on `ImageRef` + `DocumentRef.images` to
+drive sync_engine's S3 upload path. Deleting them would have broken
+every live github/notion sync.
+
+**Prevention:** Before any SPEC calls for deletion of a shared
+datastructure, grep every caller across all services in the repo.
+If non-trivially-adjacent callers exist, either broaden the SPEC
+scope to move them or narrow the SPEC scope to leave the structure
+in place. Never assume "originally added for X, therefore only used
+by X". Shared contracts spread.
+
 ## data-before-code
 Before fixing a bug: check the logs and follow the actual code path.
 No guessing. No stacking patches. Trace what happens at runtime — logs,

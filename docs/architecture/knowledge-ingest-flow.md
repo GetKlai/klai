@@ -140,7 +140,7 @@ On page delete: all Qdrant vectors for that document path are removed.
 ### 1.2 External sources via klai-connector
 
 klai-connector is a separate service that syncs external content into the knowledge pipeline
-on a schedule or on-demand.
+on a schedule or on-demand. Since SPEC-CRAWLER-004 it is a **pure adapter framework for Klasse-1 managed sources** (GitHub, Notion, Drive, MS Docs). Web crawling (Klasse-3 unmanaged-source ingress) was consolidated into knowledge-ingest; klai-connector's sync_engine delegates `connector_type=="web_crawler"` syncs to knowledge-ingest's `/ingest/v1/crawl/sync` endpoint and polls the returned `job_id` for completion. Cookies are loaded + decrypted in-process by knowledge-ingest via the shared `klai-libs/connector-credentials` library so plaintext cookies never cross a service boundary.
 
 **GitHub repos (live):** klai-connector authenticates as a GitHub App installation, lists
 all files, and skips syncs when the repository tree SHA hasn't changed since the last run.
@@ -153,12 +153,22 @@ This means a large repo with no changes costs almost nothing. Supported files: `
 parser.py`. The parsed plain text is then forwarded to `knowledge-ingest` via
 `POST /ingest/v1/document`. Maximum file size: 50 MB.
 
-**Web crawls (live) — two-phase pipeline (SPEC-CRAWL-002):** the crawler splits **URL discovery** from **content extraction**, so auth failures and selector issues surface before the full crawl runs:
+**Web crawls (live) — delegation pipeline (SPEC-CRAWLER-004):**
 
-- **Phase 1 — BFS discovery.** Traverses internal links from `base_url`, bounded by `max_pages` and `path_prefix`. The full DOM is preserved during discovery (no premature pruning) so the link graph is complete. Output: deduplicated URL list.
-- **Phase 2 — Extraction.** For each URL, applies the `css_selector` (user-provided, stored, or AI-detected) and runs the same enrichment as documents.
+```
+portal-api ─▶ klai-connector sync_engine ─▶ POST /ingest/v1/crawl/sync ─▶ knowledge-ingest
+   (Sync now)   (connector_type=="web_crawler"        (connector_id only,                   (decrypts cookies,
+                 → delegation path)                     never plaintext cookies)              enqueues Procrastinate run_crawl)
+                                                                                                   │
+                                                                                                   ▼
+                                                                                        crawl4ai REST + image pipeline
+                                                                                        (SPEC-CRAWLER-004 Fase A/B/C)
+                                                                                                   │
+   klai-connector ◀─ GET /ingest/v1/crawl/sync/{job_id}/status (polled every 5 s, timeout 30 min) ─┘
+   closes sync_run.status=completed + documents_ok=pages_total
+```
 
-Both phases use the shared Crawl4AI container via REST API (`http://crawl4ai:11235`).
+The actual crawl happens inside **knowledge-ingest's** crawler adapter, which uses the same Crawl4AI REST container (`http://crawl4ai:11235`) as the old in-connector path. The two-phase "discover → extract" semantics (SPEC-CRAWL-002) now live in `knowledge_ingest/adapters/crawler.py`. klai-connector keeps ownership of `connector.sync_runs` + `product_events` so scheduler, analytics, and UI stay untouched.
 
 **Wizard endpoints:**
 
@@ -288,9 +298,18 @@ If no `content_type` is set, the pipeline uses `unknown` — no enrichment, basi
 ### Phase 1: Immediate (synchronous)
 
 **Step 1 — Parse and chunk.** The content arrives as plain text (already decoded by the
-caller for Gitea pages and connector text files). Binary files (PDF, DOCX, HTML) are
-parsed upstream in **klai-connector** via Unstructured.io's `partition.auto` — not in
-knowledge-ingest itself.
+caller for Gitea pages and connector text files). Binary files (PDF, DOCX, HTML) arriving
+via klai-connector's github/notion/drive adapters are parsed upstream in **klai-connector**
+via Unstructured.io's `partition.auto` — not in knowledge-ingest itself.
+
+**Web-crawl content** follows a different path: since SPEC-CRAWLER-004 the bulk crawl
+runs inside knowledge-ingest itself (`POST /ingest/v1/crawl/sync` + Procrastinate
+`run_crawl` task + `knowledge_ingest/adapters/crawler.py`). Inline images in the
+`result.media.images` field from crawl4ai are downloaded + uploaded to Garage S3 by
+`knowledge_ingest/sync_images.py::download_and_upload_crawl_images` and surface in the
+Qdrant payload as `image_urls: ["/kb-images/{org_id}/images/{kb_slug}/{sha256}.{ext}"]`.
+The github + notion adapters in klai-connector keep using their own
+`sync_engine._upload_images` path for now — consolidation tracked in SPEC-KB-IMAGE-002.
 
 Chunking is done by a custom `chunker.py` inside knowledge-ingest:
 1. **Heading split** — the document is first split at H1/H2/H3 headings
@@ -704,6 +723,21 @@ When a new tenant is provisioned:
 
 The team key is the thread that connects provisioning to retrieval: it carries `org_id`,
 which scopes every Qdrant search to the correct tenant's content.
+
+### Shared libraries (klai-libs/)
+
+Two Python packages live under `klai-libs/` and are consumed by multiple services via
+`[tool.uv.sources]` path-deps:
+
+- **`klai-libs/connector-credentials/`** (SPEC-CRAWLER-004 Fase 0) — `ConnectorCredentialStore`
+  with AES-256-GCM KEK/DEK hierarchy. Consumed by `klai-portal/backend`, `klai-connector`,
+  and `klai-knowledge-ingest`. When knowledge-ingest receives a `POST /ingest/v1/crawl/sync`
+  request, it loads cookies for the `connector_id` via this library and decrypts in-process —
+  plaintext cookies never cross a service boundary (REQ-01.3, REQ-05.4).
+
+- **`klai-libs/image-storage/`** (SPEC-KB-IMAGE-002, planned) — `ImageStore` + image URL
+  helpers + `download_and_upload_*` orchestrators. Will be consumed by klai-connector and
+  knowledge-ingest once the SPEC lands; today both services still carry local copies.
 
 ---
 

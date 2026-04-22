@@ -1,7 +1,7 @@
 ---
 id: SPEC-CRAWLER-004
-version: "1.0"
-status: draft
+version: "1.1"
+status: completed
 created: 2026-04-22
 updated: 2026-04-22
 author: Mark Vletter
@@ -14,6 +14,7 @@ issue_number: 108
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0 | 2026-04-22 | Mark Vletter | Initial draft na E2E test op Voys/support KB |
+| 1.1 | 2026-04-22 | Mark Vletter | Fase F amendment: `ImageRef` + `DocumentRef.images` retained (used by github + notion adapters). REQ-04.2 scope narrowed to `DocumentRef.content_fingerprint`. Full consolidation tracked under SPEC-KB-IMAGE-002 (#111) and possible SPEC-KB-IMAGE-003. Status: `completed`. |
 
 ---
 
@@ -204,9 +205,12 @@ automatically within the same sync cycle.
 named `webcrawler.py` or `content_fingerprint.py` under `klai-connector/app/`, and
 no class named `WebCrawlerAdapter` anywhere under `klai-connector/`.
 
-**REQ-04.2 (Ubiquitous).** `klai-connector/app/adapters/base.py` shall not contain
-`ImageRef`, `DocumentRef.images`, or `DocumentRef.content_fingerprint` after Fase F;
-`DocumentRef` shall be the minimal document-of-a-managed-source dataclass.
+**REQ-04.2 (Ubiquitous).** [AMENDED v1.1] `klai-connector/app/adapters/base.py` shall not
+contain `DocumentRef.content_fingerprint` after Fase F. `ImageRef` + `DocumentRef.images`
+are RETAINED — github and notion adapters actively populate them to drive sync_engine's
+`_upload_images` path. Full removal + consolidation of the klai-connector image stack is
+tracked under SPEC-KB-IMAGE-002 (#111 — shared `klai-libs/image-storage/` package) and
+possible SPEC-KB-IMAGE-003 (adapter contract rework to surface images as inline markdown).
 
 **REQ-04.3 (Ubiquitous).** `klai-connector/app/adapters/registry.py` shall route
 `web_crawler` connector_type directly to the delegation path added in REQ-03.3,
