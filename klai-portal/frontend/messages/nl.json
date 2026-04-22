@@ -1010,6 +1010,11 @@
 
   "admin_groups_products_title": "Producten",
   "admin_groups_products_empty": "Geen producten toegewezen",
+  "admin_groups_products_assign": "Product toewijzen",
+  "admin_groups_products_assign_placeholder": "Kies een product",
+  "admin_groups_products_remove": "Verwijderen",
+  "admin_groups_products_remove_confirm": "Verwijder {product}?",
+  "admin_groups_products_none_available": "Alle producten van het plan zijn al toegewezen",
   "admin_groups_products_assign_success": "Product toegewezen aan groep",
   "admin_groups_products_revoke_success": "Product verwijderd van groep",
 
