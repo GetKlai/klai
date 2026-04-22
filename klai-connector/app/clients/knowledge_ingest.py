@@ -138,3 +138,87 @@ class KnowledgeIngestClient:
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
+
+
+# @MX:ANCHOR: CrawlSyncClient -- delegation boundary for SPEC-CRAWLER-004 Fase D.
+# @MX:REASON: Any change here changes the on-wire contract between klai-connector
+#   and the knowledge-ingest /ingest/v1/crawl/sync endpoint. Field names map 1:1
+#   to CrawlSyncRequest in knowledge_ingest/routes/crawl_sync.py — keep them
+#   synchronised.
+class CrawlSyncClient:
+    """HTTP client for the knowledge-ingest bulk-sync endpoint.
+
+    SPEC-CRAWLER-004 Fase D replaces ``WebCrawlerAdapter.list_documents`` +
+    ``fetch_document`` with a single POST to
+    ``/ingest/v1/crawl/sync``. klai-connector never sees the decrypted
+    cookies — it only sends the ``connector_id`` and knowledge-ingest loads
+    the cookies itself via the shared credentials lib (REQ-01.3).
+
+    The returned ``job_id`` is stored on ``sync_run.cursor_state`` and
+    polled via :meth:`crawl_sync_status` until the remote job finishes.
+    """
+
+    def __init__(self, base_url: str, internal_secret: str = "", timeout: float = 30.0) -> None:
+        self._internal_secret = internal_secret
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
+
+    def _headers(self) -> dict[str, str]:
+        return {"x-internal-secret": self._internal_secret} if self._internal_secret else {}
+
+    async def crawl_sync(
+        self,
+        *,
+        connector_id: str,
+        org_id: str,
+        kb_slug: str,
+        config: dict,
+    ) -> dict:
+        """Enqueue a bulk crawl via ``POST /ingest/v1/crawl/sync``.
+
+        Returns:
+            The raw JSON body — ``{"job_id": str, "status": "queued"}``.
+
+        Raises:
+            httpx.HTTPStatusError: on 4xx/5xx. Callers mark sync_runs as
+                failed when this happens (SPEC REQ-03.5).
+        """
+        body = {
+            "connector_id": connector_id,
+            "org_id": org_id,
+            "kb_slug": kb_slug,
+            "base_url": config["base_url"],
+            "max_pages": int(config.get("max_pages", 200)),
+            "max_depth": int(config.get("max_depth", 3)),
+            "path_prefix": config.get("path_prefix"),
+            "content_selector": config.get("content_selector"),
+            "canary_url": config.get("canary_url"),
+            "canary_fingerprint": config.get("canary_fingerprint"),
+            "login_indicator": config.get("login_indicator_selector"),
+        }
+        resp = await self._client.post(
+            "/ingest/v1/crawl/sync",
+            json=body,
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def crawl_sync_status(self, job_id: str) -> dict:
+        """Poll ``GET /ingest/v1/crawl/sync/{job_id}/status``.
+
+        Returns:
+            ``{"job_id", "status", "pages_total", "pages_done", "error"}``.
+
+        Raises:
+            httpx.HTTPStatusError: 404 when the job row has been deleted.
+        """
+        resp = await self._client.get(
+            f"/ingest/v1/crawl/sync/{job_id}/status",
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()

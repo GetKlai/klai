@@ -89,6 +89,16 @@ def create_app() -> FastAPI:
         ingest_client = KnowledgeIngestClient(settings.knowledge_ingest_url, settings.knowledge_ingest_secret)
         app.state.ingest_client = ingest_client
 
+        # SPEC-CRAWLER-004 Fase D — delegation client for web_crawler syncs.
+        # Shares the same base URL + internal secret as KnowledgeIngestClient.
+        from app.clients.knowledge_ingest import CrawlSyncClient
+
+        crawl_sync_client = CrawlSyncClient(
+            settings.knowledge_ingest_url,
+            settings.knowledge_ingest_secret,
+        )
+        app.state.crawl_sync_client = crawl_sync_client
+
         # Image storage (Garage S3) — optional, skip if not configured.
         image_store = None
         if settings.garage_s3_endpoint:
@@ -112,6 +122,7 @@ def create_app() -> FastAPI:
             ingest_client=ingest_client,
             portal_client=portal_client,
             image_store=image_store,
+            crawl_sync_client=crawl_sync_client,
         )
         app.state.sync_engine = sync_engine
 

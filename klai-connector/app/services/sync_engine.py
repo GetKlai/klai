@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.adapters.base import DocumentRef
 from app.adapters.registry import AdapterRegistry
 from app.adapters.webcrawler import CanaryMismatchError, CrawlJobPendingError
-from app.clients.knowledge_ingest import KnowledgeIngestClient
+from app.clients.knowledge_ingest import CrawlSyncClient, KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
@@ -45,6 +45,12 @@ class SyncEngine:
         portal_client: Client for the portal control plane API.
     """
 
+    # SPEC-CRAWLER-004 Fase D — poll cadence + total timeout for the
+    # delegation path. 5 s matches the SPEC; 30 min matches klai-connector's
+    # historical webcrawler timeout so behaviour stays unchanged for ops.
+    _WEB_CRAWLER_POLL_INTERVAL_S: float = 5.0
+    _WEB_CRAWLER_POLL_TIMEOUT_S: float = 30 * 60
+
     def __init__(
         self,
         session_maker: async_sessionmaker[AsyncSession],
@@ -52,6 +58,7 @@ class SyncEngine:
         ingest_client: KnowledgeIngestClient,
         portal_client: PortalClient,
         image_store: ImageStore | None = None,
+        crawl_sync_client: CrawlSyncClient | None = None,
     ) -> None:
         self._session_maker = session_maker
         self._registry = registry
@@ -59,6 +66,7 @@ class SyncEngine:
         self._portal_client = portal_client
         self._image_store = image_store
         self._image_http = httpx.AsyncClient(timeout=30.0) if image_store else None
+        self._crawl_sync_client = crawl_sync_client
         self._global_semaphore = asyncio.Semaphore(3)
         self._connector_locks: dict[uuid.UUID, asyncio.Lock] = {}
 
@@ -110,6 +118,23 @@ class SyncEngine:
         except Exception:
             logger.exception("Failed to fetch connector config from portal for %s", connector_id)
             await self._fail_sync_run(sync_run_id, "Portal config fetch failed")
+            return
+
+        # SPEC-CRAWLER-004 Fase D: delegate web_crawler syncs to
+        # knowledge-ingest. klai-connector no longer runs crawl4ai itself;
+        # instead it POSTs the config to /ingest/v1/crawl/sync and polls
+        # the returned job_id. Keeps sync_runs ownership + product_events
+        # on the connector side; moves pipeline execution to ingest.
+        if (
+            portal_config.connector_type == "web_crawler"
+            and self._crawl_sync_client is not None
+        ):
+            await self._run_web_crawler_delegation(
+                portal_config=portal_config,
+                connector_id=connector_id,
+                sync_run_id=sync_run_id,
+                start_time=start_time,
+            )
             return
 
         async with self._session_maker() as session:
@@ -496,6 +521,195 @@ class SyncEngine:
             documents_ok=documents_ok,
             documents_failed=documents_failed,
             bytes_processed=bytes_processed,
+            error_details=error_details if error_details else None,
+        )
+
+    async def _run_web_crawler_delegation(
+        self,
+        *,
+        portal_config: Any,
+        connector_id: uuid.UUID,
+        sync_run_id: uuid.UUID,
+        start_time: float,
+    ) -> None:
+        """SPEC-CRAWLER-004 Fase D delegation path.
+
+        klai-connector keeps owning ``sync_runs`` state + product_events but
+        forwards the actual crawl work to knowledge-ingest's
+        ``/ingest/v1/crawl/sync`` endpoint. We store the returned ``job_id``
+        on ``sync_run.cursor_state.remote_job_id`` immediately so a crash
+        leaves a traceable row, then poll the remote ``/status`` every 5 s
+        up to 30 min. On completion we close the sync_run with the remote
+        counts; on timeout or HTTP error we close it as FAILED with
+        ``error.details.service = 'knowledge-ingest'`` (REQ-03.5).
+        """
+        assert self._crawl_sync_client is not None
+
+        status: str = SyncStatus.COMPLETED
+        documents_total = 0
+        documents_ok = 0
+        documents_failed = 0
+        error_details: list[dict[str, object]] = []
+        remote_job_id: str | None = None
+
+        async with self._session_maker() as session:
+            sync_run = await session.get(SyncRun, sync_run_id)
+            if sync_run is None:
+                logger.error("SyncRun not found: %s", sync_run_id)
+                return
+
+            try:
+                # REQ-03.1: submit the config (connector_id only — no cookies).
+                enqueue_resp = await self._crawl_sync_client.crawl_sync(
+                    connector_id=str(connector_id),
+                    org_id=portal_config.zitadel_org_id,
+                    kb_slug=portal_config.kb_slug,
+                    config=portal_config.config,
+                )
+                remote_job_id = enqueue_resp["job_id"]
+                sync_run.cursor_state = {
+                    "remote_job_id": remote_job_id,
+                    "remote_status": enqueue_resp.get("status", "queued"),
+                }
+                await session.commit()
+                logger.info(
+                    "web_crawler_delegated",
+                    extra={
+                        "connector_id": str(connector_id),
+                        "sync_run_id": str(sync_run_id),
+                        "remote_job_id": remote_job_id,
+                    },
+                )
+
+                # REQ-03.4 + AC-03.4: poll until the remote job terminates
+                # or we hit the timeout.
+                poll_interval = self._WEB_CRAWLER_POLL_INTERVAL_S
+                poll_timeout = self._WEB_CRAWLER_POLL_TIMEOUT_S
+                elapsed = 0.0
+                final_state: dict = {}
+                while elapsed < poll_timeout:
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
+                    try:
+                        poll = await self._crawl_sync_client.crawl_sync_status(remote_job_id)
+                    except httpx.HTTPError as poll_err:
+                        logger.warning(
+                            "web_crawler_poll_failed",
+                            extra={
+                                "connector_id": str(connector_id),
+                                "remote_job_id": remote_job_id,
+                                "error": str(poll_err),
+                            },
+                        )
+                        continue
+                    remote_status = poll.get("status")
+                    if remote_status in ("completed", "failed"):
+                        final_state = poll
+                        break
+
+                if not final_state:
+                    # Timeout without a terminal state — SPEC-CRAWLER-004 EC-1.
+                    # Preserve remote_job_id so a later retry can resume polling.
+                    status = SyncStatus.FAILED
+                    error_details = [
+                        {
+                            "error": "web_crawler_poll_timeout",
+                            "service": "knowledge-ingest",
+                            "remote_job_id": remote_job_id,
+                            "timeout_seconds": int(poll_timeout),
+                        },
+                    ]
+                else:
+                    documents_total = int(final_state.get("pages_total") or 0)
+                    documents_ok = int(final_state.get("pages_done") or 0)
+                    if final_state.get("status") == "completed":
+                        status = SyncStatus.COMPLETED
+                    else:
+                        status = SyncStatus.FAILED
+                        documents_failed = max(0, documents_total - documents_ok)
+                        remote_error = final_state.get("error") or "unknown"
+                        error_details = [
+                            {
+                                "error": str(remote_error),
+                                "service": "knowledge-ingest",
+                                "remote_job_id": remote_job_id,
+                            },
+                        ]
+
+            except httpx.HTTPStatusError as enqueue_err:
+                # REQ-03.5: non-2xx from /crawl/sync → single failed row, no retry.
+                status = SyncStatus.FAILED
+                error_details = [
+                    {
+                        "error": f"http_{enqueue_err.response.status_code}",
+                        "service": "knowledge-ingest",
+                        "detail": enqueue_err.response.text[:500],
+                    },
+                ]
+                logger.error(
+                    "web_crawler_enqueue_failed",
+                    extra={
+                        "connector_id": str(connector_id),
+                        "status_code": enqueue_err.response.status_code,
+                    },
+                )
+            except httpx.HTTPError as enqueue_err:
+                status = SyncStatus.FAILED
+                error_details = [
+                    {
+                        "error": str(enqueue_err),
+                        "service": "knowledge-ingest",
+                    },
+                ]
+                logger.exception(
+                    "web_crawler_enqueue_network_error",
+                    extra={"connector_id": str(connector_id)},
+                )
+
+            duration = time.monotonic() - start_time
+            completed_at = datetime.now(UTC)
+            sync_run.status = status
+            sync_run.completed_at = completed_at
+            sync_run.quality_status = "healthy" if status == SyncStatus.COMPLETED else None
+            sync_run.documents_total = documents_total
+            sync_run.documents_ok = documents_ok
+            sync_run.documents_failed = documents_failed
+            sync_run.error_details = error_details if error_details else None
+            # Keep the remote_job_id so operators can correlate a failed run
+            # with the knowledge.crawl_jobs row.
+            if remote_job_id is not None:
+                sync_run.cursor_state = {
+                    "remote_job_id": remote_job_id,
+                    "remote_status": (
+                        "completed" if status == SyncStatus.COMPLETED else "failed"
+                    ),
+                }
+            await session.commit()
+
+            logger.info(
+                "web_crawler_delegation_complete",
+                extra={
+                    "event": "sync_complete",
+                    "connector_id": str(connector_id),
+                    "duration_seconds": round(duration, 1),
+                    "documents_total": documents_total,
+                    "documents_ok": documents_ok,
+                    "documents_failed": documents_failed,
+                    "status": status,
+                    "remote_job_id": remote_job_id,
+                },
+            )
+
+        # Portal callback (best-effort — errors swallowed in portal_client).
+        await self._portal_client.report_sync_status(
+            connector_id=connector_id,
+            sync_run_id=sync_run_id,
+            sync_status=status,
+            completed_at=completed_at,
+            documents_total=documents_total,
+            documents_ok=documents_ok,
+            documents_failed=documents_failed,
+            bytes_processed=0,
             error_details=error_details if error_details else None,
         )
 
